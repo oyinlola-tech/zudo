@@ -1,0 +1,1094 @@
+---
+title: Async TypeScript
+description: Type promises and async functions precisely, keep Promise.all tuples intact, narrow allSettled results, use Awaited, and page through an API with typed async generators.
+minutes: 55
+youNeed: Typed error handling, Generic API design, Promise combinators and Generators
+youBuild: A typed client for a payments API - a parallel dashboard loader, a settled-results report, a timeout helper and an async generator that pages through transactions
+keywords: typescript async, Promise type, async function return type, Awaited, Promise.all tuple types, Promise.allSettled typescript, PromiseSettledResult, Promise.race timeout, async generator typescript, AsyncIterable, AsyncGenerator, for await, pagination typescript
+objectives: Read and write the types of async functions, and know why their return type is always a Promise | Keep Promise.all results as a typed tuple, and spot when they collapse into an array of unions | Narrow allSettled results and write generic helpers with Awaited and Promise of never | Find the async mistakes the compiler cannot see, such as async callbacks passed to filter and forEach | Type async iterables and generators, and page through an API lazily
+---
+<section>
+<h2 id="problem">The payout filter that let everything through</h2>
+<p>A payouts job runs every evening. It sends each seller's money unless a fraud check flags the payout, in which case the payout is held for review. The fraud check calls another service, so it is <code>async</code>:</p>
+<example file="payouts.ts" project="problem">
+interface Payout {
+  id: string;
+  sellerId: string;
+  kobo: number;
+}
+
+async function isSuspicious(payout: Payout): Promise<boolean> {
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  return payout.kobo > 10_000_000;
+}
+
+const payouts: Payout[] = [
+  { id: "PO-1", sellerId: "S-1", kobo: 450_000 },
+  { id: "PO-2", sellerId: "S-2", kobo: 25_000_000 },
+  { id: "PO-3", sellerId: "S-3", kobo: 90_000 },
+];
+
+const toReview = payouts.filter(async (payout) => await isSuspicious(payout));
+const toPay = payouts.filter(async (payout) => !(await isSuspicious(payout)));
+
+console.log("review:", toReview.map((payout) => payout.id));
+console.log("pay:", toPay.map((payout) => payout.id));
+</example>
+<output>
+review: [ 'PO-1', 'PO-2', 'PO-3' ]
+pay: [ 'PO-1', 'PO-2', 'PO-3' ]
+</output>
+<p>Every payout is paid <em>and</em> held for review, including the ₦250,000 one the check was written to stop. <code>filter</code> expects its callback to return a boolean-ish value right now. An <code>async</code> callback returns a <code>Promise</code>, and a promise object is always truthy, so every item is kept. And it compiled without a word, because <code>filter</code>'s callback type allows any return value.</p>
+<p>The same mistake in an <code>if</code> <em>is</em> caught:</p>
+<example file="forgot-await.ts" project="problem" check="tsc-error">
+async function isSuspicious(kobo: number): Promise<boolean> {
+  return kobo > 10_000_000;
+}
+
+async function releasePayout(kobo: number): Promise<string> {
+  if (isSuspicious(kobo)) return "held for review";
+  return "paid";
+}
+</example>
+<output kind="tsc">
+forgot-await.ts:6:7 - error TS2801: This condition will always return true since this 'Promise<boolean>' is always defined.
+
+6   if (isSuspicious(kobo)) return "held for review";
+        ~~~~~~~~~~~~~~~~~~
+
+  forgot-await.ts:6:7 - Did you forget to use 'await'?
+    6   if (isSuspicious(kobo)) return "held for review";
+            ~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in forgot-await.ts:6
+</output>
+<p>That is async TypeScript in a nutshell. Promises have precise types, and the compiler uses them well in most places, but there are gaps: callbacks whose return value is ignored, values typed <code>any</code>, arrays that lose their shape. This lesson shows the types behind <code>async</code> code so you can tell which situation you are in. The runtime behaviour of promises, combinators and async generators is covered in <a href="/learn/js-promises">Promises in depth</a>, <a href="/learn/js-promise-combinators">Promise combinators</a> and <a href="/learn/js-generators#async">Generators</a>; here you add the types.</p>
+</section>
+
+<section>
+<h2 id="promise-type">Promise&lt;T&gt; and async functions</h2>
+<p><code>Promise&lt;T&gt;</code> is a generic interface: a promise that, when it fulfils, gives a value of type <code>T</code>. An <code>async</code> function <em>always</em> returns a promise, whatever its body returns, so its return type is always <code>Promise&lt;…&gt;</code>. When you leave it out, TypeScript infers it from the <code>return</code> statements.</p>
+<p>To show inferred types without an editor, this lesson uses two tiny <strong>type-level test</strong> helpers. <code>Equal&lt;A, B&gt;</code> is <code>true</code> when two types are identical, and <code>Expect</code> only accepts <code>true</code>, so a line like <code>type t = Expect&lt;Equal&lt;X, number&gt;&gt;</code> compiles only if <code>X</code> really is <code>number</code>. How <code>Equal</code> works is a puzzle for <a href="/learn/ts-conditional-types">Conditional types</a>; for now, use it:</p>
+<file name="type-tests.ts" project="types">
+export type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+export type Expect<T extends true> = T;
+</file>
+<example file="inferred.ts" project="types">
+import type { Equal, Expect } from "./type-tests.js";
+
+async function getBalance(accountId: string) {
+  if (accountId === "") throw new Error("account id required");
+  return 250_000;
+}
+
+async function getAccount(accountId: string) {
+  return { accountId, balanceKobo: await getBalance(accountId) };
+}
+
+async function recordAudit(message: string) {
+  console.log(`audit: ${message}`);
+}
+
+type T1 = Expect<Equal<ReturnType<typeof getBalance>, Promise<number>>>;
+type T2 = Expect<Equal<ReturnType<typeof getAccount>, Promise<{ accountId: string; balanceKobo: number }>>>;
+type T3 = Expect<Equal<ReturnType<typeof recordAudit>, Promise<void>>>;
+
+console.log(await getAccount("ACC-1"));
+await recordAudit("balance read");
+</example>
+<output>
+{ accountId: 'ACC-1', balanceKobo: 250000 }
+audit: balance read
+</output>
+<p>This file compiling <em>is</em> the test: if any of the three types were different, <code>tsc</code> would fail on its line. <code>getBalance</code> returns a number, so it is <code>Promise&lt;number&gt;</code>. A function that returns nothing is <code>Promise&lt;void&gt;</code>. Inside <code>getAccount</code>, <code>await getBalance(…)</code> has type <code>number</code>: <code>await</code> removes one <code>Promise</code> layer at the type level exactly as it does at runtime.</p>
+<h3>Annotating async functions</h3>
+<p>For exported functions, write the return type (<a href="/learn/ts-inference#when-to-annotate">Inference</a> explains why public boundaries deserve annotations). The annotation must be <code>Promise&lt;T&gt;</code>, and the body is then checked against <code>T</code>:</p>
+<example file="annotated.ts" project="types" check="tsc-error">
+export async function getBalance(accountId: string): number {
+  return 250_000;
+}
+
+export async function getRate(currency: string): Promise<number> {
+  return currency === "USD" ? "1540.25" : 1;
+}
+</example>
+<output kind="tsc">
+annotated.ts:1:54 - error TS1064: The return type of an async function or method must be the global Promise<T> type. Did you mean to write 'Promise<number>'?
+
+1 export async function getBalance(accountId: string): number {
+                                                       ~~~~~~
+
+annotated.ts:6:31 - error TS2322: Type 'string' is not assignable to type 'number'.
+
+6   return currency === "USD" ? "1540.25" : 1;
+                                ~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: annotated.ts:1
+</output>
+<p>In the second function, <code>return</code> is checked against <code>number</code>, not <code>Promise&lt;number&gt;</code>: inside an async function you return the plain value, and the function wraps it. Returning another promise is also fine, because promises flatten: <code>return getBalance(id)</code> in a function typed <code>Promise&lt;number&gt;</code> compiles, and the caller still gets a <code>number</code> after one <code>await</code>. A <code>Promise&lt;Promise&lt;number&gt;&gt;</code> cannot exist at runtime.</p>
+</section>
+
+<section>
+<h2 id="new-promise">new Promise&lt;T&gt; and wrapping callbacks</h2>
+<p>Older libraries report results through callbacks. To use them with <code>await</code>, you wrap them in <code>new Promise</code>. The constructor is generic, <code>new Promise&lt;T&gt;(executor)</code>, and <code>T</code> is the type <code>resolve</code> accepts. If nothing tells TypeScript what <code>T</code> is, it becomes <code>unknown</code>:</p>
+<example file="rate.ts" project="wrap" check="tsc-error">
+const rate = new Promise((resolve) => setTimeout(() => resolve(1540.25), 10));
+const kobo = (await rate) * 100;
+</example>
+<output kind="tsc">
+rate.ts:2:14 - error TS2571: Object is of type 'unknown'.
+
+2 const kobo = (await rate) * 100;
+               ~~~~~~~~~~~~
+
+
+Found 1 error in rate.ts:2
+</output>
+<p>Give <code>T</code> explicitly, or let an annotated return type provide it. Here is a legacy bank-lookup SDK wrapped the typed way:</p>
+<example file="bank-lookup.ts" project="wrap">
+type Callback<T> = (error: Error | null, result?: T) => void;
+
+function legacyLookupBank(code: string, callback: Callback<string>): void {
+  const banks: Record<string, string> = { "058": "GTBank", "044": "Access Bank" };
+  setTimeout(() => {
+    const name = banks[code];
+    if (name === undefined) callback(new Error(`unknown bank code ${code}`));
+    else callback(null, name);
+  }, 5);
+}
+
+function lookupBank(code: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    legacyLookupBank(code, (error, name) => {
+      if (error !== null) reject(error);
+      else if (name === undefined) reject(new Error("bank lookup returned nothing"));
+      else resolve(name);
+    });
+  });
+}
+
+console.log(await lookupBank("058"));
+try {
+  await lookupBank("999");
+} catch (error) {
+  console.log(error instanceof Error ? error.message : error);
+}
+</example>
+<output>
+GTBank
+unknown bank code 999
+</output>
+<p>The return type <code>Promise&lt;string&gt;</code> flows into <code>new Promise</code> by contextual typing, so <code>resolve</code> accepts only a <code>string</code>. That is why the callback checks <code>name === undefined</code>: the SDK's type says <code>result?: T</code>, and <code>resolve(name)</code> with a possibly-undefined name would not compile. <code>reject</code>, on the other hand, takes <code>any</code> (a rejection has no type, as you saw in <a href="/learn/ts-errors#async">Typed error handling</a>). Node's <code>util.promisify</code> does this wrapping for callbacks in Node's error-first style.</p>
+<p><code>Promise.withResolvers&lt;T&gt;()</code> gives you the promise and its two functions separately, typed by the same <code>T</code>, which suits events that arrive later from elsewhere:</p>
+<example file="webhook-wait.ts" project="wrap">
+interface PaymentEvent {
+  reference: string;
+  status: "success" | "failed";
+}
+
+const waiting = new Map<string, (event: PaymentEvent) => void>();
+
+function waitForWebhook(reference: string): Promise<PaymentEvent> {
+  const { promise, resolve } = Promise.withResolvers<PaymentEvent>();
+  waiting.set(reference, resolve);
+  return promise;
+}
+
+function onWebhook(event: PaymentEvent): void {
+  waiting.get(event.reference)?.(event);
+  waiting.delete(event.reference);
+}
+
+setTimeout(() => onWebhook({ reference: "TRF-77", status: "success" }), 10);
+const event = await waitForWebhook("TRF-77");
+console.log(event.reference, event.status);
+</example>
+<output>
+TRF-77 success
+</output>
+</section>
+
+<section>
+<h2 id="awaited">Awaited: the type of await</h2>
+<p><code>await</code> unwraps a promise, and a promise of a promise, and anything with a <code>then</code> method (a <strong>thenable</strong>, the <code>PromiseLike&lt;T&gt;</code> type). It leaves other values alone. The type that describes this is the built-in <code>Awaited&lt;T&gt;</code>:</p>
+<example file="awaited.ts" project="types">
+import type { Equal, Expect } from "./type-tests.js";
+
+interface Account {
+  id: string;
+  balanceKobo: number;
+}
+
+type A1 = Expect<Equal<Awaited<Promise<Account>>, Account>>;
+type A2 = Expect<Equal<Awaited<Promise<Promise<number>>>, number>>;
+type A3 = Expect<Equal<Awaited<PromiseLike<boolean>>, boolean>>;
+type A4 = Expect<Equal<Awaited<string>, string>>;
+type A5 = Expect<Equal<Awaited<Promise<number> | string>, number | string>>;
+
+async function loadAccount(id: string): Promise<Account> {
+  return { id, balanceKobo: 125_000 };
+}
+
+type Loaded = Awaited<ReturnType<typeof loadAccount>>;
+const account: Loaded = await loadAccount("ACC-9");
+console.log(account.balanceKobo);
+</example>
+<output>
+125000
+</output>
+<p><code>Awaited&lt;ReturnType&lt;typeof fn&gt;&gt;</code> is the everyday use: the type an async function eventually produces, without writing it again. <a href="/learn/ts-utility-types">Utility types</a> rebuilds <code>Awaited</code> yourself.</p>
+<h3>Why generic async helpers need Awaited</h3>
+<p>Awaited matters most in generic code. Here is a helper that runs a task and logs how it went. The task may return a plain value or a promise, so its type is <code>() =&gt; T</code>. The first attempt at its return type is <code>Promise&lt;T&gt;</code>, and the function body compiles. The trouble shows up at a call site:</p>
+<example file="with-audit-wrong.ts" project="types" check="tsc-error">
+async function withAudit<T>(label: string, task: () => T): Promise<T> {
+  const result = await task();
+  console.log(`${label}: done`);
+  return result;
+}
+
+withAudit("balance", async () => ({ balanceKobo: 900_000 })).then((balance) => {
+  console.log(balance.balanceKobo);
+});
+</example>
+<output kind="tsc">
+with-audit-wrong.ts:8:23 - error TS2339: Property 'balanceKobo' does not exist on type 'Promise<{ balanceKobo: number; }>'.
+
+8   console.log(balance.balanceKobo);
+                        ~~~~~~~~~~~
+
+  with-audit-wrong.ts:8:23 - Did you forget to use 'await'?
+    8   console.log(balance.balanceKobo);
+                            ~~~~~~~~~~~
+
+
+Found 1 error in with-audit-wrong.ts:8
+</output>
+<p>At runtime <code>balance</code> is the object: <code>await task()</code> unwrapped the promise. But the signature says otherwise. The task returns <code>Promise&lt;{ balanceKobo: number }&gt;</code>, so <code>T</code> is that promise, and <code>Promise&lt;T&gt;</code> claims the helper resolves to a promise, which can never happen. The signature lies, and a correct caller is rejected. (The compiler's hint about <code>await</code> is a red herring here: the fix belongs in the signature.) The honest return type is <code>Promise&lt;Awaited&lt;T&gt;&gt;</code>:</p>
+<example file="with-audit.ts" project="types">
+import type { Equal, Expect } from "./type-tests.js";
+
+async function withAudit<T>(label: string, task: () => T): Promise<Awaited<T>> {
+  const result = await task();
+  console.log(`${label}: done`);
+  return result;
+}
+
+const fromSync = await withAudit("fee", () => 1500);
+const fromAsync = await withAudit("balance", async () => ({ balanceKobo: 900_000 }));
+
+type W1 = Expect<Equal<typeof fromSync, number>>;
+type W2 = Expect<Equal<typeof fromAsync, { balanceKobo: number }>>;
+console.log(fromSync, fromAsync.balanceKobo);
+</example>
+<output>
+fee: done
+balance: done
+1500 900000
+</output>
+</section>
+
+<section>
+<h2 id="all">Promise.all and tuple types</h2>
+<p>A dashboard needs an account, its recent transactions and today's exchange rate. They do not depend on each other, so you start all three at once with <code>Promise.all</code>. Its type is written so that an array literal of promises produces a <strong>tuple</strong> of results, each in its own position with its own type:</p>
+<file name="api.ts" project="all">
+export interface Account {
+  id: string;
+  name: string;
+  balanceKobo: number;
+}
+
+export interface Transaction {
+  id: string;
+  kobo: number;
+}
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+export async function loadAccount(id: string): Promise<Account> {
+  await wait(20);
+  return { id, name: "Ada Stores", balanceKobo: 4_500_000 };
+}
+
+export async function loadTransactions(accountId: string): Promise<Transaction[]> {
+  await wait(10);
+  return [{ id: `${accountId}-T1`, kobo: 250_000 }, { id: `${accountId}-T2`, kobo: -80_000 }];
+}
+
+export async function loadRate(currency: "USD" | "GBP"): Promise<number> {
+  await wait(5);
+  return currency === "USD" ? 1540.25 : 1950.5;
+}
+</file>
+<example file="dashboard.ts" project="all">
+import { loadAccount, loadRate, loadTransactions } from "./api.js";
+import type { Account, Transaction } from "./api.js";
+
+const [account, transactions, usdRate] = await Promise.all([
+  loadAccount("ACC-1"),
+  loadTransactions("ACC-1"),
+  loadRate("USD"),
+]);
+
+const typed: [Account, Transaction[], number] = [account, transactions, usdRate];
+console.log(account.name, transactions.length, usdRate);
+console.log(`balance in dollars: ${(account.balanceKobo / 100 / usdRate).toFixed(2)}`, typed.length);
+</example>
+<output>
+Ada Stores 2 1540.25
+balance in dollars: 29.22 3
+</output>
+<p>Each variable has its own type, so <code>account.name</code> and <code>transactions.length</code> both compile, and the line that assigns them to <code>[Account, Transaction[], number]</code> proves it. Under the hood, <code>Promise.all</code> is declared with a type parameter for the whole input tuple and a mapped type that applies <code>Awaited</code> to each position, which you will be able to read yourself after <a href="/learn/ts-mapped-types">Mapped types</a>.</p>
+<h3>When the tuple collapses</h3>
+<p>The tuple only exists when TypeScript sees an array literal. Build the array first, and it is inferred as an ordinary array whose element type is a union. The positions are lost:</p>
+<example file="collapsed.ts" project="all" check="tsc-error">
+import { loadAccount, loadRate } from "./api.js";
+
+const jobs = [loadAccount("ACC-1"), loadRate("USD")];
+const [account, rate] = await Promise.all(jobs);
+console.log(account.name, rate.toFixed(2));
+</example>
+<output kind="tsc">
+collapsed.ts:5:21 - error TS2339: Property 'name' does not exist on type 'number | Account'.
+  Property 'name' does not exist on type 'number'.
+
+5 console.log(account.name, rate.toFixed(2));
+                      ~~~~
+
+collapsed.ts:5:32 - error TS2339: Property 'toFixed' does not exist on type 'number | Account'.
+  Property 'toFixed' does not exist on type 'Account'.
+
+5 console.log(account.name, rate.toFixed(2));
+                                 ~~~~~~~
+
+
+Found 2 errors in the same file, starting at: collapsed.ts:5
+</output>
+<p><code>jobs</code> is <code>(Promise&lt;Account&gt; | Promise&lt;number&gt;)[]</code>, so each result is <code>Account | number</code>, and neither <code>name</code> nor <code>toFixed</code> is safe. Add <code>as const</code> to keep the tuple (from <a href="/learn/ts-tuples#inference">Tuples</a>):</p>
+<example file="collapsed.ts" project="all">
+import { loadAccount, loadRate } from "./api.js";
+
+const jobs = [loadAccount("ACC-1"), loadRate("USD")] as const;
+const [account, rate] = await Promise.all(jobs);
+console.log(account.name, rate.toFixed(2));
+</example>
+<output>
+Ada Stores 1540.25
+</output>
+<p>When the promises really are a list of the same kind, the array type is exactly right: <code>Promise.all(ids.map(loadAccount))</code> gives <code>Account[]</code>. The tuple matters when the positions have different types.</p>
+</section>
+
+<section>
+<h2 id="race">race, any and a typed timeout</h2>
+<p><code>Promise.race</code> and <code>Promise.any</code> settle with <em>one</em> of their inputs, so their result type is the union of the input types. That union is how a typed timeout works. A promise that can only reject never produces a value, so its type is <code>Promise&lt;never&gt;</code>, and <code>T | never</code> is just <code>T</code>:</p>
+<example file="timeout.ts" project="race">
+export async function withTimeout<T>(task: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([task, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function slowRate(): Promise<number> {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  return 1540.25;
+}
+
+console.log(await withTimeout(slowRate(), 200, "rate lookup"));
+try {
+  await withTimeout(slowRate(), 10, "rate lookup");
+} catch (error) {
+  console.log(error instanceof Error ? error.message : error);
+}
+</example>
+<output>
+1540.25
+rate lookup timed out after 10 ms
+</output>
+<p>Three typed details make this helper safe to reuse. <code>Promise.race([task, timeout])</code> is <code>Promise&lt;T | never&gt;</code>, which is <code>Promise&lt;T&gt;</code>, so callers get their own type back. <code>ReturnType&lt;typeof setTimeout&gt;</code> is the timer's type in whatever environment you compile for (a <code>Timeout</code> object in Node, a number in browsers), so you never write either. And the <code>finally</code> clears the timer; without it every successful call would leave a timer running, which keeps a Node process alive. The slow task that lost the race is not cancelled, only ignored; real cancellation uses an <code>AbortSignal</code> (<a href="/learn/js-concurrency">Concurrency</a>).</p>
+<p><code>Promise.any</code> has the same union result type. When every input rejects, it rejects with an <code>AggregateError</code>, whose <code>errors</code> property is typed <code>any[]</code>. Treat its entries as <code>unknown</code>.</p>
+</section>
+
+<section>
+<h2 id="allsettled">Promise.allSettled and narrowing results</h2>
+<p>A dashboard should still load when the exchange-rate widget fails. <code>Promise.allSettled</code> never rejects; it gives a result object per promise, typed <code>PromiseSettledResult&lt;T&gt;</code>. That type is a discriminated union on <code>status</code>:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Member</th><th><code>status</code></th><th>Other property</th></tr></thead>
+<tbody>
+<tr><td><code>PromiseFulfilledResult&lt;T&gt;</code></td><td><code>"fulfilled"</code></td><td><code>value: T</code></td></tr>
+<tr><td><code>PromiseRejectedResult</code></td><td><code>"rejected"</code></td><td><code>reason: any</code></td></tr>
+</tbody>
+</table></div>
+<p>With an array literal you again get a tuple, so each position is narrowed on its own:</p>
+<example file="settled.ts" project="race">
+async function loadBalance(): Promise<number> {
+  return 4_500_000;
+}
+
+async function loadRate(): Promise<number> {
+  throw new Error("rates service returned 503");
+}
+
+async function loadAlerts(): Promise<string[]> {
+  return ["New login from Lagos"];
+}
+
+const [balance, rate, alerts] = await Promise.allSettled([loadBalance(), loadRate(), loadAlerts()]);
+
+const lines: string[] = [];
+lines.push(balance.status === "fulfilled" ? `balance ₦${balance.value / 100}` : "balance unavailable");
+if (rate.status === "fulfilled") {
+  lines.push(`$1 = ₦${rate.value}`);
+} else {
+  const reason: unknown = rate.reason;
+  lines.push(`rate unavailable (${reason instanceof Error ? reason.message : String(reason)})`);
+}
+if (alerts.status === "fulfilled") lines.push(...alerts.value.map((alert) => `alert: ${alert}`));
+console.log(lines.join("\n"));
+</example>
+<output>
+balance ₦45000
+rate unavailable (rates service returned 503)
+alert: New login from Lagos
+</output>
+<p>After <code>rate.status === "fulfilled"</code>, <code>rate.value</code> is a <code>number</code>; in the <code>else</code>, only <code>reason</code> exists. <code>reason</code> is <code>any</code>, so the example copies it into an <code>unknown</code> variable first, and the compiler then insists on narrowing it.</p>
+<h3>Splitting a list of settled results</h3>
+<p>For a list of the same kind of promise, split the results into successes and failures. Since TypeScript 5.5, an arrow function that just checks the discriminant is inferred as a type guard, so <code>filter</code> narrows the element type:</p>
+<example file="settle-list.ts" project="race">
+async function sendReceipt(email: string): Promise<string> {
+  if (!email.includes("@")) throw new Error(`invalid address: ${email}`);
+  return `sent to ${email}`;
+}
+
+const emails = ["ada@example.com", "grace.example.com", "tunde@example.com"];
+const results = await Promise.allSettled(emails.map(sendReceipt));
+
+const sent = results.filter((result) => result.status === "fulfilled").map((result) => result.value);
+const failed = results.filter((result) => result.status === "rejected").map((result) => String(result.reason));
+
+console.log(sent);
+console.log(failed);
+</example>
+<output>
+[ 'sent to ada@example.com', 'sent to tunde@example.com' ]
+[ 'Error: invalid address: grace.example.com' ]
+</output>
+<p><code>sent</code> is a <code>string[]</code> with no casts: the first <code>filter</code> narrowed each element to <code>PromiseFulfilledResult&lt;string&gt;</code>, so <code>.value</code> is allowed. The order of <code>results</code> matches the order of <code>emails</code>, whichever send finished first.</p>
+</section>
+
+<section>
+<h2 id="callbacks">Async callbacks the compiler cannot check</h2>
+<p>Back to the opening bug. A callback type decides what may be returned from a callback. When the parameter type says the return value is <code>void</code> or <code>unknown</code>, TypeScript accepts a function that returns a promise, and the promise is silently ignored. The common victims:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Call</th><th>Callback return type</th><th>What an async callback does</th></tr></thead>
+<tbody>
+<tr><td><code>array.filter(fn)</code></td><td><code>unknown</code></td><td>Keeps every item: a promise is truthy</td></tr>
+<tr><td><code>array.some(fn)</code>, <code>every(fn)</code>, <code>find(fn)</code></td><td><code>unknown</code></td><td>Answers from the truthiness of a promise</td></tr>
+<tr><td><code>array.forEach(fn)</code></td><td><code>void</code></td><td>Starts every call and returns before any finishes; rejections float</td></tr>
+<tr><td><code>setTimeout(fn)</code>, <code>emitter.on(event, fn)</code></td><td><code>void</code></td><td>Nobody awaits the promise; rejections float</td></tr>
+</tbody>
+</table></div>
+<p>Here is the <code>forEach</code> case, in a receipts job:</p>
+<example file="foreach.ts" project="callbacks">
+async function sendReceipt(orderId: string): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  console.log(`receipt sent for ${orderId}`);
+}
+
+async function sendAllReceipts(orderIds: string[]): Promise<void> {
+  orderIds.forEach(async (orderId) => {
+    await sendReceipt(orderId);
+  });
+  console.log("all receipts sent");
+}
+
+await sendAllReceipts(["ORD-1", "ORD-2"]);
+console.log("job finished");
+</example>
+<output>
+all receipts sent
+job finished
+receipt sent for ORD-1
+receipt sent for ORD-2
+</output>
+<p>The job reports success before anything was sent. <code>forEach</code> calls each callback, gets back a promise it does not look at, and returns. The fixes are to say which shape you want: one at a time with <code>for...of</code>, or all at once with <code>Promise.all</code> and <code>map</code>, whose callback return type <em>is</em> kept, so the result is a <code>Promise&lt;void&gt;[]</code> you can await:</p>
+<example file="foreach-fixed.ts" project="callbacks">
+async function sendReceipt(orderId: string): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  console.log(`receipt sent for ${orderId}`);
+}
+
+async function sendAllReceipts(orderIds: string[]): Promise<void> {
+  await Promise.all(orderIds.map((orderId) => sendReceipt(orderId)));
+  console.log("all receipts sent");
+}
+
+async function isSuspicious(kobo: number): Promise<boolean> {
+  return kobo > 10_000_000;
+}
+
+async function filterAsync<T>(items: readonly T[], predicate: (item: T) => Promise<boolean>): Promise<T[]> {
+  const keep = await Promise.all(items.map(predicate));
+  return items.filter((_, index) => keep[index]);
+}
+
+await sendAllReceipts(["ORD-1", "ORD-2"]);
+console.log(await filterAsync([450_000, 25_000_000, 90_000], isSuspicious));
+</example>
+<output>
+receipt sent for ORD-1
+receipt sent for ORD-2
+all receipts sent
+[ 25000000 ]
+</output>
+<p><code>filterAsync</code> fixes the payout job from the first section: it waits for all the answers, then filters synchronously on the real booleans. The type of <code>predicate</code>, <code>(item: T) =&gt; Promise&lt;boolean&gt;</code>, documents that it expects an async check. For the cases the compiler cannot see, the linter can: <code>@typescript-eslint/no-misused-promises</code> reports a promise-returning function passed where a <code>void</code> or boolean-ish callback is expected, and <code>no-floating-promises</code> reports promises nobody handles.</p>
+</section>
+
+<section>
+<h2 id="async-iteration">Async iterables and async generators</h2>
+<p>A payments API returns transactions in <strong>pages</strong>: twenty at a time, with a <strong>cursor</strong> (an opaque string) that asks for the next page. Code that wants "every transaction" should not have to know about pages. The iterator protocol from <a href="/learn/js-iterators">Iterators</a> has an async version for this, and TypeScript types all of it:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Type</th><th>Means</th></tr></thead>
+<tbody>
+<tr><td><code>AsyncIterable&lt;T&gt;</code></td><td>Has a <code>[Symbol.asyncIterator]()</code> method; usable in <code>for await...of</code></td></tr>
+<tr><td><code>AsyncIterator&lt;T&gt;</code></td><td>Has <code>next()</code>, returning <code>Promise&lt;IteratorResult&lt;T&gt;&gt;</code></td></tr>
+<tr><td><code>AsyncGenerator&lt;T, TReturn, TNext&gt;</code></td><td>What an <code>async function*</code> returns: yields <code>T</code>, finishes with <code>TReturn</code>, receives <code>TNext</code> from <code>next(value)</code>. It is both of the above.</td></tr>
+</tbody>
+</table></div>
+<p>First the page type and a fake API that counts its requests:</p>
+<file name="pages.ts" project="pager">
+export interface Page<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
+export interface Transaction {
+  id: string;
+  kobo: number;
+}
+
+const PAGES: Record<string, Page<Transaction>> = {
+  start: { items: [{ id: "T1", kobo: 250_000 }, { id: "T2", kobo: -80_000 }], nextCursor: "c2" },
+  c2: { items: [{ id: "T3", kobo: 1_200_000 }], nextCursor: "c3" },
+  c3: { items: [{ id: "T4", kobo: -15_000 }, { id: "T5", kobo: 60_000 }], nextCursor: null },
+};
+
+export const stats = { requests: 0 };
+
+export async function fetchTransactions(cursor: string | null): Promise<Page<Transaction>> {
+  stats.requests += 1;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const page = PAGES[cursor ?? "start"];
+  if (page === undefined) throw new Error(`unknown cursor ${cursor}`);
+  return page;
+}
+</file>
+<p>Now a generic pager. It takes any function that fetches a page of <code>T</code> and yields the items one by one:</p>
+<example file="paginate.ts" project="pager">
+import type { Page } from "./pages.js";
+
+export async function* paginate<T>(
+  fetchPage: (cursor: string | null) => Promise<Page<T>>,
+  maxPages = 100,
+): AsyncGenerator<T, number, undefined> {
+  let cursor: string | null = null;
+  let pages = 0;
+  do {
+    if (pages === maxPages) throw new Error(`stopped after ${maxPages} pages: the cursor never ended`);
+    const page = await fetchPage(cursor);
+    pages += 1;
+    yield* page.items;
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+  return pages;
+}
+</example>
+<ul>
+<li><code>AsyncGenerator&lt;T, number, undefined&gt;</code>: it yields items of type <code>T</code>, returns the number of pages it read when it finishes, and expects nothing from <code>next()</code>.</li>
+<li><code>T</code> is inferred from the argument, so the same pager works for transactions, customers or refunds.</li>
+<li><code>maxPages</code> guards against an API that keeps returning a cursor forever, a real failure mode. The <code>let cursor: string | null</code> annotation is needed because <code>null</code> alone would be inferred as the type <code>null</code>.</li>
+</ul>
+<example file="totals.ts" project="pager">
+import { fetchTransactions, stats } from "./pages.js";
+import { paginate } from "./paginate.js";
+
+let net = 0;
+for await (const transaction of paginate(fetchTransactions)) {
+  net += transaction.kobo;
+}
+console.log(`net ₦${net / 100} from ${stats.requests} requests`);
+
+stats.requests = 0;
+for await (const transaction of paginate(fetchTransactions)) {
+  if (transaction.kobo > 1_000_000) {
+    console.log(`first large transaction: ${transaction.id}`);
+    break;
+  }
+}
+console.log(`stopped early after ${stats.requests} requests`);
+</example>
+<output>
+net ₦14150 from 3 requests
+first large transaction: T3
+stopped early after 2 requests
+</output>
+<p>In the loop, <code>transaction</code> is a <code>Transaction</code>, inferred all the way from <code>fetchTransactions</code>. The second loop shows the laziness that makes this worth it: it found what it needed on page two and <code>break</code> stopped the generator, so page three was never requested.</p>
+<h3>Driving the generator by hand</h3>
+<p><code>for await</code> hides the <code>IteratorResult</code>. Calling <code>next()</code> yourself shows it: a union discriminated by <code>done</code>, where the yielded type and the return type sit on different sides:</p>
+<example file="manual.ts" project="pager">
+import { fetchTransactions } from "./pages.js";
+import { paginate } from "./paginate.js";
+
+const pager = paginate(fetchTransactions);
+let step = await pager.next();
+const ids: string[] = [];
+while (!step.done) {
+  ids.push(step.value.id);
+  step = await pager.next();
+}
+console.log(ids.join(","), "| pages read:", step.value);
+</example>
+<output>
+T1,T2,T3,T4,T5 | pages read: 3
+</output>
+<p>While <code>done</code> is <code>false</code>, <code>step.value</code> is a <code>Transaction</code>. After the loop, <code>done</code> is <code>true</code>, so <code>step.value</code> is the <code>number</code> the generator returned. With a return type of <code>void</code>, that last value would be <code>undefined</code>, which is the common case.</p>
+<h3>A class that is async iterable</h3>
+<p>Any object with a <code>[Symbol.asyncIterator]</code> method works with <code>for await</code>. Declaring <code>implements AsyncIterable&lt;T&gt;</code> makes the compiler check the method. Returning a generator from it is the shortest implementation:</p>
+<example file="statement.ts" project="pager">
+import { fetchTransactions } from "./pages.js";
+import type { Transaction } from "./pages.js";
+import { paginate } from "./paginate.js";
+
+class Statement implements AsyncIterable<Transaction> {
+  private readonly minimumKobo: number;
+
+  constructor(minimumKobo: number) {
+    this.minimumKobo = minimumKobo;
+  }
+
+  async *[Symbol.asyncIterator](): AsyncGenerator<Transaction, void, undefined> {
+    for await (const transaction of paginate(fetchTransactions)) {
+      if (Math.abs(transaction.kobo) >= this.minimumKobo) yield transaction;
+    }
+  }
+}
+
+async function collect<T>(source: AsyncIterable<T>): Promise<T[]> {
+  const items: T[] = [];
+  for await (const item of source) items.push(item);
+  return items;
+}
+
+const large = await collect(new Statement(100_000));
+console.log(large.map((transaction) => `${transaction.id}:${transaction.kobo}`));
+</example>
+<output>
+[ 'T1:250000', 'T3:1200000' ]
+</output>
+<p><code>collect</code> accepts any <code>AsyncIterable&lt;T&gt;</code>: the class, a generator, or a Node.js stream. <code>Array.fromAsync</code> does the same job, but its types live in the <code>esnext</code> library, so with <code>"target": "ES2024"</code> the compiler does not know it yet. A small typed helper like this is a fine alternative.</p>
+</section>
+
+<section>
+<h2 id="build">Build: a typed payments API client</h2>
+<reason title="Before you write the client">
+<p>You are writing the client your dashboard uses to talk to the payments API: fetch the merchant profile, the balance and the exchange rate, and stream all settlements. Before reading the code, think:</p>
+<ul>
+<li>What type does <code>await response.json()</code> give you, and what can you trust about the data?</li>
+<li>Which calls must succeed for the dashboard to make sense, and which are optional?</li>
+<li>What should happen when one call hangs?</li>
+<li>What happens if the settlements endpoint keeps sending a <code>nextCursor</code>?</li>
+<li>Where should the types come from, so that a change in one place is checked everywhere?</li>
+</ul>
+<answer>
+<p><code>response.json()</code> is typed <code>Promise&lt;any&gt;</code>, which is a hole in every type after it: the data comes from another program, and no type makes it correct. So every response goes through a parser that takes <code>unknown</code> and returns a checked type, the pattern from <a href="/learn/ts-validation">Runtime validation</a>. The profile and balance are required (use <code>Promise.all</code>, fail fast); the rate is optional (settle it separately). Every request gets a timeout. The pager keeps its page limit. And the types flow from the parsers: the client's methods infer their result types from them, so nothing is written twice.</p>
+</answer>
+</reason>
+<p>The API is simulated in-process with the standard <code>Response</code> class, which exists in Node.js and browsers, so the client code is exactly what you would write against the real <code>fetch</code>:</p>
+<file name="fake-api.ts" project="client">
+const routes: Record<string, { status: number; body: unknown; delayMs: number }> = {
+  "/merchant": { status: 200, body: { id: "M-17", name: "Ada Stores" }, delayMs: 10 },
+  "/balance": { status: 200, body: { availableKobo: 4_500_000, pendingKobo: 120_000 }, delayMs: 5 },
+  "/rates/USD": { status: 200, body: { rate: "not-a-number" }, delayMs: 5 },
+  "/settlements": { status: 200, body: { items: [{ id: "S1", kobo: 900_000 }], nextCursor: "2" }, delayMs: 5 },
+  "/settlements?cursor=2": { status: 200, body: { items: [{ id: "S2", kobo: 1_100_000 }], nextCursor: null }, delayMs: 5 },
+};
+
+export async function fakeFetch(path: string): Promise<Response> {
+  const route = routes[path];
+  await new Promise((resolve) => setTimeout(resolve, route?.delayMs ?? 5));
+  if (route === undefined) return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
+  return new Response(JSON.stringify(route.body), { status: route.status });
+}
+</file>
+<p>Notice the rates endpoint: it returns a string where a number is expected, the kind of surprise a real API delivers on a bad day. First the parsers, each from <code>unknown</code> to a checked type:</p>
+<example file="parsers.ts" project="client">
+export type Parser<T> = (data: unknown) => T;
+
+function record(data: unknown, what: string): Record<string, unknown> {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) throw new TypeError(`${what}: expected an object`);
+  return data as Record<string, unknown>;
+}
+
+function num(value: unknown, what: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError(`${what}: expected a number`);
+  return value;
+}
+
+function str(value: unknown, what: string): string {
+  if (typeof value !== "string") throw new TypeError(`${what}: expected a string`);
+  return value;
+}
+
+export const parseMerchant = (data: unknown) => {
+  const r = record(data, "merchant");
+  return { id: str(r.id, "merchant.id"), name: str(r.name, "merchant.name") };
+};
+
+export const parseBalance = (data: unknown) => {
+  const r = record(data, "balance");
+  return { availableKobo: num(r.availableKobo, "balance.availableKobo"), pendingKobo: num(r.pendingKobo, "balance.pendingKobo") };
+};
+
+export const parseRate = (data: unknown) => num(record(data, "rate").rate, "rate.rate");
+
+export const parseSettlementPage = (data: unknown) => {
+  const r = record(data, "page");
+  if (!Array.isArray(r.items)) throw new TypeError("page.items: expected an array");
+  const items = r.items.map((item: unknown, i) => {
+    const s = record(item, `page.items[${i}]`);
+    return { id: str(s.id, "settlement.id"), kobo: num(s.kobo, "settlement.kobo") };
+  });
+  const nextCursor = r.nextCursor === null ? null : str(r.nextCursor, "page.nextCursor");
+  return { items, nextCursor };
+};
+</example>
+<p>The one <code>as</code> is backed by the check on the line before it, as in <a href="/learn/ts-runtime#validator">TypeScript and JavaScript together</a>. None of the parsers has a written return type; their types are inferred and flow into the client. A schema library such as Zod gives you the same thing with less code, as <a href="/learn/ts-validation">Runtime validation</a> shows. Now the client:</p>
+<example file="client.ts" project="client">
+import { fakeFetch } from "./fake-api.js";
+import { parseBalance, parseMerchant, parseRate, parseSettlementPage } from "./parsers.js";
+import type { Parser } from "./parsers.js";
+
+async function withTimeout<T>(task: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([task, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function createClient(fetchImpl: (path: string) => Promise<Response>, timeoutMs = 100) {
+  async function get<T>(path: string, parse: Parser<T>): Promise<T> {
+    const response = await withTimeout(fetchImpl(path), timeoutMs, `GET ${path}`);
+    if (!response.ok) throw new Error(`GET ${path} failed with ${response.status}`);
+    const data: unknown = await response.json();
+    return parse(data);
+  }
+
+  return {
+    merchant: () => get("/merchant", parseMerchant),
+    balance: () => get("/balance", parseBalance),
+    rate: (currency: "USD" | "GBP") => get(`/rates/${currency}`, parseRate),
+    async *settlements() {
+      let path: string | null = "/settlements";
+      while (path !== null) {
+        const page: ReturnType<typeof parseSettlementPage> = await get(path, parseSettlementPage);
+        yield* page.items;
+        path = page.nextCursor === null ? null : `/settlements?cursor=${page.nextCursor}`;
+      }
+    },
+  };
+}
+
+export type Client = ReturnType<typeof createClient>;
+export const client: Client = createClient(fakeFetch);
+</example>
+<p>The key line is <code>const data: unknown = await response.json()</code>. Annotating the <code>any</code> as <code>unknown</code> closes the hole: from here on the compiler refuses to use <code>data</code> until a parser has checked it. <code>get&lt;T&gt;</code> infers <code>T</code> from the parser, so <code>client.balance()</code> is <code>Promise&lt;{ availableKobo: number; pendingKobo: number }&gt;</code> without anyone writing that type. <code>settlements</code> is an async generator method, <code>async *settlements()</code>. Its <code>page</code> needs an annotation: <code>path</code> is computed from <code>page</code>, and <code>page</code> from a generic call that takes <code>path</code>, so without it TypeScript reports that <code>page</code> "is referenced directly or indirectly in its own initializer" (error TS7022). It also needs the page limit from the pager, which is left for you to add. Finally, the dashboard:</p>
+<example file="dashboard.ts" project="client">
+import { client } from "./client.js";
+import type { Client } from "./client.js";
+
+type Balance = Awaited<ReturnType<Client["balance"]>>;
+
+function naira(kobo: number): string {
+  return `₦${(kobo / 100).toLocaleString("en-NG")}`;
+}
+
+async function loadDashboard(): Promise<string[]> {
+  const [[merchant, balance], [rate]] = await Promise.all([
+    Promise.all([client.merchant(), client.balance()]),
+    Promise.allSettled([client.rate("USD")]),
+  ]);
+
+  const available: Balance["availableKobo"] = balance.availableKobo;
+  const lines = [`${merchant.name} (${merchant.id})`, `available ${naira(available)}, pending ${naira(balance.pendingKobo)}`];
+  if (rate.status === "fulfilled") {
+    lines.push(`available in USD: $${(available / 100 / rate.value).toFixed(2)}`);
+  } else {
+    lines.push(`USD rate unavailable: ${rate.reason instanceof Error ? rate.reason.message : "unknown error"}`);
+  }
+
+  let settled = 0;
+  for await (const settlement of client.settlements()) settled += settlement.kobo;
+  lines.push(`settled so far: ${naira(settled)}`);
+  return lines;
+}
+
+console.log((await loadDashboard()).join("\n"));
+</example>
+<output>
+Ada Stores (M-17)
+available ₦45,000, pending ₦1,200
+USD rate unavailable: rate.rate: expected a number
+settled so far: ₦20,000
+</output>
+<p>Read how each decision from the reasoning shows up:</p>
+<ul>
+<li>All three requests run in parallel. The outer <code>Promise.all</code> holds two groups: an inner <code>Promise.all</code> for the required data, which fails fast, and an <code>allSettled</code> for the optional rate, which never rejects. The tuple types nest, so <code>merchant</code>, <code>balance</code> and <code>rate</code> each get their own type from one destructuring.</li>
+<li>Starting the rate request on its own and awaiting it later would be the "start first, await later" trap from <a href="/learn/js-promise-combinators#start-then-await">Promise combinators</a>: if it rejected while the other two were still loading, nothing would be listening yet.</li>
+<li>The optional rate failed. The API's bad data was caught by <code>parseRate</code>, and the dashboard shows a clear message instead of <code>$NaN</code>.</li>
+<li><code>Balance</code> is derived with <code>Awaited&lt;ReturnType&lt;Client["balance"]&gt;&gt;</code>, straight from the parser. Change the parser, and every use is re-checked.</li>
+<li>The settlements loop never mentions a page or a cursor.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="testing">Testing async code</h2>
+<p>Async code needs two kinds of test. Type-level tests pin down what callers see; runtime tests pin down behaviour, including timing and laziness.</p>
+<h3>Type-level: the types callers get</h3>
+<example file="client.types.test.ts" project="client">
+import { client } from "./client.js";
+import type { Client } from "./client.js";
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+type C1 = Expect<Equal<Awaited<ReturnType<Client["rate"]>>, number>>;
+type C2 = Expect<Equal<Awaited<ReturnType<Client["merchant"]>>, { id: string; name: string }>>;
+type C3 = Expect<Equal<ReturnType<Client["settlements"]> extends AsyncIterable<infer S> ? S : never, { id: string; kobo: number }>>;
+
+// @ts-expect-error: only USD and GBP are supported
+const unsupported = () => client.rate("EUR");
+
+console.log("type tests compiled", typeof unsupported);
+</example>
+<output>
+type tests compiled function
+</output>
+<p><code>C3</code> uses <code>infer</code>, which <a href="/learn/ts-conditional-types">Conditional types</a> explains, to pull the item type out of the generator. The <code>@ts-expect-error</code> line proves that an unsupported currency is refused. It is wrapped in a function that is never called, because a type test should not send requests: the line is still emitted and would run otherwise.</p>
+<h3>Runtime: laziness, limits and timeouts</h3>
+<example file="pager.test.ts" project="pager">
+import type { Page } from "./pages.js";
+import { paginate } from "./paginate.js";
+
+function fakeSource(pages: Page<number>[], endless = false) {
+  const calls: (string | null)[] = [];
+  const fetchPage = async (cursor: string | null): Promise<Page<number>> => {
+    calls.push(cursor);
+    const index = cursor === null ? 0 : Number(cursor);
+    const page = pages[index] ?? { items: [], nextCursor: null };
+    return endless ? { items: page.items, nextCursor: String(index) } : page;
+  };
+  return { calls, fetchPage };
+}
+
+async function check(label: string, run: () => Promise<unknown>, expected: string): Promise<void> {
+  let actual: string;
+  try {
+    actual = JSON.stringify(await run());
+  } catch (error) {
+    actual = `error: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  console.log(`${actual === expected ? "PASS" : "FAIL"} ${label} -> ${actual}`);
+}
+
+const threePages: Page<number>[] = [
+  { items: [1, 2], nextCursor: "1" },
+  { items: [], nextCursor: "2" },
+  { items: [3], nextCursor: null },
+];
+
+await check("reads every page, including an empty one", async () => {
+  const items: number[] = [];
+  for await (const item of paginate(fakeSource(threePages).fetchPage)) items.push(item);
+  return items;
+}, "[1,2,3]");
+
+await check("fetches lazily", async () => {
+  const source = fakeSource(threePages);
+  for await (const item of paginate(source.fetchPage)) if (item === 2) break;
+  return source.calls;
+}, "[null]");
+
+await check("stops an endless cursor", async () => {
+  for await (const item of paginate(fakeSource(threePages, true).fetchPage, 5)) void item;
+  return "finished";
+}, "error: stopped after 5 pages: the cursor never ended");
+</example>
+<output>
+PASS reads every page, including an empty one -> [1,2,3]
+PASS fetches lazily -> [null]
+PASS stops an endless cursor -> error: stopped after 5 pages: the cursor never ended
+</output>
+<p>Each case comes from a question in the reasoning block: empty pages in the middle, stopping early, and an API that never ends. With Vitest, <code>check</code> becomes <code>await expect(run()).resolves.toEqual(…)</code> or <code>.rejects.toThrow(…)</code>, and timeouts are tested with fake timers (<code>vi.useFakeTimers()</code>) so the test does not really wait. <a href="/learn/ts-testing">Testing TypeScript</a> covers both.</p>
+</section>
+
+<section>
+<h2 id="production">Async TypeScript in production</h2>
+<ul>
+<li><strong>Annotate exported async functions.</strong> <code>Promise&lt;Account&gt;</code> on a public function is documentation that cannot go stale, and it stops a changed body from quietly changing every caller.</li>
+<li><strong>Never let <code>Promise&lt;any&gt;</code> in.</strong> <code>response.json()</code>, <code>JSON.parse</code> and many SDKs return <code>any</code>. Annotate the result as <code>unknown</code> and parse it at the boundary.</li>
+<li><strong>Keep tuples for mixed <code>Promise.all</code>.</strong> Pass the array literal directly, or use <code>as const</code>.</li>
+<li><strong>Time-limit every network call</strong> with a helper like <code>withTimeout</code>, and clear the timer. Prefer passing an <code>AbortSignal</code> to APIs that accept one, such as <code>fetch(url, { signal: AbortSignal.timeout(5000) })</code>, so the work is really cancelled.</li>
+<li><strong>Turn on the promise lint rules</strong> from typescript-eslint: <code>no-floating-promises</code>, <code>no-misused-promises</code>, <code>await-thenable</code> and <code>return-await</code>. They cover exactly the places where the compiler's types say "anything goes".</li>
+<li><strong>Bound everything that loops.</strong> Pagers get a page limit, retries get an attempt limit, and parallel work gets a concurrency limit (<a href="/learn/js-concurrency">Concurrency</a>).</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A typed retry helper">
+<p>Write <code>retry&lt;T&gt;(task: () =&gt; Promise&lt;T&gt;, attempts: number): Promise&lt;T&gt;</code> that calls <code>task</code> until it succeeds or <code>attempts</code> calls have failed, then rejects with the last error. Test it with a flaky rate lookup that fails twice.</p>
+<solution>
+<example file="retry.ts" project="ex-retry">
+async function retry<T>(task: () => Promise<T>, attempts: number): Promise<T> {
+  let lastError: unknown = new Error("retry needs at least one attempt");
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      console.log(`attempt ${attempt} failed`);
+    }
+  }
+  throw lastError;
+}
+
+let calls = 0;
+async function flakyRate(): Promise<number> {
+  calls += 1;
+  if (calls < 3) throw new Error("rates service busy");
+  return 1540.25;
+}
+
+const rate = await retry(flakyRate, 5);
+console.log(rate.toFixed(2), "after", calls, "calls");
+try {
+  calls = 0;
+  await retry(flakyRate, 2);
+} catch (error) {
+  console.log("gave up:", error instanceof Error ? error.message : error);
+}
+</example>
+<output>
+attempt 1 failed
+attempt 2 failed
+1540.25 after 3 calls
+attempt 1 failed
+attempt 2 failed
+gave up: rates service busy
+</output>
+<p><code>T</code> is inferred from the task, so <code>rate</code> is a <code>number</code>. <code>return await</code> is required: without <code>await</code>, a rejection would skip the <code>catch</code>, the trap from <a href="/learn/ts-errors#async">Typed error handling</a>. <code>lastError</code> is <code>unknown</code>, because that is all a <code>catch</code> can know. In production, add a delay between attempts and only retry errors that are retryable.</p>
+</solution>
+</exercise>
+<exercise title="Rescue the collapsed tuple">
+<p>This code does not compile. Explain why, and fix it without any <code>as</code> on the results.</p>
+<example file="summary.ts" project="ex-tuple" check="tsc-error">
+async function countOrders(): Promise<number> {
+  return 42;
+}
+async function topProduct(): Promise<{ name: string; sold: number }> {
+  return { name: "Ankara tote bag", sold: 17 };
+}
+
+const work = [countOrders(), topProduct()];
+const [orders, product] = await Promise.all(work);
+console.log(`${orders} orders, best seller: ${product.name}`);
+</example>
+<output kind="tsc">
+summary.ts:10:55 - error TS2339: Property 'name' does not exist on type 'number | { name: string; sold: number; }'.
+  Property 'name' does not exist on type 'number'.
+
+10 console.log(`${orders} orders, best seller: ${product.name}`);
+                                                         ~~~~
+
+
+Found 1 error in summary.ts:10
+</output>
+<solution>
+<example file="summary.ts" project="ex-tuple">
+async function countOrders(): Promise<number> {
+  return 42;
+}
+async function topProduct(): Promise<{ name: string; sold: number }> {
+  return { name: "Ankara tote bag", sold: 17 };
+}
+
+const [orders, product] = await Promise.all([countOrders(), topProduct()]);
+console.log(`${orders} orders, best seller: ${product.name}`);
+</example>
+<output>
+42 orders, best seller: Ankara tote bag
+</output>
+<p><code>work</code> was inferred as an array of a union of promises, so each result is <code>number | { name: string; sold: number }</code>, and <code>product.name</code> is not safe. Passing the array literal straight to <code>Promise.all</code> (or adding <code>as const</code> to <code>work</code>) keeps the tuple, and each position gets its own type.</p>
+</solution>
+</exercise>
+<exercise title="Batches from an async iterable">
+<p>Writing to the ledger is cheaper in batches. Write <code>async function* batch&lt;T&gt;(source: AsyncIterable&lt;T&gt;, size: number): AsyncGenerator&lt;T[], void, undefined&gt;</code> that yields arrays of up to <code>size</code> items, and use it on an async generator of transaction ids.</p>
+<solution>
+<example file="batch.ts" project="ex-batch">
+async function* batch<T>(source: AsyncIterable<T>, size: number): AsyncGenerator<T[], void, undefined> {
+  let current: T[] = [];
+  for await (const item of source) {
+    current.push(item);
+    if (current.length === size) {
+      yield current;
+      current = [];
+    }
+  }
+  if (current.length > 0) yield current;
+}
+
+async function* transactionIds(count: number): AsyncGenerator<string, void, undefined> {
+  for (let i = 1; i <= count; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    yield `TX-${i}`;
+  }
+}
+
+for await (const group of batch(transactionIds(7), 3)) {
+  console.log(`writing ${group.length}: ${group.join(" ")}`);
+}
+</example>
+<output>
+writing 3: TX-1 TX-2 TX-3
+writing 3: TX-4 TX-5 TX-6
+writing 1: TX-7
+</output>
+<p>The last, partial batch is yielded after the loop; forgetting it is the classic bug here. <code>current = []</code> creates a new array instead of emptying the old one, because the consumer may still hold the batch it was given. And <code>T</code> flows from the source: <code>group</code> is a <code>string[]</code>.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>An async function always returns <code>Promise&lt;T&gt;</code>; its body returns plain <code>T</code> values, and <code>await</code> removes one promise layer at the type level too.</li>
+<li><code>new Promise&lt;T&gt;</code> needs its <code>T</code> from a type argument or a return type, or <code>resolve</code> takes <code>unknown</code>. <code>Promise.withResolvers&lt;T&gt;()</code> is typed the same way.</li>
+<li><code>Awaited&lt;T&gt;</code> is the type of <code>await</code>: it unwraps nested promises and thenables. Generic helpers that await a <code>T</code> return <code>Promise&lt;Awaited&lt;T&gt;&gt;</code>.</li>
+<li><code>Promise.all</code> on an array literal gives a typed tuple; a prebuilt array collapses into a union unless it is <code>as const</code>. <code>race</code> and <code>any</code> give unions, and <code>Promise&lt;never&gt;</code> makes typed timeouts.</li>
+<li><code>allSettled</code> results are a union on <code>status</code>; <code>reason</code> is <code>any</code>, so treat it as <code>unknown</code>.</li>
+<li>Async callbacks passed to <code>filter</code>, <code>some</code>, <code>forEach</code> or event handlers are not checked; use <code>Promise.all</code> with <code>map</code>, <code>for...of</code>, and the promise lint rules.</li>
+<li><code>AsyncIterable&lt;T&gt;</code> and <code>AsyncGenerator&lt;T, TReturn, TNext&gt;</code> type lazy async sequences; a generic pager hides pages and cursors from its callers.</li>
+</ul>
+<p>This is the last lesson of the TypeScript course. Next, <a href="/learn/ts-type-operators">Type operators</a> opens Advanced TypeScript: deriving types from values and from each other with <code>keyof</code>, <code>typeof</code> and indexed access.</p>
+</section>

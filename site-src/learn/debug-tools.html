@@ -1,0 +1,829 @@
+---
+title: Debugging tools
+description: Pause a running program with breakpoints, step through it, watch values, inspect objects, debug Node.js and browser code, read network traffic and map compiled code back with source maps.
+minutes: 55
+youNeed: The debugging method, Node.js basics and The DOM
+youBuild: A diagnosed delivery-fee bug found with the Node.js debugger, a secret-safe account object, and a source map decoded by hand
+keywords: debugger, breakpoints, conditional breakpoint, logpoint, step over, step into, step out, watch expressions, node inspect, node --inspect, chrome devtools, vs code debugger, network panel, source maps, util.inspect
+objectives: Pause a program at a breakpoint and step over, into and out of calls | Drive the Node.js debugger from the terminal and attach Chrome DevTools or VS Code with --inspect | Use conditional breakpoints, logpoints, watch expressions and pause-on-exception to answer one question at a time | Inspect nested and secret-holding objects without leaking data into logs | Diagnose a failing request from its status, headers and body in the Network panel or with curl | Explain how a source map turns a compiled position back into a TypeScript line
+---
+<section>
+<h2 id="problem">A total of ₦17,650,001,500</h2>
+<p>A new checkout goes live, and the first test order shows this:</p>
+<file name="checkout.js" project="fee">
+const settings = Object.fromEntries(
+  new URLSearchParams("deliveryFeeKobo=150000&freeDeliveryFromKobo=5000000"),
+);
+
+function cartSubtotal(lines) {
+  let subtotal = 0;
+  for (const line of lines) {
+    subtotal += line.priceKobo * line.quantity;
+  }
+  return subtotal;
+}
+
+function checkoutTotal(lines) {
+  const subtotal = cartSubtotal(lines);
+  const delivery = subtotal >= settings.freeDeliveryFromKobo ? 0 : settings.deliveryFeeKobo;
+  const total = subtotal + delivery;
+  return total;
+}
+
+const cart = [
+  { sku: "RICE-5", priceKobo: 850000, quantity: 2 },
+  { sku: "TOM-400", priceKobo: 65000, quantity: 1 },
+];
+console.log(`Total: ${checkoutTotal(cart)} kobo`);
+</file>
+<example file="run-checkout.js" project="fee" browser="no">
+await import("./checkout.js");
+</example>
+<output>
+Total: 1765000150000 kobo
+</output>
+<p>The settings come from a query string here; in a real server they would come from environment variables. The subtotal should be ₦17,650 plus ₦1,500 delivery. Instead, the total is a 13-digit number.</p>
+<p>In <a href="/learn/debug-method">The debugging method</a> you reproduced bugs and tested hypotheses with <code>console.log</code>. That works, but every question costs an edit and a rerun, and you have to guess in advance which values you will want to see. A <strong>debugger</strong> is a tool that pauses a running program at a line you choose and lets you look at <em>every</em> value in scope, then move forward one step at a time. It does not replace the method; it makes the observe and test steps much faster.</p>
+<p>This lesson covers the debugger in the terminal, in Chrome DevTools and in VS Code; the browser's debugger and Network panel; tools for printing objects; and source maps, which make all of these work on compiled TypeScript.</p>
+</section>
+
+<section>
+<h2 id="concepts">What a debugger does</h2>
+<p>Every debugger, in every language and editor, is built from the same few ideas:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><strong>Breakpoint</strong></td><td>A marker on a line. When execution reaches it, the program <strong>pauses</strong> before running that line.</td></tr>
+<tr><td><strong>Paused</strong></td><td>The program is frozen, with all its variables alive. Timers, requests and other code wait too.</td></tr>
+<tr><td><strong>Call stack</strong></td><td>The same list as a stack trace, but live: click a frame to see that function's variables.</td></tr>
+<tr><td><strong>Scope</strong></td><td>The variables visible at the paused line: local, closure, module and global.</td></tr>
+<tr><td><strong>Continue</strong></td><td>Run until the next breakpoint (or the end).</td></tr>
+<tr><td><strong>Step over</strong></td><td>Run the current line, including any function it calls, and pause at the next line of the <em>same</em> function.</td></tr>
+<tr><td><strong>Step into</strong></td><td>If the current line calls a function, go inside it and pause at its first line.</td></tr>
+<tr><td><strong>Step out</strong></td><td>Run the rest of the current function and pause just after it returns to its caller.</td></tr>
+<tr><td><strong>Watch expression</strong></td><td>An expression (<code>subtotal</code>, <code>typeof delivery</code>, <code>cart.length</code>) re-evaluated every time the program pauses.</td></tr>
+</tbody>
+</table></div>
+<figure class="lx-diagram">
+<pre>
+ checkoutTotal(lines)                       cartSubtotal(lines)
+ ─────────────────────                      ─────────────────────
+▶ const subtotal = cartSubtotal(lines); ──step into──►  let subtotal = 0;
+                                                        for (const line of lines) {
+   │ step over                                            subtotal += ...
+   ▼                                                    }
+  const delivery = ...;          ◄──────step out──────  return subtotal;
+  const total = subtotal + delivery;
+</pre>
+<figcaption>Step over treats a call as one line. Step into enters the called function. Step out finishes the current function and returns to the caller.</figcaption>
+</figure>
+<p>Stepping is the automated version of the trace tables from <a href="/learn/solve-broken#method">Why doesn't this work?</a>: the debugger fills in each row for you, and you keep doing the important part, predicting the next row before you press the key.</p>
+<h3>The debugger statement</h3>
+<p>You can also put a breakpoint in the code itself with the <code>debugger</code> statement. When a debugger is attached, execution pauses there. When none is attached, it does nothing at all:</p>
+<example file="debugger-statement.js">
+function applyDelivery(subtotal, fee) {
+  debugger;
+  return subtotal + fee;
+}
+
+console.log(applyDelivery(1765000, 150000));
+</example>
+<output>
+1915000
+</output>
+<p>It is handy for code that is hard to click on in an editor, such as code generated at runtime. Never commit one: a colleague who happens to have DevTools open will be stopped by it in the middle of their work. Most linters flag it (<a href="/learn/js-tooling">JavaScript tooling</a>).</p>
+</section>
+
+<section>
+<h2 id="node-inspect">The Node.js debugger in the terminal</h2>
+<p>Node.js has a debugger built in. <code>node inspect file.js</code> starts your program paused on its first line and gives you a <code>debug&gt;</code> prompt. It is the least comfortable debugger, but it works everywhere (including on a server over SSH), and because everything is typed, you can see exactly what each command does. The sessions below are real runs; your <code>ws://</code> id will differ.</p>
+<reason title="Before you start the debugger">
+<p>Using <a href="/learn/debug-method#hypothesize">the method</a>, decide what you want to learn before you pause anything:</p>
+<ul>
+<li>The output has far too many digits. What kind of bug produces a number that looks like two numbers written side by side?</li>
+<li>Which line is the first where that could happen? Which values on that line would you like to see, and what do you predict they are?</li>
+<li>Where should the breakpoint go so that you see those values <em>before</em> the damage happens?</li>
+</ul>
+<answer>
+<p><strong>The symptom:</strong> 1765000150000 is 1765000 followed by 150000. A number that looks like two numbers glued together is almost always string concatenation: <code>+</code> with a string on one side joins text instead of adding.</p>
+<p><strong>The line:</strong> <code>const total = subtotal + delivery;</code> is the only place where the two amounts meet. Prediction: one of them is a string. <code>subtotal</code> is built from numbers in the cart, so the suspect is <code>delivery</code>, which comes from the settings.</p>
+<p><strong>The breakpoint:</strong> at line 14, the start of <code>checkoutTotal</code>, so you can watch both values being made. A breakpoint at line 16 would also work, but starting one step earlier lets you check the subtotal too.</p>
+</answer>
+</reason>
+<shell title="Terminal: step into, out and over (a real session)">
+$ node inspect checkout.js
+&lt; Debugger listening on ws://127.0.0.1:9229/b982a2ca-b8fa-4f6b-aa71-9e89a26cb1fe
+&lt; For help, see: https://nodejs.org/learn/getting-started/debugging
+&lt;
+connecting to 127.0.0.1:9229 ... ok
+&lt; Debugger attached.
+&lt;
+debug> Break on start in checkout.js:1
+> 1 const settings = Object.fromEntries(
+  2   new URLSearchParams("deliveryFeeKobo=150000&freeDeliveryFromKobo=5000000"),
+  3 );
+debug> sb(14)
+  9   }
+ 10   return subtotal;
+ 11 }
+ 12
+ 13 function checkoutTotal(lines) {
+>14   const subtotal = cartSubtotal(lines);
+ 15   const delivery = subtotal >= settings.freeDeliveryFromKobo ? 0 : settings.deliveryFeeKobo;
+ 16   const total = subtotal + delivery;
+ 17   return total;
+ 18 }
+ 19
+debug> c
+debug> break in checkout.js:14
+ 12
+ 13 function checkoutTotal(lines) {
+>14   const subtotal = cartSubtotal(lines);
+ 15   const delivery = subtotal >= settings.freeDeliveryFromKobo ? 0 : settings.deliveryFeeKobo;
+ 16   const total = subtotal + delivery;
+debug> s
+debug> step in checkout.js:6
+  4
+  5 function cartSubtotal(lines) {
+> 6   let subtotal = 0;
+  7   for (const line of lines) {
+  8     subtotal += line.priceKobo * line.quantity;
+debug> o
+debug> step in checkout.js:15
+ 13 function checkoutTotal(lines) {
+*14   const subtotal = cartSubtotal(lines);
+>15   const delivery = subtotal >= settings.freeDeliveryFromKobo ? 0 : settings.deliveryFeeKobo;
+ 16   const total = subtotal + delivery;
+ 17   return total;
+debug> n
+debug> step in checkout.js:16
+*14   const subtotal = cartSubtotal(lines);
+ 15   const delivery = subtotal >= settings.freeDeliveryFromKobo ? 0 : settings.deliveryFeeKobo;
+>16   const total = subtotal + delivery;
+ 17   return total;
+ 18 }
+debug> exec delivery
+'150000'
+debug> exec typeof delivery
+'string'
+debug> exec settings
+{ deliveryFeeKobo: '150000', freeDeliveryFromKobo: '5000000' }
+debug> .exit
+</shell>
+<p>What happened, command by command:</p>
+<ul>
+<li><code>sb(14)</code> ("set breakpoint") marked line 14; <code>c</code> ("continue") ran until it was reached. The <code>&gt;</code> shows the line about to run, the <code>*</code> a line with a breakpoint.</li>
+<li><code>s</code> ("step") went <em>into</em> <code>cartSubtotal</code>. <code>o</code> ("out") ran the rest of it and came back to <code>checkoutTotal</code>, now on line 15. <code>n</code> ("next") stepped <em>over</em> line 15.</li>
+<li><code>exec expr</code> evaluated expressions in the paused scope. The quotes in <code>'150000'</code> answer the question: <code>delivery</code> is a string, and so is every value in <code>settings</code>. <code>URLSearchParams</code> (like <code>process.env</code>, form fields and CSV cells) only ever produces text.</li>
+</ul>
+<p>The hypothesis is confirmed in one pause, without a single edit. Notice what else the session tells you for free: <code>freeDeliveryFromKobo</code> is a string too. The comparison <code>subtotal &gt;= "5000000"</code> happens to work, because <code>&gt;=</code> converts the string to a number when the other side is a number. If both sides were strings, it would compare them alphabetically, and <code>"900" &gt;= "5000000"</code> would be <code>true</code>. The fix is to convert the settings once, when they are loaded:</p>
+<example file="settings-fixed.js">
+function loadSettings(query) {
+  const raw = Object.fromEntries(new URLSearchParams(query));
+  const settings = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const number = Number(value);
+    if (!Number.isInteger(number) || number < 0) throw new Error(`Setting ${key} must be whole kobo, got "${value}"`);
+    settings[key] = number;
+  }
+  return settings;
+}
+
+const settings = loadSettings("deliveryFeeKobo=150000&freeDeliveryFromKobo=5000000");
+console.log(settings);
+console.log(1765000 + settings.deliveryFeeKobo);
+try {
+  loadSettings("deliveryFeeKobo=1,500");
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output>
+{ deliveryFeeKobo: 150000, freeDeliveryFromKobo: 5000000 }
+1915000
+Setting deliveryFeeKobo must be whole kobo, got "1,500"
+</output>
+<h3>Watch expressions</h3>
+<p>When you pause many times (a loop, a request handler), re-typing <code>exec</code> gets tedious. A <strong>watch expression</strong> is printed automatically at every pause:</p>
+<shell title="Terminal: watching values across loop iterations (a real session)">
+$ node inspect checkout.js
+…
+debug> sb(8)
+  3 );
+  4
+  5 function cartSubtotal(lines) {
+  6   let subtotal = 0;
+  7   for (const line of lines) {
+> 8     subtotal += line.priceKobo * line.quantity;
+  9   }
+ 10   return subtotal;
+ 11 }
+ 12
+ 13 function checkoutTotal(lines) {
+debug> c
+debug> break in checkout.js:8
+  6   let subtotal = 0;
+  7   for (const line of lines) {
+> 8     subtotal += line.priceKobo * line.quantity;
+  9   }
+ 10   return subtotal;
+debug> watch('subtotal')
+debug> watch('line.sku')
+debug> c
+debug> break in checkout.js:8
+Watchers:
+  0: subtotal = 1700000
+  1: line.sku = 'TOM-400'
+
+  6   let subtotal = 0;
+  7   for (const line of lines) {
+> 8     subtotal += line.priceKobo * line.quantity;
+  9   }
+ 10   return subtotal;
+debug> c
+debug> &lt; Total: 1765000150000 kobo
+&lt;
+debug> &lt; Waiting for the debugger to disconnect...
+</shell>
+<p>The second pause shows the loop's second iteration: the rice is already added (1,700,000 kobo), and the line about to be added is the tomato paste. Watches can be any expression, including <code>typeof x</code>, <code>items.length</code> or <code>total &gt; 10_000_000</code>.</p>
+<h3>Conditional breakpoints</h3>
+<p>A breakpoint inside a loop that runs 10,000 times is useless if you care about one iteration. A <strong>conditional breakpoint</strong> only pauses when an expression is true:</p>
+<shell title="Terminal: pause only for one product (a real session)">
+$ node inspect checkout.js
+…
+debug> sb('checkout.js', 8, 'line.sku === "TOM-400"')
+  3 );
+  4
+  5 function cartSubtotal(lines) {
+  6   let subtotal = 0;
+  7   for (const line of lines) {
+> 8     subtotal += line.priceKobo * line.quantity;
+  9   }
+ 10   return subtotal;
+ 11 }
+ 12
+ 13 function checkoutTotal(lines) {
+debug> c
+debug> break in checkout.js:8
+  6   let subtotal = 0;
+  7   for (const line of lines) {
+> 8     subtotal += line.priceKobo * line.quantity;
+  9   }
+ 10   return subtotal;
+debug> exec line
+{ sku: 'TOM-400', priceKobo: 65000, quantity: 1 }
+debug> exec subtotal
+1700000
+</shell>
+<p>Good conditions come straight from your hypothesis: <code>typeof subtotal !== "number"</code>, <code>order.id === 1042</code>, <code>stock &lt; 0</code>. The program runs at full speed until the one moment you care about.</p>
+<h3>Pause on exceptions</h3>
+<p>For a crash, you want to be paused at the moment of the throw, with all the variables still alive. <code>breakOnException</code> does exactly that. Here it is on the receipt printer from <a href="/learn/debug-method#stack-traces">the method lesson</a>:</p>
+<shell title="Terminal: pause where the error is thrown (a real session)">
+$ node inspect receipt.js
+…
+debug> breakOnException
+debug> c
+debug> &lt; #1041 Ada: 1700000 kobo
+&lt;
+debug> exception in receipt.js:8
+  6 function orderTotal(order) {
+  7   return order.items
+> 8     .map((item) => item.price * item.quantity)
+  9     .reduce((sum, n) => sum + n, 0);
+ 10 }
+debug> exec order
+{ id: 1042, customer: 'Bola', lineItems: Array(1) }
+debug> bt
+#0 orderTotal receipt.js:8:5
+#1 receiptLine receipt.js:13:44
+#2 (anonymous) receipt.js:17:14
+#3 run node:internal/modules/esm/module_job:439:24
+</shell>
+<p>The stack trace told you <em>where</em>; the paused program tells you <em>what</em>: order 1042 has <code>lineItems</code>, not <code>items</code>. <code>bt</code> ("backtrace") prints the live call stack. <code>breakOnException</code> pauses on every thrown error, even ones that are caught later, which is noisy in code that uses exceptions a lot; <code>breakOnUncaught</code> pauses only on ones nobody catches, and <code>breakOnNone</code> turns both off.</p>
+</section>
+
+<section>
+<h2 id="inspect-flag">Attaching Chrome DevTools or VS Code</h2>
+<p>The terminal debugger talks to Node.js through the <strong>inspector protocol</strong>, and so do the graphical debuggers. Start your program with one of these flags:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Flag</th><th>What it does</th><th>Use it when</th></tr></thead>
+<tbody>
+<tr><td><code>--inspect</code></td><td>Runs normally, and accepts a debugger at any time</td><td>A server you want to attach to while it handles requests</td></tr>
+<tr><td><code>--inspect-brk</code></td><td>Pauses before the first line until a debugger attaches</td><td>A script that would finish (or crash) before you could attach</td></tr>
+<tr><td><code>--inspect-wait</code></td><td>Waits for a debugger, then runs without pausing on line 1</td><td>Start-up code with breakpoints already set in your editor</td></tr>
+</tbody>
+</table></div>
+<shell title="Terminal (a real run)">
+$ node --inspect-brk checkout.js
+Debugger listening on ws://127.0.0.1:9229/944a45cc-c8de-4d3c-8211-a0d29410ebc9
+For help, see: https://nodejs.org/learn/getting-started/debugging
+</shell>
+<p>The program is now waiting. In Chrome, open <code>chrome://inspect</code>, find <code>checkout.js</code> under "Remote Target" and click <strong>inspect</strong>. A DevTools window opens on the <strong>Sources</strong> panel, paused on line 1. From here:</p>
+<ul>
+<li>Click a line number to set a breakpoint (a blue marker). Right-click it for <strong>Add conditional breakpoint</strong> or <strong>Add logpoint</strong>.</li>
+<li>The buttons at the top of the right-hand pane are continue (F8), step over (F10), step into (F11) and step out (Shift+F11).</li>
+<li>The <strong>Scope</strong> section shows local, closure, module and global variables. Hover any variable in the code to see its value. Private class fields (<code>#pin</code>) are visible here, although <code>console.log</code> never prints them.</li>
+<li>The <strong>Watch</strong> section takes expressions; the <strong>Call Stack</strong> section lists frames, and clicking one shows its variables.</li>
+<li>The <strong>Console</strong> tab evaluates in the paused scope, like <code>exec</code>. You can even change a variable (<code>delivery = 150000</code>) and continue, to test a fix without restarting.</li>
+</ul>
+<h3>VS Code</h3>
+<p>VS Code has the same debugger built in. The quickest way in: open the command palette, run <strong>Debug: JavaScript Debug Terminal</strong>, and start your program as usual (<code>node checkout.js</code>, <code>npm run dev</code>, <code>npx tsx src/main.ts</code>). Every Node.js process started from that terminal is attached automatically, and breakpoints you click in the editor gutter just work. For a repeatable setup, add a launch configuration:</p>
+<file name=".vscode/launch.json">
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug checkout",
+      "program": "${workspaceFolder}/checkout.js",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "type": "node",
+      "request": "attach",
+      "name": "Attach to running server",
+      "port": 9229
+    }
+  ]
+}
+</file>
+<p><code>skipFiles</code> makes "step into" skip Node.js's own internals, so you never land in <code>node:internal/…</code>. Add <code>"${workspaceFolder}/node_modules/**"</code> to skip libraries as well. The second configuration attaches to a process you started yourself with <code>--inspect</code>. Press F5 to start the selected configuration; F9 toggles a breakpoint on the current line.</p>
+<h3>Logpoints</h3>
+<p>Both Chrome and VS Code offer <strong>logpoints</strong>: a breakpoint that does not pause, but prints a message such as <code>subtotal={subtotal} delivery={delivery}</code> every time the line runs. It is a <code>console.log</code> you add without editing, restarting or remembering to delete it afterwards. Reach for it when pausing would change the behaviour, for example in code with timeouts, where a paused program makes requests time out.</p>
+<warn title="Never expose the inspector">Whoever connects to the inspector port can run any code inside your process: read secrets, change data, start other programs. By default Node.js only listens on <code>127.0.0.1</code>, which is safe. Never start a production server with <code>--inspect=0.0.0.0</code>, and never open port 9229 in a firewall. To debug a remote server, forward the port over SSH (<code>ssh -L 9229:localhost:9229 server</code>) and attach locally.</warn>
+</section>
+
+<section>
+<h2 id="objects">Inspecting objects</h2>
+<p>Whether you print with <code>console.log</code> or pause in a debugger, the tool decides how much of an object you see. <code>console.log</code> in Node.js stops at a depth of 2 and prints <code>[Object]</code> below that. When the value you care about is deeper, ask for all of it:</p>
+<example file="depth.js" browser="no">
+import { inspect } from "node:util";
+
+const order = {
+  id: 1042,
+  customer: { name: "Bola", address: { city: "Lagos", geo: { lat: 6.45, lng: 3.39 } } },
+  lines: [{ sku: "RICE-5", quantity: 2 }],
+};
+
+console.log(order);
+console.dir(order, { depth: null });
+console.log(inspect(order, { depth: 0 }));
+</example>
+<output>
+{
+  id: 1042,
+  customer: { name: 'Bola', address: { city: 'Lagos', geo: [Object] } },
+  lines: [ { sku: 'RICE-5', quantity: 2 } ]
+}
+{
+  id: 1042,
+  customer: {
+    name: 'Bola',
+    address: { city: 'Lagos', geo: { lat: 6.45, lng: 3.39 } }
+  },
+  lines: [ { sku: 'RICE-5', quantity: 2 } ]
+}
+{ id: 1042, customer: [Object], lines: [Array] }
+</output>
+<p><code>console.dir(value, { depth: null })</code> prints every level; <code>util.inspect</code> returns the same text as a string, with options for depth, sorting keys (<code>sorted: true</code>) and more. In a debugger, you expand levels by clicking instead.</p>
+<h3>Secrets in logs</h3>
+<p>Printing a whole object is convenient and dangerous. This account holds an API token:</p>
+<example file="secrets.js" browser="no">
+import { inspect } from "node:util";
+
+class Account {
+  #pin;
+  constructor(owner, balanceKobo, pin, apiToken) {
+    this.owner = owner;
+    this.balanceKobo = balanceKobo;
+    this.apiToken = apiToken;
+    this.#pin = pin;
+  }
+}
+
+const ada = new Account("Ada", 500000, "4321", "sk_test_51H8xQ2");
+console.log(ada);
+
+class SafeAccount extends Account {
+  [inspect.custom]() {
+    return `SafeAccount { owner: '${this.owner}', balanceKobo: ${this.balanceKobo}, apiToken: '[redacted]' }`;
+  }
+}
+
+console.log(new SafeAccount("Bola", 120000, "9999", "sk_test_77Zp01"));
+</example>
+<output>
+Account {
+  owner: 'Ada',
+  balanceKobo: 500000,
+  apiToken: 'sk_test_51H8xQ2'
+}
+SafeAccount { owner: 'Bola', balanceKobo: 120000, apiToken: '[redacted]' }
+</output>
+<p>The private <code>#pin</code> is never printed, but the public <code>apiToken</code> is, and a debug log line like that, shipped to a log service, leaks the token to everyone who can read logs. <code>util.inspect.custom</code> (a symbol, <code>Symbol.for("nodejs.util.inspect.custom")</code>) lets a class decide how it is printed by <code>console.log</code> and <code>util.inspect</code>. Redacting sensitive fields there protects every log line at once. <a href="/learn/zudo-logging">Logging with ZudoJS</a> redacts by field name for the same reason. A debugger still shows the real values, which is fine: it runs on your machine, not in a log file.</p>
+</section>
+
+<section>
+<h2 id="browser">The browser debugger</h2>
+<p>Everything above works in the browser too, with the same keys: open DevTools (F12), go to <strong>Sources</strong>, find your script, and click a line number. The browser adds breakpoints that have no line to click on, because browser code is driven by events:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Breakpoint</th><th>Where</th><th>Answers</th></tr></thead>
+<tbody>
+<tr><td>Event listener breakpoints</td><td>Sources → Event Listener Breakpoints → Mouse → click</td><td>"Which code runs when I click this?"</td></tr>
+<tr><td>DOM change breakpoints</td><td>Elements → right-click a node → Break on → subtree modifications / attribute modifications / node removal</td><td>"Who keeps changing this element?"</td></tr>
+<tr><td>XHR/fetch breakpoints</td><td>Sources → XHR/fetch Breakpoints → add a URL fragment</td><td>"Which code sends this request?"</td></tr>
+<tr><td>Pause on exceptions</td><td>Sources → the pause-on-exceptions toggles</td><td>"What were the values when it threw?"</td></tr>
+</tbody>
+</table></div>
+<p>The <strong>Elements</strong> panel also has an <strong>Event Listeners</strong> tab that lists every listener attached to the selected element, with a link to its source. It finds one of the most common browser bugs in seconds. Here is a cart button:</p>
+<file name="index.html" project="cart-button">
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Cart</title></head>
+<body>
+  <button id="add">Add rice to cart</button>
+  <p id="count">Cart: 0 items</p>
+</body>
+</html>
+</file>
+<example file="cart-bug.js" project="cart-button" runtime="dom">
+let items = 0;
+const button = document.querySelector("#add");
+const count = document.querySelector("#count");
+
+function render() {
+  count.textContent = `Cart: ${items} items`;
+  button.addEventListener("click", () => {
+    items++;
+    render();
+  });
+}
+
+render();
+for (let click = 1; click <= 3; click++) {
+  button.click();
+  console.log(`after click ${click}: ${count.textContent}`);
+}
+</example>
+<output>
+after click 1: Cart: 1 items
+after click 2: Cart: 3 items
+after click 3: Cart: 7 items
+</output>
+<p>Each click adds more than the one before: 1, then 2 more, then 4 more. The Event Listeners tab would show the button with 8 click listeners after three clicks. The cause is in <code>render</code>: every render adds <em>another</em> listener, and they pile up. The fix is to attach listeners once, outside anything that runs repeatedly:</p>
+<example file="cart-fixed.js" project="cart-button" runtime="dom">
+let items = 0;
+const button = document.querySelector("#add");
+const count = document.querySelector("#count");
+
+function render() {
+  count.textContent = `Cart: ${items} items`;
+}
+
+button.addEventListener("click", () => {
+  items++;
+  render();
+});
+
+render();
+for (let click = 1; click <= 3; click++) {
+  button.click();
+  console.log(`after click ${click}: ${count.textContent}`);
+}
+</example>
+<output>
+after click 1: Cart: 1 items
+after click 2: Cart: 2 items
+after click 3: Cart: 3 items
+</output>
+<p><a href="/learn/browser-events">Events</a> covers listeners and delegation in depth. The debugging lesson here is the symptom: when an action happens "too many times" and the count grows, look for a listener or a timer registered in code that runs more than once.</p>
+</section>
+
+<section>
+<h2 id="network">Inspecting network traffic</h2>
+<p>Many bugs are not in your code at all but in the conversation between two programs. This client fails with an error that seems to make no sense:</p>
+<example file="products-client.js" browser="no">
+import { createServer } from "node:http";
+
+const server = createServer((req, res) => {
+  if (req.method === "GET" && req.url === "/api/products") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify([{ sku: "RICE-5", priceKobo: 850000 }]));
+    return;
+  }
+  res.writeHead(404, { "content-type": "text/html" });
+  res.end("<!doctype html><h1>Page not found</h1>");
+});
+await new Promise((resolve) => server.listen(0, resolve));
+const base = `http://localhost:${server.address().port}`;
+
+async function loadProducts() {
+  const res = await fetch(`${base}/api/products/`);
+  return res.json();
+}
+
+try {
+  await loadProducts();
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+server.close();
+</example>
+<output>
+SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON
+</output>
+<p>"Unexpected token '&lt;'" means the body starts with <code>&lt;</code>, so it is HTML, not JSON. The error is thrown by <code>res.json()</code>, but the cause is the request. Look at the whole response instead of just the body:</p>
+<example file="products-inspect.js" browser="no">
+import { createServer } from "node:http";
+
+const server = createServer((req, res) => {
+  if (req.method === "GET" && req.url === "/api/products") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify([{ sku: "RICE-5", priceKobo: 850000 }]));
+    return;
+  }
+  res.writeHead(404, { "content-type": "text/html" });
+  res.end("<!doctype html><h1>Page not found</h1>");
+});
+await new Promise((resolve) => server.listen(0, resolve));
+const base = `http://localhost:${server.address().port}`;
+
+for (const path of ["/api/products/", "/api/products"]) {
+  const res = await fetch(base + path);
+  const body = await res.text();
+  console.log(`GET ${path} -> ${res.status} ${res.statusText}`);
+  console.log(`  content-type: ${res.headers.get("content-type")}`);
+  console.log(`  body: ${body.slice(0, 40)}`);
+}
+server.close();
+</example>
+<output>
+GET /api/products/ -> 404 Not Found
+  content-type: text/html
+  body: <!doctype html><h1>Page not found</h1>
+GET /api/products -> 200 OK
+  content-type: application/json
+  body: [{"sku":"RICE-5","priceKobo":850000}]
+</output>
+<p>Status 404 and <code>text/html</code>: the trailing slash asked for a route that does not exist, and the server answered with its HTML error page. The rule for any failed request: <strong>check the status, then the content type, then the body</strong>, before you debug the code that reads them. A client should also check <code>res.ok</code> before calling <code>res.json()</code>, so that the error names the status instead of complaining about a <code>&lt;</code>.</p>
+<h3>The Network panel</h3>
+<p>In the browser, DevTools' <strong>Network</strong> panel records every request the page makes. Click a request to see:</p>
+<ul>
+<li><strong>Headers</strong>: the URL, method, status code, request headers (was the <code>Authorization</code> header sent? which cookies?) and response headers (<code>content-type</code>, CORS headers, <code>cache-control</code>).</li>
+<li><strong>Payload</strong>: what the page sent. Is the body the JSON you think it is, or <code>[object Object]</code>?</li>
+<li><strong>Preview / Response</strong>: what came back, before your code touched it.</li>
+<li><strong>Timing</strong>: where the time went: waiting for a connection, waiting for the server (a slow query), or downloading.</li>
+</ul>
+<p>Useful switches: <strong>Preserve log</strong> keeps requests across page reloads and redirects; <strong>Disable cache</strong> makes sure you see what the server sends now; the throttling menu simulates a slow phone connection, which exposes race conditions and missing loading states. A red <code>(failed)</code> or <code>CORS error</code> status means the browser blocked the request; the reason is in the Console (<a href="/learn/browser-networking">Networking from JavaScript</a> explains CORS).</p>
+<p>Right-click a request and choose <strong>Copy → Copy as cURL</strong> to get a command that repeats the exact request from a terminal. That is how you turn a browser bug into a <a href="/learn/debug-method#reproduce">reproduction</a> anyone can run:</p>
+<shell title="Terminal (a real run, with the same server listening on port 3457)">
+$ curl -i http://localhost:3457/api/products/
+HTTP/1.1 404 Not Found
+content-type: text/html
+Date: Thu, 24 Sep 2026 20:33:03 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+&lt;!doctype html>&lt;h1>Page not found&lt;/h1>
+</shell>
+<p><code>-i</code> prints the status line and headers before the body. For Node.js code, Node 24 can also show its own <code>fetch</code> and <code>http</code> requests in the DevTools Network panel: start it with <code>node --inspect --experimental-network-inspection app.js</code> and attach as above. The flag is still experimental, so logging the status, content type and the start of the body, as above, remains the dependable way.</p>
+</section>
+
+<section>
+<h2 id="source-maps">Source maps</h2>
+<p>You rarely run the code you write. TypeScript is compiled to JavaScript; browser code is bundled and minified into one file with short variable names. A stack trace or breakpoint in the <em>output</em> points at code you never wrote. <a href="/learn/ts-compiler#emit-files">The TypeScript compiler lesson</a> introduced source maps; here is what they do for debugging. A wallet transfer in TypeScript:</p>
+<file name="src/transfer.ts">
+interface Account {
+  owner: string;
+  balanceKobo: number;
+}
+
+type Transfer = { from: Account; to: Account; amountKobo: number };
+
+export function transfer({ from, to, amountKobo }: Transfer): void {
+  if (amountKobo <= 0) {
+    throw new RangeError(`Transfer amount must be positive, got ${amountKobo}`);
+  }
+  from.balanceKobo -= amountKobo;
+  to.balanceKobo += amountKobo;
+}
+</file>
+<file name="src/main.ts">
+import { transfer } from "./transfer.js";
+
+const ada = { owner: "Ada", balanceKobo: 500000 };
+const bola = { owner: "Bola", balanceKobo: 0 };
+
+transfer({ from: ada, to: bola, amountKobo: 200000 });
+transfer({ from: ada, to: bola, amountKobo: -50000 });
+</file>
+<p>With <code>"sourceMap": true</code>, <code>"rootDir": "src"</code> and <code>"outDir": "dist"</code> in <code>tsconfig.json</code>, <code>tsc</code> writes a <code>.js.map</code> next to every <code>.js</code> file, and a comment at the end of the JavaScript that points to it:</p>
+<shell title="Terminal (a real run, TypeScript 7)">
+$ npx tsc
+$ ls dist
+main.js  main.js.map  transfer.js  transfer.js.map
+$ tail -n 1 dist/transfer.js
+//# sourceMappingURL=transfer.js.map
+$ cat dist/transfer.js.map
+{"version":3,"file":"transfer.js","sourceRoot":"","sources":["../src/transfer.ts"],"names":[],"mappings":"AAOA,MAAM,UAAU,QAAQ,CAAC,EAAE,IAAI,EAAE,EAAE,EAAE,UAAU,EAAY;IACzD,IAAI,UAAU,IAAI,CAAC,EAAE,CAAC;QACpB,MAAM,IAAI,UAAU,CAAC,yCAAyC,UAAU,EAAE,CAAC,CAAC;IAC9E,CAAC;IACD,IAAI,CAAC,WAAW,IAAI,UAAU,CAAC;IAC/B,EAAE,CAAC,WAAW,IAAI,UAAU,CAAC;AAC/B,CAAC"}
+</shell>
+<p>Run the compiled code, first without the map and then with it:</p>
+<shell title="Terminal (real runs)">
+$ node dist/main.js
+file:///home/you/wallet/dist/transfer.js:3
+        throw new RangeError(`Transfer amount must be positive, got ${amountKobo}`);
+              ^
+
+RangeError: Transfer amount must be positive, got -50000
+    at transfer (file:///home/you/wallet/dist/transfer.js:3:15)
+    at file:///home/you/wallet/dist/main.js:5:1
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v24.19.0
+$ node --enable-source-maps dist/main.js
+/home/you/wallet/src/transfer.ts:10
+    throw new RangeError(`Transfer amount must be positive, got ${amountKobo}`);
+          ^
+
+RangeError: Transfer amount must be positive, got -50000
+    at transfer (/home/you/wallet/src/transfer.ts:10:11)
+    at &lt;anonymous> (/home/you/wallet/src/main.ts:7:1)
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v24.19.0
+</shell>
+<p>Without the map, the trace names <code>transfer.js:3</code> and <code>main.js:5</code>: lines in files you never edit, whose numbers do not match your source (the interface and type alias were erased, so everything moved up). With <code>--enable-source-maps</code>, the same error names <code>transfer.ts:10</code> and <code>main.ts:7</code>, the second <code>transfer</code> call, and even shows the TypeScript line.</p>
+<h3>What is inside the map</h3>
+<p>The <code>mappings</code> field is a compact list of pairs: "this position in the output came from that position in the source". Lines of output are separated by <code>;</code>, positions within a line by <code>,</code>, and each position is a few numbers written in <strong>base64 VLQ</strong>, a variable-length encoding where each character carries 5 bits of a number plus a "more digits follow" bit. Each number is stored as the <em>difference</em> from the previous one, which keeps the map small. Decoding it takes twenty lines:</p>
+<example file="read-map.js">
+const map = {
+  sources: ["../src/transfer.ts"],
+  mappings:
+    "AAOA,MAAM,UAAU,QAAQ,CAAC,EAAE,IAAI,EAAE,EAAE,EAAE,UAAU,EAAY;IACzD,IAAI,UAAU,IAAI,CAAC,EAAE,CAAC;QACpB,MAAM,IAAI,UAAU,CAAC,yCAAyC,UAAU,EAAE,CAAC,CAAC;IAC9E,CAAC;IACD,IAAI,CAAC,WAAW,IAAI,UAAU,CAAC;IAC/B,EAAE,CAAC,WAAW,IAAI,UAAU,CAAC;AAC/B,CAAC",
+};
+
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+function decodeVlq(segment) {
+  const values = [];
+  let value = 0;
+  let shift = 0;
+  for (const char of segment) {
+    const digit = B64.indexOf(char);
+    value += (digit & 31) << shift;
+    if (digit & 32) {
+      shift += 5;
+      continue;
+    }
+    values.push(value & 1 ? -(value >> 1) : value >> 1);
+    value = 0;
+    shift = 0;
+  }
+  return values;
+}
+
+let sourceLine = 0;
+let sourceColumn = 0;
+map.mappings.split(";").forEach((line, jsLine) => {
+  let jsColumn = 0;
+  line.split(",").forEach((segment, i) => {
+    const [dJsColumn, , dSourceLine, dSourceColumn] = decodeVlq(segment);
+    jsColumn += dJsColumn;
+    sourceLine += dSourceLine;
+    sourceColumn += dSourceColumn;
+    if (i === 0) console.log(`transfer.js ${jsLine + 1}:${jsColumn + 1} -> transfer.ts ${sourceLine + 1}:${sourceColumn + 1}`);
+  });
+});
+</example>
+<output>
+transfer.js 1:1 -> transfer.ts 8:1
+transfer.js 2:5 -> transfer.ts 9:3
+transfer.js 3:9 -> transfer.ts 10:5
+transfer.js 4:5 -> transfer.ts 11:3
+transfer.js 5:5 -> transfer.ts 12:3
+transfer.js 6:5 -> transfer.ts 13:3
+transfer.js 7:1 -> transfer.ts 14:1
+</output>
+<p>Line 3 of the JavaScript (the <code>throw</code>) comes from line 10 of the TypeScript: exactly the translation <code>--enable-source-maps</code> did for the stack trace. Debuggers do the same for breakpoints, in both directions: you click line 10 of <code>transfer.ts</code> in VS Code, and it sets the real breakpoint on line 3 of <code>transfer.js</code>.</p>
+<h3>Source maps in practice</h3>
+<ul>
+<li><strong>Node.js:</strong> run compiled code with <code>--enable-source-maps</code> (or <code>NODE_OPTIONS=--enable-source-maps</code>) so production logs show <code>.ts</code> lines. <code>tsx</code> and Node's own type stripping need no maps at all: type stripping replaces the types with spaces, so every line and column stays where it was.</li>
+<li><strong>Browsers:</strong> DevTools loads maps automatically when the <code>sourceMappingURL</code> comment points to one, and shows your original files in Sources. Bundlers (Vite, esbuild, webpack) generate them with an option.</li>
+<li><strong>Inline maps</strong> (<code>"inlineSourceMap": true</code>) embed the map in the <code>.js</code> file as base64. That is one file fewer to lose, and a bigger file.</li>
+<li><strong>Publishing maps is publishing your source.</strong> A public site that serves <code>.map</code> files lets anyone read your original code with comments. That is fine for open-source projects; others upload maps privately to their error-tracking service and do not serve them.</li>
+<li><strong>A stale map lies.</strong> If the <code>.js</code> is rebuilt but the <code>.map</code> is not (or the other way round), traces point at the wrong lines. When a trace names a line that cannot possibly throw, rebuild before you debug.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="choosing">Choosing the tool</h2>
+<p>A tool only helps when it answers the question your hypothesis asks. A quick guide:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Question</th><th>Tool</th></tr></thead>
+<tbody>
+<tr><td>What are all the values at this line?</td><td>Breakpoint, then Scope / <code>exec</code></td></tr>
+<tr><td>How does this value change over a loop?</td><td>Watch expressions, or a logpoint</td></tr>
+<tr><td>What is different in iteration 7,431?</td><td>Conditional breakpoint</td></tr>
+<tr><td>What was the state when it threw?</td><td>Pause on exceptions</td></tr>
+<tr><td>Who calls this function with a bad value?</td><td>Breakpoint + Call Stack, or <code>console.trace</code></td></tr>
+<tr><td>Which code changed this element / ran on this click?</td><td>DOM change and event listener breakpoints</td></tr>
+<tr><td>Did the request go out, and what came back?</td><td>Network panel, <code>curl -i</code>, logging status and content type</td></tr>
+<tr><td>Where is this line in my TypeScript?</td><td>Source maps, <code>--enable-source-maps</code></td></tr>
+<tr><td>What happened in production last night?</td><td>Structured logs: you cannot pause the past</td></tr>
+<tr><td>Why is it slow?</td><td>A profiler: <code>node --cpu-prof</code>, or the DevTools Performance panel</td></tr>
+</tbody>
+</table></div>
+<p>A few more Node.js flags are worth knowing: <code>--trace-warnings</code> adds a stack trace to warnings (such as "MaxListenersExceededWarning", a sign of the listener pile-up above), <code>--trace-uncaught</code> shows where a non-Error value was thrown in CommonJS code, and <code>--stack-trace-limit=50</code> keeps more frames.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Plan a debugging session">
+<p>A loop applies a discount to 20,000 orders, and one order ends up with a negative total. Write down, in <code>node inspect</code> commands, the session you would run: where the breakpoint goes, its condition, and the two things you would evaluate once it pauses. Assume the loop body is on line 42 of <code>discounts.js</code> and each order has <code>id</code>, <code>totalKobo</code> and <code>discountKobo</code>.</p>
+<solution>
+<p>Pause just before the subtraction, only for the order that goes wrong, and look at both inputs:</p>
+<pre><code>$ node inspect discounts.js
+debug&gt; sb('discounts.js', 42, 'order.discountKobo &gt; order.totalKobo')
+debug&gt; c
+debug&gt; exec order
+debug&gt; exec typeof order.discountKobo
+debug&gt; bt</code></pre>
+<p>The condition comes from the hypothesis "the discount is larger than the total". If it never pauses, that hypothesis is dead: try <code>order.totalKobo - order.discountKobo &lt; 0</code> or <code>typeof order.discountKobo !== "number"</code> next. <code>bt</code> shows which code built the discount, one frame down.</p>
+</solution>
+</exercise>
+<exercise title="Redact before you log">
+<p>A <code>Customer</code> class has <code>name</code>, <code>email</code> and <code>cardNumber</code>. Give it a custom inspect method so that <code>console.log</code> shows the name, the email and only the last four digits of the card.</p>
+<solution>
+<example file="customer-redact.js" browser="no">
+import { inspect } from "node:util";
+
+class Customer {
+  constructor(name, email, cardNumber) {
+    this.name = name;
+    this.email = email;
+    this.cardNumber = cardNumber;
+  }
+
+  [inspect.custom]() {
+    return `Customer { name: '${this.name}', email: '${this.email}', card: '**** ${this.cardNumber.slice(-4)}' }`;
+  }
+}
+
+console.log(new Customer("Chidi", "chidi@example.com", "4242424242424242"));
+</example>
+<output>
+Customer { name: 'Chidi', email: 'chidi@example.com', card: '**** 4242' }
+</output>
+<p>Every <code>console.log</code> and <code>util.inspect</code> of a customer is now safe, including logs you have not written yet. <code>JSON.stringify</code> ignores the inspect method, so for JSON logs add a <code>toJSON()</code> method with the same redaction.</p>
+</solution>
+</exercise>
+<exercise title="Read the response first">
+<p>A page shows "SyntaxError: Unexpected end of JSON input" when it saves a task. In the Network panel the <code>POST /api/tasks</code> request has status <code>204 No Content</code>. What is the bug, and how should the client code change?</p>
+<solution>
+<p>204 means "success, and there is no body". The client calls <code>res.json()</code> on an empty body, which throws "Unexpected end of JSON input". The request worked; the client's assumption did not. Check the status (and <code>content-type</code>) before parsing:</p>
+<example file="no-content.js">
+async function readJson(res) {
+  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+const saved = await readJson(new Response(null, { status: 204 }));
+console.log(saved);
+const task = await readJson(new Response('{"id":7,"title":"Pay rent"}', { status: 201 }));
+console.log(task);
+try {
+  await new Response(null, { status: 204 }).json();
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+null
+{ id: 7, title: 'Pay rent' }
+SyntaxError: Unexpected end of JSON input
+</output>
+<p><code>new Response(...)</code> builds a response by hand, which makes this easy to test without a server.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Summary</h2>
+<ul>
+<li>A debugger pauses at a breakpoint and shows every value in scope. Step over runs a line, step into enters a call, step out finishes the current function; watch expressions are re-evaluated at every pause.</li>
+<li><code>node inspect</code> works anywhere; <code>--inspect</code>, <code>--inspect-brk</code> and <code>--inspect-wait</code> let Chrome DevTools (<code>chrome://inspect</code>) or VS Code attach. The JavaScript Debug Terminal in VS Code attaches automatically. Never expose the inspector port.</li>
+<li>Conditional breakpoints, logpoints and pause-on-exceptions let you answer one precise question without editing code.</li>
+<li><code>console.dir(x, { depth: null })</code> prints nested objects in full; <code>util.inspect.custom</code> controls how an object is printed and keeps secrets out of logs.</li>
+<li>In the browser, event listener, DOM change and fetch breakpoints find the code behind an event; the Event Listeners tab finds duplicate listeners.</li>
+<li>For a failed request, check the status, then the content type, then the body. The Network panel and <code>curl -i</code> show all three; "Copy as cURL" turns a browser request into a reproduction.</li>
+<li>Source maps translate positions in compiled code back to your source. Run compiled code with <code>--enable-source-maps</code>, and rebuild when a trace points somewhere impossible.</li>
+</ul>
+<p>Next: <a href="/learn/debug-practice">Debugging practice</a>, where you find a regression with <code>git bisect</code>, dig to a root cause with the five whys, and work through five complete bug hunts.</p>
+</section>

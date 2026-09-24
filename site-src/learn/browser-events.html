@@ -1,0 +1,880 @@
+---
+title: Events
+description: Make pages respond to clicks, typing and forms: listeners, bubbling and capturing, preventDefault, event delegation, custom events and debounced search, in a real shopping cart.
+minutes: 55
+youNeed: The DOM, this in depth and Closures
+youBuild: A shopping cart driven by three delegated listeners, with custom events, quantity validation and double-submit protection, plus a debounced search box
+keywords: dom events, addEventListener, event object, event bubbling, event capturing, stopPropagation, preventDefault, event delegation, custom events, CustomEvent, input event, change event, submit event, FormData, debounce, removeEventListener, AbortController signal
+objectives: Attach and remove listeners, and read the event object (target, currentTarget, type) | Predict the order listeners run in through the capture, target and bubble phases | Stop default actions with preventDefault, and explain why stopPropagation is rarely the answer | Handle a whole list with one delegated listener, including items added later | Handle forms and typing with submit, input and change events, FormData and a debounce | Design custom events so separate parts of a page stay in step
+---
+<section>
+<h2 id="problem">The Remove button that did nothing</h2>
+<p>A grocery shop's cart page lists what the customer is buying, each line with a Remove button. The developer wrote the obvious code: find every Remove button and give each one a <strong>listener</strong>, a function the browser calls when the button is clicked. It worked in testing. Then customers started complaining that items they had just added could not be removed. Here is a small copy of the page:</p>
+<file name="index.html" project="cart-bug">
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Cart</title></head>
+<body>
+  <ul id="cart">
+    <li data-sku="rice-5kg">Rice 5kg <button type="button" class="remove">Remove</button></li>
+    <li data-sku="palm-oil-1l">Palm oil 1L <button type="button" class="remove">Remove</button></li>
+  </ul>
+</body>
+</html>
+</file>
+<p>The example clicks the buttons in code with <code>button.click()</code>, which fires the same <code>click</code> event a mouse click would, so you can see the result without touching anything:</p>
+<example file="bug.js" project="cart-bug" runtime="dom">
+for (const button of document.querySelectorAll(".remove")) {
+  button.addEventListener("click", () => {
+    const line = button.closest("li");
+    console.log("removing", line.dataset.sku);
+    line.remove();
+  });
+}
+
+// Later, the customer adds garri to the cart.
+const line = document.createElement("li");
+line.dataset.sku = "garri-2kg";
+const remove = document.createElement("button");
+remove.type = "button";
+remove.className = "remove";
+remove.textContent = "Remove";
+line.append("Garri 2kg ", remove);
+document.querySelector("#cart").append(line);
+
+document.querySelector('[data-sku="rice-5kg"] .remove').click();
+document.querySelector('[data-sku="garri-2kg"] .remove').click();
+
+const left = [...document.querySelectorAll("#cart li")].map((li) => li.dataset.sku);
+console.log("still in the cart:", left);
+</example>
+<output>
+</output>
+<p>Rice was removed. Garri was not: its button was created <em>after</em> the loop ran, so it never got a listener. The loop attached listeners to the buttons that existed at that moment, and nothing else. Re-running the loop after every change would fix that, and introduce the opposite bug: the old buttons would get a second listener each time, and one click would remove, or charge, twice.</p>
+<p>The real fix uses the way events travel through the DOM tree: a single listener on the <code>&lt;ul&gt;</code> can handle clicks on every button inside it, including buttons that do not exist yet. To get there, you need to know exactly what happens between "the user clicks" and "your function runs".</p>
+</section>
+
+<section>
+<h2 id="listeners">Listeners and the event object</h2>
+<p>An <strong>event</strong> is a message that something happened: a click, a key press, a form being submitted, a page finishing loading. Every DOM node is an <code>EventTarget</code> (you saw it at the end of the prototype chain in <a href="/learn/browser-dom#tree">The DOM</a>), which gives it three methods: <code>addEventListener(type, listener, options)</code>, <code>removeEventListener(type, listener, options)</code> and <code>dispatchEvent(event)</code>.</p>
+<p>When the event happens, the browser calls each listener with an <strong>event object</strong> that describes it:</p>
+<file name="index.html" project="events">
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Events</title></head>
+<body>
+  <main id="shop">
+    <ul id="cart">
+      <li id="line-rice" data-sku="rice-5kg">
+        Rice 5kg
+        <button type="button" id="remove-rice" data-action="remove"><span class="icon">×</span> Remove</button>
+      </li>
+    </ul>
+    <a id="help" href="https://shop.example/help">Help</a>
+    <label><input type="checkbox" id="gift"> Gift wrap</label>
+  </main>
+</body>
+</html>
+</file>
+<example file="event-object.js" project="events" runtime="dom">
+const button = document.querySelector("#remove-rice");
+
+button.addEventListener("click", (event) => {
+  console.log("type:", event.type);
+  console.log("constructor:", event.constructor.name);
+  console.log("target:", event.target.id, "currentTarget:", event.currentTarget.id);
+  console.log("bubbles:", event.bubbles, "cancelable:", event.cancelable);
+  console.log("isTrusted:", event.isTrusted);
+});
+
+button.click();
+</example>
+<output>
+</output>
+<ul>
+<li><code>type</code> is the event's name. <code>click</code> events are <code>MouseEvent</code>s, which also carry the pointer position and which modifier keys were held.</li>
+<li><code>target</code> is the element the event happened on. <code>currentTarget</code> is the element whose listener is running now. Here they are the same button; with delegation they are not.</li>
+<li><code>bubbles</code> and <code>cancelable</code> say whether the event travels up the tree and whether its default action can be stopped. Both are explained below.</li>
+<li><code>isTrusted</code> is <code>false</code> because code created this click, not a person. Browsers let only trusted events do a few sensitive things, such as opening a pop-up or going full screen.</li>
+</ul>
+<p>A second way to listen is an event-handler property: <code>button.onclick = fn</code>. It holds exactly one function, so a second assignment silently replaces the first. <code>addEventListener</code> can add any number of listeners, which run in the order they were added, and it takes options. Use <code>addEventListener</code>.</p>
+<example file="onclick.js" project="events" runtime="dom">
+const button = document.querySelector("#remove-rice");
+
+button.onclick = () => console.log("analytics: remove clicked");
+button.onclick = () => console.log("cart: removing rice");
+
+button.addEventListener("click", () => console.log("listener 1"));
+button.addEventListener("click", () => console.log("listener 2"));
+
+button.click();
+</example>
+<output>
+</output>
+<p>The analytics handler is gone. In a real page, two scripts written by two teams would never know they were overwriting each other.</p>
+<note>Listeners declared with <code>function</code> get <code>this</code> set to <code>currentTarget</code>; arrow functions keep the <code>this</code> from outside. <a href="/learn/js-this#events">this in depth</a> covers it. Reading <code>event.currentTarget</code> says what you mean in both kinds of function.</note>
+</section>
+
+<section>
+<h2 id="propagation">How an event travels: capture, target, bubble</h2>
+<p>When you click the <code>×</code> icon inside the Remove button, which element was clicked? The icon, the button, the list item, the list and the page all contain the pointer. The DOM's answer is to deliver the event to <em>all</em> of them, in a fixed order called <strong>propagation</strong>. The browser first works out the <strong>path</strong>: the target and every ancestor up to <code>window</code>. Then the event travels that path in three phases:</p>
+<figure class="lx-diagram">
+<pre>                 window
+                   │   ▲
+1 capture phase    │   │   3 bubble phase
+(listeners with    ▼   │   (normal listeners,
+ capture: true)  document   from the target
+                   │   ▲    back up)
+                   ▼   │
+                 &lt;ul id="cart"&gt;
+                   │   ▲
+                   ▼   │
+                 &lt;li&gt;
+                   │   ▲
+                   ▼   │
+                 &lt;button&gt;
+                   │   ▲
+                   ▼   │
+               &lt;span class="icon"&gt;   2 target phase</pre>
+<figcaption>A click on the icon: down from window to the target, then back up.</figcaption>
+</figure>
+<p>A listener added normally runs in the <strong>bubble</strong> phase. Pass <code>{ capture: true }</code> to run in the <strong>capture</strong> phase instead, on the way down. <code>event.eventPhase</code> says which phase is running: 1 for capture, 2 at the target, 3 for bubble:</p>
+<example file="phases.js" project="events" runtime="dom">
+const phases = { 1: "capture", 2: "target", 3: "bubble" };
+const name = (node) => (node === window ? "window" : node === document ? "document" : node.id || node.className);
+
+for (const node of [window, document, document.querySelector("#cart"), document.querySelector("#line-rice"), document.querySelector("#remove-rice")]) {
+  node.addEventListener("click", (e) => console.log(`${name(e.currentTarget)} ${phases[e.eventPhase]}`), { capture: true });
+  node.addEventListener("click", (e) => console.log(`${name(e.currentTarget)} ${phases[e.eventPhase]}`));
+}
+
+document.querySelector(".icon").click();
+</example>
+<output>
+</output>
+<p>The event went down through the capture listeners, reached the button and the icon's parents, and came back up through the bubble listeners. The icon itself had no listener, but the event still passed through it. Nearly all events bubble; a few don't, notably <code>focus</code>, <code>blur</code>, <code>mouseenter</code>, <code>mouseleave</code> and <code>load</code>. For focus there are bubbling twins, <code>focusin</code> and <code>focusout</code>.</p>
+
+<h3>Stopping propagation</h3>
+<p><code>event.stopPropagation()</code> stops the event from travelling any further: listeners on later nodes of the path do not run. (Other listeners on the <em>same</em> node still run; <code>stopImmediatePropagation()</code> stops those too.) It sounds useful, and it is usually a bug waiting to happen. A common pattern: a drop-down menu closes when you click anywhere else, using a listener on <code>document</code>. Then someone adds a widget that stops propagation "so its clicks don't do anything else":</p>
+<example file="stop.js" project="events" runtime="dom">
+const menu = { open: true };
+document.addEventListener("click", () => {
+  menu.open = false;
+  console.log("document: click outside, menu closed");
+});
+
+const gift = document.querySelector("#gift");
+gift.addEventListener("click", (event) => {
+  event.stopPropagation();
+  console.log("gift checkbox: stopped propagation");
+});
+
+gift.click();
+console.log("menu open?", menu.open);
+
+document.querySelector("#remove-rice").click();
+console.log("menu open?", menu.open);
+</example>
+<output>
+</output>
+<p>Clicking the checkbox left the menu open, because the document never heard about the click. The same thing breaks analytics, keyboard shortcuts and anything else that listens on an ancestor. Instead of stopping the event, let listeners that care check <code>event.target</code> and decide for themselves, which is exactly what delegation does.</p>
+</section>
+
+<section>
+<h2 id="default-actions">Default actions and preventDefault</h2>
+<p>Many events have a <strong>default action</strong>: what the browser does after your listeners have run. A click on a link navigates; a click on a checkbox ticks it; submitting a form sends it and loads a new page; pressing a key in a text box types a character. If the event is <code>cancelable</code>, a listener can call <code>event.preventDefault()</code> and the browser skips the default action. The event still propagates; only the browser's own behaviour is cancelled.</p>
+<example file="prevent.js" project="events" runtime="dom">
+const help = document.querySelector("#help");
+help.addEventListener("click", (event) => {
+  event.preventDefault();
+  console.log("open the help panel instead of leaving the page");
+});
+help.click();
+console.log("still on the page:", location.href);
+
+const gift = document.querySelector("#gift");
+gift.addEventListener("click", (event) => {
+  if (document.querySelector("#cart").children.length === 1) {
+    event.preventDefault();
+    console.log("gift wrap needs at least two items");
+  }
+});
+gift.click();
+console.log("gift checked?", gift.checked);
+
+const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+const notCancelled = help.dispatchEvent(event);
+console.log("dispatchEvent returned", notCancelled, "defaultPrevented:", event.defaultPrevented);
+</example>
+<output>
+</output>
+<p>The preview did not navigate away, and the checkbox stayed unticked. <code>dispatchEvent</code> returns <code>false</code> when a listener cancelled the event, which is how your own code can offer "cancel this" to its listeners.</p>
+<p>Two details prevent confusing bugs. First, <code>preventDefault()</code> on a non-cancelable event does nothing. Second, listeners for scrolling and touch events are often added with <code>{ passive: true }</code>, a promise that the listener will not call <code>preventDefault()</code>. The browser can then scroll straight away instead of waiting for your code, and it ignores <code>preventDefault()</code> in such a listener.</p>
+</section>
+
+<section>
+<h2 id="delegation">Event delegation</h2>
+<p>Because clicks bubble, a listener on the list hears every click on every button inside it. <code>event.target</code> says what was clicked, and <code>closest</code> finds the button and the line it belongs to. That is <strong>event delegation</strong>: one listener on a stable ancestor, instead of one per item. It fixes the bug from the start of the lesson, because a new button is inside the list the moment it is inserted:</p>
+<example file="delegation.js" project="cart-bug" runtime="dom">
+const cart = document.querySelector("#cart");
+
+cart.addEventListener("click", (event) => {
+  const button = event.target.closest("button.remove");
+  if (!button || !cart.contains(button)) return;
+  const line = button.closest("li");
+  console.log("removing", line.dataset.sku);
+  line.remove();
+});
+
+const line = document.createElement("li");
+line.dataset.sku = "garri-2kg";
+line.innerHTML = 'Garri 2kg <button type="button" class="remove">Remove</button>';
+cart.append(line);
+
+document.querySelector('[data-sku="rice-5kg"] .remove').click();
+document.querySelector('[data-sku="garri-2kg"] .remove').click();
+cart.click();
+
+console.log("still in the cart:", [...cart.children].map((li) => li.dataset.sku));
+</example>
+<output>
+</output>
+<p>Three details make a delegated listener robust:</p>
+<ul>
+<li><strong><code>closest</code>, not <code>target</code></strong>. A click can land on a child of the button, such as the <code>×</code> icon. <code>event.target.closest("button.remove")</code> finds the button either way.</li>
+<li><strong>Ignore everything else</strong>. The click on the list itself (<code>cart.click()</code>) found no button, and the listener returned without doing anything.</li>
+<li><strong>Stay inside</strong>. <code>cart.contains(button)</code> makes sure the match is inside the list, not an ancestor above it that happens to match the selector.</li>
+</ul>
+<p>(The <code>innerHTML</code> above is safe because the string is fixed text written in the code, with no user data in it.)</p>
+<h3>Finishing the task list</h3>
+<p>The task list you built in <a href="/learn/browser-dom#build">The DOM</a> rendered checkboxes and Delete buttons that did nothing. One delegated listener for clicks and one for checkbox changes connect them to <code>toggleTask</code> and <code>removeTask</code>. They survive every <code>render()</code>, because <code>render()</code> replaces the rows, not the list:</p>
+<file name="index.html" project="task-events">
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Ada's jobs</title></head>
+<body>
+  <ul id="tasks"></ul>
+  <p class="summary"></p>
+  <template id="task-row">
+    <li class="task">
+      <label><input type="checkbox" class="toggle"> <span class="title"></span></label>
+      <button type="button" class="delete">Delete</button>
+    </li>
+  </template>
+</body>
+</html>
+</file>
+<example file="task-events.js" project="task-events" runtime="dom">
+const state = {
+  tasks: [
+    { id: 1, title: "Buy detergent", done: false },
+    { id: 2, title: "Pay the electricity bill", done: false },
+    { id: 3, title: "Clean the Okafor flat", done: false },
+  ],
+};
+const list = document.querySelector("#tasks");
+const rowTemplate = document.querySelector("#task-row");
+
+function render() {
+  const rows = state.tasks.map((task) => {
+    const li = rowTemplate.content.firstElementChild.cloneNode(true);
+    li.dataset.id = String(task.id);
+    li.querySelector(".toggle").checked = task.done;
+    li.querySelector(".title").textContent = task.title;
+    return li;
+  });
+  list.replaceChildren(...rows);
+  const open = state.tasks.filter((t) => !t.done).length;
+  document.querySelector(".summary").textContent = `${open} of ${state.tasks.length} tasks left`;
+}
+
+const idOf = (element) => Number(element.closest("li[data-id]").dataset.id);
+
+list.addEventListener("change", (event) => {
+  if (!event.target.matches(".toggle")) return;
+  const task = state.tasks.find((t) => t.id === idOf(event.target));
+  task.done = event.target.checked;
+  render();
+});
+
+list.addEventListener("click", (event) => {
+  const button = event.target.closest(".delete");
+  if (!button) return;
+  state.tasks = state.tasks.filter((t) => t.id !== idOf(button));
+  render();
+});
+
+render();
+list.querySelector('[data-id="1"] .toggle').click();
+list.querySelector('[data-id="2"] .delete').click();
+list.querySelector('[data-id="3"] .title').click();
+console.log([...list.children].map((li) => `${li.querySelector(".toggle").checked ? "[x]" : "[ ]"} ${li.querySelector(".title").textContent}`));
+console.log(document.querySelector(".summary").textContent);
+</example>
+<output>
+</output>
+<p>The third click landed on the title text, inside the <code>&lt;label&gt;</code>. Clicking a label clicks its checkbox (another default action), which fired a <code>change</code> event and ticked task 3. The checkbox listener uses <code>change</code> rather than <code>click</code> because <code>change</code> fires for every way of ticking a box: mouse, label, or the space bar.</p>
+</section>
+
+<section>
+<h2 id="custom-events">Custom events</h2>
+<p>The shop's header shows a cart badge: "Cart (3)". The cart code could update the badge directly, but then the cart has to know about the header, the mini-cart, the analytics script and whatever gets added next year. Instead, the cart announces what happened with a <strong>custom event</strong>, and anything that cares listens for it. <code>new CustomEvent(type, { detail, bubbles })</code> creates one, and <code>detail</code> carries your data:</p>
+<file name="index.html" project="custom">
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Shop</title></head>
+<body>
+  <header>Cart (<span id="badge">0</span>)</header>
+  <section id="cart-widget"></section>
+</body>
+</html>
+</file>
+<example file="custom.js" project="custom" runtime="dom">
+const widget = document.querySelector("#cart-widget");
+const lines = new Map();
+
+function addToCart(sku, quantity) {
+  lines.set(sku, (lines.get(sku) ?? 0) + quantity);
+  const count = [...lines.values()].reduce((a, b) => a + b, 0);
+  widget.dispatchEvent(new CustomEvent("cart:change", { bubbles: true, detail: { sku, count } }));
+}
+
+document.addEventListener("cart:change", (event) => {
+  document.querySelector("#badge").textContent = String(event.detail.count);
+});
+document.addEventListener("cart:change", (event) => {
+  console.log(`analytics: ${event.detail.sku} added, cart has ${event.detail.count}`);
+});
+
+addToCart("rice-5kg", 2);
+addToCart("palm-oil-1l", 1);
+console.log("badge:", document.querySelector("#badge").textContent);
+</example>
+<output>
+</output>
+<p>The cart knows nothing about badges or analytics; they listen on <code>document</code> and hear the event because it bubbles. A namespace in the name, such as <code>cart:</code>, avoids clashing with built-in event names. <code>dispatchEvent</code> is <strong>synchronous</strong>: all listeners have run by the time it returns, which is why the badge was already up to date on the last line.</p>
+<p><code>EventTarget</code> is also a class you can extend, so your own objects can have events without any DOM element. It exists in Node.js too, so this style works on both sides:</p>
+<example file="event-target.js">
+class Cart extends EventTarget {
+  #lines = new Map();
+
+  add(sku, quantity) {
+    if (!Number.isInteger(quantity) || quantity < 1) throw new RangeError(`bad quantity ${quantity}`);
+    this.#lines.set(sku, (this.#lines.get(sku) ?? 0) + quantity);
+    this.dispatchEvent(new CustomEvent("change", { detail: { sku, quantity } }));
+  }
+}
+
+const cart = new Cart();
+cart.addEventListener("change", (event) => console.log("changed:", event.detail));
+cart.add("rice-5kg", 2);
+try {
+  cart.add("garri-2kg", 0);
+} catch (error) {
+  console.log(error.name, error.message);
+}
+</example>
+<output>
+</output>
+</section>
+
+<section>
+<h2 id="forms">Forms, input and change</h2>
+<p>Forms have their own events:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Event</th><th>Fires when</th></tr></thead>
+<tbody>
+<tr><td><code>input</code></td><td>the value changes, on every keystroke, paste or deletion</td></tr>
+<tr><td><code>change</code></td><td>the user commits a change: leaves a text field after editing it, ticks a box, picks an option</td></tr>
+<tr><td><code>submit</code></td><td>on the <code>&lt;form&gt;</code>, when it is about to be sent: Enter in a field, a click on a submit button, <code>form.requestSubmit()</code></td></tr>
+<tr><td><code>invalid</code></td><td>on a field whose value breaks its HTML rules (<code>required</code>, <code>min</code>, <code>maxlength</code>, <code>type="email"</code>) when the form is checked</td></tr>
+<tr><td><code>keydown</code> / <code>keyup</code></td><td>a key is pressed or released; <code>event.key</code> is <code>"Enter"</code>, <code>"Escape"</code>, <code>"a"</code>, …</td></tr>
+<tr><td><code>focusin</code> / <code>focusout</code></td><td>a field gains or loses focus (the bubbling versions of <code>focus</code> and <code>blur</code>)</td></tr>
+</tbody>
+</table></div>
+<p>Handle the <code>submit</code> event, not the button's <code>click</code>: <code>submit</code> also fires when the user presses Enter. Its default action sends the form and loads a new page, so a script that handles the form itself must call <code>preventDefault()</code>. <code>new FormData(form)</code> collects every named field:</p>
+<file name="index.html" project="checkout-form">
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Delivery</title></head>
+<body>
+  <form id="delivery" novalidate>
+    <label>Name <input name="name" required maxlength="80"></label>
+    <label>Phone <input name="phone" type="tel" required pattern="0[789][01][0-9]{8}"></label>
+    <label>Deliver on
+      <select name="slot">
+        <option value="morning">Morning</option>
+        <option value="evening">Evening</option>
+      </select>
+    </label>
+    <label><input type="checkbox" name="leaveAtGate"> Leave at the gate</label>
+    <button type="submit">Confirm delivery</button>
+  </form>
+</body>
+</html>
+</file>
+<example file="submit.js" project="checkout-form" runtime="dom">
+const form = document.querySelector("#delivery");
+
+form.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!form.checkValidity()) {
+    const bad = [...form.elements].filter((field) => field.name && !field.validity.valid);
+    console.log("fix these fields:", bad.map((field) => field.name));
+    return;
+  }
+  const data = Object.fromEntries(new FormData(form));
+  console.log("send to the server:", data);
+});
+
+form.elements.name.value = "Chioma Eze";
+form.elements.phone.value = "12345";
+form.requestSubmit();
+
+form.elements.phone.value = "08031234567";
+form.elements.slot.value = "evening";
+form.elements.leaveAtGate.checked = true;
+form.requestSubmit();
+</example>
+<output>
+</output>
+<p>Things to notice:</p>
+<ul>
+<li><code>novalidate</code> on the form turns off the browser's built-in error bubbles, so the code decides how to show errors. The rules in the HTML (<code>required</code>, <code>pattern</code>, <code>maxlength</code>) still work: <code>checkValidity()</code> and each field's <code>validity</code> use them.</li>
+<li><code>FormData</code> uses each field's <code>name</code>. An unticked checkbox is left out entirely, and a ticked one sends the string <code>"on"</code>. Every value is a string.</li>
+<li><code>form.requestSubmit()</code> behaves like the user submitting: it fires <code>submit</code>. The older <code>form.submit()</code> skips both the event and validation, and sends the form immediately.</li>
+</ul>
+<warn>Checks in the browser are for the user's convenience: quick feedback without a round trip. Anyone can skip them by sending a request straight to your server, so the server must check everything again. <a href="/learn/browser-networking">Networking from JavaScript</a> sends this data to a real API.</warn>
+</section>
+
+<section>
+<h2 id="debounce">Typing: a debounced search box</h2>
+<p>The shop has a search box. Searching on every <code>input</code> event means that typing "rice" sends four requests, for "r", "ri", "ric" and "rice", and the answers may even arrive in the wrong order. A <strong>debounce</strong> waits until the user has stopped typing for a moment, then acts once. It is a small closure (see <a href="/learn/js-closures">Closures</a>) around a timer:</p>
+<file name="index.html" project="search">
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Search</title></head>
+<body>
+  <label>Search products <input type="search" id="search" autocomplete="off"></label>
+  <ul id="results"></ul>
+</body>
+</html>
+</file>
+<example file="debounce.js" project="search" runtime="dom">
+function debounce(fn, waitMs) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), waitMs);
+  };
+}
+
+const products = ["Rice 5kg", "Rice 10kg", "Palm oil 1L", "Garri 2kg", "Brown beans 1kg"];
+const input = document.querySelector("#search");
+let searches = 0;
+
+const search = debounce((term) => {
+  searches++;
+  const found = products.filter((p) => p.toLowerCase().includes(term.toLowerCase()));
+  console.log(`search #${searches} for "${term}":`, found);
+}, 300);
+
+input.addEventListener("input", () => search(input.value.trim()));
+input.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    input.value = "";
+    console.log("cleared");
+  }
+});
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function type(text) {
+  for (const ch of text) {
+    input.value += ch;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(50);
+  }
+}
+
+await type("ric");
+await sleep(400);
+await type("e 1");
+await sleep(400);
+input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+console.log("input events: 6, searches:", searches);
+</example>
+<output>
+</output>
+<p>Six input events produced two searches: one when the user paused after "ric", and one after "rice 1". Each keystroke cleared the previous timer, so only the last one in a burst survives. Setting <code>input.value</code> from code does not fire any event, which is why the example dispatches <code>input</code> itself.</p>
+<p>A debounce reduces the number of requests, but the answers can still arrive in the wrong order, and a slow answer for "ric" can land after the answer for "rice 1". The fix is to cancel the previous request with an <code>AbortController</code> each time a new search starts; <a href="/learn/browser-networking#abort">Networking from JavaScript</a> adds it to this search box. A related tool, <strong>throttle</strong>, runs a function at most once per period while events keep coming, which suits scroll and resize handlers.</p>
+</section>
+
+<section>
+<h2 id="removing">Removing listeners</h2>
+<p>A listener stays until you remove it or its element is garbage-collected. On a long-lived page (a single-page app that swaps views without reloading) a view that adds listeners to <code>window</code> or <code>document</code> and never removes them keeps running its code, and keeps its data in memory, after it has left the screen. To remove a listener, <code>removeEventListener</code> needs the <em>same function</em> and the same <code>capture</code> setting:</p>
+<example file="remove.js" project="events" runtime="dom">
+const button = document.querySelector("#remove-rice");
+
+button.addEventListener("click", () => console.log("arrow listener"));
+button.removeEventListener("click", () => console.log("arrow listener"));
+
+function onRemove() {
+  console.log("named listener");
+}
+button.addEventListener("click", onRemove);
+button.removeEventListener("click", onRemove);
+
+button.addEventListener("click", () => console.log("once listener"), { once: true });
+
+const controller = new AbortController();
+const { signal } = controller;
+window.addEventListener("resize", () => console.log("resize"), { signal });
+document.addEventListener("keydown", () => console.log("keydown"), { signal });
+button.addEventListener("click", () => console.log("signal listener"), { signal });
+
+button.click();
+console.log("--- abort");
+controller.abort();
+button.click();
+document.dispatchEvent(new KeyboardEvent("keydown", { key: "n" }));
+</example>
+<output>
+</output>
+<p>The first removal did nothing: two arrow functions with the same code are two different objects. Keep a reference to any listener you want to remove. <code>{ once: true }</code> removes the listener after its first call. The <code>signal</code> option is the cleanest tool for a whole view: pass one <code>AbortSignal</code> to every listener it adds, and a single <code>controller.abort()</code> removes them all when the view closes. It is the same <code>AbortController</code> that cancels requests, so one abort can stop a view's listeners and its pending fetches together.</p>
+</section>
+
+<section>
+<h2 id="plan">Before you build: the shopping cart</h2>
+<p>Time to build the grocery shop's cart properly: products with "Add to cart" buttons, cart lines with minus, plus, a quantity box and Remove, a total in naira, a header badge, and a "Place order" button.</p>
+<reason title="What can go wrong in a cart?">
+<p>Think through these before reading the code:</p>
+<ul>
+<li>Lines are added and removed all the time. How many listeners do you need, and where do they go?</li>
+<li>A click can land on the button's text, on an icon inside it, or on empty space in the line. How does the code find the right product?</li>
+<li>The customer types into the quantity box: "0", "-3", "2.5", "abc", "999", or clears it. What should happen for each?</li>
+<li>Prices: how do you store ₦8,500 so that adding prices never gives <code>0.30000000000000004</code>-style errors?</li>
+<li>The network is slow and the customer clicks "Place order" twice. How many orders arrive?</li>
+<li>The header badge and the total must always match the lines. Who updates them?</li>
+</ul>
+<answer>
+<ul>
+<li>Three delegated listeners, all on elements that never get replaced: <code>click</code> on the products section, <code>click</code> on the cart list, <code>change</code> on the cart list. Plus <code>submit</code> on the form. Rendering replaces the lines, never the containers, so no listener is ever lost or added twice.</li>
+<li><code>event.target.closest("[data-action]")</code> finds the button, and <code>closest("[data-sku]")</code> finds the product or line. Everything else is ignored.</li>
+<li>Accept only whole numbers from 1 to 20 (<code>/^[0-9]+$/</code> and a range check). Anything else is refused with a message and the box is reset to the current quantity by re-rendering. Removing a line is a separate, explicit action.</li>
+<li>In <strong>kobo</strong>, as integers (₦8,500 is 850,000 kobo), and format only for display. <a href="/learn/logic-math">Mathematical reasoning</a> explains why.</li>
+<li>Without protection, two. Keep a <code>submitting</code> flag, disable the button while the order is being sent, and ignore submits while it is set. (The server should also refuse duplicates; that is idempotency, which <a href="/learn/api-idempotency">a later lesson</a> builds.)</li>
+<li>Nobody updates them directly. The cart changes its state, renders, and dispatches a <code>cart:change</code> event; the badge listens for it.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: a shopping cart</h2>
+<file name="index.html" project="shop">
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Oja Groceries</title></head>
+<body>
+  <header>Oja Groceries · Cart (<span id="badge">0</span>)</header>
+  <section id="products">
+    <article data-sku="rice-5kg"><h2>Rice 5kg</h2><button type="button" data-action="add">Add to cart</button></article>
+    <article data-sku="palm-oil-1l"><h2>Palm oil 1L</h2><button type="button" data-action="add">Add to cart</button></article>
+    <article data-sku="garri-2kg"><h2>Garri 2kg</h2><button type="button" data-action="add">Add to cart</button></article>
+  </section>
+  <form id="cart-form">
+    <ul id="cart"></ul>
+    <p id="message" role="status"></p>
+    <p id="total"></p>
+    <button type="submit" id="checkout">Place order</button>
+  </form>
+  <template id="cart-line">
+    <li class="line">
+      <span class="name"></span>
+      <button type="button" data-action="decrease" aria-label="One less">−</button>
+      <input class="qty" inputmode="numeric" aria-label="Quantity">
+      <button type="button" data-action="increase" aria-label="One more">+</button>
+      <span class="price"></span>
+      <button type="button" data-action="remove">Remove</button>
+    </li>
+  </template>
+</body>
+</html>
+</file>
+<example file="cart.js" project="shop" runtime="dom">
+const catalog = {
+  "rice-5kg": { name: "Rice 5kg", priceKobo: 850_000 },
+  "palm-oil-1l": { name: "Palm oil 1L", priceKobo: 230_000 },
+  "garri-2kg": { name: "Garri 2kg", priceKobo: 180_000 },
+};
+const MAX_QTY = 20;
+const lines = new Map();
+let submitting = false;
+
+const $ = (selector) => document.querySelector(selector);
+const naira = (kobo) => `₦${(kobo / 100).toLocaleString("en-NG")}`;
+const say = (text) => ($("#message").textContent = text);
+
+function render() {
+  const rows = [...lines].map(([sku, qty]) => {
+    const li = $("#cart-line").content.firstElementChild.cloneNode(true);
+    li.dataset.sku = sku;
+    li.querySelector(".name").textContent = catalog[sku].name;
+    li.querySelector(".qty").value = String(qty);
+    li.querySelector(".price").textContent = naira(catalog[sku].priceKobo * qty);
+    return li;
+  });
+  $("#cart").replaceChildren(...rows);
+  let count = 0;
+  let totalKobo = 0;
+  for (const [sku, qty] of lines) {
+    count += qty;
+    totalKobo += catalog[sku].priceKobo * qty;
+  }
+  $("#total").textContent = `Total: ${naira(totalKobo)}`;
+  $("#checkout").disabled = submitting || count === 0;
+  document.dispatchEvent(new CustomEvent("cart:change", { detail: { count, totalKobo } }));
+}
+
+function setQuantity(sku, qty) {
+  if (qty > MAX_QTY) return say(`At most ${MAX_QTY} of each item.`);
+  if (qty < 1) lines.delete(sku);
+  else lines.set(sku, qty);
+  say("");
+  render();
+}
+
+$("#products").addEventListener("click", (event) => {
+  const button = event.target.closest('[data-action="add"]');
+  if (!button) return;
+  const sku = button.closest("[data-sku]").dataset.sku;
+  setQuantity(sku, (lines.get(sku) ?? 0) + 1);
+});
+
+$("#cart").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-action]");
+  if (!button) return;
+  const sku = button.closest("[data-sku]").dataset.sku;
+  const qty = lines.get(sku);
+  if (button.dataset.action === "increase") setQuantity(sku, qty + 1);
+  if (button.dataset.action === "decrease") setQuantity(sku, qty - 1);
+  if (button.dataset.action === "remove") setQuantity(sku, 0);
+});
+
+$("#cart").addEventListener("change", (event) => {
+  if (!event.target.matches(".qty")) return;
+  const sku = event.target.closest("[data-sku]").dataset.sku;
+  const text = event.target.value.trim();
+  if (!/^[0-9]+$/.test(text) || Number(text) < 1) {
+    say(`"${text}" is not a quantity. Use Remove to take an item out.`);
+    return render();
+  }
+  setQuantity(sku, Number(text));
+});
+
+$("#cart-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (submitting || lines.size === 0) return console.log("submit ignored");
+  submitting = true;
+  render();
+  const order = Object.fromEntries(lines);
+  console.log("sending order:", JSON.stringify(order));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  lines.clear();
+  submitting = false;
+  say("Order placed. Thank you!");
+  render();
+});
+
+document.addEventListener("cart:change", (event) => {
+  $("#badge").textContent = String(event.detail.count);
+});
+
+// A customer's visit, click by click.
+const click = (selector) => $(selector).click();
+const typeQty = (sku, text) => {
+  const box = $(`#cart [data-sku="${sku}"] .qty`);
+  box.value = text;
+  box.dispatchEvent(new Event("change", { bubbles: true }));
+};
+const show = (label) =>
+  console.log(`${label}: ${[...lines].map(([s, q]) => `${s}×${q}`).join(", ") || "(empty)"} | ${$("#total").textContent} | badge ${$("#badge").textContent} | ${$("#message").textContent || "-"}`);
+
+render();
+click('[data-sku="rice-5kg"] [data-action="add"]');
+click('[data-sku="rice-5kg"] [data-action="add"]');
+click('[data-sku="palm-oil-1l"] h2');
+click('[data-sku="palm-oil-1l"] [data-action="add"]');
+show("added");
+click('#cart [data-sku="palm-oil-1l"] [data-action="increase"]');
+typeQty("rice-5kg", "abc");
+show("bad quantity");
+typeQty("rice-5kg", "25");
+show("too many");
+click('#cart [data-sku="palm-oil-1l"] [data-action="remove"]');
+show("removed");
+$("#cart-form").requestSubmit();
+$("#cart-form").requestSubmit();
+await new Promise((resolve) => setTimeout(resolve, 200));
+show("after checkout");
+</example>
+<output>
+</output>
+<p>Follow the output line by line:</p>
+<ul>
+<li>A click on the product's heading (<code>h2</code>) did nothing: the products listener found no <code>[data-action]</code> button and returned.</li>
+<li>"abc" and 25 were refused with a message, and <code>render()</code> put the real quantity back in the box, so the page never shows a number the cart does not have.</li>
+<li>The two quick submits produced one order. The second found <code>submitting</code> set and was ignored; a real user could not even click, because the button was disabled.</li>
+<li>The badge always matched the cart, although no cart code touches it. It only listens for <code>cart:change</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="failures">When event code fails</h2>
+<ul>
+<li><strong>Listeners on elements that get replaced.</strong> The bug that opened this lesson, and its twin: re-attaching listeners after every render so that old elements get two. Delegate to a container that is never replaced.</li>
+<li><strong><code>event.target</code> is a child of what you expected.</strong> <code>event.target.dataset.action</code> is <code>undefined</code> when the click landed on an icon inside the button. Use <code>closest</code>.</li>
+<li><strong>A form that reloads the page.</strong> Forgetting <code>preventDefault()</code> in a <code>submit</code> handler sends the form the old way: the page reloads, your state is gone, and the handler's asynchronous work is cut off. If a page "flashes" and forgets everything on submit, look here first.</li>
+<li><strong>A listener that cannot be removed.</strong> An inline arrow function passed to <code>addEventListener</code> can never be passed to <code>removeEventListener</code>. Keep a reference, use <code>{ once: true }</code>, or use a <code>signal</code>.</li>
+<li><strong><code>stopPropagation</code> breaking someone else.</strong> Outside-click handlers, analytics and shortcuts on ancestors stop working. Check <code>event.target</code> instead.</li>
+<li><strong>Listening to the wrong event.</strong> <code>click</code> on a checkbox misses keyboard toggles in some flows, and <code>keydown</code> on a text box misses paste and autofill. Use <code>change</code> for committed values and <code>input</code> for every edit.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="testing">Testing event code</h2>
+<p>Every example in this lesson is a test in disguise: it builds the page, fires events with <code>click()</code> and <code>dispatchEvent</code>, and reads the page back. That is how DOM tests work in Vitest with jsdom or happy-dom. Two things to know:</p>
+<ul>
+<li>A real click is several events: <code>pointerdown</code>, <code>mousedown</code>, focus changes, <code>pointerup</code>, <code>mouseup</code>, then <code>click</code>. <code>el.click()</code> fires only the last one. Testing Library's <code>user-event</code> package simulates the whole sequence, including typing character by character, which catches bugs like a handler listening to <code>keyup</code> when the code sets the value with <code>paste</code>.</li>
+<li>Test through the same doors a user uses: click buttons found by their text, type into fields found by their labels, submit the form. Then check what is on the page. Do not call <code>setQuantity</code> directly in a test of the cart; that would skip the delegation code, which is where the bugs live.</li>
+</ul>
+<p>For debounced code, tests either wait for real time, as the search example did, or use fake timers (<code>vi.useFakeTimers()</code> in Vitest), which let a test jump the clock forward 300 ms instantly.</p>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Keyboard and screen readers.</strong> A <code>&lt;button&gt;</code> fires <code>click</code> for Enter and Space too, so a click listener on a real button works for keyboard users automatically. A click listener on a <code>&lt;div&gt;</code> does not. Handle <code>submit</code>, not the submit button's <code>click</code>, so Enter works in forms.</li>
+<li><strong>Performance.</strong> One delegated listener beats a thousand individual ones in memory and setup time. Debounce input that triggers work, throttle scroll and resize handlers, and mark touch and wheel listeners <code>{ passive: true }</code> so scrolling never waits for your code.</li>
+<li><strong>Memory.</strong> Remove listeners on <code>window</code>, <code>document</code> and long-lived objects when a view goes away; an <code>AbortController</code> per view makes that one line.</li>
+<li><strong>Trust.</strong> Anything in the browser can be changed by the user: the <code>disabled</code> attribute, <code>isTrusted</code> checks, the prices in the page. The server must recompute the total from its own price list and validate every quantity.</li>
+<li><strong>Errors.</strong> An exception inside a listener does not stop other listeners or the page, but the action silently fails for the user. Report errors from listeners to your logging (a global <code>error</code> event listener on <code>window</code> catches uncaught ones).</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Close a menu on Escape or an outside click">
+<p>Write <code>openMenu(menu)</code> that shows a menu element and closes it (sets <code>hidden</code>) when the user presses Escape or clicks anywhere outside it, but not when they click inside it. Clean up both listeners when the menu closes, and do not use <code>stopPropagation</code>.</p>
+<solution>
+<example file="menu.js" project="events" runtime="dom">
+function openMenu(menu, onClose) {
+  menu.hidden = false;
+  const controller = new AbortController();
+  const close = (reason) => {
+    menu.hidden = true;
+    controller.abort();
+    onClose(reason);
+  };
+  document.addEventListener("click", (event) => {
+    if (!menu.contains(event.target)) close("outside click");
+  }, { signal: controller.signal });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close("Escape");
+  }, { signal: controller.signal });
+}
+
+const menu = document.querySelector("#cart");
+const log = (reason) => console.log("closed by", reason, "| hidden:", menu.hidden);
+
+openMenu(menu, log);
+document.querySelector("#remove-rice").click();
+console.log("after inside click, hidden:", menu.hidden);
+document.querySelector("#help").addEventListener("click", (e) => e.preventDefault());
+document.querySelector("#help").click();
+
+openMenu(menu, log);
+document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+document.querySelector("#help").click();
+</example>
+<output>
+</output>
+<p><code>menu.contains(event.target)</code> decides "inside or outside" without stopping anyone's event. The last click printed nothing: the abort removed both listeners when the menu closed, so a closed menu does not keep reacting.</p>
+</solution>
+</exercise>
+<exercise title="Write a throttle">
+<p>Write <code>throttle(fn, periodMs)</code>: the first call runs straight away, and further calls within <code>periodMs</code> of the last run are ignored. Test it with calls every 40 ms for 400 ms and a 100 ms period.</p>
+<solution>
+<example file="throttle.js">
+function throttle(fn, periodMs) {
+  let last = -Infinity;
+  return (...args) => {
+    const now = performance.now();
+    if (now - last < periodMs) return;
+    last = now;
+    fn(...args);
+  };
+}
+
+let runs = 0;
+const onScroll = throttle(() => runs++, 100);
+let calls = 0;
+await new Promise((resolve) => {
+  const timer = setInterval(() => {
+    calls++;
+    onScroll();
+    if (calls === 10) {
+      clearInterval(timer);
+      resolve();
+    }
+  }, 40);
+});
+console.log("calls:", calls, "runs between 3 and 5:", runs >= 3 && runs <= 5);
+</example>
+<output>
+</output>
+<p>Timers are never exact, so the test checks a range rather than an exact count. A debounce would have run once, after the calls stopped; a throttle runs regularly while they continue, which is what a scroll position indicator needs.</p>
+</solution>
+</exercise>
+<exercise title="A keyboard shortcut that respects typing">
+<p>Pressing <kbd>n</kbd> anywhere on the task page should focus the "new task" box, but not when the user is already typing in a text field (they want the letter n). Write the listener and test both cases.</p>
+<solution>
+<example file="shortcut.js" project="checkout-form" runtime="dom">
+const nameBox = document.querySelector('input[name="name"]');
+
+document.addEventListener("keydown", (event) => {
+  const typing = event.target.closest("input, textarea, select, [contenteditable]");
+  if (event.key !== "n" || typing || event.ctrlKey || event.metaKey || event.altKey) return;
+  event.preventDefault();
+  nameBox.focus();
+  console.log("shortcut: focused the name box");
+});
+
+document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true, cancelable: true }));
+console.log("active element:", document.activeElement.name);
+
+const phone = document.querySelector('input[name="phone"]');
+phone.focus();
+phone.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true, cancelable: true }));
+console.log("active element:", document.activeElement.name);
+</example>
+<output>
+</output>
+<p>The listener sits on <code>document</code> and uses the target to decide. <code>preventDefault()</code> stops the "n" from being typed into the box it just focused. Ignoring presses with <kbd>Ctrl</kbd>, <kbd>Cmd</kbd> or <kbd>Alt</kbd> keeps browser shortcuts working.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Summary</h2>
+<ul>
+<li><code>addEventListener(type, listener, options)</code> adds any number of listeners. The event object says what happened: <code>type</code>, <code>target</code> (where it happened), <code>currentTarget</code> (whose listener is running), <code>isTrusted</code>.</li>
+<li>Events travel down from <code>window</code> to the target (capture), then back up (bubble). Normal listeners run while bubbling. Avoid <code>stopPropagation</code>; decide with <code>event.target</code> instead.</li>
+<li><code>preventDefault()</code> cancels the browser's default action (navigate, tick, submit); it does not stop propagation.</li>
+<li>Event delegation: one listener on a container, <code>event.target.closest(selector)</code> to find the element, <code>dataset</code> to find the data. It covers elements added later.</li>
+<li>Custom events (<code>CustomEvent</code> with <code>detail</code>, or your own <code>EventTarget</code> subclass) let parts of a page react to each other without knowing about each other. <code>dispatchEvent</code> runs the listeners synchronously.</li>
+<li>Handle <code>submit</code> with <code>preventDefault()</code> and <code>FormData</code>; use <code>input</code> for every edit, <code>change</code> for committed values; debounce work triggered by typing.</li>
+<li>Remove listeners with the same function reference, <code>{ once: true }</code>, or an <code>AbortSignal</code>.</li>
+</ul>
+<p>Next: <a href="/learn/browser-apis">Browser APIs</a>: fetch, storage, URLs, the History API, timers and workers, the other tools the browser gives your code.</p>
+</section>

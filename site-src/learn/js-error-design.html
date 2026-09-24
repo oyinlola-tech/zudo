@@ -1,0 +1,983 @@
+---
+title: Designing error handling
+description: Decide which layer handles each error and which lets it pass, chain causes, collect failures with AggregateError, and build a payment flow that never loses an error.
+minutes: 55
+youNeed: Handling errors, Asynchronous JavaScript, Functional JavaScript and Generators
+youBuild: A layered payment flow (gateway client, payment service, order service, HTTP boundary) with retries, compensation, cause chains and one log line per failure, tested against a fake gateway
+keywords: javascript error handling design, error propagation, error cause, cause chain, AggregateError, Error.isError, recoverable errors, unrecoverable errors, operational errors, programmer errors, retry, idempotency, compensation, refund, error boundary, swallowed errors, finally return, unhandledRejection, uncaughtException, log once
+objectives: Classify an error as expected, environmental or a bug, and decide whether it is recoverable | Choose for each layer whether to handle, translate or let an error propagate, and log it exactly once | Wrap errors with { cause } at layer boundaries and read a cause chain | Report several failures at once with AggregateError | Place error boundaries at the edges of a program: requests, jobs, the process | Recognise every way an error gets swallowed, and test error paths
+---
+<section>
+<h2 id="problem">The order that was confirmed but never paid</h2>
+<p><a href="/learn/js-errors">Handling errors</a> taught the tools: <code>throw</code>, <code>try</code>/<code>catch</code>/<code>finally</code>, error classes, <code>cause</code>, and turning errors into safe API responses. Tools are not a design. Here is what happens when every layer of a real checkout uses them with good intentions and no plan:</p>
+<example file="problem.js">
+const logs = [];
+const log = (line) => logs.push(line);
+
+function gatewayCharge(orderId, kobo) {
+  throw new Error("ETIMEDOUT: gateway did not answer in 10s");
+}
+
+function chargeCard(orderId, kobo) {
+  try {
+    return gatewayCharge(orderId, kobo);
+  } catch (error) {
+    log(`chargeCard failed: ${error.message}`);
+    return null;
+  }
+}
+
+function placeOrder(order) {
+  try {
+    const charge = chargeCard(order.id, order.totalKobo);
+    return { ...order, status: "confirmed", chargeId: charge?.id ?? "unknown" };
+  } catch (error) {
+    log(`placeOrder failed: ${error.message}`);
+    throw new Error("Order failed");
+  }
+}
+
+console.log(placeOrder({ id: "ORD-7", totalKobo: 2327850 }));
+console.log(logs);
+</example>
+<output>
+{
+  id: 'ORD-7',
+  totalKobo: 2327850,
+  status: 'confirmed',
+  chargeId: 'unknown'
+}
+[ 'chargeCard failed: ETIMEDOUT: gateway did not answer in 10s' ]
+</output>
+<p>The customer sees "confirmed", the warehouse ships ₦23,278.50 of goods, and no money was taken. Every piece of this code "handles errors", and together they produced the worst possible outcome:</p>
+<ul>
+<li><code>chargeCard</code> caught an error it could do nothing about, logged it, and returned <code>null</code>. The error was <strong>swallowed</strong>: turned into an ordinary-looking value that the caller did not check.</li>
+<li><code>placeOrder</code>'s <code>catch</code> never ran, because nothing was thrown any more. If it had run, it would have replaced the real reason with "Order failed" and thrown away the original error.</li>
+<li>A timeout is also ambiguous: the gateway may have charged the card and failed to answer. Nobody asked that question.</li>
+</ul>
+<p>Error handling is a design problem: <em>for each kind of failure, which layer can actually do something about it, and what should every other layer do?</em> This lesson gives you a way to answer that, the language features that support it (<code>cause</code> chains, <code>AggregateError</code>, boundaries), and ends with this payment flow rebuilt so that no error can be lost.</p>
+</section>
+
+<section>
+<h2 id="kinds">Three kinds of failure</h2>
+<p>Before deciding who handles an error, decide what kind it is. A useful classification has three groups, and they call for completely different responses:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Kind</th><th>Examples</th><th>Who can do something</th><th>Typical response</th></tr></thead>
+<tbody>
+<tr><td><strong>Expected outcomes</strong> (sometimes called operational or domain errors)</td><td>Card declined, insufficient stock, invalid input, order not found, daily limit reached</td><td>The user, or the business logic</td><td>Tell the user precisely; offer an alternative. Not a bug; do not page anyone.</td></tr>
+<tr><td><strong>Environment failures</strong></td><td>Network timeout, database down, rate limited by a provider, disk full</td><td>Retry logic, fallbacks, operators</td><td>Retry if safe, fall back if possible, otherwise fail the request cleanly and alert if it persists.</td></tr>
+<tr><td><strong>Bugs</strong> (programmer errors)</td><td><code>TypeError: Cannot read properties of undefined</code>, a broken invariant, calling a function with the wrong arguments</td><td>A developer, by changing the code</td><td>Do not try to recover. Fail the request, log everything, fix the code.</td></tr>
+</tbody>
+</table></div>
+<p>This also answers "is it <strong>recoverable</strong>?". An expected outcome is recoverable by design: the program has a planned path for it. An environment failure <em>may</em> be recoverable by waiting or trying elsewhere. A bug is not recoverable by the running program: the code's assumptions are wrong, so any "recovery" code is running on assumptions that are also wrong. That is why catching a <code>TypeError</code> and carrying on is almost never correct.</p>
+<h3>Make the kind visible in the type</h3>
+<p>Code can only treat kinds differently if it can tell them apart. Give expected outcomes and environment failures their own classes (or a machine-readable <code>code</code>), and let bugs stay as the built-in <code>TypeError</code>, <code>RangeError</code> and friends. One common convention is a flag that says whether retrying could help:</p>
+<example file="kinds.js" project="kinds">
+export class AppError extends Error {
+  constructor(message, { code, retryable = false, cause } = {}) {
+    super(message, { cause });
+    this.name = new.target.name;
+    this.code = code;
+    this.retryable = retryable;
+  }
+}
+export class CardDeclinedError extends AppError {
+  constructor(reason) {
+    super(`card declined: ${reason}`, { code: "CARD_DECLINED" });
+    this.reason = reason;
+  }
+}
+export class GatewayUnavailableError extends AppError {
+  constructor(message, { cause } = {}) {
+    super(message, { code: "GATEWAY_UNAVAILABLE", retryable: true, cause });
+  }
+}
+
+export function kindOf(error) {
+  if (error instanceof AppError) return error.retryable ? "environment" : "expected";
+  return "bug";
+}
+</example>
+<example file="use-kinds.js" project="kinds">
+import { CardDeclinedError, GatewayUnavailableError, kindOf } from "./kinds.js";
+
+const failures = [
+  new CardDeclinedError("insufficient funds"),
+  new GatewayUnavailableError("gateway returned 503"),
+  (() => { try { null.id; } catch (error) { return error; } })(),
+];
+
+for (const error of failures) console.log(kindOf(error).padEnd(12), `${error.name}: ${error.message}`);
+</example>
+<output>
+expected     CardDeclinedError: card declined: insufficient funds
+environment  GatewayUnavailableError: gateway returned 503
+bug          TypeError: Cannot read properties of null (reading 'id')
+</output>
+<p>Anything that is not one of your deliberate error classes is treated as a bug by default. That is the safe default: an unknown error must never be mistaken for "card declined" and shown to a customer, and never be retried blindly.</p>
+</section>
+
+<section>
+<h2 id="propagation">Handle, translate or let it pass</h2>
+<p>When a function calls something that can throw, it has exactly three honest choices:</p>
+<ol>
+<li><strong>Handle it</strong>: the function knows a correct way to continue. A retry succeeded; a cached exchange rate is good enough; "not found" means "create a new cart". After handling, the error is gone, and the result must be genuinely correct.</li>
+<li><strong>Translate it</strong>: the function cannot recover, but it can say what the failure means <em>at its level</em>. A payment service turns "HTTP 503 from gateway" into <code>GatewayUnavailableError</code>, keeping the original as the <code>cause</code>.</li>
+<li><strong>Let it pass</strong>: do nothing. The error keeps unwinding the call stack to a caller that can handle or translate it. This is the default, and it is correct far more often than beginners expect.</li>
+</ol>
+<p>What is not on the list: catching an error in order to log it and then continue as if nothing happened (swallowing), and catching, logging and re-throwing in every layer. The second one is not dangerous, but it turns one failure into a pile of duplicate log lines that hide the order of events:</p>
+<example file="log-once.js">
+const logs = [];
+
+function gateway() {
+  throw new Error("gateway returned 503");
+}
+function payments() {
+  try {
+    return gateway();
+  } catch (error) {
+    logs.push(`payments: ${error.message}`);
+    throw error;
+  }
+}
+function orders() {
+  try {
+    return payments();
+  } catch (error) {
+    logs.push(`orders: ${error.message}`);
+    throw error;
+  }
+}
+function handleRequest() {
+  try {
+    return orders();
+  } catch (error) {
+    logs.push(`request failed: ${error.message}`);
+    return { status: 503 };
+  }
+}
+
+console.log(handleRequest());
+console.log(logs);
+</example>
+<output>
+{ status: 503 }
+[
+  'payments: gateway returned 503',
+  'orders: gateway returned 503',
+  'request failed: gateway returned 503'
+]
+</output>
+<p>Three log lines for one failure. In a busy service, an alert counting "errors per minute" now fires three times too often, and anyone reading the logs has to work out that these are the same event. The rule: <strong>log an error once, at the place that handles it</strong>. Layers in between either translate it (adding information through <code>cause</code>, not through extra log lines) or leave it alone. The <code>try</code>/<code>catch</code> in <code>payments</code> and <code>orders</code> above can simply be deleted.</p>
+<figure class="lx-diagram">
+<pre>
+  HTTP boundary   catches everything · logs once · maps to a response
+       ▲
+  order service   handles: stock conflicts, compensation (refund) · lets the rest pass
+       ▲
+  payment service handles: retry transient failures · translates gateway errors
+       ▲
+  gateway client  translates: HTTP status and network errors → typed errors
+       ▲
+  fetch / socket  throws low-level errors (ETIMEDOUT, ECONNRESET, 5xx)
+</pre>
+<figcaption>Each layer handles only what it can act on. Errors travel upward; logging happens at the top.</figcaption>
+</figure>
+</section>
+
+<section>
+<h2 id="cause">Cause chains: context without losing detail</h2>
+<p>Translating an error must never throw away the original: it is the detail a developer needs to find the root. The <code>cause</code> option (introduced in <a href="/learn/js-errors#error-objects">Handling errors</a>) links the new error to the old one, and each layer can add its own link. The result is a <strong>cause chain</strong>: the top says what failed in business terms, the bottom says what actually broke.</p>
+<example file="cause-chain.js">
+class GatewayUnavailableError extends Error {
+  name = "GatewayUnavailableError";
+}
+class PaymentFailedError extends Error {
+  name = "PaymentFailedError";
+}
+
+function httpPost() {
+  const error = new Error("connect ECONNREFUSED 10.0.4.2:443");
+  error.code = "ECONNREFUSED";
+  throw error;
+}
+function chargeViaGateway(orderId) {
+  try {
+    return httpPost();
+  } catch (error) {
+    throw new GatewayUnavailableError(`gateway unreachable while charging ${orderId}`, { cause: error });
+  }
+}
+function payForOrder(orderId) {
+  try {
+    return chargeViaGateway(orderId);
+  } catch (error) {
+    throw new PaymentFailedError(`payment for ${orderId} could not be completed`, { cause: error });
+  }
+}
+
+function describeChain(error) {
+  const lines = [];
+  for (let current = error, depth = 0; current && depth < 10; current = current.cause, depth++) {
+    const code = current.code ? ` [${current.code}]` : "";
+    lines.push(`${"  ".repeat(depth)}${depth ? "caused by " : ""}${current.name}${code}: ${current.message}`);
+  }
+  return lines.join("\n");
+}
+
+try {
+  payForOrder("ORD-7");
+} catch (error) {
+  console.log(describeChain(error));
+  console.log("root is a network error:", error.cause.cause.code === "ECONNREFUSED");
+}
+</example>
+<output>
+PaymentFailedError: payment for ORD-7 could not be completed
+  caused by GatewayUnavailableError: gateway unreachable while charging ORD-7
+    caused by Error [ECONNREFUSED]: connect ECONNREFUSED 10.0.4.2:443
+root is a network error: true
+</output>
+<p>Each layer added a sentence in its own vocabulary (orders, gateway, network) and kept everything below it. <code>describeChain</code> is the kind of helper a logger uses to print the whole chain in one log entry; the depth limit protects against a chain that loops back on itself. (<code>console.log(error)</code> in Node also prints causes, as <code>[cause]:</code> blocks under the stack trace.)</p>
+<p>Two design points:</p>
+<ul>
+<li><strong>Translate at boundaries, not everywhere.</strong> A good place to wrap is where the vocabulary changes: network → gateway, gateway → payment. Wrapping in every function adds links that say nothing new.</li>
+<li><strong>Keep machine-readable facts.</strong> Messages are for people. Code that decides (retry? which HTTP status?) should read <code>name</code>, a <code>code</code> or a flag like <code>retryable</code>, from the top error or by searching the chain. Parsing message text breaks the day someone rewords it.</li>
+</ul>
+<h3>Things that are thrown but are not errors</h3>
+<p>JavaScript can throw any value, and some libraries do throw strings or plain objects. A catch block therefore cannot assume it received an <code>Error</code> (TypeScript types the <code>catch</code> variable as <code>unknown</code> for this reason). Normalise at the edge where foreign code is called. <code>Error.isError(value)</code> (ES2026, available in Node.js 24 and current browsers) checks for a real error object, even one created in another realm such as an iframe or a <code>vm</code> context, where <code>instanceof Error</code> fails:</p>
+<example file="normalise.js">
+function toError(value) {
+  if (Error.isError(value)) return value;
+  return new Error(`non-error thrown: ${JSON.stringify(value)}`, { cause: value });
+}
+
+const thrown = [new TypeError("bad"), "insufficient funds", { code: 51 }, undefined];
+for (const value of thrown) {
+  try {
+    throw value;
+  } catch (caught) {
+    const error = toError(caught);
+    console.log(`${error.name}: ${error.message}`);
+  }
+}
+console.log(Error.isError({ name: "Error", message: "fake", stack: "" }));
+</example>
+<output>
+TypeError: bad
+Error: non-error thrown: "insufficient funds"
+Error: non-error thrown: {"code":51}
+Error: non-error thrown: undefined
+false
+</output>
+</section>
+
+<section>
+<h2 id="aggregate">Several failures at once: AggregateError</h2>
+<p>Some operations fail in more than one way at the same time. A cart can have three invalid lines; a batch of vendor payouts can have two failures among fifty successes; a fallback can fail after the main path already failed. Reporting only the first failure hides the others, and the user fixes one line, submits, and is told about the next. <code>AggregateError</code> is the built-in error that carries a list: <code>new AggregateError(errors, message, { cause })</code>, with the list in <code>.errors</code>.</p>
+<h3>Collecting validation problems</h3>
+<example file="aggregate-validate.js">
+class InvalidLineError extends Error {
+  name = "InvalidLineError";
+  constructor(sku, problem) {
+    super(`${sku}: ${problem}`);
+    this.sku = sku;
+  }
+}
+
+function validateCart(lines, stock) {
+  const problems = [];
+  for (const line of lines) {
+    if (!(line.sku in stock)) problems.push(new InvalidLineError(line.sku, "unknown product"));
+    else if (!Number.isInteger(line.qty) || line.qty < 1) problems.push(new InvalidLineError(line.sku, `bad quantity ${line.qty}`));
+    else if (line.qty > stock[line.sku]) problems.push(new InvalidLineError(line.sku, `only ${stock[line.sku]} left`));
+  }
+  if (problems.length > 0) throw new AggregateError(problems, `${problems.length} cart lines are invalid`);
+  return lines;
+}
+
+try {
+  validateCart(
+    [{ sku: "RICE-5", qty: 2 }, { sku: "TV-99", qty: 1 }, { sku: "OIL-1", qty: 0 }, { sku: "SALT", qty: 9 }],
+    { "RICE-5": 10, "OIL-1": 3, SALT: 4 },
+  );
+} catch (error) {
+  console.log(error.name, "-", error.message);
+  for (const problem of error.errors) console.log("  ", problem.message);
+  console.log(error.errors.map((problem) => problem.sku));
+}
+</example>
+<output>
+AggregateError - 3 cart lines are invalid
+   TV-99: unknown product
+   OIL-1: bad quantity 0
+   SALT: only 4 left
+[ 'TV-99', 'OIL-1', 'SALT' ]
+</output>
+<p>The customer sees every problem at once, and each item in <code>.errors</code> keeps its own type and fields (the <code>sku</code>), so an API can return a structured list.</p>
+<h3>Partial failure in a batch</h3>
+<p>Paying fifty vendors at the end of the day is fifty independent operations. One failure must not stop the other forty-nine, and must not be lost either. <code>Promise.allSettled</code> (<a href="/learn/js-async#combinators">Asynchronous JavaScript</a>) waits for all of them; the failures are then gathered into one <code>AggregateError</code> for the caller:</p>
+<example file="payouts.js">
+async function payVendor(vendor) {
+  await null;
+  if (vendor.account === null) throw new Error(`${vendor.name}: no bank account on file`);
+  if (vendor.kobo > 50000000) throw new Error(`${vendor.name}: above the single-transfer limit`);
+  return `${vendor.name} paid ₦${vendor.kobo / 100}`;
+}
+
+async function payAll(vendors) {
+  const results = await Promise.allSettled(vendors.map(payVendor));
+  const paid = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
+  const failures = results.filter((r) => r.status === "rejected").map((r) => r.reason);
+  if (failures.length > 0) {
+    const error = new AggregateError(failures, `${failures.length} of ${vendors.length} payouts failed`);
+    error.paid = paid;
+    throw error;
+  }
+  return paid;
+}
+
+try {
+  await payAll([
+    { name: "Mama Put Foods", account: "0123", kobo: 1500000 },
+    { name: "Ade Prints", account: null, kobo: 300000 },
+    { name: "Kano Grains", account: "0456", kobo: 90000000 },
+    { name: "Eko Oils", account: "0789", kobo: 720000 },
+  ]);
+} catch (error) {
+  console.log(error.message);
+  console.log("paid:", error.paid);
+  console.log("failed:", error.errors.map((e) => e.message));
+}
+</example>
+<output>
+2 of 4 payouts failed
+paid: [ 'Mama Put Foods paid ₦15000', 'Eko Oils paid ₦7200' ]
+failed: [
+  'Ade Prints: no bank account on file',
+  'Kano Grains: above the single-transfer limit'
+]
+</output>
+<p>The caller learns both halves: which vendors were paid (so they are not paid twice when the batch is retried) and why each failure happened. <code>Promise.any</code>, which succeeds when any promise succeeds, uses <code>AggregateError</code> the same way when <em>all</em> of them fail.</p>
+<warn>Do not use <code>AggregateError</code> just to throw two errors "to be safe". It is for genuinely independent failures that the caller needs to see together. For one failure with a history, use a <code>cause</code> chain.</warn>
+</section>
+
+<section>
+<h2 id="recover">Recovering correctly: retry, fallback, compensate</h2>
+<p>Handling an error means the program continues <em>correctly</em>. Three recovery strategies cover most real cases, and each has a condition that must be true first.</p>
+<h3>Retry: only if trying again is safe</h3>
+<p>A retry is safe when the operation is <strong>idempotent</strong>: doing it twice has the same effect as doing it once. Reading an order is idempotent. Charging a card is not, unless you make it so: payment gateways accept an <strong>idempotency key</strong>, a unique id for the <em>intent</em> ("charge for ORD-7"), and will not charge twice for the same key. That also resolves the ambiguous timeout from the first section: retrying with the same key either completes the charge or returns the one that already happened. And only retry errors marked as retryable; retrying "card declined" just annoys the bank.</p>
+<h3>Fallback: only if the substitute is acceptable</h3>
+<p>If the live exchange rate service is down, a rate cached ten minutes ago may be fine for showing prices, and unacceptable for settling a payment. A fallback is a business decision, and it must be visible: log that it happened, and never fall back silently from an error that means "your code is wrong".</p>
+<h3>Compensate: undo what already happened</h3>
+<p>Some operations cannot be wrapped in one database transaction because they span systems. If the card was charged and then saving the order fails, the program cannot "un-throw". It must <strong>compensate</strong>: run an action that reverses the first step, a refund. If the compensation also fails, both failures matter, and a person must be told.</p>
+<example file="compensate.js">
+async function checkout({ charge, refund, saveOrder }, order) {
+  const payment = await charge(order);
+  try {
+    return await saveOrder({ ...order, chargeId: payment.id });
+  } catch (saveError) {
+    try {
+      await refund(payment.id);
+    } catch (refundError) {
+      throw new AggregateError([saveError, refundError], `order ${order.id} not saved and refund of ${payment.id} failed: manual action needed`);
+    }
+    throw new Error(`order ${order.id} not saved; payment ${payment.id} refunded`, { cause: saveError });
+  }
+}
+
+const order = { id: "ORD-7", totalKobo: 2327850 };
+const charge = async () => ({ id: "ch_881" });
+const failingSave = async () => { throw new Error("database: connection lost"); };
+
+for (const refund of [async () => {}, async () => { throw new Error("gateway: refund window closed"); }]) {
+  try {
+    await checkout({ charge, refund, saveOrder: failingSave }, order);
+  } catch (error) {
+    console.log(`${error.name}: ${error.message}`);
+    const inner = error instanceof AggregateError ? error.errors : [error.cause];
+    for (const e of inner) console.log("   -", e.message);
+  }
+}
+</example>
+<output>
+Error: order ORD-7 not saved; payment ch_881 refunded
+   - database: connection lost
+AggregateError: order ORD-7 not saved and refund of ch_881 failed: manual action needed
+   - database: connection lost
+   - gateway: refund window closed
+</output>
+<p>In both cases the error still propagates: compensation is cleanup, not recovery. The request fails either way; what compensation changes is whether the customer keeps their money. The second case produces an error an operator must act on, which is exactly what the <code>AggregateError</code> carries.</p>
+</section>
+
+<section>
+<h2 id="swallowing">How errors get swallowed</h2>
+<p>A swallowed error is worse than a crash: the program keeps running on a false assumption, and there is nothing in the logs to explain the damage later. Most swallowing is accidental. Here are the common forms in one file:</p>
+<example file="swallowing.js">
+function emptyCatch() {
+  try {
+    JSON.parse("{ broken");
+  } catch {}
+  return "carried on";
+}
+
+function returnInFinally() {
+  try {
+    throw new Error("charge failed");
+  } finally {
+    return "finally won";
+  }
+}
+
+async function forgottenAwait() {
+  try {
+    return Promise.reject(new Error("saved nothing"));
+  } catch {
+    return "caught";
+  }
+}
+
+async function awaited() {
+  try {
+    return await Promise.reject(new Error("saved nothing"));
+  } catch (error) {
+    return `caught: ${error.message}`;
+  }
+}
+
+console.log(emptyCatch());
+console.log(returnInFinally());
+forgottenAwait().then(
+  (value) => console.log("forgottenAwait resolved:", value),
+  (error) => console.log("forgottenAwait rejected past its own catch:", error.message),
+);
+console.log(await awaited());
+const settled = await Promise.resolve().then(() => { throw new Error("background job failed"); }).catch(() => {});
+console.log("fire-and-forget .catch(() => {}):", settled);
+</example>
+<output>
+carried on
+finally won
+caught: saved nothing
+forgottenAwait rejected past its own catch: saved nothing
+fire-and-forget .catch(() => {}): undefined
+</output>
+<ul>
+<li><strong>Empty <code>catch {}</code></strong>: the error is gone. If ignoring a failure really is correct (a best-effort cache write), say so in a comment and at least count it in a metric.</li>
+<li><strong><code>return</code> in <code>finally</code></strong>: a <code>return</code> (or <code>throw</code>) in <code>finally</code> replaces whatever the <code>try</code> was doing, including a thrown error. Use <code>finally</code> only for cleanup.</li>
+<li><strong><code>return promise</code> without <code>await</code> inside <code>try</code></strong>: the function returns the promise before it rejects, so the rejection happens outside the <code>try</code>. <code>return await</code> keeps it inside. Here the error still reached the caller, but the function's own <code>catch</code>, which might have translated it, never ran.</li>
+<li><strong><code>.catch(() =&gt; {})</code></strong> turns a rejection into <code>undefined</code>, the promise version of an empty <code>catch</code>.</li>
+<li><strong>Returning <code>null</code> or <code>false</code> for failure</strong>, as <code>chargeCard</code> did at the start: callers who forget to check carry on with a value that means "failed" as if it meant "succeeded".</li>
+</ul>
+<h3>Result values: when failure is normal</h3>
+<p>Returning a value for failure is not wrong in itself; the problem is a value that <em>looks like</em> success. When a failure is a normal, expected outcome that every caller must handle, a <strong>result object</strong> makes that explicit: <code>{ ok: true, value }</code> or <code>{ ok: false, error }</code>. The transfer limiter in <a href="/learn/js-closures#build">Closures in depth</a> did exactly this. The rule of thumb:</p>
+<ul>
+<li>Return a result when the caller is expected to branch on the outcome every time (validation of a form, a limiter, "is this coupon valid?").</li>
+<li>Throw when the caller usually cannot continue and the error should travel up to someone who can (a failed charge, a lost database connection, a bug).</li>
+</ul>
+</section>
+
+<section>
+<h2 id="boundaries">Error boundaries at the edges</h2>
+<p>Letting errors propagate only works if something at the top catches them. An <strong>error boundary</strong> is that something: a place, at the edge of a unit of work, that catches <em>everything</em>, logs it once with its full cause chain, turns it into the right outcome for that edge, and lets the rest of the program keep running. Each kind of program has its own edges:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Edge</th><th>Unit of work</th><th>What the boundary does</th></tr></thead>
+<tbody>
+<tr><td>HTTP handler</td><td>One request</td><td>Map expected errors to 4xx with a safe message; everything else to a generic 500. Log once. (The calculator API in <a href="/learn/js-errors#build">Handling errors</a> is one.)</td></tr>
+<tr><td>Job or message worker</td><td>One job</td><td>Mark the job failed or schedule a retry; the worker keeps taking jobs. One bad job must not stop the queue.</td></tr>
+<tr><td>Scheduled task, CLI command</td><td>One run</td><td>Log, set a non-zero exit code, clean up.</td></tr>
+<tr><td>The process</td><td>Everything</td><td>Last resort for errors that escaped every other boundary: log, then shut down cleanly and let a supervisor restart the process.</td></tr>
+</tbody>
+</table></div>
+<p>A job worker boundary, where each job is isolated from the others:</p>
+<example file="worker-boundary.js">
+const jobs = [
+  { id: 1, type: "send-receipt", orderId: "ORD-7" },
+  { id: 2, type: "send-receipt", orderId: null },
+  { id: 3, type: "resize-image", orderId: "ORD-8" },
+  { id: 4, type: "send-receipt", orderId: "ORD-9" },
+];
+
+const handlers = {
+  "send-receipt": (job) => `receipt for ${job.orderId.toUpperCase()} sent`,
+};
+
+function runJob(job) {
+  const handler = handlers[job.type];
+  if (!handler) throw new Error(`no handler for job type ${job.type}`);
+  return handler(job);
+}
+
+const summary = { done: 0, failed: 0 };
+for (const job of jobs) {
+  try {
+    console.log(`job ${job.id}: ${runJob(job)}`);
+    summary.done += 1;
+  } catch (error) {
+    summary.failed += 1;
+    console.log(`job ${job.id} FAILED (${error.name}: ${error.message})`);
+  }
+}
+console.log(summary);
+</example>
+<output>
+job 1: receipt for ORD-7 sent
+job 2 FAILED (TypeError: Cannot read properties of null (reading 'toUpperCase'))
+job 3 FAILED (Error: no handler for job type resize-image)
+job 4: receipt for ORD-9 sent
+{ done: 2, failed: 2 }
+</output>
+<p>Job 2 hit a bug and job 3 hit a configuration gap, yet jobs 1 and 4 were done. Without a boundary per job, the first failure would have stopped the loop, and every job after it would have waited for a restart. <code>@zudojs/queue</code> and <code>@zudojs/http</code> put these boundaries in for you; knowing why they exist tells you not to add a second, swallowing layer of your own inside them.</p>
+<h3>The process boundary in Node</h3>
+<p>An error that escapes everything, such as a rejected promise nobody awaited, reaches the process. Node's default for an unhandled rejection is to print it and exit with a non-zero code, which is the right behaviour: the process is in an unknown state. You can hook in to log it properly first, but not to "keep going":</p>
+<example file="process-boundary.js" browser="no">
+process.on("unhandledRejection", (reason) => {
+  console.log(`fatal: unhandled rejection: ${reason.message}`);
+  process.exitCode = 1;
+});
+
+async function nightlyReport() {
+  throw new Error("report query timed out");
+}
+
+nightlyReport();
+console.log("main code finished");
+</example>
+<output>
+main code finished
+fatal: unhandled rejection: report query timed out
+</output>
+<p>A real service would also stop accepting requests, finish the ones in flight, close connections and exit, which is the job of a lifecycle manager (<a href="/learn/zudo-runtime">the ZudoJS runtime</a> handles shutdown signals this way). The process boundary is a safety net for bugs, not a place to handle errors that belong to a request or a job.</p>
+</section>
+
+<section>
+<h2 id="reason">Before you build: an error policy for payments</h2>
+<reason title="Which layer handles which payment error?">
+<p>You will rebuild the checkout from the first section with four layers: a <strong>gateway client</strong> that talks HTTP to the payment provider, a <strong>payment service</strong>, an <strong>order service</strong> and an <strong>HTTP boundary</strong>. For each failure below, decide which layer handles it, what the others do, and what the customer sees:</p>
+<ul>
+<li>The gateway answers <code>402</code> with <code>{ "reason": "insufficient_funds" }</code>.</li>
+<li>The gateway times out. Did the charge happen?</li>
+<li>The gateway answers <code>503</code> three times in a row.</li>
+<li>The charge succeeds, then saving the order fails.</li>
+<li>The gateway returns a response without the <code>id</code> field the code expects.</li>
+</ul>
+<answer>
+<ul>
+<li><strong>Declined (402)</strong>: an expected outcome. The gateway client translates it into <code>CardDeclinedError</code> with the reason. Payment and order services let it pass. The HTTP boundary maps it to a 402 with a helpful message ("Your card was declined: insufficient funds"). Nothing is retried; the log line is informational, not an alarm.</li>
+<li><strong>Timeout</strong>: an environment failure with an unknown outcome. The gateway client translates it into a retryable <code>GatewayUnavailableError</code>. The payment service retries <em>with the same idempotency key</em>, so if the first attempt did charge, the retry returns that charge instead of charging again.</li>
+<li><strong>503 three times</strong>: the payment service gives up after its retry budget and lets the error pass, wrapped as <code>PaymentFailedError</code> with the last failure as its cause. The boundary maps it to a 503, which tells the client the failure is temporary and it may try again later, and logs it once with the whole chain.</li>
+<li><strong>Save fails after charge</strong>: only the order service knows both steps happened, so it compensates with a refund and then lets the failure pass. If the refund also fails, it throws an <code>AggregateError</code> that the boundary logs as needing manual action.</li>
+<li><strong>Missing <code>id</code></strong>: the gateway broke its contract, or our code expects the wrong shape. That is a bug-class failure: the gateway client should check the shape and throw a plain <code>Error</code> (not a retryable one). The boundary returns a generic 500 and logs everything. It must not be reported to the customer as "declined".</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: a payment flow that never loses an error</h2>
+<p>The error classes carry the kind (through the class and the <code>retryable</code> flag) and an HTTP status for the boundary:</p>
+<example file="errors.js" project="pay">
+export class AppError extends Error {
+  constructor(message, { status = 500, code = "INTERNAL", retryable = false, cause } = {}) {
+    super(message, { cause });
+    this.name = new.target.name;
+    this.status = status;
+    this.code = code;
+    this.retryable = retryable;
+  }
+}
+export class CardDeclinedError extends AppError {
+  constructor(reason) {
+    super(`card declined: ${reason.replaceAll("_", " ")}`, { status: 402, code: "CARD_DECLINED" });
+  }
+}
+export class GatewayUnavailableError extends AppError {
+  constructor(message, { cause } = {}) {
+    super(message, { status: 503, code: "GATEWAY_UNAVAILABLE", retryable: true, cause });
+  }
+}
+export class PaymentFailedError extends AppError {
+  constructor(message, { cause } = {}) {
+    super(message, { status: 503, code: "PAYMENT_FAILED", cause });
+  }
+}
+</example>
+<p>The gateway client is the only layer that knows HTTP status codes. It translates every response into a charge or a typed error, and checks the shape of what it got:</p>
+<example file="gateway.js" project="pay">
+import { CardDeclinedError, GatewayUnavailableError } from "./errors.js";
+
+export function createGatewayClient(send) {
+  return {
+    async charge({ orderId, kobo, idempotencyKey }) {
+      let response;
+      try {
+        response = await send({ path: "/charges", body: { orderId, kobo }, idempotencyKey });
+      } catch (error) {
+        throw new GatewayUnavailableError(`no answer from gateway for ${orderId}`, { cause: error });
+      }
+      if (response.status === 402) throw new CardDeclinedError(response.body.reason);
+      if (response.status >= 500) throw new GatewayUnavailableError(`gateway returned ${response.status}`);
+      if (response.status !== 200 || typeof response.body?.id !== "string") {
+        throw new Error(`unexpected gateway response ${response.status}: ${JSON.stringify(response.body)}`);
+      }
+      return { id: response.body.id };
+    },
+    async refund(chargeId) {
+      const response = await send({ path: `/charges/${chargeId}/refund`, body: {} });
+      if (response.status !== 200) throw new Error(`refund of ${chargeId} failed with ${response.status}`);
+    },
+  };
+}
+</example>
+<p>The payment service retries only retryable errors, always with the same idempotency key, and wraps the last failure when it gives up. The order service compensates. The HTTP boundary is the only place that logs:</p>
+<example file="services.js" project="pay">
+import { AppError, PaymentFailedError } from "./errors.js";
+
+export function createPaymentService(gateway, { attempts = 3 } = {}) {
+  return {
+    async pay(order) {
+      const idempotencyKey = `charge:${order.id}`;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await gateway.charge({ orderId: order.id, kobo: order.totalKobo, idempotencyKey });
+        } catch (error) {
+          if (!error.retryable) throw error;
+          if (attempt === attempts) {
+            throw new PaymentFailedError(`payment for ${order.id} failed after ${attempts} attempts`, { cause: error });
+          }
+        }
+      }
+    },
+  };
+}
+
+export function createOrderService(payments, gateway, saveOrder) {
+  return {
+    async placeOrder(order) {
+      const charge = await payments.pay(order);
+      try {
+        return await saveOrder({ ...order, status: "confirmed", chargeId: charge.id });
+      } catch (saveError) {
+        try {
+          await gateway.refund(charge.id);
+        } catch (refundError) {
+          throw new AggregateError([saveError, refundError], `order ${order.id}: not saved, refund of ${charge.id} failed`);
+        }
+        throw new Error(`order ${order.id} not saved; charge ${charge.id} refunded`, { cause: saveError });
+      }
+    },
+  };
+}
+
+export function createHttpBoundary(orders, log) {
+  return async function handlePlaceOrder(order) {
+    try {
+      const saved = await orders.placeOrder(order);
+      return { status: 201, body: { orderId: saved.id, chargeId: saved.chargeId } };
+    } catch (error) {
+      log(error);
+      if (error instanceof AppError) {
+        return { status: error.status, body: { code: error.code, message: error.message } };
+      }
+      return { status: 500, body: { code: "INTERNAL", message: "Something went wrong. Please try again later." } };
+    }
+  };
+}
+</example>
+<p>Notice what is <em>absent</em>: no <code>try</code>/<code>catch</code> in <code>pay</code> for declines, none in <code>placeOrder</code> around <code>pay</code>, and no logging below the boundary. Each layer only catches what it acts on.</p>
+<p>Now a fake gateway that can play any scenario, and a logger that prints the cause chain on one entry. The fake's <code>"timeout"</code> is the nasty case: it records the charge and <em>then</em> fails to answer, like a real gateway that charged the card and dropped the connection. Charges are stored by idempotency key, the way a real gateway deduplicates them:</p>
+<example file="main.js" project="pay">
+import { createGatewayClient } from "./gateway.js";
+import { createHttpBoundary, createOrderService, createPaymentService } from "./services.js";
+
+function fakeGateway(script) {
+  const calls = [];
+  const charges = new Map();
+  const send = async (request) => {
+    calls.push(request.path);
+    const step = script.shift() ?? "ok";
+    const recordCharge = () => {
+      if (request.idempotencyKey && !charges.has(request.idempotencyKey)) charges.set(request.idempotencyKey, `ch_${charges.size + 1}`);
+    };
+    if (step === "timeout") {
+      recordCharge();
+      throw new Error("ETIMEDOUT");
+    }
+    if (step === "503") return { status: 503, body: {} };
+    if (step === "declined") return { status: 402, body: { reason: "insufficient_funds" } };
+    if (step === "garbage") return { status: 200, body: { ok: true } };
+    if (step === "refund-fails") return { status: 500, body: {} };
+    recordCharge();
+    return { status: 200, body: { id: charges.get(request.idempotencyKey) } };
+  };
+  return { send, calls, charges };
+}
+
+function chain(error) {
+  const parts = [];
+  for (let e = error; e; e = e.cause) parts.push(e instanceof AggregateError ? `${e.message} [${e.errors.map((x) => x.message).join("; ")}]` : e.message);
+  return parts.join(" <- ");
+}
+
+async function scenario(label, script, { saveFails = false } = {}) {
+  const gateway = fakeGateway(script);
+  const client = createGatewayClient(gateway.send);
+  const saveOrder = async (order) => {
+    if (saveFails) throw new Error("database connection lost");
+    return order;
+  };
+  const logs = [];
+  const handle = createHttpBoundary(createOrderService(createPaymentService(client), client, saveOrder), (e) => logs.push(chain(e)));
+  const response = await handle({ id: "ORD-7", totalKobo: 2327850 });
+  console.log(`${label}: ${response.status} ${JSON.stringify(response.body)}`);
+  console.log(`   calls: ${gateway.calls.length}, distinct charges: ${gateway.charges.size}, log lines: ${logs.length}`);
+  for (const line of logs) console.log(`   log: ${line}`);
+}
+
+await scenario("happy path", []);
+await scenario("declined", ["declined"]);
+await scenario("timeout then ok", ["timeout", "ok"]);
+await scenario("gateway down", ["503", "503", "503"]);
+await scenario("bad response", ["garbage"]);
+await scenario("save fails", ["ok"], { saveFails: true });
+await scenario("save and refund fail", ["ok", "refund-fails"], { saveFails: true });
+</example>
+<output>
+happy path: 201 {"orderId":"ORD-7","chargeId":"ch_1"}
+   calls: 1, distinct charges: 1, log lines: 0
+declined: 402 {"code":"CARD_DECLINED","message":"card declined: insufficient funds"}
+   calls: 1, distinct charges: 0, log lines: 1
+   log: card declined: insufficient funds
+timeout then ok: 201 {"orderId":"ORD-7","chargeId":"ch_1"}
+   calls: 2, distinct charges: 1, log lines: 0
+gateway down: 503 {"code":"PAYMENT_FAILED","message":"payment for ORD-7 failed after 3 attempts"}
+   calls: 3, distinct charges: 0, log lines: 1
+   log: payment for ORD-7 failed after 3 attempts <- gateway returned 503
+bad response: 500 {"code":"INTERNAL","message":"Something went wrong. Please try again later."}
+   calls: 1, distinct charges: 0, log lines: 1
+   log: unexpected gateway response 200: {"ok":true}
+save fails: 500 {"code":"INTERNAL","message":"Something went wrong. Please try again later."}
+   calls: 2, distinct charges: 1, log lines: 1
+   log: order ORD-7 not saved; charge ch_1 refunded <- database connection lost
+save and refund fail: 500 {"code":"INTERNAL","message":"Something went wrong. Please try again later."}
+   calls: 2, distinct charges: 1, log lines: 1
+   log: order ORD-7: not saved, refund of ch_1 failed [database connection lost; refund of ch_1 failed with 500]
+</output>
+<p>Read each scenario against the policy you reasoned out:</p>
+<ul>
+<li><strong>Declined</strong>: one gateway call, no retry, a 402 the customer can act on, and a log line that is plainly not a bug.</li>
+<li><strong>Timeout then ok</strong>: two calls, one charge. The idempotency key made the retry safe, whatever the first attempt did.</li>
+<li><strong>Gateway down</strong>: three attempts, then a 503 whose log line holds the whole chain in one entry.</li>
+<li><strong>Bad response</strong>: a contract failure became a generic 500, not "declined", and was not retried.</li>
+<li><strong>Save fails</strong>: the charge was refunded before the error propagated. <strong>Both fail</strong>: an <code>AggregateError</code> naming both failures, the one log line an operator must act on.</li>
+</ul>
+<h3>Testing error paths</h3>
+<p>Error paths are code, and untested error paths are where production surprises live. The fake above makes each failure a one-word script, so tests can assert the <em>policy</em>: which errors are retried, how many calls are made, what is logged, and that nothing is charged twice:</p>
+<example file="policy.test.js" project="pay">
+import { createGatewayClient } from "./gateway.js";
+import { createPaymentService } from "./services.js";
+import { CardDeclinedError, PaymentFailedError } from "./errors.js";
+
+function check(label, actual, expected) {
+  const same = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`${same ? "PASS" : "FAIL"} ${label} -> ${JSON.stringify(actual)}`);
+}
+
+function scripted(steps) {
+  const keys = [];
+  const send = async (request) => {
+    keys.push(request.idempotencyKey);
+    const step = steps.shift();
+    if (step === "timeout") throw new Error("ETIMEDOUT");
+    if (step === "declined") return { status: 402, body: { reason: "do_not_honor" } };
+    if (step === "503") return { status: 503, body: {} };
+    return { status: 200, body: { id: "ch_1" } };
+  };
+  return { send, keys };
+}
+
+async function outcome(promise) {
+  try {
+    return { ok: await promise };
+  } catch (error) {
+    return { error: error.name, cause: error.cause?.name ?? null };
+  }
+}
+
+const order = { id: "ORD-7", totalKobo: 100 };
+{
+  const g = scripted(["declined", "ok"]);
+  const result = await outcome(createPaymentService(createGatewayClient(g.send)).pay(order));
+  check("declined is not retried", [result.error, g.keys.length], ["CardDeclinedError", 1]);
+}
+{
+  const g = scripted(["timeout", "503", "ok"]);
+  const result = await outcome(createPaymentService(createGatewayClient(g.send)).pay(order));
+  check("transient errors are retried", result, { ok: { id: "ch_1" } });
+  check("every attempt uses the same key", new Set(g.keys).size, 1);
+}
+{
+  const g = scripted(["503", "503", "503", "ok"]);
+  const result = await outcome(createPaymentService(createGatewayClient(g.send), { attempts: 3 }).pay(order));
+  check("gives up after the budget", [result, g.keys.length], [{ error: "PaymentFailedError", cause: "GatewayUnavailableError" }, 3]);
+}
+check("declined is expected, not retryable", new CardDeclinedError("x").retryable, false);
+check("wrapped error keeps its cause", new PaymentFailedError("p", { cause: new Error("root") }).cause.message, "root");
+</example>
+<output>
+PASS declined is not retried -> ["CardDeclinedError",1]
+PASS transient errors are retried -> {"ok":{"id":"ch_1"}}
+PASS every attempt uses the same key -> 1
+PASS gives up after the budget -> [{"error":"PaymentFailedError","cause":"GatewayUnavailableError"},3]
+PASS declined is expected, not retryable -> false
+PASS wrapped error keeps its cause -> "root"
+</output>
+<h3>In production</h3>
+<ul>
+<li><strong>One failure, one log entry, the whole chain.</strong> Log at the boundary, with the cause chain and a request or job id, as structured data (<a href="/learn/zudo-logging">Logging in ZudoJS</a>). Alert on bug-class errors and on environment errors that persist; expected outcomes are metrics, not alarms.</li>
+<li><strong>Messages to users are designed, not forwarded.</strong> Only errors you created for users (declined, validation, not found) carry messages that reach the client. Everything else becomes a generic message; the details stay in the logs.</li>
+<li><strong>Unknown outcomes need reconciliation.</strong> If the last attempt timed out, the charge may or may not exist, and no error class can tell you which. Record the idempotency key with the failed order, and let a background job ask the gateway later whether that key was charged, then refund it or complete the order.</li>
+<li><strong>Retry budgets, backoff and idempotency go together.</strong> Retries without backoff hammer a struggling provider (<a href="/learn/js-generators#lazy">backoff in Generators</a>); retries without idempotency keys charge twice.</li>
+<li><strong>Use the framework's classes.</strong> In a ZudoJS app, <code>@zudojs/errors</code> provides the error hierarchy with status codes and the HTTP layer provides the boundary, so your code mostly throws the right class and lets it pass (<a href="/learn/zudo-errors">Errors in ZudoJS</a>).</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Find the root cause">
+<p>Write <code>rootCause(error)</code> that follows <code>.cause</code> links to the deepest error and returns it, and <code>findInChain(error, predicate)</code> that returns the first error in the chain for which <code>predicate</code> is true (or <code>undefined</code>). Both must stop on a chain that loops back on itself.</p>
+<solution>
+<example file="root-cause.js">
+function* chainOf(error) {
+  const seen = new Set();
+  for (let current = error; current instanceof Error && !seen.has(current); current = current.cause) {
+    seen.add(current);
+    yield current;
+  }
+}
+
+const rootCause = (error) => [...chainOf(error)].at(-1);
+const findInChain = (error, predicate) => chainOf(error).find(predicate);
+
+const network = Object.assign(new Error("ECONNRESET"), { code: "ECONNRESET" });
+const gateway = new Error("gateway unreachable", { cause: network });
+const payment = new Error("payment failed", { cause: gateway });
+
+console.log(rootCause(payment).message);
+console.log(findInChain(payment, (e) => e.code === "ECONNRESET")?.message);
+console.log(findInChain(payment, (e) => e.code === "E_NOPE"));
+
+const loopA = new Error("A");
+const loopB = new Error("B", { cause: loopA });
+loopA.cause = loopB;
+console.log(rootCause(loopA).message);
+</example>
+<output>
+ECONNRESET
+ECONNRESET
+undefined
+B
+</output>
+<p>A generator (<a href="/learn/js-generators">Generators</a>) walks the chain lazily, so <code>findInChain</code> stops at the first match, and the <code>seen</code> set stops at a loop. Searching the chain by a <code>code</code>, instead of by message text, keeps the check working when messages are reworded.</p>
+</solution>
+</exercise>
+<exercise title="Validate a whole form at once">
+<p>A registration form has <code>email</code>, <code>phone</code> (11 digits for a Nigerian number) and <code>password</code> (at least 10 characters). Write <code>validateSignup(form)</code> that throws one <code>AggregateError</code> listing every invalid field, where each inner error has a <code>field</code> property, and returns the form if everything is valid.</p>
+<solution>
+<example file="signup.js">
+class FieldError extends Error {
+  name = "FieldError";
+  constructor(field, message) {
+    super(message);
+    this.field = field;
+  }
+}
+
+function validateSignup(form) {
+  const problems = [];
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email ?? "")) problems.push(new FieldError("email", "enter a valid email address"));
+  if (!/^0\d{10}$/.test(form.phone ?? "")) problems.push(new FieldError("phone", "enter an 11-digit phone number starting with 0"));
+  if ((form.password ?? "").length < 10) problems.push(new FieldError("password", "use at least 10 characters"));
+  if (problems.length) throw new AggregateError(problems, "signup form has errors");
+  return form;
+}
+
+try {
+  validateSignup({ email: "ada@shop", phone: "0803123456", password: "short" });
+} catch (error) {
+  console.log(error.message);
+  console.log(Object.fromEntries(error.errors.map((e) => [e.field, e.message])));
+}
+console.log(validateSignup({ email: "ada@shop.ng", phone: "08031234567", password: "long enough pw" }).email);
+</example>
+<output>
+signup form has errors
+{
+  email: 'enter a valid email address',
+  phone: 'enter an 11-digit phone number starting with 0',
+  password: 'use at least 10 characters'
+}
+ada@shop.ng
+</output>
+<p>Turning <code>.errors</code> into a field-to-message map gives a client exactly what it needs to show each message next to its input. A form is a case where every failure matters at once; stopping at the first would make the user submit three times.</p>
+</solution>
+</exercise>
+<exercise title="Fix the swallowing">
+<p>This refund function reports success even when the refund failed. Find all three ways it loses the error, and rewrite it so failures reach the caller with context.</p>
+<example file="bad-refund.js">
+async function refundOrder(gateway, order) {
+  try {
+    gateway.refund(order.chargeId).catch(() => {});
+  } catch (error) {
+    console.log(`refund failed: ${error.message}`);
+  } finally {
+    return "refunded";
+  }
+}
+
+const gateway = { refund: async () => { throw new Error("refund window closed"); } };
+console.log(await refundOrder(gateway, { id: "ORD-7", chargeId: "ch_881" }));
+</example>
+<output>
+refunded
+</output>
+<solution>
+<p>Three problems: the promise from <code>gateway.refund</code> is not awaited, so its rejection can never reach the <code>catch</code> block; <code>.catch(() =&gt; {})</code> throws the rejection away (someone added it to silence an "unhandled rejection" warning, which was the one signal that something was wrong); and the <code>return</code> in <code>finally</code> would override any error anyway. Await the call, drop the swallowing, and wrap with context:</p>
+<example file="good-refund.js">
+async function refundOrder(gateway, order) {
+  try {
+    await gateway.refund(order.chargeId);
+    return "refunded";
+  } catch (error) {
+    throw new Error(`refund for ${order.id} (${order.chargeId}) failed`, { cause: error });
+  }
+}
+
+const gateway = { refund: async () => { throw new Error("refund window closed"); } };
+try {
+  await refundOrder(gateway, { id: "ORD-7", chargeId: "ch_881" });
+} catch (error) {
+  console.log(error.message, "<-", error.cause.message);
+}
+</example>
+<output>
+refund for ORD-7 (ch_881) failed <- refund window closed
+</output>
+<p>The rewritten version has no <code>finally</code> at all, because it has nothing to clean up. The caller now decides what to do, and the log at the boundary will say which order and which charge were affected.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Classify failures: expected outcomes (tell the user), environment failures (retry, fall back or fail cleanly) and bugs (fail, log, fix). Only the first two are recoverable by the running program; unknown errors default to "bug".</li>
+<li>For each call that can throw, a layer handles the error (and continues correctly), translates it (with <code>{ cause }</code>), or lets it pass. Letting it pass is usually right. Never swallow; log once, at the handling boundary.</li>
+<li>Cause chains keep the business meaning on top and the root detail at the bottom. Decide with names, codes and flags, not message text. Normalise non-errors with <code>Error.isError</code>.</li>
+<li><code>AggregateError</code> reports independent failures together: form fields, batch payouts, a failed compensation after a failed save.</li>
+<li>Retry only idempotent operations (use idempotency keys), fall back only to acceptable substitutes, and compensate for steps that already happened.</li>
+<li>Put error boundaries at the edges: per request, per job, per command, and at the process as a last resort.</li>
+<li>Watch for swallowing: empty <code>catch</code>, <code>return</code> in <code>finally</code>, un-awaited promises in <code>try</code>, <code>.catch(() =&gt; {})</code>, and failure values that look like success.</li>
+</ul>
+<p>Next: <a href="/learn/js-module-systems">Module systems in depth</a>, how JavaScript files find and load each other, in Node and in the browser.</p>
+</section>

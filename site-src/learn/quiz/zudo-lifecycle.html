@@ -1,0 +1,792 @@
+<question id="lc-why" type="choice">
+<q>What does <code>@zudojs/lifecycle</code> manage, compared with <code>@zudojs/runtime</code>?</q>
+<option>The same modules, but faster</option>
+<option correct>Smaller parts called components (a pool, a queue worker, a server) with retries, timeouts, priorities and optional parts; the runtime manages modules</option>
+<option>Only HTTP servers</option>
+<option>Database migrations</option>
+<explain><p>The ideas are the same (order, rollback, graceful shutdown), one level down. The lifecycle package also stands alone: it depends only on <code>@zudojs/errors</code> and <code>@zudojs/constants</code>.</p></explain>
+</question>
+
+<question id="lc-phase-order" type="choice">
+<q>Three components depend on each other: http → queue → database. In what order do the hooks run on <code>start()</code>?</q>
+<option>database: initialize, start, ready; then queue: initialize, start, ready; then http</option>
+<option correct>initialize for database, queue, http; then start for all three; then ready for all three</option>
+<option>All hooks of all components at the same time</option>
+<option>http first, because it was registered first</option>
+<explain><p>A phase runs for every component before the next phase begins, and within a phase dependencies go first. When http becomes ready, every component has at least started.</p></explain>
+</question>
+
+<question id="lc-initialize-vs-start" type="choice">
+<q>Which work belongs in <code>initialize</code> rather than <code>start</code>?</q>
+<option>Opening the database connection</option>
+<option>Listening on port 3000</option>
+<option correct>Reading settings and creating objects, without touching the network</option>
+<option>Draining the queue</option>
+<explain><p><code>initialize</code> prepares; <code>start</code> connects; <code>ready</code> confirms. Keeping network work out of <code>initialize</code> means a configuration mistake fails before anything is opened.</p></explain>
+</question>
+
+<question id="lc-final-state" type="choice">
+<q>What is <code>manager.state</code> after <code>await manager.shutdown()</code>, and can you call <code>start()</code> again?</q>
+<option><code>stopped</code>; yes</option>
+<option correct><code>disposed</code>; no, a manager is used once</option>
+<option><code>idle</code>; yes</option>
+<option><code>ready</code>; it restarts automatically</option>
+<explain><p><code>disposed</code> has no outgoing transitions. To run again, create and register a new manager.</p></explain>
+</question>
+
+<question id="lc-failed-transitions" type="choice">
+<q>According to <code>LIFECYCLE_VALID_TRANSITIONS</code>, where can a component go from <code>failed</code>?</q>
+<option>Back to <code>starting</code>, to retry</option>
+<option correct>Only to <code>stopping</code> or <code>disposed</code></option>
+<option>To <code>ready</code>, if the error is fixed</option>
+<option>Nowhere</option>
+<explain><p>A failed component is cleaned up, never "un-failed". Retrying happens inside a phase (the <code>retry</code> option), before the component is marked failed.</p></explain>
+</question>
+
+<question id="lc-parallel" type="choice">
+<q><code>cache</code> and <code>database</code> do not depend on each other. How does the manager start them?</q>
+<option>One after the other, in registration order</option>
+<option correct>At the same time, up to the <code>concurrency</code> limit</option>
+<option>Alphabetically</option>
+<option>Only one of them; the other waits for <code>ready</code></option>
+<explain><p>Independent components share a stage and run concurrently. Starting them one by one would add their times for nothing.</p></explain>
+</question>
+
+<question id="lc-priority" type="choice">
+<q><code>metrics</code> has <code>priority: 100</code>; <code>database</code> and <code>cache</code> have the default. What does that mean?</q>
+<option>metrics gets more CPU time</option>
+<option correct>metrics finishes each phase before the others begin it, and on shutdown it stops after them</option>
+<option>metrics starts at the same time but is retried more often</option>
+<option>Nothing unless concurrency is 1</option>
+<explain><p>Priority is a barrier: all components of a higher priority finish the phase before a lower priority begins. Shutdown is the mirror image, so the highest priority stops last.</p></explain>
+</question>
+
+<question id="lc-queue-when" type="choice">
+<q><code>database</code> takes 200 ms, <code>queue</code> (depends on database) takes 50 ms, <code>cache</code> takes 100 ms, all starting at 0 ms. When is <code>queue</code> up?</q>
+<option>At 50 ms</option>
+<option>At 150 ms</option>
+<option correct>At about 250 ms</option>
+<option>At 350 ms</option>
+<explain><p>The queue waits only for the database (200 ms), then needs 50 ms. The cache runs alongside and does not delay it.</p></explain>
+</question>
+
+<question id="lc-graph-errors" type="choice">
+<q>When does the manager report a dependency cycle between <code>orders</code> and <code>payments</code>?</q>
+<option>When <code>payments</code> first fails</option>
+<option correct>In <code>start()</code>, before any hook runs, as a <code>LifecycleDependencyError</code> naming the loop</option>
+<option>Never; it picks an order</option>
+<option>At shutdown</option>
+<explain><p>The whole graph is validated first. No connection is opened for an application whose wiring is impossible.</p></explain>
+</question>
+
+<question id="lc-register-late" type="choice">
+<q>What happens if you call <code>manager.register(...)</code> after <code>manager.start()</code>?</q>
+<option>The component starts immediately</option>
+<option>It is queued for the next start</option>
+<option correct>It throws: the registry is frozen once start begins</option>
+<option>It replaces a component with the same name</option>
+<explain><p>Freezing the registry keeps the plan that is running consistent. Register everything before starting.</p></explain>
+</question>
+
+<question id="lc-critical" type="choice">
+<q>A mailer registered with <code>critical: false</code> fails to start. What is the result?</q>
+<option><code>start()</code> rejects and everything rolls back</option>
+<option correct><code>start()</code> resolves, the manager is <code>ready</code>, and the mailer's status is <code>failed</code></option>
+<option>The mailer is retried forever</option>
+<option>The mailer is removed from the manager</option>
+<explain><p>Non-critical parts may fail without failing the application. Watch <code>component:failed</code> or the status so someone notices.</p></explain>
+</question>
+
+<question id="lc-critical-stop" type="choice">
+<q>The non-critical mailer failed to start. On shutdown, is its <code>stop</code> called?</q>
+<option>No, only started components are stopped</option>
+<option correct>Yes, in the published version, so <code>stop</code> must be safe for a component that never started</option>
+<option>Only if it has a <code>dispose</code></option>
+<option>Only with <code>handleSignals: true</code></option>
+<explain><p>The same is true for the component that fails during a rollback. Guard <code>stop</code> on the resource it closes.</p></explain>
+</question>
+
+<question id="lc-attempts" type="choice">
+<q>A component always fails and is registered with <code>retry: { attempts: 3, delay: 100 }</code>. How many times is <code>start</code> called?</q>
+<option>3</option>
+<option correct>4: one try plus three retries</option>
+<option>1</option>
+<option>Until it succeeds</option>
+<explain><p><code>attempts</code> counts retries. Plan the total time with that in mind.</p></explain>
+</question>
+
+<question id="lc-backoff-default" type="choice">
+<q>With <code>retry: { attempts: 3, delay: 100 }</code> and no <code>backoff</code>, what are the waits between calls?</q>
+<option>100, 100, 100 ms</option>
+<option correct>100, 200, 400 ms</option>
+<option>100, 150, 200 ms</option>
+<option>No waits</option>
+<explain><p>Backoff is exponential unless you write <code>backoff: "fixed"</code>. <code>maxDelay</code> caps a single wait (10 seconds by default).</p></explain>
+</question>
+
+<question id="lc-what-to-retry" type="choice">
+<q>Which startup failure is worth retrying?</q>
+<option><code>password authentication failed for user "shop"</code></option>
+<option><code>relation "orders" does not exist</code></option>
+<option correct><code>connect ECONNREFUSED 127.0.0.1:5432</code> right after the database container started</option>
+<option><code>Invalid DATABASE_URL</code></option>
+<explain><p>Retry transient failures: a service still booting, a timeout, a 503. A wrong password or a missing table fails the same way every time, and retrying only delays the message the operator needs.</p></explain>
+</question>
+
+<question id="lc-timeout-real" type="choice">
+<q>A component has <code>timeout: 100</code> and its <code>start</code> takes 500 ms. When does <code>manager.start()</code> reject in the published version?</q>
+<option>At 100 ms</option>
+<option correct>At about 500 ms: the component is marked failed at 100 ms, but the manager waits for the hook to settle before rolling back</option>
+<option>Never; the component succeeds at 500 ms</option>
+<option>At 30 seconds</option>
+<explain><p>Waiting prevents a <code>stop</code> from running alongside a <code>start</code> that is still going. The cost is that a timeout does not free startup by itself.</p></explain>
+</question>
+
+<question id="lc-timeout-hang" type="choice">
+<q>A <code>start</code> hook returns a promise that never settles. It has <code>timeout: 100</code>. What happens?</q>
+<option><code>start()</code> rejects after 100 ms</option>
+<option correct><code>start()</code> keeps waiting forever in the published version</option>
+<option>The process exits with code 1</option>
+<option>The hook is retried</option>
+<explain><p>Because the manager waits for timed-out hooks to settle, a hook that never settles hangs startup. Make the work itself cancellable, for example with <code>AbortSignal.timeout</code>.</p></explain>
+</question>
+
+<question id="lc-abort-timeout" type="choice">
+<q>What does passing <code>AbortSignal.timeout(100)</code> to a connect call achieve inside a <code>start</code> hook?</q>
+<option>It makes the connection faster</option>
+<option correct>The connect call itself gives up after 100 ms, so the hook settles and the manager can roll back on time</option>
+<option>It aborts the whole process after 100 ms</option>
+<option>Nothing; lifecycle ignores signals</option>
+<explain><p>Cancellation has to happen where the waiting happens. The manager's <code>timeout</code> then acts only as a safety net.</p></explain>
+</question>
+
+<question id="lc-error-chain" type="choice">
+<q>A component times out during <code>start</code>. What is the error chain of the rejection?</q>
+<option>Just <code>TimeoutError</code></option>
+<option correct><code>LifecycleStartError</code> → cause <code>LifecycleComponentError</code> → cause <code>LifecycleTimeoutError</code></option>
+<option><code>LifecycleTimeoutError</code> → cause <code>LifecycleStartError</code></option>
+<option><code>Error: failed</code> with no cause</option>
+<explain><p>Each layer adds what it knows: the start failed, this component and phase failed, and why. Walk <code>error.cause</code> to reach the original.</p></explain>
+</question>
+
+<question id="lc-rollback" type="choice">
+<q>The HTTP server fails to start after the database and queue started. What does the rollback do?</q>
+<option>Leaves the database and queue running for the next attempt</option>
+<option correct>Stops the started components in reverse order, disposes everything, and rejects <code>start()</code>; the manager ends <code>disposed</code></option>
+<option>Retries the HTTP server forever</option>
+<option>Stops only the HTTP server</option>
+<explain><p>Rollback leaves nothing open. To try again, build a new manager.</p></explain>
+</question>
+
+<question id="lc-start-idempotent" type="choice">
+<q>After a failed start you call <code>manager.start()</code> again. What happens?</q>
+<option>It starts again from scratch</option>
+<option correct>It returns the same rejected promise; nothing runs again</option>
+<option>It throws a different error</option>
+<option>It waits for the database</option>
+<explain><p><code>start()</code> and <code>shutdown()</code> are idempotent: they return the same promise every time. A retry of the whole start needs a new manager.</p></explain>
+</question>
+
+<question id="lc-stop-throws" type="choice">
+<q>During shutdown, the search component's <code>stop</code> throws. What happens to the others?</q>
+<option>Shutdown aborts and the others stay open</option>
+<option correct>They are stopped and disposed as usual; the failure is recorded in the results and emitted as <code>component:failed</code>, and <code>shutdown()</code> resolves</option>
+<option><code>shutdown()</code> rejects after stopping the others</option>
+<option>The process exits with code 1</option>
+<explain><p>One broken part must not keep the others open. Because <code>shutdown()</code> still resolves, you must listen for the event to see the failure.</p></explain>
+</question>
+
+<question id="lc-deadline" type="choice">
+<q><code>shutdownTimeout: 200</code> expires while a worker's <code>stop</code> is still running. What happens?</q>
+<option>Nothing; the manager waits for the worker</option>
+<option correct>The manager aborts <code>context.signal</code> in the hooks' context and <code>shutdown()</code> returns; a hook that ignores the signal is abandoned without an error</option>
+<option><code>shutdown()</code> rejects with <code>LifecycleTimeoutError</code></option>
+<option>The process is killed</option>
+<explain><p>Listening to <code>context.signal</code> lets the worker stop cleanly. The published version reports nothing when a hook is abandoned, so a shutdown that takes exactly the deadline is a warning sign.</p></explain>
+</question>
+
+<question id="lc-grace" type="choice">
+<q>Kubernetes waits 30 seconds between <code>SIGTERM</code> and a hard kill. What is a sensible <code>shutdownTimeout</code>?</q>
+<option>60 seconds, to be safe</option>
+<option>30 seconds, exactly the grace period</option>
+<option correct>A few seconds below the grace period, for example 25 seconds</option>
+<option>0, meaning no deadline</option>
+<explain><p>Your own deadline must fire first, so your clean-up (aborting work, closing connections) runs before the platform kills the process.</p></explain>
+</question>
+
+<question id="lc-signals-default" type="choice">
+<q>What does the default <code>handleSignals: true</code> do?</q>
+<option>Exits immediately on <code>SIGTERM</code></option>
+<option correct>From <code>start()</code> until shutdown finishes, <code>SIGINT</code> and <code>SIGTERM</code> run <code>shutdown()</code>; a second signal exits with code 1</option>
+<option>Ignores signals</option>
+<option>Installs handlers in the constructor</option>
+<explain><p>Handlers are installed by <code>start()</code> and removed afterwards. The manager never calls <code>process.exit()</code> after a normal shutdown; the process ends when nothing is left open.</p></explain>
+</question>
+
+<question id="lc-signal-owner" type="choice">
+<q>A process has a <code>@zudojs/runtime</code> runtime with signal handling on, and a lifecycle manager inside one of its modules. What should the manager use?</q>
+<option>The default <code>handleSignals: true</code>, so both react</option>
+<option correct><code>handleSignals: false</code>, with the module's <code>onShutdown</code> calling <code>manager.shutdown()</code></option>
+<option>A different signal, such as <code>SIGHUP</code></option>
+<option>No shutdown at all</option>
+<explain><p>One owner per process. Two handlers race, and the order between "stop the module" and "stop its components" is lost.</p></explain>
+</question>
+
+<question id="lc-shop-order" type="choice">
+<q>In the shop example, why must the HTTP server stop before the queue, and the queue before the database?</q>
+<option>Alphabetical order</option>
+<option correct>The server must stop accepting orders first; the queue then confirms what is pending, which needs the database still open</option>
+<option>The database is the slowest to stop</option>
+<option>It does not matter because <code>dispose</code> runs last</option>
+<explain><p>Shutdown reverses the dependency chain: stop taking work, finish it, then release what it used. With the queue's <code>dependsOn</code> missing, orders stayed pending.</p></explain>
+</question>
+
+<question id="lc-out-phases" type="output">
+<q>What does this print?</q>
+<code file="phases.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+const say = (name: string, hook: string) => async () => console.log(hook, name);
+const part = (name: string) => ({ name, start: say(name, "start"), ready: say(name, "ready"), stop: say(name, "stop") });
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register(part("api"), { dependsOn: ["db"] });
+manager.register(part("db"));
+await manager.start();
+await manager.shutdown();
+</code>
+<option correct>start db
+start api
+ready db
+ready api
+stop api
+stop db</option>
+<option>start db
+ready db
+start api
+ready api
+stop api
+stop db</option>
+<option>start api
+start db
+ready api
+ready db
+stop db
+stop api</option>
+<option>start db
+start api
+ready db
+ready api
+stop db
+stop api</option>
+<explain><p>Phase by phase, dependencies first; shutdown reverses the order.</p></explain>
+</question>
+
+<question id="lc-out-state-machine" type="output">
+<q>What does this print?</q>
+<code file="machine.ts" browser="no">
+import { LifecycleState } from "@zudojs/constants";
+import { LifecycleStateMachine } from "@zudojs/lifecycle";
+
+const machine = new LifecycleStateMachine("cache");
+console.log(machine.state, machine.canTransition(LifecycleState.STARTING));
+machine.transition(LifecycleState.INITIALIZING);
+machine.transition(LifecycleState.FAILED);
+console.log(machine.state, machine.canTransition(LifecycleState.STARTING), machine.canTransition(LifecycleState.STOPPING));
+</code>
+<option correct>idle false
+failed false true</option>
+<option>idle true
+failed true true</option>
+<option>created false
+failed false true</option>
+<option>idle false
+failed false false</option>
+<explain><p>From <code>idle</code> the only moves are <code>initializing</code> and <code>disposed</code>. From <code>failed</code> you may only clean up: <code>stopping</code> or <code>disposed</code>.</p></explain>
+</question>
+
+<question id="lc-out-critical" type="output">
+<q>What does this print?</q>
+<code file="critical.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register({ name: "db", start: async () => {} });
+manager.register({ name: "sms", start: async () => { throw new Error("gateway down"); } }, { critical: false });
+await manager.start();
+console.log(manager.state, [...manager.getStatus()].map(([id, s]) => `${id}:${s.state}`).join(" "));
+</code>
+<option correct>ready db:ready sms:failed</option>
+<option>failed db:ready sms:failed</option>
+<option>disposed db:disposed sms:failed</option>
+<option>ready db:ready sms:ready</option>
+<explain><p>A non-critical failure is recorded on the component only. The application is ready without it.</p></explain>
+</question>
+
+<question id="lc-out-critical-default" type="output">
+<q>Same as before, but <code>sms</code> is registered without options. What does this print?</q>
+<code file="critical2.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register({ name: "db", start: async () => {}, stop: async () => console.log("stop db") });
+manager.register({ name: "sms", start: async () => { throw new Error("gateway down"); } });
+await manager.start().catch((error: Error) => console.log(error.name));
+console.log(manager.state);
+</code>
+<option correct>stop db
+LifecycleStartError
+disposed</option>
+<option>LifecycleStartError
+ready</option>
+<option>stop db
+LifecycleStartError
+failed</option>
+<option>LifecycleStartError
+stop db
+disposed</option>
+<explain><p>Components are critical by default. The failure rolls back what started (the database stops) before <code>start()</code> rejects, and the manager is disposed.</p></explain>
+</question>
+
+<question id="lc-out-retry-count" type="output">
+<q>What does this print?</q>
+<code file="retry.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+let calls = 0;
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register(
+  { name: "db", start: async () => { calls += 1; if (calls < 3) throw new Error("ECONNREFUSED"); } },
+  { retry: { attempts: 2, delay: 10, backoff: "fixed" } },
+);
+await manager.start().catch(() => console.log("failed"));
+console.log(calls, manager.state);
+</code>
+<option correct>3 ready</option>
+<option>2 ready</option>
+<option>failed
+2 disposed</option>
+<option>failed
+3 disposed</option>
+<explain><p>Two retries after the first call make three calls in total, and the third succeeds.</p></explain>
+</question>
+
+<question id="lc-out-retry-exhausted" type="output">
+<q>What does this print?</q>
+<code file="retry2.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+let calls = 0;
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register(
+  { name: "db", start: async () => { calls += 1; throw new Error("ECONNREFUSED"); } },
+  { retry: { attempts: 2, delay: 10, backoff: "fixed" } },
+);
+await manager.start().catch((error: Error) => console.log(error.name, ((error.cause as Error).cause as Error).message));
+console.log(calls, manager.state);
+</code>
+<option correct>LifecycleStartError ECONNREFUSED
+3 disposed</option>
+<option>LifecycleStartError ECONNREFUSED
+2 disposed</option>
+<option>Error ECONNREFUSED
+3 failed</option>
+<option>LifecycleStartError Component "db" failed during start.
+3 disposed</option>
+<explain><p>After the last retry the start fails. The original error sits two levels down the cause chain, under the component error.</p></explain>
+</question>
+
+<question id="lc-out-priority" type="output">
+<q>What does this print?</q>
+<code file="priority.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+const part = (name: string) => ({ name, start: async () => console.log("start", name), stop: async () => console.log("stop", name) });
+const manager = createLifecycleManager({ handleSignals: false, concurrency: 1 });
+manager.register(part("orders"));
+manager.register(part("logging"), { priority: 50 });
+manager.register(part("metrics"), { priority: 100 });
+await manager.start();
+await manager.shutdown();
+</code>
+<option correct>start metrics
+start logging
+start orders
+stop orders
+stop logging
+stop metrics</option>
+<option>start orders
+start logging
+start metrics
+stop metrics
+stop logging
+stop orders</option>
+<option>start metrics
+start logging
+start orders
+stop metrics
+stop logging
+stop orders</option>
+<option>start orders
+start logging
+start metrics
+stop orders
+stop logging
+stop metrics</option>
+<explain><p>Higher priority starts first and stops last. Metrics and logging are available to everything else for the whole life of the app.</p></explain>
+</question>
+
+<question id="lc-out-register-twice" type="output">
+<q>What does this print?</q>
+<code file="twice.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register({ name: "cache" });
+try {
+  manager.register({ name: "cache" });
+} catch (error) {
+  console.log((error as Error).message);
+}
+manager.register({ name: "cache" }, { id: "cache-eu" });
+console.log(manager.registry.getIds().join(", "));
+</code>
+<option correct>Component "cache" is already registered
+cache, cache-eu</option>
+<option>cache, cache</option>
+<option>Component "cache" is already registered
+cache</option>
+<option>cache-eu</option>
+<explain><p>Registration is keyed by <code>id</code>, which defaults to the component's name. Pass an explicit <code>id</code> to register two components with the same name.</p></explain>
+</question>
+
+<question id="lc-out-signal-abort" type="output">
+<q>What does this print?</q>
+<code file="abort.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+const manager = createLifecycleManager({ handleSignals: false, shutdownTimeout: 50 });
+manager.register({
+  name: "exporter",
+  stop: (context) =>
+    new Promise<void>((resolve) => {
+      const flush = setTimeout(() => { console.log("flushed"); resolve(); }, 2000);
+      context.signal.addEventListener("abort", () => { clearTimeout(flush); console.log("aborted:", context.signal.aborted); resolve(); });
+    }),
+});
+await manager.start();
+await manager.shutdown();
+console.log(manager.state);
+</code>
+<option correct>aborted: true
+disposed</option>
+<option>flushed
+disposed</option>
+<option>aborted: true
+flushed
+disposed</option>
+<option>disposed</option>
+<explain><p>The 50 ms deadline aborts the signal long before the 2-second flush. The hook reacts, clears its timer and resolves, so nothing keeps the process alive.</p></explain>
+</question>
+
+<question id="lc-code-stages" type="code" file="stages.js">
+<q><p>Write <code>stages(components)</code>: group component names into stages so that every component comes in a later stage than all of its <code>dependsOn</code>, and each stage is as early as possible. Keep registration order inside a stage.</p></q>
+<starter>
+function stages(components) {
+  // your code here
+}
+
+const shop = [
+  { name: "http", dependsOn: ["queue", "cache"] },
+  { name: "queue", dependsOn: ["database"] },
+  { name: "database", dependsOn: [] },
+  { name: "cache", dependsOn: [] },
+];
+for (const stage of stages(shop)) console.log(stage.join(", "));
+</starter>
+<solution>
+function stages(components) {
+  const level = new Map();
+  const byName = new Map(components.map((c) => [c.name, c]));
+  const depth = (name) => {
+    if (level.has(name)) return level.get(name);
+    const deps = byName.get(name).dependsOn;
+    const d = deps.length === 0 ? 0 : 1 + Math.max(...deps.map(depth));
+    level.set(name, d);
+    return d;
+  };
+  const result = [];
+  for (const c of components) {
+    const d = depth(c.name);
+    (result[d] ??= []).push(c.name);
+  }
+  return result;
+}
+
+const shop = [
+  { name: "http", dependsOn: ["queue", "cache"] },
+  { name: "queue", dependsOn: ["database"] },
+  { name: "database", dependsOn: [] },
+  { name: "cache", dependsOn: [] },
+];
+for (const stage of stages(shop)) console.log(stage.join(", "));
+</solution>
+<expected>database, cache
+queue
+http</expected>
+<explain><p>A component's stage is one more than its deepest dependency. Everything in one stage can run in parallel; shutdown walks the stages backwards.</p></explain>
+</question>
+
+<question id="lc-code-delays" type="code" file="delays.js">
+<q><p>Write <code>retryDelays({ attempts, delay, maxDelay, backoff })</code> returning the list of waits before each retry: <code>delay</code> every time for <code>"fixed"</code>, doubling for <code>"exponential"</code> (the default), never above <code>maxDelay</code> (default 10000).</p></q>
+<starter>
+function retryDelays({ attempts, delay, maxDelay = 10000, backoff = "exponential" }) {
+  // your code here
+}
+
+console.log(retryDelays({ attempts: 3, delay: 100 }).join(" "));
+console.log(retryDelays({ attempts: 3, delay: 100, backoff: "fixed" }).join(" "));
+console.log(retryDelays({ attempts: 5, delay: 50, maxDelay: 150 }).join(" "));
+</starter>
+<solution>
+function retryDelays({ attempts, delay, maxDelay = 10000, backoff = "exponential" }) {
+  const waits = [];
+  for (let i = 0; i < attempts; i++) {
+    const wait = backoff === "fixed" ? delay : delay * 2 ** i;
+    waits.push(Math.min(wait, maxDelay));
+  }
+  return waits;
+}
+
+console.log(retryDelays({ attempts: 3, delay: 100 }).join(" "));
+console.log(retryDelays({ attempts: 3, delay: 100, backoff: "fixed" }).join(" "));
+console.log(retryDelays({ attempts: 5, delay: 50, maxDelay: 150 }).join(" "));
+</solution>
+<expected>100 200 400
+100 100 100
+50 100 150 150 150</expected>
+<explain><p>These are the waits the manager used in the lesson. Adding them up tells you how long a failing dependency can delay startup before the error appears.</p></explain>
+</question>
+
+<question id="lc-code-retry" type="code" file="retry.js">
+<q><p>Write <code>async withRetry(fn, attempts)</code>: call <code>fn()</code>; if it throws, retry up to <code>attempts</code> more times; return the first successful result, or throw the last error. (No waiting needed here.)</p></q>
+<starter>
+async function withRetry(fn, attempts) {
+  // your code here
+}
+
+let calls = 0;
+const flaky = async () => {
+  calls += 1;
+  if (calls < 3) throw new Error(`ECONNREFUSED (call ${calls})`);
+  return "connected";
+};
+console.log(await withRetry(flaky, 3), "after", calls, "calls");
+calls = 0;
+await withRetry(async () => { calls += 1; throw new Error(`down (call ${calls})`); }, 2).catch((error) => console.log(error.message));
+</starter>
+<solution>
+async function withRetry(fn, attempts) {
+  let lastError;
+  for (let i = 0; i <= attempts; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+let calls = 0;
+const flaky = async () => {
+  calls += 1;
+  if (calls < 3) throw new Error(`ECONNREFUSED (call ${calls})`);
+  return "connected";
+};
+console.log(await withRetry(flaky, 3), "after", calls, "calls");
+calls = 0;
+await withRetry(async () => { calls += 1; throw new Error(`down (call ${calls})`); }, 2).catch((error) => console.log(error.message));
+</solution>
+<expected>connected after 3 calls
+down (call 3)</expected>
+<explain><p><code>i &lt;= attempts</code> gives one first call plus <code>attempts</code> retries, the same counting as the lifecycle option. <code>return await</code> matters: without <code>await</code>, a rejected promise would escape the <code>try</code>.</p></explain>
+</question>
+
+<question id="lc-code-timeout" type="code" file="timeout.js">
+<q><p>Write <code>connect(ms, signal)</code> that resolves <code>"connected"</code> after <code>ms</code> milliseconds, but rejects with <code>signal.reason</code> as soon as the signal aborts (and clears its timer). Then use <code>AbortSignal.timeout(50)</code> so the slow connection gives up.</p></q>
+<starter>
+function connect(ms, signal) {
+  // your code here
+}
+
+console.log(await connect(10, AbortSignal.timeout(500)));
+try {
+  await connect(1000, AbortSignal.timeout(50));
+} catch (error) {
+  console.log("gave up:", error.name);
+}
+</starter>
+<solution>
+function connect(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve("connected"), ms);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }, { once: true });
+  });
+}
+
+console.log(await connect(10, AbortSignal.timeout(500)));
+try {
+  await connect(1000, AbortSignal.timeout(50));
+} catch (error) {
+  console.log("gave up:", error.name);
+}
+</solution>
+<expected>connected
+gave up: TimeoutError</expected>
+<explain><p>The waiting code itself listens for cancellation, which is what makes a startup timeout effective. <code>AbortSignal.timeout</code> aborts with a <code>DOMException</code> named <code>TimeoutError</code>.</p></explain>
+</question>
+
+<question id="lc-code-transitions" type="code" file="transitions.js">
+<q><p>Write <code>walk(path)</code> that checks a list of states against the transition table and returns <code>"ok"</code>, or <code>"FROM -&gt; TO is not allowed"</code> for the first illegal step.</p></q>
+<starter>
+const allowed = {
+  idle: ["initializing", "disposed"],
+  initializing: ["initialized", "failed"],
+  initialized: ["starting", "stopping", "disposed"],
+  starting: ["started", "failed"],
+  started: ["ready", "stopping", "failed"],
+  ready: ["stopping", "failed"],
+  stopping: ["stopped", "failed"],
+  stopped: ["disposed"],
+  failed: ["stopping", "disposed"],
+  disposed: [],
+};
+
+function walk(path) {
+  // your code here
+}
+
+console.log(walk(["idle", "initializing", "initialized", "starting", "started", "ready", "stopping", "stopped", "disposed"]));
+console.log(walk(["idle", "initializing", "failed", "starting"]));
+</starter>
+<solution>
+const allowed = {
+  idle: ["initializing", "disposed"],
+  initializing: ["initialized", "failed"],
+  initialized: ["starting", "stopping", "disposed"],
+  starting: ["started", "failed"],
+  started: ["ready", "stopping", "failed"],
+  ready: ["stopping", "failed"],
+  stopping: ["stopped", "failed"],
+  stopped: ["disposed"],
+  failed: ["stopping", "disposed"],
+  disposed: [],
+};
+
+function walk(path) {
+  for (let i = 1; i < path.length; i++) {
+    const from = path[i - 1];
+    const to = path[i];
+    if (!allowed[from].includes(to)) return `${from} -> ${to} is not allowed`;
+  }
+  return "ok";
+}
+
+console.log(walk(["idle", "initializing", "initialized", "starting", "started", "ready", "stopping", "stopped", "disposed"]));
+console.log(walk(["idle", "initializing", "failed", "starting"]));
+</solution>
+<expected>ok
+failed -> starting is not allowed</expected>
+<explain><p>The table is the whole state machine. A failed component can only be cleaned up; retrying happens before it is marked failed.</p></explain>
+</question>
+
+<question id="lc-code-rollback" type="code" file="rollback.js">
+<q><p>Write <code>async startAll(components)</code>: call each <code>start()</code> in order; if one throws, call <code>stop()</code> on the components that <strong>already started</strong>, in reverse order, then rethrow.</p></q>
+<starter>
+async function startAll(components) {
+  // your code here
+}
+
+const part = (name, fails = false) => ({
+  start: async () => { if (fails) throw new Error(`${name}: EADDRINUSE`); console.log("start", name); },
+  stop: async () => console.log("stop", name),
+});
+await startAll([part("database"), part("queue"), part("http", true)]).catch((error) => console.log(error.message));
+</starter>
+<solution>
+async function startAll(components) {
+  const started = [];
+  try {
+    for (const component of components) {
+      await component.start();
+      started.push(component);
+    }
+  } catch (error) {
+    for (const component of started.reverse()) await component.stop();
+    throw error;
+  }
+}
+
+const part = (name, fails = false) => ({
+  start: async () => { if (fails) throw new Error(`${name}: EADDRINUSE`); console.log("start", name); },
+  stop: async () => console.log("stop", name),
+});
+await startAll([part("database"), part("queue"), part("http", true)]).catch((error) => console.log(error.message));
+</solution>
+<expected>start database
+start queue
+stop queue
+stop database
+http: EADDRINUSE</expected>
+<explain><p>Only what started is stopped, in reverse. Unlike this version, the published manager also calls <code>stop</code> on the component that failed, which is why real <code>stop</code> hooks must tolerate that.</p></explain>
+</question>
+
+<question id="lc-code-deadline" type="code" file="deadline.js">
+<q><p>Write <code>async stopWithDeadline(stops, ms)</code>: run all stop functions at the same time, each receiving an <code>AbortSignal</code>; abort that signal after <code>ms</code> and return as soon as all stops finished or the deadline passed, whichever is first. Return <code>"clean"</code> or <code>"deadline"</code>.</p></q>
+<starter>
+async function stopWithDeadline(stops, ms) {
+  // your code here
+}
+
+const worker = (signal) => new Promise((resolve) => {
+  const t = setTimeout(resolve, 1000);
+  signal.addEventListener("abort", () => { clearTimeout(t); console.log("worker aborted"); resolve(); });
+});
+const cache = async () => console.log("cache closed");
+console.log(await stopWithDeadline([cache], 100));
+console.log(await stopWithDeadline([cache, worker], 50));
+</starter>
+<solution>
+async function stopWithDeadline(stops, ms) {
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort(new Error(`deadline of ${ms}ms`));
+      resolve("deadline");
+    }, ms);
+  });
+  const all = Promise.all(stops.map((stop) => stop(controller.signal))).then(() => "clean");
+  const result = await Promise.race([all, deadline]);
+  clearTimeout(timer);
+  return result;
+}
+
+const worker = (signal) => new Promise((resolve) => {
+  const t = setTimeout(resolve, 1000);
+  signal.addEventListener("abort", () => { clearTimeout(t); console.log("worker aborted"); resolve(); });
+});
+const cache = async () => console.log("cache closed");
+console.log(await stopWithDeadline([cache], 100));
+console.log(await stopWithDeadline([cache, worker], 50));
+</solution>
+<expected>cache closed
+clean
+cache closed
+worker aborted
+deadline</expected>
+<explain><p>This is what <code>shutdownTimeout</code> does: race the stops against a timer and tell everyone to give up when time runs out. Clearing the timer on a clean finish keeps it from holding the process open.</p></explain>
+</question>
