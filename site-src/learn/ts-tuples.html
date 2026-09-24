@@ -1,0 +1,431 @@
+---
+title: Tuples
+description: Type fixed-shape arrays with tuples - optional, rest and named elements, readonly tuples, tuple inference and const type parameters - and return tuples from functions the way useState does.
+minutes: 40
+youNeed: Narrowing and Enums and their alternatives
+youBuild: A typed bank-statement parser that turns CSV lines into tuples, plus a useState-style state helper
+keywords: typescript tuple, tuple type, optional tuple elements, rest elements in tuples, named tuple elements, labeled tuple, readonly tuple, as const tuple, tuple inference, const type parameter, return tuple from function, useState tuple, Promise.all tuple, Object.entries
+objectives: Tell when an array literal is inferred as an array and when as a tuple | Write tuples with optional, rest and named elements | Protect tuples from push and in-place sorting with readonly | Return tuples from functions, useState-style, and destructure them | Model success and failure as a union of tuples and narrow it
+---
+<section>
+<h2 id="problem">A row that lost its shape</h2>
+<p>Your bank lets customers download a statement as CSV. Each line has a date, a description and an amount in naira. You parse a line and want to add up the amounts:</p>
+<example file="row.ts" project="problem" check="tsc-error">
+const row = ["2026-09-01", "POS purchase, Shoprite Lekki", -2500];
+
+const amount = row[2];
+console.log(amount.toFixed(2));
+</example>
+<output kind="tsc">
+</output>
+<p>You can see that position 2 holds a number. TypeScript cannot, because it inferred <code>row</code> as <code>(string | number)[]</code>: an array of any length where <em>every</em> element could be a string or a number. It has no idea which position holds which. For a list of similar things (a list of prices, a list of names), that is exactly right. For a small, fixed record where each position means something different, you need a <strong>tuple</strong>: an array type with a fixed number of elements, each with its own type.</p>
+<example file="row.ts" project="problem">
+const row: [string, string, number] = ["2026-09-01", "POS purchase, Shoprite Lekki", -2500];
+
+const [date, description, amount] = row;
+console.log(date, amount.toFixed(2), description.length);
+</example>
+<output>
+</output>
+<p>You met tuples briefly in <a href="/learn/ts-types#tuples">Basic types</a>. This lesson covers the whole feature: optional and rest elements, labels, <code>readonly</code>, how TypeScript decides between an array and a tuple, and the places where tuples are the best design, and where they are not.</p>
+</section>
+
+<section>
+<h2 id="basics">What a tuple type knows</h2>
+<p>A tuple type carries three pieces of information an array type does not: how many elements there are, the type of each position, and therefore which indexes exist:</p>
+<example file="knows.ts" project="basics">
+const transfer: [from: string, to: string, kobo: number] = ["ACC-001", "ACC-002", 250000];
+
+const size: 3 = transfer.length;
+const [from, to, kobo] = transfer;
+console.log(`${from} -> ${to}: ₦${(kobo / 100).toLocaleString("en-NG")}`, size);
+</example>
+<output>
+</output>
+<p><code>transfer.length</code> has the literal type <code>3</code>, not <code>number</code>. Reading or destructuring past the end is a compile error:</p>
+<example file="past-end.ts" project="basics" check="tsc-error">
+const transfer: [string, string, number] = ["ACC-001", "ACC-002", 250000];
+
+const [from, to, kobo, fee] = transfer;
+console.log(transfer[3]);
+</example>
+<output kind="tsc">
+</output>
+<p>Under the hood a tuple is an ordinary JavaScript array. Nothing at runtime knows it is a tuple, which matters in a moment.</p>
+<h3>Named elements</h3>
+<p>In <code>[from: string, to: string, kobo: number]</code>, the names before the colons are <strong>labels</strong> (TypeScript calls them named tuple elements). They change nothing about the type: <code>[from: string]</code> and <code>[string]</code> are the same type, and the caller can destructure with any names. They exist for people: your editor shows them on hover and in error messages, and they document what each position means. Either label every element or none.</p>
+</section>
+
+<section>
+<h2 id="optional-rest">Optional and rest elements</h2>
+<h3>Optional elements</h3>
+<p>A <code>?</code> after an element type makes that element optional. Optional elements must come after all required ones, and the <code>length</code> type becomes a union:</p>
+<example file="optional.ts" project="optional-rest">
+type Fee = [label: string, kobo: number, waivedFor?: string];
+
+const fees: Fee[] = [
+  ["SMS alert", 400],
+  ["Transfer fee", 1075, "Premium"],
+];
+
+for (const [label, kobo, waivedFor] of fees) {
+  const note = waivedFor === undefined ? "" : ` (free for ${waivedFor})`;
+  console.log(`${label}: ₦${kobo / 100}${note}`);
+}
+
+const first: Fee = ["Card maintenance", 5000];
+const size: 2 | 3 = first.length;
+console.log(size);
+</example>
+<output>
+</output>
+<p>Inside the loop, <code>waivedFor</code> is <code>string | undefined</code>, so you must narrow it before use, exactly as with an optional property.</p>
+<h3>Rest elements</h3>
+<p>A <strong>rest element</strong>, <code>...T[]</code>, stands for zero or more elements of one type. It turns a tuple into a type with a fixed part and a variable part. A monthly report row with a branch name followed by any number of daily totals:</p>
+<example file="rest.ts" project="optional-rest">
+type BranchRow = [branch: string, ...dailyKobo: number[]];
+
+const rows: BranchRow[] = [
+  ["Lekki", 1250000, 980000, 1430000],
+  ["Ikeja", 2100000],
+  ["Wuse"],
+];
+
+for (const [branch, ...daily] of rows) {
+  const total = daily.reduce((sum, kobo) => sum + kobo, 0);
+  console.log(`${branch}: ${daily.length} days, ₦${(total / 100).toLocaleString("en-NG")}`);
+}
+</example>
+<output>
+</output>
+<p>The rest element can also sit at the start or in the middle, as long as there is only one. <code>[...path: string[], amount: number]</code> describes "any number of strings, then exactly one number at the end", which fits a ledger path like <code>["assets", "bank", "gtbank", 500000]</code>:</p>
+<example file="leading-rest.ts" project="optional-rest">
+type LedgerEntry = [...path: string[], kobo: number];
+
+function describe(entry: LedgerEntry): string {
+  const kobo = entry[entry.length - 1];
+  const path = entry.slice(0, -1);
+  return `${path.join(":")} = ${kobo}`;
+}
+
+console.log(describe(["assets", "bank", "gtbank", 500000]));
+console.log(describe(["expenses", 2500]));
+</example>
+<output>
+</output>
+<p>TypeScript knows only the <em>shape</em> here, not every index: <code>entry[entry.length - 1]</code> is typed <code>string | number</code>, and the template literal accepts both. When a type starts needing this much care, an object like <code>{ path: string[]; kobo: number }</code> is often clearer; you will see that trade-off again at the end of the lesson.</p>
+</section>
+
+<section>
+<h2 id="readonly">readonly tuples</h2>
+<p>Here is the runtime fact from earlier coming back to bite. A tuple is a real array, and plain tuple types still allow the array methods that change length:</p>
+<example file="push.ts" project="readonly">
+const rate: [currency: string, nairaPerUnit: number] = ["USD", 1550];
+
+rate.push(1600);
+
+const [currency, value] = rate;
+console.log(currency, value, rate.length, rate);
+</example>
+<output>
+</output>
+<p>This compiles. The type still says "two elements" while the array now has three. A <strong>readonly tuple</strong> removes <code>push</code>, <code>pop</code>, <code>sort</code>, <code>splice</code> and assignment to elements, so the shape cannot drift:</p>
+<example file="readonly.ts" project="readonly" check="tsc-error">
+const rate: readonly [currency: string, nairaPerUnit: number] = ["USD", 1550];
+
+rate.push(1600);
+rate[1] = 1600;
+</example>
+<output kind="tsc">
+</output>
+<p>Write <code>readonly</code> on tuples you do not intend to change, which is almost all of them. A function parameter typed <code>readonly [string, number]</code> accepts both mutable and readonly tuples, so it is the friendlier choice for inputs too. To "change" a readonly tuple, make a new one: <code>const next = [rate[0], 1600] as const</code>.</p>
+<h3>Sorting in place</h3>
+<p><code>sort</code> and <code>reverse</code> change the array they are called on. On a tuple that holds different kinds of things, that can scramble the positions. On a readonly tuple, TypeScript refuses; use the copying versions <code>toSorted</code> and <code>toReversed</code> instead, which return a new array:</p>
+<example file="to-sorted.ts" project="readonly">
+const topUps: readonly [number, number, number] = [5000, 1000, 20000];
+
+const ascending = topUps.toSorted((a, b) => a - b);
+console.log(ascending, topUps);
+</example>
+<output>
+</output>
+<p>Note the result type: <code>toSorted</code> returns <code>number[]</code>, not a tuple. After sorting, TypeScript no longer promises which value is where, which is honest.</p>
+</section>
+
+<section>
+<h2 id="inference">When TypeScript infers a tuple</h2>
+<p>An array literal on its own is always inferred as an array. That is a deliberate default: most arrays grow and shrink. There are four ways to get a tuple instead.</p>
+<example file="inference.ts" project="inference">
+const inferred = ["NGN", 1];
+const annotated: [string, number] = ["NGN", 1];
+const constant = ["NGN", 1] as const;
+
+function pair(): [currency: string, rate: number] {
+  return ["USD", 1550];
+}
+const returned = pair();
+
+function tuple<const T extends readonly unknown[]>(...items: T): T {
+  return items;
+}
+const generic = tuple("GBP", 2050, true);
+
+console.log(inferred.length, annotated.length, constant.length, returned.length, generic.length);
+</example>
+<output>
+</output>
+<ul>
+<li><code>inferred</code> is <code>(string | number)[]</code>: an array.</li>
+<li>An <strong>annotation</strong> makes it <code>[string, number]</code>.</li>
+<li><code>as const</code> makes it <code>readonly ["NGN", 1]</code>: a readonly tuple of literal types. That is the most precise type there is, and often too precise for values that are not constants.</li>
+<li>A <strong>return type</strong> on a function makes the returned literal a tuple, which is how most tuples in real code are created.</li>
+<li>A <strong>const type parameter</strong>, <code>&lt;const T extends readonly unknown[]&gt;</code> (TypeScript 5.0), asks TypeScript to infer <code>T</code> as if the caller had written <code>as const</code>. Here <code>generic</code> is <code>readonly ["GBP", 2050, true]</code>, without the caller writing anything.</li>
+</ul>
+<p>Without the return type, even a two-element return would be inferred as an array, and every caller would lose the positions:</p>
+<example file="no-return-type.ts" project="inference" check="tsc-error">
+function exchangeRate(currency: string) {
+  return [currency, 1550];
+}
+
+const [code, rate] = exchangeRate("USD");
+console.log(rate.toFixed(2));
+</example>
+<output kind="tsc">
+</output>
+</section>
+
+<section>
+<h2 id="returning">Returning tuples, useState-style</h2>
+<p>The most famous tuple in JavaScript is React's <code>const [count, setCount] = useState(0)</code>. It returns a tuple, not an object, for one reason: the caller chooses the names. With an object, every caller would have to write <code>const { value: count, setValue: setCount } = …</code>. With a tuple, names are free and destructuring is short. Here is the same idea as a small state helper for a shopping cart:</p>
+<example file="state.ts" project="state">
+export function createState<T>(initial: T): readonly [get: () => T, set: (next: T | ((previous: T) => T)) => void] {
+  let value = initial;
+  const get = () => value;
+  const set = (next: T | ((previous: T) => T)) => {
+    value = typeof next === "function" ? (next as (previous: T) => T)(value) : next;
+  };
+  return [get, set] as const;
+}
+
+const [itemCount, setItemCount] = createState(0);
+const [coupon, setCoupon] = createState<string | null>(null);
+
+setItemCount(3);
+setItemCount((n) => n + 1);
+setCoupon("SAVE10");
+
+console.log(itemCount(), coupon());
+</example>
+<output>
+</output>
+<ul>
+<li>The return type is a readonly tuple with labels, so callers see <code>get</code> and <code>set</code> in their editor, then pick their own names.</li>
+<li><code>T</code> is inferred from the initial value: <code>number</code> for the counter. For the coupon, <code>null</code> alone would infer <code>T = null</code>, so the caller passes <code>&lt;string | null&gt;</code>, exactly as with <code>useState</code>.</li>
+<li>The one <code>as</code> is there because TypeScript cannot tell, from <code>typeof next === "function"</code>, that the function is the updater and not a <code>T</code> that happens to be a function. It is the "proof the compiler cannot follow" case from <a href="/learn/ts-assertions#justified">Type assertions</a>; it would be wrong if <code>T</code> itself were a function type, which is why React documents the same limitation.</li>
+</ul>
+<h3>Tuples you already use</h3>
+<p>The standard library returns and accepts tuples in several places, and the types are written that way:</p>
+<example file="builtins.ts" project="state">
+const balances = { "ACC-001": 125000, "ACC-002": 0 };
+
+for (const [account, kobo] of Object.entries(balances)) {
+  console.log(account, kobo);
+}
+
+const fees = new Map<string, number>([["transfer", 1075], ["sms", 400]]);
+console.log([...fees.entries()][0]);
+
+const [user, account] = await Promise.all([
+  Promise.resolve({ name: "Ada" }),
+  Promise.resolve({ id: "ACC-001", kobo: 125000 }),
+]);
+console.log(user.name, account.kobo);
+</example>
+<output>
+</output>
+<p><code>Object.entries</code> gives <code>[string, number][]</code>, an array of pairs. A <code>Map</code> is built from pairs. <code>Promise.all</code> on a tuple of promises returns a tuple of results, so <code>user</code> and <code>account</code> each get their own type; with a plain array, both would be a union.</p>
+<h3>Tuples as parameter lists</h3>
+<p>A function's parameter list is itself a tuple type, and a rest parameter can be typed with one. <code>Parameters&lt;typeof fn&gt;</code> from <a href="/learn/ts-advanced#utility-types">Advanced and utility types</a> gives you that tuple:</p>
+<example file="params.ts" project="state">
+function transfer(from: string, to: string, kobo: number): string {
+  return `${from} -> ${to}: ${kobo}`;
+}
+
+type TransferArgs = Parameters<typeof transfer>;
+
+const queued: TransferArgs[] = [
+  ["ACC-001", "ACC-002", 250000],
+  ["ACC-003", "ACC-001", 1000],
+];
+
+for (const args of queued) console.log(transfer(...args));
+</example>
+<output>
+</output>
+<p><code>TransferArgs</code> is <code>[from: string, to: string, kobo: number]</code>, labels included. Spreading a tuple into a call type-checks each argument by position, which is what makes a queue of saved calls safe.</p>
+</section>
+
+<section>
+<h2 id="build">Build: a statement parser</h2>
+<reason title="Before you parse the statement">
+<p>Each line of the CSV looks like <code>2026-09-01,POS purchase,-2500.00</code>. Some lines have a fourth column, a reference. The file comes from another system, so treat it as outside data. Think first:</p>
+<ul>
+<li>What tuple type describes a valid row, including the optional reference?</li>
+<li>What can be wrong with a line? Think about too few columns, a date that is not a date, an amount that is not a number, and a description that contains a comma.</li>
+<li>How should the parser report a bad line: throw, skip it silently, or return something the caller must check?</li>
+<li>Amounts like <code>-2500.00</code> are naira with decimals. What should the program store?</li>
+</ul>
+<answer>
+<p>A valid row is <code>readonly [date: string, description: string, kobo: number, reference?: string]</code>. A line can have too few or too many columns, a malformed date, or an amount where <code>Number(…)</code> gives <code>NaN</code>. A real bank CSV quotes descriptions that contain commas; this simple parser does not support quotes, so it must at least refuse lines with the wrong number of columns instead of shifting every field. Skipping silently hides data loss and throwing stops the whole file for one bad line, so each line returns either an error or a row, and the caller decides. A union of two tuples, <code>[error: string, row: null] | [error: null, row: Row]</code>, does exactly that and narrows on the first element. Money is stored as whole kobo, as in <a href="/learn/ts-narrowing#build">Narrowing</a>.</p>
+</answer>
+</reason>
+<example file="statement.ts" project="statement">
+export type Row = readonly [date: string, description: string, kobo: number, reference?: string];
+export type ParseResult = readonly [error: string, row: null] | readonly [error: null, row: Row];
+
+export function parseLine(line: string): ParseResult {
+  const cells = line.split(",").map((cell) => cell.trim());
+  if (cells.length < 3 || cells.length > 4) return [`expected 3 or 4 columns, got ${cells.length}`, null];
+  const [date = "", description = "", amount = "", reference] = cells;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [`bad date "${date}"`, null];
+  const naira = Number(amount);
+  if (amount === "" || !Number.isFinite(naira)) return [`bad amount "${amount}"`, null];
+  const kobo = Math.round(naira * 100);
+  return [null, reference ? [date, description, kobo, reference] : [date, description, kobo]];
+}
+
+const csv = `2026-09-01,POS purchase,-2500.00
+2026-09-02,Salary,450000.00,PAY-0925
+2026-09-03,Airtime
+2026-09-04,Transfer to Ada,abc
+2026-09-05,Lunch, Yaba,-3000`;
+
+let balance = 0;
+for (const [lineNo, line] of csv.split("\n").entries()) {
+  const [error, row] = parseLine(line);
+  if (error !== null) {
+    console.log(`line ${lineNo + 1}: ${error}`);
+    continue;
+  }
+  const [date, description, kobo, reference] = row;
+  balance += kobo;
+  console.log(`${date} ${description.padEnd(16)} ${String(kobo).padStart(9)}${reference ? " " + reference : ""}`);
+}
+console.log(`balance: ₦${(balance / 100).toFixed(2)}`);
+</example>
+<output>
+</output>
+<p>Read how the tuples work together:</p>
+<ul>
+<li><code>ParseResult</code> is a union of two tuples, and the first element is <code>string</code> in one and <code>null</code> in the other. <code>null</code> is a unit type, so it works as a discriminant: after <code>if (error !== null) continue</code>, TypeScript knows <code>row</code> is a <code>Row</code>, even though both came from destructuring.</li>
+<li>The destructuring defaults <code>date = ""</code> are needed because <code>cells</code> is a <code>string[]</code>; with <code>noUncheckedIndexedAccess</code> on, each element would be <code>string | undefined</code>. The length check above makes the defaults unreachable, but the compiler cannot connect the two.</li>
+<li>The last line has a comma inside the description and produced four columns: <code>" Yaba"</code> became the amount and was refused. Without the column count and amount checks, it would have been stored as a real transaction. Supporting quoted CSV properly is a job for a CSV library.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="testing">Testing functions that return tuples</h2>
+<p>A tuple is an array, so tests compare it with deep equality, position by position. Test each position you care about, the failure tuples, and the optional element both present and absent:</p>
+<example file="statement.test.ts" project="statement">
+import { parseLine } from "./statement.js";
+
+const cases: [line: string, expected: unknown][] = [
+  ["2026-09-01,POS purchase,-2500.00", [null, ["2026-09-01", "POS purchase", -250000]]],
+  ["2026-09-02,Salary,450000,PAY-1", [null, ["2026-09-02", "Salary", 45000000, "PAY-1"]]],
+  ["2026-09-03,Airtime", ["expected 3 or 4 columns, got 2", null]],
+  ["01/09/2026,Rent,-100000", ['bad date "01/09/2026"', null]],
+  ["2026-09-04,Refund,", ['bad amount ""', null]],
+];
+
+for (const [line, expected] of cases) {
+  const same = JSON.stringify(parseLine(line)) === JSON.stringify(expected);
+  console.log(same ? "PASS" : "FAIL", line);
+}
+</example>
+<output>
+</output>
+<p>Notice <code>"2026-09-04,Refund,"</code>: <code>Number("")</code> is <code>0</code>, not <code>NaN</code>, so without the explicit <code>amount === ""</code> check an empty amount would have become a ₦0 transaction. The test table is where you find out. In a Vitest suite, <code>expect(parseLine(line)).toEqual(expected)</code> does the deep comparison for you.</p>
+</section>
+
+<section>
+<h2 id="production">Tuples in production code</h2>
+<ul>
+<li><strong>Keep them short.</strong> Two or three positions whose meaning is obvious: pairs, entries, <code>[value, setValue]</code>, <code>[error, result]</code>. Beyond that, use an object; <code>row.kobo</code> is clearer than <code>row[2]</code>, and adding a field does not shift every position.</li>
+<li><strong>Make them readonly.</strong> <code>push</code> on a tuple compiles and breaks the type's promise. <code>readonly</code> costs nothing.</li>
+<li><strong>Label them.</strong> Labels are free documentation that shows up in editors and error messages.</li>
+<li><strong>Validate at the boundary.</strong> JSON has no tuples: <code>JSON.parse("[1, 2]")</code> is an array of <code>any</code>. A tuple from a request, file or queue needs its length and every position checked, like any outside data.</li>
+<li><strong>Prefer objects in public APIs and JSON.</strong> An API field <code>"rate": ["USD", 1550]</code> forces every client to know the positions; <code>{ "currency": "USD", "rate": 1550 }</code> explains itself.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Min and max in one pass">
+<p>Write <code>range(amounts: readonly number[]): readonly [min: number, max: number] | null</code>, which returns <code>null</code> for an empty list. Use it on a list of withdrawals.</p>
+<solution>
+<example file="range.ts" project="ex-range">
+function range(amounts: readonly number[]): readonly [min: number, max: number] | null {
+  const [first, ...rest] = amounts;
+  if (first === undefined) return null;
+  let min = first;
+  let max = first;
+  for (const amount of rest) {
+    if (amount < min) min = amount;
+    if (amount > max) max = amount;
+  }
+  return [min, max];
+}
+
+const result = range([5000, 1200, 20000, 800]);
+if (result !== null) {
+  const [smallest, largest] = result;
+  console.log(smallest, largest);
+}
+console.log(range([]));
+</example>
+<output>
+</output>
+<p>The return type makes the returned literal a tuple, and the caller chooses the names. <code>null</code> for an empty list is part of the type, so the caller must narrow before destructuring.</p>
+</solution>
+</exercise>
+<exercise title="A useToggle helper">
+<p>Using the same idea as <code>createState</code>, write <code>useToggle(initial: boolean)</code> that returns a readonly tuple <code>[isOn: () =&gt; boolean, toggle: () =&gt; void]</code>. Use it for a "show balance" switch.</p>
+<solution>
+<example file="toggle.ts" project="ex-toggle">
+function useToggle(initial: boolean): readonly [isOn: () => boolean, toggle: () => void] {
+  let on = initial;
+  return [() => on, () => { on = !on; }] as const;
+}
+
+const [showBalance, toggleBalance] = useToggle(false);
+console.log(showBalance());
+toggleBalance();
+console.log(showBalance());
+toggleBalance();
+console.log(showBalance());
+</example>
+<output>
+</output>
+<p>Both functions close over the same <code>on</code> variable, so the toggle is visible through the getter. The caller named them <code>showBalance</code> and <code>toggleBalance</code>, which an object return would not have allowed without renaming.</p>
+</solution>
+</exercise>
+<exercise title="Tuple or object?">
+<p>For each of these, would you use a tuple or an object, and why? (a) A currency pair and its rate returned by <code>latestRate()</code>. (b) A customer record with name, e-mail, phone, BVN and date of birth. (c) The two halves of a split bill, <code>[yours, mine]</code>.</p>
+<solution>
+<p>(a) Either works; a labelled readonly tuple <code>[pair: string, rate: number]</code> is fine for a two-value return that callers destructure at once, and an object is better if it goes into JSON. (b) An object: five fields, all strings except the date, would be impossible to keep in the right order, and positions say nothing in logs or JSON. (c) A tuple: two values of the same kind, destructured immediately, where the caller naming them (<code>const [yours, mine] = split(bill)</code>) is the whole point.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A tuple type fixes the length and the type of each position. An array literal is inferred as an array unless an annotation, a return type, <code>as const</code> or a const type parameter says otherwise.</li>
+<li><code>?</code> marks optional elements (at the end), <code>...T[]</code> a rest element (one per tuple, anywhere). Labels document positions and change nothing else.</li>
+<li>Plain tuples still allow <code>push</code> and <code>sort</code>. <code>readonly</code> tuples do not; use <code>toSorted</code> for a sorted copy.</li>
+<li>Return tuples when callers should name the parts (<code>[get, set]</code>, <code>[error, row]</code>). <code>Object.entries</code>, <code>Map</code>, <code>Promise.all</code> and <code>Parameters</code> all speak tuples.</li>
+<li>A union of tuples with a <code>null</code> or literal element narrows like a discriminated union, even after destructuring.</li>
+<li>Keep tuples short, readonly and labelled, validate them at the boundary, and switch to an object when positions stop being obvious.</li>
+</ul>
+<p>Next: <a href="/learn/ts-generics">Generics</a>, where functions like <code>createState&lt;T&gt;</code> come from.</p>
+</section>

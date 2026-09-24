@@ -1,0 +1,738 @@
+---
+title: Types in depth
+description: Map every JavaScript type, see why objects are shared while primitives are copied, and learn exactly how equality and type coercion decide what your comparisons return.
+minutes: 50
+youNeed: Values, variables and types
+youBuild: A fixed shopping-cart bug, a coercion table printed by JavaScript itself, and a safe comparison for data that arrives as text
+keywords: javascript types, primitive vs reference, bigint, symbol, object types, map set weakmap weakset, mutability, immutability, object identity, strict equality, loose equality algorithm, Object.is, SameValueZero, type coercion table, ToPrimitive, valueOf toString
+objectives: Name all seven primitive types and the main built-in object types, and tell them apart at run time | Predict when assigning or passing a value copies it and when it shares it, and fix bugs caused by shared objects | Explain the difference between an immutable value, a const variable and a frozen object | Choose between ===, ==, Object.is and SameValueZero, and explain how each treats NaN, -0, null and objects | Predict type coercion with the ToNumber, ToString and ToPrimitive rules, and convert data from outside the program explicitly
+---
+<section>
+<h2 id="shared-cart">Two customers, one cart</h2>
+<p>A small online shop keeps a template for an empty cart and gives every new customer a copy of it. At least, that is what the developer meant to do:</p>
+<example file="shared-cart.js">
+const emptyCart = { items: [], totalKobo: 0 };
+
+const adaCart = emptyCart;
+const bolaCart = emptyCart;
+
+adaCart.items.push("Rice 5kg");
+adaCart.totalKobo = 850000;
+
+console.log(bolaCart.items, bolaCart.totalKobo);
+console.log(emptyCart.items.length);
+</example>
+<output>
+[ 'Rice 5kg' ] 850000
+1
+</output>
+<p>Ada added rice to her cart, and it appeared in Bola's cart too, and in the "empty" template. On a real site, every customer would now see everyone else's shopping. <code>items.push(…)</code> adds an item to the end of a list; you will study lists in <a href="/learn/js-arrays">Arrays</a>, and objects like <code>{ items: [], totalKobo: 0 }</code> in <a href="/learn/js-data">Objects and JSON</a>. Here you only need to see the bug.</p>
+<reason title="Before you read on: what does = copy?">
+<p>With numbers, assignment clearly copies: after <code>let a = 5; let b = a; b = 6;</code>, <code>a</code> is still 5. Yet here, changing <code>adaCart</code> changed <code>bolaCart</code>.</p>
+<ul>
+<li>How many carts exist in memory after the first three lines? One or three?</li>
+<li>What do you think <code>adaCart === bolaCart</code> prints?</li>
+<li>And <code>{ items: [] } === { items: [] }</code>, two carts that look exactly the same?</li>
+<li>Why might a language be designed so that <code>=</code> does not copy objects?</li>
+</ul>
+<answer>
+<p><strong>One cart.</strong> <code>{ items: [], totalKobo: 0 }</code> creates one object. <code>adaCart = emptyCart</code> does not copy that object; it makes <code>adaCart</code> point at the same one. All three names are labels on a single cart.</p>
+<p><strong><code>adaCart === bolaCart</code> is <code>true</code></strong>: for objects, <code>===</code> asks "is this the same object?". <strong>Two carts written separately are not <code>===</code></strong>, even with identical contents, because they are two different objects.</p>
+<p><strong>Why not copy?</strong> Objects can be huge (a list of a million orders) and can contain other objects. Copying on every assignment and every function call would be slow and use a lot of memory, and it would not even be clear how deep to copy. So JavaScript copies only the small thing, the reference, and leaves copying to you, when you ask for it. The rest of this lesson makes that model precise.</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="two-families">Two families of values</h2>
+<p>Every value in JavaScript belongs to one of two families:</p>
+<ul>
+<li><strong>Primitive values</strong>: the seven simple types you met in <a href="/learn/js-values#types">Values and types</a>: string, number, bigint, boolean, undefined, null and symbol. A primitive is a single, simple value, and it can never be changed.</li>
+<li><strong>Objects</strong>: everything else. Plain objects, arrays, functions, dates, maps, sets, errors… An object is a container: it holds other values, it can be changed, and it has an identity of its own.</li>
+</ul>
+<p>Two of the seven primitives only got a sentence in the first lesson. Here is a little more on each.</p>
+<h3>BigInt: exact whole numbers of any size</h3>
+<p>Ordinary numbers are exact only up to <code>Number.MAX_SAFE_INTEGER</code> (about nine quadrillion). A <strong>bigint</strong>, written with an <code>n</code> at the end, is a whole number that stays exact however large it gets:</p>
+<example file="bigint.js">
+console.log(2 ** 64, 2n ** 64n);
+console.log(10n / 3n);             // whole numbers only: the fraction is dropped
+console.log(typeof 10n, 10n === 10, 10n == 10);
+
+try {
+  console.log(10n + 1);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+console.log(10n + BigInt(1), Number(10n) + 1);
+</example>
+<output>
+18446744073709552000 18446744073709551616n
+3n
+bigint false true
+TypeError: Cannot mix BigInt and other types, use explicit conversions
+11n 11
+</output>
+<p>The ordinary number lost its last digits; the bigint did not. Division drops the fraction. You cannot mix bigints and numbers in arithmetic: JavaScript refuses to guess which precision you wanted, so you convert one side with <code>BigInt()</code> or <code>Number()</code>. In practice you meet bigints for database ids and counters that can exceed the safe range; money in kobo stays comfortably inside it (the safe limit is about ₦90 trillion).</p>
+<h3>Symbol: a guaranteed-unique value</h3>
+<p>A <strong>symbol</strong> is a value that is equal only to itself. Every call to <code>Symbol()</code> makes a new one; the text in the parentheses is only a description for people. Symbols are used as property keys that can never clash with anybody else's keys:</p>
+<example file="symbol.js">
+const orderId = Symbol("id");
+const otherId = Symbol("id");
+console.log(orderId === otherId, orderId.description);
+
+const order = { id: "ORD-1" };
+order[orderId] = "internal-7731";   // a hidden key: cannot clash with order.id
+console.log(order.id, order[orderId]);
+
+console.log(Symbol.for("app.cache") === Symbol.for("app.cache"));
+try {
+  console.log("key: " + orderId);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+false id
+ORD-1 internal-7731
+true
+TypeError: Cannot convert a Symbol value to a string
+</output>
+<p><code>Symbol.for(name)</code> looks up a shared symbol in a global registry, so the same name gives the same symbol everywhere in the program. A symbol refuses to be quietly turned into text; <code>String(orderId)</code> works because it asks explicitly. You will rarely create symbols yourself, but the language uses them for its own hooks, which <a href="/learn/js-symbols">Symbols</a> covers.</p>
+</section>
+
+<section>
+<h2 id="object-map">The map of object types</h2>
+<p>Most of what you will build is made of objects. JavaScript ships with many kinds, each made for one job. This is the map; each one gets a full lesson later.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Type</th><th>Made for</th><th>Created with</th><th>Lesson</th></tr></thead>
+<tbody>
+<tr><td>Object</td><td>A record with named properties: a user, an order</td><td><code>{ name: "Ada" }</code></td><td><a href="/learn/js-data">Objects and JSON</a></td></tr>
+<tr><td>Array</td><td>An ordered list: orders, lines on a receipt</td><td><code>[1, 2, 3]</code></td><td><a href="/learn/js-arrays">Arrays</a></td></tr>
+<tr><td>Function</td><td>Code you can call; also an object</td><td><code>function f() {}</code>, <code>() =&gt; {}</code></td><td><a href="/learn/js-functions">Functions</a></td></tr>
+<tr><td>Date</td><td>A moment in time</td><td><code>new Date()</code></td><td><a href="/learn/js-dates">Dates</a></td></tr>
+<tr><td>Map</td><td>A lookup table with keys of <em>any</em> type</td><td><code>new Map()</code></td><td><a href="/learn/js-collections">Collections</a></td></tr>
+<tr><td>Set</td><td>A collection of unique values</td><td><code>new Set()</code></td><td><a href="/learn/logic-sets">Sets</a></td></tr>
+<tr><td>WeakMap</td><td>Extra data attached to objects, forgotten when the object is</td><td><code>new WeakMap()</code></td><td><a href="/learn/js-collections">Collections</a></td></tr>
+<tr><td>WeakSet</td><td>Marking objects ("already processed"), forgotten when the object is</td><td><code>new WeakSet()</code></td><td><a href="/learn/js-collections">Collections</a></td></tr>
+<tr><td>RegExp</td><td>A text pattern to search or validate</td><td><code>/^\d+$/</code></td><td><a href="/learn/js-regexp">Regular expressions</a></td></tr>
+<tr><td>Error</td><td>Something that went wrong, with a message and a stack trace</td><td><code>new Error("…")</code></td><td><a href="/learn/js-errors">Errors</a></td></tr>
+</tbody>
+</table></div>
+<p>A few of them in action:</p>
+<example file="object-types.js">
+const stock = new Map();
+stock.set("rice", 12);
+stock.set(42, "a number key works too");
+console.log(stock.get("rice"), stock.get(42), stock.size);
+
+const tags = new Set(["vip", "new", "vip"]);
+console.log(tags.size, tags.has("vip"));
+
+const onlyDigits = /^\d+$/;
+console.log(onlyDigits.test("2026"), onlyDigits.test("20x6"));
+
+const problem = new Error("Out of stock");
+console.log(problem.name, problem.message);
+
+function applyVat(kobo) {
+  return Math.round(kobo * 1.075);
+}
+applyVat.rate = 7.5;                    // a function is an object: it can hold properties
+console.log(applyVat(10000), applyVat.name, applyVat.rate);
+</example>
+<output>
+12 a number key works too 2
+2 true
+true false
+Error Out of stock
+10750 applyVat 7.5
+</output>
+<h3>Weak collections</h3>
+<p>A <code>WeakMap</code> only accepts objects as keys, and it does not keep those objects alive: when nothing else in the program refers to an object, the object and its entry can be thrown away by the garbage collector. That makes it the right tool for data <em>about</em> an object, such as a cache per request, without leaking memory. The price: you cannot list its contents or ask its size, because entries may disappear at any moment.</p>
+<example file="weakmap.js">
+const lastSeen = new WeakMap();
+const user = { name: "Ada" };
+lastSeen.set(user, "09:30");
+console.log(lastSeen.get(user), lastSeen.has({ name: "Ada" }));
+
+try {
+  lastSeen.set("Ada", "09:30");
+} catch (error) {
+  console.log(error.name);
+}
+</example>
+<output>
+09:30 false
+TypeError
+</output>
+<p>The second lookup fails because <code>{ name: "Ada" }</code> is a <em>different</em> object that just looks the same: maps and sets find object keys by identity, which the next sections explain.</p>
+<h3>Telling types apart</h3>
+<p><code>typeof</code> is enough for primitives, but for objects it only ever says <code>"object"</code> (or <code>"function"</code>). To find out which kind of object you have:</p>
+<example file="which-object.js">
+const values = [{}, [], new Date(0), new Map(), /a/, new Error("x"), null, () => 1];
+
+for (const value of values) {
+  const tag = Object.prototype.toString.call(value);
+  console.log(typeof value, "|", Array.isArray(value), "|", tag);
+}
+</example>
+<output>
+object | false | [object Object]
+object | true | [object Array]
+object | false | [object Date]
+object | false | [object Map]
+object | false | [object RegExp]
+object | false | [object Error]
+object | false | [object Null]
+function | false | [object Function]
+</output>
+<p>The <code>for (const value of values)</code> loop runs its line once for each value in the list; <a href="/learn/js-loops">Loops</a> covers it. Use <code>Array.isArray(x)</code> to check for arrays, <code>x instanceof Date</code> (read: "was <code>x</code> made by <code>Date</code>?") for the other built-in types, and <code>x === null</code> for null, since <code>typeof null</code> is <code>"object"</code>. <code>Object.prototype.toString.call(x)</code> is the most precise tag, mostly used in libraries. And every object type is a special kind of object, so an array is also an <code>Object</code>:</p>
+<example file="instanceof.js">
+console.log(new Date(0) instanceof Date, [] instanceof Array, [] instanceof Object);
+</example>
+<output>
+true true true
+</output>
+</section>
+
+<section>
+<h2 id="copy-or-share">Copied or shared: primitives and references</h2>
+<p>Here is the model that explains the shared cart. A variable is a box. For a primitive, the box holds the value itself. For an object, the object lives somewhere else in memory, and the box holds a <strong>reference</strong> to it: an arrow pointing at it.</p>
+<pre>
+let a = 5;            a        [ 5 ]
+let b = a;            b        [ 5 ]              two boxes, two separate 5s
+
+const cart1 = {…};    cart1    [ ●──────┐ ]
+const cart2 = cart1;  cart2    [ ●──────┤ ]
+                                        ▼
+                               { items: [], totalKobo: 0 }   one object
+</pre>
+<p>Assignment always copies <em>what is in the box</em>. For a primitive that is the value, so the copy is independent. For an object it is the arrow, so both boxes now point at the same object. Changing the object through either name changes the one object that both see.</p>
+<h3>Passing values to functions</h3>
+<p>A function's parameters are new boxes, filled by assignment from the arguments. So the same rule applies. This is sometimes called <strong>pass by sharing</strong>:</p>
+<example file="pass-by-sharing.js">
+function applyDiscount(order, percent) {
+  order.totalKobo = order.totalKobo - (order.totalKobo * percent) / 100;
+  percent = 0;                        // changes only this function's box
+}
+
+function replaceOrder(order) {
+  order = { totalKobo: 0 };           // points this box at a new object
+}
+
+const order = { totalKobo: 1000000 };
+let discount = 10;
+
+applyDiscount(order, discount);
+console.log(order.totalKobo, discount);
+
+replaceOrder(order);
+console.log(order.totalKobo);
+</example>
+<output>
+900000 10
+900000
+</output>
+<ul>
+<li><code>applyDiscount</code> followed the arrow and changed the caller's order. That is visible outside.</li>
+<li>Setting <code>percent = 0</code> changed the function's own box; the caller's <code>discount</code> is still 10.</li>
+<li><code>replaceOrder</code> pointed its own box at a new object. The caller's box still points at the old order, which is unchanged.</li>
+</ul>
+<p>Changing an object you were given, as <code>applyDiscount</code> does, is called a <strong>side effect</strong>, and it is a common source of bugs in backends: a function quietly edits an object that other code is still using. Many teams prefer functions that return a new object instead, a habit you will build in <a href="/learn/js-functions#pure">Functions</a>.</p>
+<h3>Fixing the shared cart</h3>
+<p>The fix is to create a <em>new</em> object for every customer. The simplest way is a function that builds one each time it is called:</p>
+<example file="cart-fixed.js">
+function createCart() {
+  return { items: [], totalKobo: 0 };
+}
+
+const adaCart = createCart();
+const bolaCart = createCart();
+
+adaCart.items.push("Rice 5kg");
+adaCart.totalKobo = 850000;
+
+console.log(adaCart.items, bolaCart.items, adaCart === bolaCart);
+</example>
+<output>
+[ 'Rice 5kg' ] [] false
+</output>
+<p>Each call runs <code>{ items: [], totalKobo: 0 }</code> again, and each run makes a brand-new object with a brand-new list inside. A function that creates objects like this is called a <strong>factory</strong>. Copying an existing object is the other option; spread (<code>{ ...cart }</code>) makes a shallow copy and <code>structuredClone(cart)</code> a deep one, as <a href="/learn/js-data#copying">Objects and JSON</a> shows. The factory is simpler when you are starting from a fixed template.</p>
+</section>
+
+<section>
+<h2 id="mutability">Mutability: values, variables and frozen objects</h2>
+<p>"Can this change?" has three different answers in JavaScript, depending on what "this" is:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>What</th><th>Can it change?</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td>A primitive value</td><td>Never. Operations make new values.</td><td><code>"ada".toUpperCase()</code> returns a new string</td></tr>
+<tr><td>A <code>const</code> variable</td><td>The box cannot be pointed elsewhere, but the object it points at can change.</td><td><code>const cart = …; cart.items.push(x)</code> works</td></tr>
+<tr><td>A frozen object</td><td>Its own properties cannot change (one level deep).</td><td><code>Object.freeze(settings)</code></td></tr>
+</tbody>
+</table></div>
+<example file="mutability.js">
+const name = "ada";
+const loud = name.toUpperCase();
+console.log(name, loud);
+
+try {
+  name[0] = "A";               // strings cannot be changed in place
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+
+const cart = { items: [] };
+cart.items.push("Garri");     // allowed: the object changes, the variable does not
+console.log(cart.items);
+
+try {
+  cart = { items: [] };       // not allowed: a const box cannot be pointed elsewhere
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+ada ADA
+TypeError: Cannot assign to read only property '0' of string 'ada'
+[ 'Garri' ]
+TypeError: Assignment to constant variable.
+</output>
+<p>An object whose contents can change is <strong>mutable</strong>; a value that can never change is <strong>immutable</strong>. All primitives are immutable: <code>name[0] = "A"</code> is refused (in older, non-strict code it was silently ignored, which was worse). <code>const</code> is about the variable, not the value. To protect the object itself, freeze it:</p>
+<example file="freeze.js">
+const settings = Object.freeze({ currency: "NGN", vatPercent: 7.5, limits: { daily: 100000 } });
+
+try {
+  settings.vatPercent = 0;
+} catch (error) {
+  console.log(error.name);
+}
+settings.limits.daily = 999999999;     // freeze is shallow: the inner object is not frozen
+console.log(settings.vatPercent, settings.limits.daily, Object.isFrozen(settings));
+</example>
+<output>
+TypeError
+7.5 999999999 true
+</output>
+<p>Freezing stops changes to the object's own properties, but only one level deep: <code>limits</code> is a separate object and is still mutable. <a href="/learn/js-objects-deep">Objects in depth</a> shows how to freeze deeply. ZudoJS freezes its configuration objects for exactly this reason: settings that nobody can change by accident are settings you can trust.</p>
+<h3>Methods that change and methods that copy</h3>
+<p>Some built-in methods change the object you call them on; others return a new one. Knowing which is which prevents the shared-object bug in its sneakier forms:</p>
+<example file="mutating-methods.js">
+const prices = [1500, 200, 850];
+
+const sortedCopy = prices.toSorted((a, b) => a - b);
+console.log(prices, sortedCopy);
+
+prices.sort((a, b) => a - b);        // sorts the list itself
+console.log(prices);
+</example>
+<output>
+[ 1500, 200, 850 ] [ 200, 850, 1500 ]
+[ 200, 850, 1500 ]
+</output>
+<p><code>sort</code>, <code>reverse</code>, <code>push</code>, <code>pop</code> and <code>splice</code> change the list. <code>toSorted</code>, <code>toReversed</code>, <code>slice</code>, <code>map</code> and <code>filter</code> return a new one. String methods never change the string, because strings are immutable.</p>
+</section>
+
+<section>
+<h2 id="equality">Identity and equality</h2>
+<p>"Are these equal?" can mean three different questions:</p>
+<ol>
+<li><strong>Same value?</strong> For primitives: are these the same number, the same text?</li>
+<li><strong>Same identity?</strong> For objects: are these two references to the very same object?</li>
+<li><strong>Same contents?</strong> Do these two objects have the same properties with the same values?</li>
+</ol>
+<p><code>===</code> answers question 1 for primitives and question 2 for objects. Nothing built into the language answers question 3 directly:</p>
+<example file="identity.js">
+const a = { sku: "RICE-5", qty: 2 };
+const b = { sku: "RICE-5", qty: 2 };
+const c = a;
+
+console.log(a === b, a === c);
+console.log([] === [], "RICE-5" === "RICE-" + "5");
+
+console.log(a.sku === b.sku && a.qty === b.qty);
+console.log(JSON.stringify(a) === JSON.stringify(b));
+console.log(JSON.stringify({ sku: "RICE-5", qty: 2 }) === JSON.stringify({ qty: 2, sku: "RICE-5" }));
+</example>
+<output>
+false true
+false true
+true
+true
+false
+</output>
+<p>To compare contents, compare the fields that matter, as the third line does. Comparing <code>JSON.stringify</code> text works for simple data but depends on the order the properties were written in, as the last line shows. Test runners have a proper deep comparison: in Vitest, <code>toBe</code> checks identity and <code>toEqual</code> checks contents (<a href="/learn/testing-basics">Testing basics</a>).</p>
+<h3>Four ways to compare</h3>
+<p>JavaScript actually has four equality algorithms. You write two of them yourself; the other two are used for you by built-in methods:</p>
+<ul>
+<li><code>===</code>, <strong>strict equality</strong>: same type and same value (or same object). Two exceptions: <code>NaN === NaN</code> is false, and <code>0 === -0</code> is true.</li>
+<li><code>==</code>, <strong>loose equality</strong>: converts the two sides first, following rules explained in the next section.</li>
+<li><code>Object.is(a, b)</code>, <strong>same value</strong>: like <code>===</code>, but without the two exceptions: <code>NaN</code> equals <code>NaN</code>, and <code>0</code> and <code>-0</code> are different.</li>
+<li><strong>SameValueZero</strong>: like <code>Object.is</code>, except that <code>0</code> and <code>-0</code> are equal. You never call it by name; <code>includes</code>, <code>Map</code> and <code>Set</code> use it.</li>
+</ul>
+<p>Negative zero, <code>-0</code>, is a real value in JavaScript: numbers carry a sign even when they are zero. It appears when a negative number is rounded to zero or multiplied by zero, and it can matter when the sign means something, such as the direction of a price change.</p>
+<example file="four-equalities.js">
+console.log(NaN === NaN, Object.is(NaN, NaN));
+console.log(0 === -0, Object.is(0, -0));
+console.log(Math.round(-0.4), -5 * 0, String(-0));
+
+console.log([NaN].includes(NaN), [NaN].indexOf(NaN));
+console.log(new Set([NaN, NaN, 0, -0]).size);
+
+const ids = new Map([[1, "number one"], ["1", "text one"]]);
+console.log(ids.get(1), "|", ids.get("1"));
+</example>
+<output>
+false true
+true false
+-0 -0 0
+true -1
+2
+number one | text one
+</output>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Comparison</th><th><code>==</code></th><th><code>===</code></th><th><code>Object.is</code></th><th>SameValueZero (<code>includes</code>, <code>Map</code>, <code>Set</code>)</th></tr></thead>
+<tbody>
+<tr><td><code>NaN</code> and <code>NaN</code></td><td>false</td><td>false</td><td>true</td><td>true</td></tr>
+<tr><td><code>0</code> and <code>-0</code></td><td>true</td><td>true</td><td>false</td><td>true</td></tr>
+<tr><td><code>1</code> and <code>"1"</code></td><td>true</td><td>false</td><td>false</td><td>false</td></tr>
+<tr><td><code>null</code> and <code>undefined</code></td><td>true</td><td>false</td><td>false</td><td>false</td></tr>
+<tr><td>two different <code>{}</code></td><td>false</td><td>false</td><td>false</td><td>false</td></tr>
+</tbody>
+</table></div>
+<p>Notice <code>indexOf</code>: it uses <code>===</code>, so it can never find <code>NaN</code>, while <code>includes</code> can. And the Map keeps <code>1</code> and <code>"1"</code> apart. That is exactly the bug waiting for you when an id arrives from a web address as text and your table uses numbers.</p>
+</section>
+
+<section>
+<h2 id="coercion">Type coercion, precisely</h2>
+<p>In <a href="/learn/js-values#coercion">Values and types</a> you saw that JavaScript converts values on its own: <code>"5" - 1</code> is 4. This is <strong>implicit coercion</strong>. It is not random. Every operator follows the same few conversion rules, and once you know them you can predict any result.</p>
+<h3>To a number</h3>
+<p>Arithmetic (except <code>+</code> with text), comparisons with <code>&lt;</code> and <code>&gt;</code>, and <code>Number(x)</code> all use the same conversion to a number. Let JavaScript print its own table:</p>
+<example file="to-number.js">
+const inputs = [undefined, null, true, false, "", "  12  ", "12px", "0x1A", "1e3", [], [5], [1, 2], {}];
+const labels = ["undefined", "null", "true", "false", '""', '"  12  "', '"12px"', '"0x1A"', '"1e3"', "[]", "[5]", "[1, 2]", "{}"];
+
+for (let i = 0; i < inputs.length; i++) {
+  console.log(labels[i].padEnd(10), "->", Number(inputs[i]));
+}
+</example>
+<output>
+undefined  -> NaN
+null       -> 0
+true       -> 1
+false      -> 0
+""         -> 0
+"  12  "   -> 12
+"12px"     -> NaN
+"0x1A"     -> 26
+"1e3"      -> 1000
+[]         -> 0
+[5]        -> 5
+[1, 2]     -> NaN
+{}         -> NaN
+</output>
+<p>The rules behind the table: <code>undefined</code> becomes NaN but <code>null</code> becomes 0; booleans become 1 and 0; text is read as a number after trimming spaces, with empty text as 0, hexadecimal (<code>0x</code>) and exponent (<code>1e3</code>) forms allowed, and anything else NaN. Objects are first turned into a primitive (see below): an array becomes its text, so <code>[]</code> is <code>""</code> (0), <code>[5]</code> is <code>"5"</code> and <code>[1, 2]</code> is <code>"1,2"</code> (NaN). <code>padEnd(10)</code> only pads the labels with spaces so the arrows line up.</p>
+<h3>To a string</h3>
+<example file="to-string.js">
+console.log(String(null), String(undefined), String(true), String(-0));
+console.log(`[${String([1, 2, 3])}] [${String([])}] [${String([null, undefined])}]`);
+console.log(String({}), String(1e21), String(0.000001), String(0.0000001));
+</example>
+<output>
+null undefined true 0
+[1,2,3] [] [,]
+[object Object] 1e+21 0.000001 1e-7
+</output>
+<p>Arrays join their items with commas (and <code>null</code> and <code>undefined</code> items become empty), plain objects become the unhelpful <code>"[object Object]"</code>, <code>-0</code> loses its sign, and very large or very small numbers switch to exponent notation. When <code>"[object Object]"</code> shows up in a web page or a log, some code turned an object into text by accident.</p>
+<h3>Objects to primitives: valueOf and toString</h3>
+<p>When an operator needs a primitive and gets an object, JavaScript asks the object for one. It calls the object's <code>valueOf()</code> method, and if that does not return a primitive, its <code>toString()</code> method (when text is preferred, as in a template literal, it tries <code>toString()</code> first). You can define both on your own objects, and then the operators use them:</p>
+<example file="to-primitive.js">
+const price = {
+  kobo: 150000,
+  valueOf() {
+    return this.kobo;
+  },
+  toString() {
+    return "₦1,500.00";
+  },
+};
+
+console.log(price + 500, price * 2, price > 100000);
+console.log(`${price}`, String(price));
+</example>
+<output>
+150500 300000 true
+₦1,500.00 ₦1,500.00
+</output>
+<p>Arithmetic used <code>valueOf</code> (the number of kobo); the template literal and <code>String()</code> used <code>toString</code>. <code>this.kobo</code> means "the <code>kobo</code> of the object this method belongs to"; <a href="/learn/js-this">this</a> explains it. Be careful with this power: an object that behaves like a number in some places and like text in others is clever, and clever code is hard to read. Explicit methods such as <code>price.format()</code> are usually clearer.</p>
+<h3>The + operator</h3>
+<p><code>+</code> is the one operator with two jobs, so it has its own rule: convert both sides to primitives; if <em>either</em> is a string, join them as text; otherwise, add them as numbers.</p>
+<example file="plus.js">
+console.log(1 + null, 1 + undefined, true + true);
+console.log("3" + 4, 3 + 4 + "5", "3" + 4 + 5);
+console.log(`[${[] + []}]`, [] + {}, [1, 2] + [3]);
+console.log("3" * "4", "10" / "4", "7" - - "2");
+</example>
+<output>
+1 NaN 2
+34 75 345
+[] [object Object] 1,23
+12 2.5 9
+</output>
+<p><code>3 + 4 + "5"</code> is <code>"75"</code> because <code>+</code> works left to right: first 3 + 4 is 7, then 7 + "5" joins. <code>[] + []</code> is empty text, since both arrays turn into <code>""</code>. The other arithmetic operators have only one job, so <code>*</code>, <code>/</code> and <code>-</code> always convert to numbers: <code>"7" - - "2"</code> is 7 minus negative 2.</p>
+<h3>Comparisons with &lt; and &gt;</h3>
+<p>If both sides are strings, they are compared as text, character by character. Otherwise both are converted to numbers. And <code>==</code> has rules of its own, which produce one of the most famous oddities in the language:</p>
+<example file="relational.js">
+console.log("10" < "9", "10" < 9, "abc" < 5, "abc" > 5);
+console.log(null >= 0, null > 0, null == 0);
+console.log(undefined >= 0, undefined == 0);
+</example>
+<output>
+true false false false
+true false false
+false false
+</output>
+<p><code>"abc"</code> becomes NaN, and every comparison with NaN is false, in both directions. <code>null &gt;= 0</code> is true (null becomes 0 for <code>&gt;=</code>) while <code>null == 0</code> is false, because <code>==</code> does not convert null to a number at all. That is the reason for the rule of thumb: never rely on how null and undefined compare; check for them explicitly first.</p>
+<h3>The rules of ==</h3>
+<p>Loose equality follows these steps, in order:</p>
+<ol>
+<li>Same type on both sides: compare exactly like <code>===</code>.</li>
+<li><code>null</code> and <code>undefined</code> are equal to each other, and to nothing else.</li>
+<li>A number and a string: convert the string to a number.</li>
+<li>A boolean on either side: convert the boolean to a number (1 or 0) and start again.</li>
+<li>An object and a primitive: convert the object to a primitive and start again.</li>
+<li>A bigint and a number (or string) compare by their mathematical value.</li>
+</ol>
+<p>Here is the complete <code>==</code> table for ten common values, printed by JavaScript. <code>==</code> marks a pair that is loosely equal:</p>
+<example file="loose-table.js">
+const values = [0, "", "0", false, null, undefined, NaN, [], "1", 1];
+const names = ["0", '""', '"0"', "false", "null", "undef", "NaN", "[]", '"1"', "1"];
+
+let header = "      ";
+for (const name of names) header = header + name.padEnd(6);
+console.log(header);
+
+for (let row = 0; row < values.length; row++) {
+  let line = names[row].padEnd(6);
+  for (let col = 0; col < values.length; col++) {
+    line = line + (values[row] == values[col] ? "==" : ".").padEnd(6);
+  }
+  console.log(line);
+}
+</example>
+<output>
+      0     ""    "0"   false null  undef NaN   []    "1"   1
+0     ==    ==    ==    ==    .     .     .     ==    .     .
+""    ==    ==    .     ==    .     .     .     ==    .     .
+"0"   ==    .     ==    ==    .     .     .     .     .     .
+false ==    ==    ==    ==    .     .     .     ==    .     .
+null  .     .     .     .     ==    ==    .     .     .     .
+undef .     .     .     .     ==    ==    .     .     .     .
+NaN   .     .     .     .     .     .     .     .     .     .
+[]    ==    ==    .     ==    .     .     .     ==    .     .
+"1"   .     .     .     .     .     .     .     .     ==    ==
+1     .     .     .     .     .     .     .     .     ==    ==
+</output>
+<p>You do not need to follow the two loops that print it (they come in <a href="/learn/js-loops">Loops</a>); read the table. It is full of results that break ordinary logic. <code>0 == ""</code> and <code>0 == "0"</code>, but <code>"" == "0"</code> is false, so <code>==</code> is not even consistent with itself. <code>"0" == false</code>, yet <code>Boolean("0")</code> is true, so a value can be "equal to false" and truthy at once. <code>NaN</code> equals nothing, not even itself. The <code>===</code> version of this table is just the diagonal, minus NaN.</p>
+<warn title="Use ===">This table is why the course, ZudoJS, and almost every style guide use <code>===</code> and <code>!==</code> everywhere. Linters can enforce it (ESLint's <code>eqeqeq</code> rule). The one widely accepted exception is <code>value == null</code>, which is true for exactly <code>null</code> and <code>undefined</code>, as the table shows, and which <a href="/learn/js-operators#comparison">Operators</a> uses.</warn>
+</section>
+
+<section>
+<h2 id="outside-data">Real application: data from outside the program</h2>
+<p>Coercion bugs rarely come from values you typed. They come from values that arrived: form fields, web addresses, CSV files, environment variables. All of those are <strong>text</strong>, whatever they look like.</p>
+<reason title="Before you code: an id from a web address">
+<p>A request arrives for <code>/orders/42</code>. The server reads the id from the address as the string <code>"42"</code>. Orders are stored in a Map keyed by numeric ids.</p>
+<ul>
+<li>What does <code>orders.get("42")</code> return, and why?</li>
+<li>Would <code>order.id == id</code> "fix" it? What else would that let through?</li>
+<li>Which inputs must be rejected: <code>"42abc"</code>, <code>""</code>, <code>"4.2"</code>, <code>"-1"</code>, <code>" 42 "</code>?</li>
+<li>Where in the program should the conversion happen?</li>
+</ul>
+<answer>
+<p><strong><code>orders.get("42")</code> is <code>undefined</code>.</strong> Maps compare keys with SameValueZero, which never converts types: <code>"42"</code> and <code>42</code> are different keys. The order looks missing although it exists.</p>
+<p><strong><code>==</code> hides the problem instead of solving it.</strong> <code>42 == "42"</code> is true, but so is <code>0 == ""</code>, so an empty id would match order 0. And <code>==</code> does not help Map lookups at all.</p>
+<p><strong>Rejecting input:</strong> <code>Number("42abc")</code> is NaN, but <code>Number("")</code> is 0 and <code>Number(" 42 ")</code> is 42 (spaces are trimmed), so <code>Number()</code> alone is too forgiving. An id is a positive whole number, so the rule is: the text must be only digits, and the number must be a safe integer above 0. <code>"4.2"</code> and <code>"-1"</code> fail that rule.</p>
+<p><strong>Convert at the edge.</strong> Convert and validate once, where the text enters the program, then pass only real numbers inside it. Code deep inside the program should never have to wonder whether an id is text.</p>
+</answer>
+</reason>
+<example file="parse-id.js">
+const orders = new Map([
+  [42, { id: 42, totalKobo: 1350000 }],
+  [7, { id: 7, totalKobo: 450000 }],
+]);
+
+function parseId(text) {
+  if (!/^\d+$/.test(text)) return null;        // only the digits 0-9, at least one
+  const id = Number(text);
+  if (!Number.isSafeInteger(id) || id === 0) return null;
+  return id;
+}
+
+console.log(orders.get("42"), orders.get(42).totalKobo);
+
+for (const input of ["42", "42abc", "", "4.2", "-1", " 42 ", "0", "007"]) {
+  const id = parseId(input);
+  const found = id === null ? "rejected" : orders.get(id) ? "found" : "no such order";
+  console.log(JSON.stringify(input).padEnd(8), id, found);
+}
+</example>
+<output>
+undefined 1350000
+"42"     42 found
+"42abc"  null rejected
+""       null rejected
+"4.2"    null rejected
+"-1"     null rejected
+" 42 "   null rejected
+"0"      null rejected
+"007"    7 found
+</output>
+<p><code>/^\d+$/</code> is a regular expression meaning "one or more digits and nothing else"; <a href="/learn/js-regexp">Regular expressions</a> explains the syntax. Notice the decision in the last line: <code>"007"</code> is accepted as order 7. That may or may not be what you want, and a test now documents it. Later in the course, <a href="/learn/zudo-validation">@zudojs/validation</a> does this kind of parsing at the edge of every request, so the code behind it only ever sees checked, correctly typed data.</p>
+<tip>The same applies to <code>process.env</code> in Node.js: every environment variable is a string, so <code>process.env.PORT</code> is <code>"3000"</code>, never 3000. <code>"3000" + 1</code> is <code>"30001"</code>.</tip>
+</section>
+
+<section>
+<h2 id="testing">Testing with types in mind</h2>
+<p>Everything in this lesson turns into test cases. When a function takes outside data, its edge-case table should include:</p>
+<ul>
+<li>the right value as text (<code>"42"</code>) and as a number (<code>42</code>);</li>
+<li>empty text, text with spaces, <code>null</code> and <code>undefined</code>;</li>
+<li><code>NaN</code>, <code>0</code> and, where the sign matters, <code>-0</code>;</li>
+<li>for functions that receive objects, a check that the caller's object is unchanged afterwards (or deliberately changed);</li>
+<li>for functions that return objects, a check of the contents, not the identity, and a check that two calls return two separate objects when they should.</li>
+</ul>
+<example file="type-tests.js">
+function check(label, actual, expected) {
+  console.log(Object.is(actual, expected) ? `PASS ${label}` : `FAIL ${label}: got ${actual}, expected ${expected}`);
+}
+
+function createCart() {
+  return { items: [], totalKobo: 0 };
+}
+
+function withItem(cart, item, priceKobo) {
+  return { items: [...cart.items, item], totalKobo: cart.totalKobo + priceKobo };
+}
+
+const empty = createCart();
+const one = withItem(empty, "Rice 5kg", 850000);
+
+check("new cart each call", createCart() === createCart(), false);
+check("original untouched", empty.items.length, 0);
+check("item added to copy", one.items.length, 1);
+check("total", one.totalKobo, 850000);
+check("NaN is detected", Number("12px"), NaN);
+check("-0 is detected", Math.round(-0.2), -0);
+</example>
+<output>
+PASS new cart each call
+PASS original untouched
+PASS item added to copy
+PASS total
+PASS NaN is detected
+PASS -0 is detected
+</output>
+<p>This <code>check</code> uses <code>Object.is</code> instead of <code>===</code>, so that a test expecting <code>NaN</code> can pass, and a test can tell <code>0</code> from <code>-0</code>. <code>withItem</code> returns a new cart instead of changing the one it was given: <code>[...cart.items, item]</code> builds a new list from the old items plus one more (spread, covered in <a href="/learn/js-modern">Modern JavaScript</a>).</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Predict the coercions">
+<p>Write down what each line prints before you run it. Then use the rules from this lesson to explain every surprise.</p>
+<pre><code>console.log("5" * "2", "5" + 2, 5 + +"2");
+console.log([] == false, [0] == false, [1] == true);
+console.log(null + 1, undefined + 1, "" - 1);
+console.log(Object.is(-0, 0), [-0].includes(0));</code></pre>
+<solution>
+<example file="predict-coercion.js">
+console.log("5" * "2", "5" + 2, 5 + +"2");
+console.log([] == false, [0] == false, [1] == true);
+console.log(null + 1, undefined + 1, "" - 1);
+console.log(Object.is(-0, 0), [-0].includes(0));
+</example>
+<output>
+10 52 7
+true true true
+1 NaN -1
+false true
+</output>
+<p><code>*</code> always converts to numbers; <code>+</code> with a string joins; unary <code>+"2"</code> converts to 2 first. For <code>==</code> with a boolean, the boolean becomes a number, then the array becomes text: <code>[]</code> is <code>""</code> which is 0, <code>[0]</code> is <code>"0"</code> which is 0, <code>[1]</code> is <code>"1"</code> which is 1. <code>null</code> is 0 in arithmetic but <code>undefined</code> is NaN. <code>includes</code> uses SameValueZero, where <code>-0</code> and <code>0</code> are equal.</p>
+</solution>
+</exercise>
+<exercise title="Stop sharing the default settings">
+<p>Every new shop account should start with default notification settings. After one shop turns off SMS, every other shop has it turned off too. Explain why, then fix it so each shop gets its own settings.</p>
+<pre><code>const defaultSettings = { sms: true, email: true };
+
+function createShop(name) {
+  return { name, settings: defaultSettings };
+}
+
+const a = createShop("Mama Titi");
+const b = createShop("Chinedu Electronics");
+a.settings.sms = false;
+console.log(b.settings.sms);</code></pre>
+<solution>
+<p><code>createShop</code> creates a new shop object each time, but its <code>settings</code> property holds a reference to the one <code>defaultSettings</code> object. All shops share it. Create a new settings object per shop, and freeze the defaults so a future mistake fails loudly instead of changing every shop:</p>
+<example file="shop-settings.js">
+const defaultSettings = Object.freeze({ sms: true, email: true });
+
+function createShop(name) {
+  return { name, settings: { ...defaultSettings } };
+}
+
+const a = createShop("Mama Titi");
+const b = createShop("Chinedu Electronics");
+a.settings.sms = false;
+console.log(a.settings.sms, b.settings.sms, a.settings === b.settings);
+</example>
+<output>
+false true false
+</output>
+<p><code>{ ...defaultSettings }</code> copies the properties into a new object. A shallow copy is enough here because the settings contain only primitives. <code>{ name, … }</code> is short for <code>{ name: name, … }</code>.</p>
+</solution>
+</exercise>
+<exercise title="Read a quantity from a form">
+<p>A form sends the quantity of an item as text. Write <code>parseQuantity(text)</code> that returns a whole number from 1 to 99, or <code>null</code> for anything else. Reason first: what do <code>Number("")</code>, <code>Number(" 3 ")</code> and <code>Number("2.5")</code> give, and which of them should be accepted?</p>
+<solution>
+<p><code>Number("")</code> is 0 and <code>Number(" 3 ")</code> is 3, so <code>Number()</code> alone would accept empty text as 0 and quietly accept spaces. Decide: trim spaces (people type them by accident), refuse empty text, then require a whole number in range.</p>
+<example file="parse-quantity.js">
+function parseQuantity(text) {
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  if (!Number.isInteger(n) || n < 1 || n > 99) return null;
+  return n;
+}
+
+for (const input of ["3", " 3 ", "", "0", "2.5", "100", "3 bags", "1e1"]) {
+  console.log(JSON.stringify(input), parseQuantity(input));
+}
+</example>
+<output>
+"3" 3
+" 3 " 3
+"" null
+"0" null
+"2.5" null
+"100" null
+"3 bags" null
+"1e1" 10
+</output>
+<p>Look at the last line: <code>"1e1"</code> is exponent notation for 10, and <code>Number()</code> accepts it. Is that acceptable for a quantity field? If not, add a digits-only check like <code>parseId</code> above. Every decision like this belongs in a test.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Seven primitives (string, number, bigint, boolean, undefined, null, symbol) are single, immutable values. Everything else is an object: Object, Array, Function, Date, Map, Set, WeakMap, WeakSet, RegExp, Error and more.</li>
+<li>Use <code>typeof</code> for primitives, <code>Array.isArray</code> and <code>instanceof</code> for objects, and <code>=== null</code> for null.</li>
+<li>Assignment and argument passing copy what is in the variable: the value for primitives, a reference for objects. Two names can point at one object; create new objects (a factory, a copy) when you need separate ones.</li>
+<li><code>const</code> fixes the variable, not the object. <code>Object.freeze</code> fixes an object's own properties, one level deep.</li>
+<li><code>===</code> compares values or identity; <code>Object.is</code> also handles NaN and -0; <code>includes</code>, <code>Map</code> and <code>Set</code> use SameValueZero. Nothing built in compares object contents.</li>
+<li>Coercion follows fixed rules: ToNumber, ToString, and ToPrimitive via <code>valueOf</code>/<code>toString</code>. <code>+</code> joins if either side is text. <code>==</code> has its own steps that break ordinary logic, so use <code>===</code>.</li>
+<li>Data from outside is text. Convert and validate it once, at the edge of the program.</li>
+</ul>
+<p>Next, <a href="/learn/js-operators">Operators</a> puts these values to work: arithmetic, comparison, logic, and safe defaults for missing values.</p>
+</section>
