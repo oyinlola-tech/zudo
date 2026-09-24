@@ -112,6 +112,7 @@
 <section>
 <h2 id="map">The map</h2>
 <p>Here is the whole project as one picture. Arrows mean "imports and calls":</p>
+<figure class="lx-diagram">
 <pre>
  npm run dev ──▶ tsx watch src/server.ts            (the entry point)
                      │
@@ -133,6 +134,8 @@
                                                    │            │           │
                                              dtos/ (schemas)  errors    in-memory Map
 </pre>
+<figcaption>The generated project: what runs once at startup (top) and what runs for every request (bottom line).</figcaption>
+</figure>
 <p>The picture has two halves. Everything above "a request" happens once, when the process starts. The bottom line happens for every request. Keep them apart in your head: a bug in the top half stops the app from starting; a bug in the bottom half makes one kind of request fail.</p>
 <p>The folders from the tree in the previous lessons fall into three groups:</p>
 <div class="lx-table-wrap"><table>
@@ -566,7 +569,11 @@ for (const env of [{ PORT: "80a" }, { PORT: "70000" }, { RATE_LIMIT_MAX: "-1" }]
     console.log(`${(error as Error).name}: ${(error as Error).message}`);
   }
 }</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx config-trace.ts</code></div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx config-trace.ts</code></div><pre class="lx-no-copy">4000 0.0.0.0 [ 'https://shop.example', 'https://admin.shop.example' ] 300
+true true
+ConfigurationError: PORT must be an integer between 0 and 65535, got "80a".
+ConfigurationError: PORT must be an integer between 0 and 65535, got "70000".
+ConfigurationError: RATE_LIMIT_MAX must be a non-negative integer, got "-1".</pre></div>
 </figure>
 <p>Unset values fall back to defaults (<code>0.0.0.0</code>, 300 requests per window), the comma list is split and trimmed, and bad numbers are refused with the variable's name in the message. <code>Object.freeze</code> means no code can change a setting while the app runs.</p>
 </section>
@@ -1028,7 +1035,20 @@ await runtime.start();
 console.log("state:", runtime.state, "| ready:", runtime.ready);
 await runtime.stop();
 console.log("state:", runtime.state);</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx startup-trace.ts</code></div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx startup-trace.ts</code></div><pre class="lx-no-copy">state: created
+2026-09-24T19:55:46.033Z [INFO] [app-service] app service initialized
+2026-09-24T19:55:46.035Z [INFO] [task-api] app module initialized
+2026-09-24T19:55:46.036Z [INFO] [task-api] All modules initialized. modules=["integrations","app"] durationMs=5
+2026-09-24T19:55:46.039Z [INFO] [task-api] All modules started. modules=["integrations","app"] durationMs=1
+2026-09-24T19:55:46.041Z [INFO] [task-api] Runtime is ready. runtimeId=rt_d0cb87c3ed7d4eaaae498f44479b6324 environment=development
+state: running | ready: true
+2026-09-24T19:55:46.042Z [INFO] [task-api] Initiating graceful shutdown. timeoutMs=30000
+2026-09-24T19:55:46.043Z [INFO] [task-api] app module stopped
+2026-09-24T19:55:46.044Z [INFO] [task-api] All modules stopped. modules=["app","integrations"] durationMs=1
+2026-09-24T19:55:46.045Z [INFO] [task-api] All modules destroyed. durationMs=0
+2026-09-24T19:55:46.046Z [INFO] [task-api] Graceful shutdown complete.
+2026-09-24T19:55:46.046Z [INFO] [task-api] Runtime stopped. runtimeId=rt_d0cb87c3ed7d4eaaae498f44479b6324
+state: stopped</pre></div>
 </figure>
 <p>Read the log lines as the runtime lesson taught you: <code>integrations</code> initializes first, then <code>app</code>; they stop in reverse. The first line comes from a different logger, <code>app-service</code>, which <code>AppService</code> creates for itself. Every time, the timestamps and the <code>runtimeId</code> are new.</p>
 <p>Two things in <code>createApp</code> are easy to misread:</p>
@@ -2044,7 +2064,21 @@ await client.get(`/api/v1/examples/${id}`);
 await client.get("/api/v1/examples/7a1c7a0e-5d7e-4f5b-9c1d-2b3e4f5a6b7c");
 await client.post("/api/v1/examples").send({ name: "" });
 await client.close();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx layers-trace.ts</code></div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx layers-trace.ts</code></div><pre class="lx-no-copy">→ POST /api/v1/examples
+    service.create
+      repository.create { name: 'Buy milk' }
+← 201
+→ GET /api/v1/examples/e72bbff3-326c-4593-8d8b-f5d81b373ce3
+    service.get
+      repository.findById -&gt; Buy milk
+← 200
+→ GET /api/v1/examples/7a1c7a0e-5d7e-4f5b-9c1d-2b3e4f5a6b7c
+    service.get
+      repository.findById -&gt; undefined
+  dispatch caught NotFoundError
+← 404
+→ POST /api/v1/examples
+← 400</pre></div>
 </figure>
 <p>Four requests, four different depths:</p>
 <ul>
@@ -2145,7 +2179,9 @@ console.log(badJson.status, badJson.text);
 const noBody = await client.post("/api/v1/examples");
 console.log(noBody.status, noBody.text);
 await client.close();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx errors-trace.ts</code></div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx errors-trace.ts</code></div><pre class="lx-no-copy">500 {"error":"Internal Server Error"}
+400 {"error":"The request body is not valid JSON.","code":"BAD_REQUEST"}
+400 {"error":"Validation failed","issues":[{"path":"","message":"Expected object, received undefined"}]}</pre></div>
 </figure>
 <p>The client learns nothing about the disk or the file path: good. But look at what is missing. Nothing printed the <code>disk full</code> error either. The generated <code>dispatch</code> rethrows it, the HTTP server answers 500, and <strong>no log line is written anywhere</strong>. The same happens in the real server: a crashing handler in <code>npm run dev</code> leaves the terminal silent while the client gets 500. In production that means errors nobody can see. The first exercise below fixes it.</p>
 </section>
@@ -2305,7 +2341,8 @@ async function smoke(label: string, register: (router: HttpRouter, deps: AppDepe
 
 await smoke("generated wiring", registerRoutes);
 await smoke("lost routes marker", (router, deps) => registerHealthRoutes(router, deps.health));</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx smoke.ts</code></div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx smoke.ts</code></div><pre class="lx-no-copy">generated wiring     /health 200 | /api/v1/examples 200
+lost routes marker   /health 200 | /api/v1/examples 404</pre></div>
 </figure>
 <p>The second line plays the broken case: a <code>registerRoutes</code> that lost its example registration. In your project the smoke test lives in <code>tests/</code> as a Vitest test, and you add each new resource's path to <code>expected</code>. It costs a few milliseconds and catches the one failure the generated tests cannot.</p>
 </section>
@@ -2411,7 +2448,9 @@ const client = createHttpTestClient(new HttpMiddlewarePipeline({ middlewares: [d
 console.log((await client.get("/api/v1/examples/not-a-uuid")).status);
 console.log((await client.post("/api/v1/examples").send({ name: "Buy milk" })).status);
 await client.close();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx log-500.ts</code></div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx log-500.ts</code></div><pre class="lx-no-copy">400
+2026-09-24T19:55:52.443Z [ERROR] [task-api] unhandled error on POST /api/v1/examples: disk full at /var/lib/shop/data.db
+500</pre></div>
 </figure>
 <p>The 400 is expected behaviour and stays quiet; the 500 now leaves a line in the log with the method, the path and the real message, which only the operator sees. In <code>server.ts</code>, create the logger once at the top, or pass in the runtime's logger.</p></details></div>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Swap a layer at the composition root</h3><p>Write a repository that refuses to store more than two examples (throwing <code>ConflictError</code> from <code>@zudojs/errors</code>) and plug it in with the generated controller and service. What does the third <code>POST</code> answer, and why did no other layer need to change?</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="25" data-file="small-store.ts" data-project="anatomy">
@@ -2495,7 +2534,9 @@ for (const name of ["Buy milk", "Pay rent", "Call Ada"]) {
   console.log(response.status, response.status === 201 ? name : response.text);
 }
 await client.close();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx small-store.ts</code></div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx small-store.ts</code></div><pre class="lx-no-copy">201 Buy milk
+201 Pay rent
+409 {"error":"Only two examples fit in this store.","code":"ERR_CONFLICT"}</pre></div>
 </figure>
 <p>The third request gets 409 Conflict. The service calls <code>repository.create</code> through the <code>ExamplesRepository</code> interface, the error already carries its status, and <code>errorResponse</code> turns any exposed 4xx error into a response. Only the composition root changed.</p></details></div>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Where would you look?</h3><p>For each report, name the first file you would open: (a) the app does not start and says <code>PORT must be an integer between 0 and 65535</code>; (b) every response lacks the <code>x-frame-options</code> header; (c) <code>POST /api/v1/examples</code> accepts a 300-character name; (d) after a restart, all examples are gone.</p><details class="lx-solution"><summary>Show a solution</summary><ul>
