@@ -380,6 +380,29 @@ for (const dir of packages) {
   console.log(`  ✓ ${manifest.name} — ${surface.total} exports`);
 }
 
+/* The header badge next to the logo shows the @zudojs/core version — the
+ * package the landing page installs first. It was hand-typed once and went
+ * stale, so it is synced here with the export indexes. */
+{
+  const corePath = join(root, "packages", "core", "package.json");
+  const componentsPath = join(root, "site", "js", "components.js");
+  const coreVersion = JSON.parse(readFileSync(corePath, "utf8")).version;
+  const components = readFileSync(componentsPath, "utf8");
+  const nextComponents = components.replace(
+    /var VERSION = '[^']*';/,
+    `var VERSION = '${coreVersion}';`,
+  );
+
+  if (nextComponents !== components) {
+    drifted.push(`header version badge (should be v${coreVersion})`);
+
+    if (!checkOnly) {
+      writeFileSync(componentsPath, nextComponents);
+      console.log(`  ✓ header version badge — v${coreVersion}`);
+    }
+  }
+}
+
 if (checkOnly) {
   if (drifted.length > 0) {
     console.error("✗ Export index is stale for:");

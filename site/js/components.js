@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.1.0';
+  var VERSION = '1.2.4';
   var GITHUB_URL = 'https://github.com/oyinlola-tech/zudo';
   var NPM_URL = 'https://www.npmjs.com/org/zudojs';
   var TWITTER_URL = 'https://x.com/zudojs';
