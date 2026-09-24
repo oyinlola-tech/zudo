@@ -117,6 +117,13 @@ runtime, which only exists with the `prisma-client-js` generator. With the
 `prisma-client` generator, construct the client yourself and pass it as
 `prisma`.
 
+**Writing your own transaction client** (a hand-written adapter, a test
+double, a PGlite wrapper): since 1.4.0 `DatabaseTransactionContext` is a real
+structural type rather than a type that resolved to `any`, so an object you
+return as one must implement all four raw-query methods — `$queryRaw`,
+`$executeRaw`, `$queryRawUnsafe` and `$executeRawUnsafe` — or TypeScript
+reports TS2739. Code that only *receives* a transaction client is unaffected.
+
 ## Querying
 
 ```typescript
