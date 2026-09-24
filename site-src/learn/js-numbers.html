@@ -19,11 +19,11 @@ console.log(notice.orderId === 1844674407370955169);
 console.log(String(notice.orderId) === "1844674407370955169");
 </example>
 <output>
-1844674407370955200
+1844674407370955300
 true
 false
 </output>
-<p>The id came out as <code>…955200</code>. The service looks up an order that does not exist, or worse, one that belongs to someone else. The second line is even more confusing: the literal in the code is rounded in exactly the same way, so comparing two wrong numbers says <code>true</code>. Only the string comparison reveals that the digits changed.</p>
+<p>The id came out as <code>…955300</code>. The service looks up an order that does not exist, or worse, one that belongs to someone else. The second line is even more confusing: the literal in the code is rounded in exactly the same way, so comparing two wrong numbers says <code>true</code>. Only the string comparison reveals that the digits changed.</p>
 <p><a href="/learn/js-values#numbers">Values and types</a> showed that <code>0.1 + 0.2</code> is not <code>0.3</code>, and <a href="/learn/logic-math#kobo">Mathematical reasoning</a> fixed money by counting whole kobo. This lesson explains the number format underneath both problems, so you can predict exactly where numbers stay exact and where they do not, and then covers rounding, parsing, <code>BigInt</code> and formatting well enough to build a correct money module.</p>
 </section>
 
@@ -215,23 +215,23 @@ for (const kobo of [250, 350, -250, 251]) {
 <example file="parse.js">
 const inputs = ["", "  12 ", "1,250.50", "1_000", "0x1F", "1e3", "Infinity", "12abc", ".5", null];
 
-console.log("input        Number  parseFloat");
+console.log("input".padEnd(12), "Number".padStart(7), "parseFloat".padStart(11));
 for (const input of inputs) {
   console.log(JSON.stringify(input).padEnd(12), String(Number(input)).padStart(7), String(parseFloat(input)).padStart(11));
 }
 </example>
 <output>
-input        Number  parseFloat
-""                0         NaN
-"  12 "          12          12
-"1,250.50"      NaN           1
-"1_000"         NaN           1
-"0x1F"           31           0
-"1e3"          1000        1000
-"Infinity"  Infinity    Infinity
-"12abc"         NaN          12
-".5"            0.5         0.5
-null              0         NaN
+input         Number  parseFloat
+""                 0         NaN
+"  12 "           12          12
+"1,250.50"       NaN           1
+"1_000"          NaN           1
+"0x1F"            31           0
+"1e3"           1000        1000
+"Infinity"   Infinity    Infinity
+"12abc"          NaN          12
+".5"             0.5         0.5
+null               0         NaN
 </output>
 <p>Neither is safe for money. <code>Number("")</code> and <code>Number(null)</code> are 0, so an empty price field becomes free. <code>parseFloat("1,250.50")</code> stops at the comma and reads ₦1. Both accept <code>Infinity</code> and exponents, and <code>Number</code> accepts hexadecimal. And even for well-formed input, converting a decimal string to a double and multiplying by 100 can land on the wrong side of a half, as <code>1.005 * 100</code> showed.</p>
 <p>The reliable approach treats the amount as <em>text</em> all the way to kobo: check the shape with a regular expression (<a href="/learn/js-regexp">Regular expressions</a> covers the syntax), split at the decimal point, and build the integer from the digit strings. No fraction is ever stored in a double:</p>
@@ -255,6 +255,15 @@ for (const input of ["₦1,250.50", "1.005", "1.05", "0.5", "-20", " ₦ 3,000 "
 }
 </example>
 <output>
+"₦1,250.50" -> 125050
+"1.005" -> not an amount: "1.005"
+"1.05" -> 105
+"0.5" -> 50
+"-20" -> -2000
+" ₦ 3,000 " -> 300000
+"" -> not an amount: ""
+"1e3" -> not an amount: "1e3"
+"12abc" -> not an amount: "12abc"
 </output>
 <p><code>1.005</code> is rejected instead of silently rounded: it has three decimal places, and kobo have two. Whether to reject or round sub-kobo input is a business decision, but it must be a <em>decision</em>, visible in the code. <code>Number(naira) * 100</code> is exact because both are integers and the result is checked to be safe. A thousands separator is removed before matching; this parser deliberately accepts only the Nigerian style (<code>1,250.50</code>), because <code>1.250,50</code> means the same amount in German and something very different here.</p>
 </section>
@@ -366,6 +375,13 @@ for (const extra of options) {
 }
 </example>
 <output>
+₦12,500.00 -₦2,500.00 ₦0.50
+{"currencyDisplay":"code"}     -NGN 1,250,000.50 | NGN 1,250,000.50
+{"currencyDisplay":"name"}     -1,250,000.50 Nigerian nairas | 1,250,000.50 Nigerian nairas
+{"currencySign":"accounting"}  (₦1,250,000.50) | ₦1,250,000.50
+{"signDisplay":"exceptZero"}   -₦1,250,000.50 | +₦1,250,000.50
+{"notation":"compact"}         -₦1.3M | ₦1.3M
+{"maximumFractionDigits":0}    -₦1,250,001 | ₦1,250,001
 </output>
 <p>The same amount has many correct presentations: <code>accounting</code> puts negatives in parentheses as financial statements do, <code>compact</code> suits dashboards, and <code>code</code> is unambiguous in emails that cross borders. The formatter rounds for display only; it never changes your stored kobo.</p>
 
@@ -388,6 +404,16 @@ console.log(percent.format(0.075), kg.format(2.5));
 console.log(new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 0 }).formatRange(5000, 10000));
 </example>
 <output>
+en-NG  NGN ₦1,234,567.50 2
+en-US  NGN NGN 1,234,567.50 2
+de-DE  EUR 1.234.567,50 € 2
+en-IN  INR ₹12,34,567.50 2
+ja-JP  JPY ￥1,234,568 0
+₦90,071,992,547,409.92
+₦90,071,992,547,409.93
+₦123,456,789,012,345,678.00
+7.5% 2.5 kg
+₦5,000 – ₦10,000
 </output>
 <ul>
 <li>The <strong>locale</strong> decides the separators and symbol position; the <strong>currency</strong> decides the symbol and how many decimals. <code>en-US</code> writes the naira as <code>NGN</code>, because the <code>₦</code> symbol would be unfamiliar there. The yen has no minor unit, so it has 0 decimals.</li>
@@ -504,6 +530,17 @@ for (const bad of ["1.005", "12,50", "", "1e3"]) {
 }
 </example>
 <output>
+Sachet water x3      ₦73.50 VAT ₦5.51
+Bread             ₦1,200.00 VAT ₦90.00
+Palm oil 1L       ₦2,450.25 VAT ₦183.77
+Net               ₦3,723.75
+VAT                 ₦279.28
+Total             ₦4,003.03
+₦1,234,567,890,123,456.78 -₦0.05
+not an amount: "1.005"
+not an amount: "12,50"
+not an amount: ""
+not an amount: "1e3"
 </output>
 <p>VAT is rounded per line and the total VAT is the sum of the rounded lines, so the printed receipt always adds up. Every value between the typed text and the printed text was an integer.</p>
 </section>
@@ -536,7 +573,7 @@ check("European comma refused", errorOf(() => parseNairaToKobo("12,50")), "Error
 check("half up away from zero", divideRound(-250, 100), -3);
 check("half even down", divideRound(250, 100, "halfEven"), 2);
 check("half even up", divideRound(350, 100, "halfEven"), 4);
-check("VAT 183.75 -> 184", percentOfKobo(2450, 750), 184);
+check("VAT on 2,450 kobo", percentOfKobo(2450, 750), 184);
 check("VAT of zero is +0", Object.is(percentOfKobo(0, 750), 0), true);
 check("unsafe total refused", errorOf(() => sumKobo([Number.MAX_SAFE_INTEGER, 1])), "RangeError");
 check("fraction refused", errorOf(() => sumKobo([10.5])), "TypeError");
@@ -554,6 +591,21 @@ for (let i = 0; i < 5000; i++) {
 check("5000 round trips", failures, 0);
 </example>
 <output>
+PASS parse 1.05 exactly -> 105
+PASS parse 0.5 -> 50
+PASS parse negative -> -2000
+PASS parse with commas -> 123456789
+PASS European comma refused -> Error
+PASS half up away from zero -> -3
+PASS half even down -> 2
+PASS half even up -> 4
+PASS VAT on 2,450 kobo -> 184
+PASS VAT of zero is +0 -> true
+PASS unsafe total refused -> RangeError
+PASS fraction refused -> TypeError
+PASS number input refused -> TypeError
+PASS format -5 kobo -> -₦0.05
+PASS 5000 round trips -> 0
 </output>
 <p>The generator is a <strong>linear congruential generator</strong>, a very old formula for pseudo-random numbers. It is useless for security, but perfect for tests: seed 42 always produces the same 5,000 amounts, including negative ones, so a failure can be reproduced. Notice that the round trip goes through <code>formatKobo</code>, which prints <code>-₦…</code>, and the test removes the symbol because the parser expects the minus before it.</p>
 </section>
@@ -604,6 +656,9 @@ try {
 }
 </example>
 <output>
+2295
+3
+bad rate: 12000
 </output>
 <p>The discount on ₦25.50 is 255 kobo exactly. Half of 5 kobo is 2.5 kobo; half-even rounds it to 2, so the customer pays 3 kobo. Validating the rate is what stops a typo in configuration from producing negative prices.</p>
 </solution>
@@ -624,8 +679,11 @@ console.log(data.items.reduce((sum, item) => sum + item.qty, 0));
 console.log(JSON.parse(body).items.map((item) => item.id));
 </example>
 <output>
+[ '9007199254740993', '9007199254740995' ]
+3
+[ 9007199254740992, 9007199254740996 ]
 </output>
-<p>The last line shows what plain <code>JSON.parse</code> does: both ids are rounded, and the second one even changes to a different odd-looking number. The reviver takes <code>context.source</code>, the original digits, only for numeric <code>id</code> values.</p>
+<p>The last line shows what plain <code>JSON.parse</code> does: both ids are rounded to the nearest double, <code>…993</code> down to <code>…992</code> and <code>…995</code> up to <code>…996</code>. Neither is the product that was ordered. The reviver takes <code>context.source</code>, the original digits, only for numeric <code>id</code> values.</p>
 </solution>
 </exercise>
 
@@ -650,6 +708,10 @@ for (const [label, kobo] of rows) console.log(statementLine(label, kobo));
 console.log(statementLine("Closing", rows.reduce((sum, [, kobo]) => sum + kobo, 0)));
 </example>
 <output>
+Opening          ₦150,000.00
+Transfer out    (₦45,250.50)
+SMS fee             (₦53.75)
+Closing          ₦104,695.75
 </output>
 <p>Building the decimal string from integer division and remainder keeps the amounts exact, and the accounting style adds the parentheses. The closing balance is computed in kobo, never from the formatted text.</p>
 </solution>

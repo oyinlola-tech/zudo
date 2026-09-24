@@ -482,3 +482,456 @@ task urgent done 1 string
 <p><code>dataset.id</code> is the string <code>"1"</code>, not the number 1. When you look a task up by the id stored on its element, convert it first (<code>Number(li.dataset.id)</code>), or <code>tasks.find((t) =&gt; t.id === li.dataset.id)</code> will never find anything. <code>outerHTML</code> is the element itself as HTML, handy for seeing what your code really produced.</p>
 <p>Style works the same way: <code>el.style.color = "red"</code> sets an inline style, one property at a time. Prefer toggling a class and keeping the looks in CSS; the stylesheet stays the one place that decides how a "done" task looks, and your code only says <em>that</em> it is done.</p>
 </section>
+
+<section>
+<h2 id="many-changes">Changing many things at once</h2>
+<p>Every change to the page's tree can make the browser recalculate styles, work out where everything goes (<strong>layout</strong>) and draw the result again (<strong>paint</strong>). Browsers are clever about waiting until your code has finished before they draw, but you can still make them do far more work than needed. You can see how many separate changes a piece of code makes with a <code>MutationObserver</code>, a Web API that records changes to a part of the tree. Here, three tasks are added one at a time, then three more in one go with a <strong><code>DocumentFragment</code></strong>: a lightweight container node that is not part of the page:</p>
+<example file="fragment.js" project="tasks-page" runtime="dom">
+const list = document.querySelector("#tasks");
+const observer = new MutationObserver(() => {});
+observer.observe(list, { childList: true });
+
+function taskItem(title) {
+  const li = document.createElement("li");
+  li.className = "task";
+  li.textContent = title;
+  return li;
+}
+
+for (const title of ["Wash windows", "Mop kitchen", "Dust shelves"]) {
+  list.append(taskItem(title));
+}
+console.log("one at a time:", observer.takeRecords().length, "changes");
+
+const fragment = document.createDocumentFragment();
+for (const title of ["Iron curtains", "Empty bins", "Water plants"]) {
+  fragment.append(taskItem(title));
+}
+console.log("fragment holds", fragment.childNodes.length, "items");
+list.append(fragment);
+console.log("with a fragment:", observer.takeRecords().length, "change");
+console.log("fragment now holds", fragment.childNodes.length, "items; list has", list.children.length);
+observer.disconnect();
+</example>
+<output>
+</output>
+<p>When you insert a fragment, its children move into the page in a single operation and the fragment is left empty. Build a list of any size off the page, in a fragment, then insert it once. <code>parent.append(a, b, c)</code> and <code>replaceChildren(…)</code> with several nodes do the same thing internally.</p>
+<p>A second habit matters even more: don't mix <em>reading</em> layout with <em>writing</em> to the page inside a loop. Properties such as <code>offsetHeight</code>, <code>getBoundingClientRect()</code> and <code>innerText</code> need an up-to-date layout. If you changed the page just before, the browser has to calculate the layout right then, and doing that once per loop turn (called <strong>layout thrashing</strong>) can make a page stutter. Read everything first, then write everything.</p>
+</section>
+
+<section>
+<h2 id="templates">Templates</h2>
+<p>A task row is not one element but several: a checkbox, the title, a delete button. Building that with <code>createElement</code> line by line is long and hides what the row looks like. A <strong><code>&lt;template&gt;</code></strong> element holds HTML that the browser parses but does not show, does not run, and does not include in searches of the page. You clone its content each time you need a row, then fill in the data with <code>textContent</code>:</p>
+<file name="index.html" project="task-ui">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ada's jobs</title>
+</head>
+<body>
+  <main id="app">
+    <h1>Today</h1>
+    <p class="error" role="alert" hidden></p>
+    <ul id="tasks" class="task-list"></ul>
+    <p class="summary" aria-live="polite"></p>
+  </main>
+  <template id="task-row">
+    <li class="task">
+      <label><input type="checkbox" class="toggle"> <span class="title"></span></label>
+      <button type="button" class="delete">Delete</button>
+    </li>
+  </template>
+</body>
+</html>
+</file>
+<file name="app.css" project="task-ui">
+body { font-family: system-ui, sans-serif; margin: 1rem; }
+.task-list { list-style: none; padding: 0; }
+.task { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0; border-bottom: 1px solid #ddd; }
+.task.done .title { text-decoration: line-through; color: #666; }
+.error { color: #b00020; }
+</file>
+<example file="template.js" project="task-ui" runtime="dom">
+const template = document.querySelector("#task-row");
+console.log(template.content.constructor.name);
+console.log("rows in the page:", document.querySelectorAll(".task").length);
+
+const row = template.content.firstElementChild.cloneNode(true);
+row.querySelector(".title").textContent = "Buy detergent";
+row.classList.add("done");
+row.querySelector(".toggle").checked = true;
+document.querySelector("#tasks").append(row);
+
+console.log("rows in the page:", document.querySelectorAll(".task").length);
+console.log("rows in the template:", template.content.querySelectorAll(".task").length);
+console.log(getComputedStyle(row.querySelector(".title")).textDecorationLine);
+</example>
+<output>
+</output>
+<p><code>template.content</code> is a <code>DocumentFragment</code> that lives outside the page. <code>cloneNode(true)</code> gives you a fresh copy of the row every time, and the template itself stays untouched for the next one. The last line asks the browser for the <strong>computed style</strong>, the final value after all CSS rules are applied: the <code>.task.done .title</code> rule from <code>app.css</code> crossed the title out. The code only added a class.</p>
+</section>
+
+<section>
+<h2 id="failures">When DOM code fails</h2>
+<p>Most DOM bugs fall into a handful of patterns. Each of these runs for real in the preview.</p>
+<h3>The script ran before the element existed</h3>
+<p>The browser builds the tree from top to bottom and runs a plain <code>&lt;script&gt;</code> as soon as it reaches it. A script in the <code>&lt;head&gt;</code> runs before the <code>&lt;body&gt;</code> has been parsed, so its <code>querySelector</code> finds nothing. This page records what its head script saw, straight away and after the <code>DOMContentLoaded</code> event, which fires once the whole HTML has been parsed:</p>
+<file name="index.html" project="early-script">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Early script</title>
+  <script>
+    window.foundEarly = document.querySelector("#tasks");
+    document.addEventListener("DOMContentLoaded", () => {
+      window.foundLater = document.querySelector("#tasks");
+    });
+  </script>
+</head>
+<body>
+  <ul id="tasks"><li>Buy detergent</li></ul>
+</body>
+</html>
+</file>
+<example file="early.js" project="early-script" runtime="dom">
+console.log("found while parsing the head:", window.foundEarly);
+console.log("found after DOMContentLoaded:", window.foundLater.id);
+</example>
+<output>
+</output>
+<p>The usual fix is to load scripts with <code>&lt;script src="app.js" defer&gt;</code> (or <code>type="module"</code>, which defers automatically): the file downloads in parallel, and runs after the HTML has been parsed, in order. Putting the script at the end of <code>&lt;body&gt;</code> also works.</p>
+<h3>Looping over a live collection while changing it</h3>
+<p>The goal: clear the <code>done</code> class from every task. The collection is live, so each removal shrinks it while the loop is still counting:</p>
+<file name="index.html" project="live-bug">
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Live bug</title></head>
+<body>
+  <ul id="tasks">
+    <li class="task done">Buy detergent</li>
+    <li class="task done">Pay the electricity bill</li>
+    <li class="task done">Clean the Okafor flat</li>
+    <li class="task done">Order mop heads</li>
+  </ul>
+</body>
+</html>
+</file>
+<example file="live-bug.js" project="live-bug" runtime="dom">
+const done = document.getElementsByClassName("done");
+for (let i = 0; i < done.length; i++) {
+  done[i].classList.remove("done");
+}
+console.log("still done:", [...document.querySelectorAll(".done")].map((li) => li.textContent));
+
+for (const li of document.querySelectorAll(".done")) li.classList.remove("done");
+console.log("after the static loop:", document.querySelectorAll(".done").length);
+</example>
+<output>
+</output>
+<p>Removing the class from item 0 drops it out of the collection, so the item that was at index 1 moves to index 0, and the loop, now at <code>i = 1</code>, skips it. Every second item survives. The static <code>NodeList</code> from <code>querySelectorAll</code> does not change while you loop, so the second loop gets them all.</p>
+<h3><code>innerHTML +=</code> throws the old elements away</h3>
+<p><code>el.innerHTML += more</code> reads the whole inside as a string, adds to it, and parses the result into <em>brand-new</em> elements. Everything that lived only on the old elements is lost: what the user typed, which checkbox was ticked, focus, and event listeners. Any variable that pointed to an old element now points to one that is no longer in the page:</p>
+<example file="inner-plus.js" project="task-form" runtime="dom">
+const input = document.querySelector('input[name="title"]');
+input.value = "Buy detergent and gloves";
+
+document.body.innerHTML += "<p>Draft saved</p>";
+
+console.log("old input still in the page?", input.isConnected);
+console.log("value in the box now:", document.querySelector('input[name="title"]').value);
+</example>
+<output>
+</output>
+<p>The user's typing is gone, silently. Use <code>append</code> with a created element, or <code>insertAdjacentHTML("beforeend", html)</code> for your own HTML, both of which leave existing elements alone.</p>
+</section>
+
+<section>
+<h2 id="plan">Before you build: rendering from data</h2>
+<p>You now have every tool for Ada's task list. The design question is where the truth lives. One option is to treat the DOM as the data: to add a task, append an <code>&lt;li&gt;</code>; to count open tasks, count elements without a <code>done</code> class. That is how the example at the top of the lesson ended up with a summary that lied. The other option is to keep the tasks in an ordinary array, the <strong>state</strong>, and write one <code>render()</code> function that makes the page match the state. Every action changes the state and calls <code>render()</code>. The DOM becomes an output, never an input.</p>
+<reason title="What can go wrong in a task list?">
+<p>Before writing the code, think through these questions:</p>
+<ul>
+<li>A user can type anything as a title. Which inputs should be refused, and which should be stored exactly as typed?</li>
+<li>A title contains <code>&lt;</code>, <code>&amp;</code> or a whole <code>&lt;img onerror=…&gt;</code> tag. What must be true of the code that puts it on the page?</li>
+<li>Two tasks can have the same title. How does a click on a row know <em>which</em> task it belongs to?</li>
+<li><code>render()</code> runs after every change. What happens to the previous rows, and can anything be left behind or shown twice?</li>
+<li>How would a test know the page is right, without looking at the screen?</li>
+</ul>
+<answer>
+<ul>
+<li><strong>Refuse</strong> what cannot be a task: an empty title, or one that is only spaces (<code>trim()</code> first), and absurdly long ones (pick a limit, such as 120 characters). <strong>Store as typed</strong> everything else, including quotes and angle brackets: they are legitimate text.</li>
+<li>Titles must only ever reach the page through <code>textContent</code> (or attributes set with <code>setAttribute</code>), never through <code>innerHTML</code>. Then any title is shown as text and nothing in it can run.</li>
+<li>Give every task an <strong>id</strong> from a counter, store it on the row as <code>data-id</code>, and look tasks up by id. Titles are not unique; ids are. Remember that <code>dataset.id</code> comes back as a string.</li>
+<li><code>replaceChildren(fragment)</code> removes every old row and inserts the new ones in one operation, so nothing can be duplicated or left over. For a list of a few hundred rows, rebuilding it is fast enough.</li>
+<li>A test can call the actions, then <strong>read the page back</strong>: the titles, the checkbox states and the summary text, the same things a user sees, and compare them with what it expects.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: a task list UI</h2>
+<p>The page is the <code>task-ui</code> project from the templates section: an empty <code>&lt;ul&gt;</code>, a summary line, a hidden error box and the row template. The program keeps the tasks in <code>state</code>, and every action ends with <code>render()</code>. At the bottom it runs a short scenario, including a hostile title and an empty one, and prints the page the way a user would read it:</p>
+<example file="task-list.js" project="task-ui" runtime="dom">
+const state = {
+  tasks: [
+    { id: 1, title: "Buy detergent", done: false },
+    { id: 2, title: "Pay the electricity bill", done: true },
+  ],
+  nextId: 3,
+};
+
+const list = document.querySelector("#tasks");
+const summary = document.querySelector(".summary");
+const errorBox = document.querySelector(".error");
+const rowTemplate = document.querySelector("#task-row");
+
+function renderTask(task) {
+  const li = rowTemplate.content.firstElementChild.cloneNode(true);
+  li.dataset.id = String(task.id);
+  li.classList.toggle("done", task.done);
+  li.querySelector(".toggle").checked = task.done;
+  li.querySelector(".title").textContent = task.title;
+  li.querySelector(".delete").setAttribute("aria-label", `Delete ${task.title}`);
+  return li;
+}
+
+function render() {
+  const fragment = document.createDocumentFragment();
+  for (const task of state.tasks) fragment.append(renderTask(task));
+  list.replaceChildren(fragment);
+  const open = state.tasks.filter((t) => !t.done).length;
+  summary.textContent = `${open} of ${state.tasks.length} tasks left`;
+}
+
+function showError(message) {
+  errorBox.textContent = message;
+  errorBox.hidden = message === "";
+}
+
+function addTask(rawTitle) {
+  const title = String(rawTitle).trim();
+  if (title === "") return showError("A task needs a title.");
+  if (title.length > 120) return showError("Keep the title under 120 characters.");
+  showError("");
+  state.tasks.push({ id: state.nextId++, title, done: false });
+  render();
+}
+
+function toggleTask(id) {
+  const task = state.tasks.find((t) => t.id === id);
+  if (!task) return;
+  task.done = !task.done;
+  render();
+}
+
+function removeTask(id) {
+  state.tasks = state.tasks.filter((t) => t.id !== id);
+  render();
+}
+
+function readPage() {
+  const rows = [...list.children].map((li) => {
+    const box = li.querySelector(".toggle").checked ? "[x]" : "[ ]";
+    return `${box} #${li.dataset.id} ${li.querySelector(".title").textContent}`;
+  });
+  const error = errorBox.hidden ? "(no error)" : `error: ${errorBox.textContent}`;
+  return [...rows, summary.textContent, error].join("\n");
+}
+
+render();
+addTask("  Clean the Okafor flat  ");
+addTask(`Fix sink <img src="data:," onerror="window.stolen = 1">`);
+toggleTask(1);
+removeTask(2);
+addTask("   ");
+console.log(readPage());
+console.log("images:", list.querySelectorAll("img").length, "stolen:", window.stolen);
+</example>
+<output>
+</output>
+<p>Walk through what happened:</p>
+<ul>
+<li>The first title was trimmed before it was stored. The hostile title was stored and shown exactly as typed, as text: no image, no script.</li>
+<li>Toggling task 1 and removing task 2 only changed <code>state</code>; <code>render()</code> made the page match, summary included. The summary can no longer disagree with the list, because both are drawn from the same array in the same function.</li>
+<li>The blank title was refused with a message in the error box. The box has <code>role="alert"</code> so screen readers announce it, and the summary has <code>aria-live="polite"</code> so changes to it are read out too.</li>
+<li>Each delete button got an <code>aria-label</code> such as "Delete Buy detergent": a screen reader user hears which task the button deletes, not five buttons all called "Delete".</li>
+</ul>
+<p>The buttons and checkboxes do nothing yet when clicked. Connecting them to <code>toggleTask</code> and <code>removeTask</code> takes one event listener on the list, which is the first thing <a href="/learn/browser-events">Events</a> builds.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing DOM code</h2>
+<p><code>readPage()</code> above is already a test tool: it turns the page into text you can compare. A test for a DOM function sets up the page, calls the function, and checks what a user would see, not how the code did it. It looks at text, checkbox states and attributes, not at private variables. Here <code>renderTask</code> is tested on its own, including the hostile title:</p>
+<example file="render-test.js" project="task-ui" runtime="dom">
+const rowTemplate = document.querySelector("#task-row");
+
+function renderTask(task) {
+  const li = rowTemplate.content.firstElementChild.cloneNode(true);
+  li.dataset.id = String(task.id);
+  li.classList.toggle("done", task.done);
+  li.querySelector(".toggle").checked = task.done;
+  li.querySelector(".title").textContent = task.title;
+  li.querySelector(".delete").setAttribute("aria-label", `Delete ${task.title}`);
+  return li;
+}
+
+function check(label, actual, expected) {
+  console.log(`${actual === expected ? "PASS" : "FAIL"} ${label}: ${JSON.stringify(actual)}`);
+}
+
+const done = renderTask({ id: 7, title: "Buy detergent", done: true });
+check("id on the row", done.dataset.id, "7");
+check("done class", done.classList.contains("done"), true);
+check("checkbox ticked", done.querySelector(".toggle").checked, true);
+check("button label", done.querySelector(".delete").getAttribute("aria-label"), "Delete Buy detergent");
+
+const hostile = `<b>bold</b> & "quoted"`;
+const row = renderTask({ id: 8, title: hostile, done: false });
+check("title shown as typed", row.querySelector(".title").textContent, hostile);
+check("no elements created from the title", row.querySelector(".title").children.length, 0);
+check("not done", row.classList.contains("done"), false);
+</example>
+<output>
+</output>
+<p>In a real project you run tests like these with a test runner such as Vitest (see <a href="/learn/testing-basics">Testing</a>) and a <strong>simulated DOM</strong>, a library such as jsdom or happy-dom that implements <code>document</code> in Node.js, so tests run without opening a browser. Libraries like Testing Library add helpers that find elements the way users do, by their visible text and their accessible role ("the button called Delete Buy detergent"), which keeps tests working when you change class names. For behaviour that depends on real layout, such as scrolling or what is visible on a small screen, teams add a few end-to-end tests in a real browser with tools like Playwright.</p>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Security.</strong> Every value that came from outside your code goes in with <code>textContent</code>, <code>value</code> or <code>setAttribute</code>. Search your code base for <code>innerHTML</code>, <code>outerHTML</code>, <code>insertAdjacentHTML</code> and <code>document.write</code>, and check each one. Even <code>setAttribute</code> needs care with <code>href</code> and <code>src</code>: a link to <code>javascript:…</code> runs code when clicked, so only accept <code>http:</code> and <code>https:</code> addresses from users. Browsers also offer Trusted Types and Content Security Policy, which block dangerous sinks for the whole page.</li>
+<li><strong>Performance.</strong> Build off-page (fragments, templates) and insert once; read layout before writing; don't rebuild a list of 10,000 rows on every keystroke. Very long lists show only the rows on screen ("virtual scrolling").</li>
+<li><strong>Rebuilding loses state.</strong> <code>replaceChildren</code> makes new elements, so focus and scroll position inside the list are lost on each render. That is fine here; for large, interactive pages, UI libraries such as React, Vue and Svelte compare the new output with the current page and change only what differs. They are built on exactly the DOM calls in this lesson.</li>
+<li><strong>Accessibility.</strong> Use the element that means what you want: a <code>&lt;button&gt;</code> for actions (keyboard and screen readers support it for free, a clickable <code>&lt;div&gt;</code> gets nothing), <code>&lt;label&gt;</code> for inputs, and <code>aria-live</code> or <code>role="alert"</code> for messages that change.</li>
+<li><strong>Missing elements.</strong> Look up the elements your code depends on once, at start-up, and fail with a clear message if one is missing, as <code>mustFind</code> did.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Show only open tasks">
+<p>Add a filter to the task list without rebuilding any rows. Write <code>showOnly(filter)</code>, where <code>filter</code> is <code>"all"</code>, <code>"open"</code> or <code>"done"</code>. It sets the <code>hidden</code> property of each row and returns how many rows are visible. Test it on three rows made from the template.</p>
+<solution>
+<example file="filter.js" project="task-ui" runtime="dom">
+const list = document.querySelector("#tasks");
+const rowTemplate = document.querySelector("#task-row");
+
+for (const [title, done] of [["Buy detergent", false], ["Pay the electricity bill", true], ["Clean the Okafor flat", false]]) {
+  const li = rowTemplate.content.firstElementChild.cloneNode(true);
+  li.classList.toggle("done", done);
+  li.querySelector(".title").textContent = title;
+  list.append(li);
+}
+
+function showOnly(filter) {
+  let visible = 0;
+  for (const li of list.children) {
+    const isDone = li.classList.contains("done");
+    li.hidden = (filter === "open" && isDone) || (filter === "done" && !isDone);
+    if (!li.hidden) visible++;
+  }
+  return visible;
+}
+
+console.log("open:", showOnly("open"));
+console.log("done:", showOnly("done"));
+console.log("all:", showOnly("all"));
+</example>
+<output>
+</output>
+<p>Hiding keeps the elements (and anything the user typed in them) and is cheap. In the render-from-state design you would more often store the filter in <code>state</code> and let <code>render()</code> skip the rows; both are fine, as long as there is one source of truth for which filter is active.</p>
+</solution>
+</exercise>
+<exercise title="Highlight a search term safely">
+<p>Write <code>highlight(element, text, term)</code> that shows <code>text</code> inside <code>element</code> with every case-insensitive match of <code>term</code> wrapped in a <code>&lt;mark&gt;</code>. It must be safe for any <code>text</code>, so no <code>innerHTML</code>: build text nodes and <code>&lt;mark&gt;</code> elements yourself.</p>
+<solution>
+<example file="highlight.js" project="task-ui" runtime="dom">
+function highlight(element, text, term) {
+  const parts = [];
+  const lower = text.toLowerCase();
+  const needle = term.toLowerCase();
+  let from = 0;
+  let at = needle === "" ? -1 : lower.indexOf(needle);
+  while (at !== -1) {
+    parts.push(text.slice(from, at));
+    const mark = document.createElement("mark");
+    mark.textContent = text.slice(at, at + needle.length);
+    parts.push(mark);
+    from = at + needle.length;
+    at = lower.indexOf(needle, from);
+  }
+  parts.push(text.slice(from));
+  element.replaceChildren(...parts.filter((p) => p !== ""));
+}
+
+const box = document.querySelector(".summary");
+highlight(box, "Clean the flat, then clean the car", "clean");
+console.log(box.innerHTML);
+
+highlight(box, `<img src="data:," onerror="window.stolen = 1"> invoice`, "invoice");
+console.log(box.querySelectorAll("img").length, box.querySelector("mark").textContent);
+</example>
+<output>
+</output>
+<p>Strings passed to <code>replaceChildren</code> become text nodes, so the attacker's tag stays text. The marks keep the original capitalisation because the slice comes from <code>text</code>, while the search uses the lower-case copy. An empty term would match everywhere, so it is treated as "no match".</p>
+</solution>
+</exercise>
+<exercise title="Fix the renderer">
+<p>A colleague wrote this renderer. Find three problems and rewrite it with the tools from this lesson.</p>
+<pre class="lx-json">function render(tasks) {
+  const list = document.querySelector("#tasks");
+  list.innerHTML = "";
+  for (const task of tasks) {
+    list.innerHTML += `&lt;li data-id="${task.id}"&gt;${task.title}&lt;/li&gt;`;
+  }
+}</pre>
+<solution>
+<ul>
+<li><strong>XSS</strong>: <code>task.title</code> is parsed as HTML. A title with an <code>onerror</code> attribute runs code for every user who sees the list.</li>
+<li><strong>Slow</strong>: every <code>+=</code> turns the whole list back into a string and parses all of it again, so rendering <em>n</em> tasks does work proportional to <em>n</em>², and every earlier row is thrown away and rebuilt each time.</li>
+<li><strong>Silent failure</strong>: if <code>#tasks</code> is missing, the error is a confusing <code>TypeError</code> on <code>null</code>.</li>
+</ul>
+<example file="fixed-render.js" project="tasks-page" runtime="dom">
+function render(tasks) {
+  const list = document.querySelector("#tasks");
+  if (!list) throw new Error("Page is missing #tasks");
+  const fragment = document.createDocumentFragment();
+  for (const task of tasks) {
+    const li = document.createElement("li");
+    li.dataset.id = String(task.id);
+    li.textContent = task.title;
+    fragment.append(li);
+  }
+  list.replaceChildren(fragment);
+}
+
+render([
+  { id: 1, title: "Buy detergent" },
+  { id: 2, title: `<img src="data:," onerror="window.stolen = 1">` },
+]);
+const list = document.querySelector("#tasks");
+console.log(list.children.length, list.querySelectorAll("img").length);
+console.log(list.lastElementChild.textContent);
+</example>
+<output>
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Summary</h2>
+<ul>
+<li>The browser parses HTML into the DOM, a tree of node objects. Elements are one kind of node; text (including whitespace between tags) and comments are others. Prefer the element-only properties: <code>children</code>, <code>firstElementChild</code>, <code>nextElementSibling</code>, <code>parentElement</code>.</li>
+<li>Find elements with <code>querySelector</code> and <code>querySelectorAll</code> (a static snapshot), <code>closest</code> and <code>matches</code>. Expect <code>null</code>, and fail with a clear message for elements the page needs.</li>
+<li>Create with <code>createElement</code>, insert with <code>append</code>, <code>prepend</code>, <code>before</code>, <code>after</code>, <code>replaceChildren</code>, remove with <code>remove()</code>. Inserting an element that is already in the page moves it.</li>
+<li>Attributes are the strings in the HTML; properties are the live, typed values on the object. Read form input from <code>value</code> and <code>checked</code>. Use <code>classList</code> and <code>dataset</code>, and remember boolean attributes are on when present.</li>
+<li>User data goes in with <code>textContent</code>, never <code>innerHTML</code>: otherwise it is an XSS hole.</li>
+<li>Build many nodes off the page in a <code>DocumentFragment</code> or from a <code>&lt;template&gt;</code>, and insert them once.</li>
+<li>Keep the data in state and render the page from it; test by reading the page back.</li>
+</ul>
+<p>Next: <a href="/learn/browser-events">Events</a>, where the task list's buttons and a shopping cart come alive with listeners, bubbling and event delegation.</p>
+</section>
