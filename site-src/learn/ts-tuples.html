@@ -118,13 +118,10 @@ const rows: BranchRow[] = [
 
 for (const [branch, ...daily] of rows) {
   const total = daily.reduce((sum, kobo) => sum + kobo, 0);
-  console.log(`${branch}: ${daily.length} days, ₦${(total / 100).toLocaleString("en-NG")}`);
+  console.log(`${branch}: ₦${(total / 100).toLocaleString("en-NG")}, days reported: ${daily.length}`);
 }
 </example>
 <output>
-Lekki: 3 days, ₦36,600
-Ikeja: 1 days, ₦21,000
-Wuse: 0 days, ₦0
 </output>
 <p>The rest element can also sit at the start or in the middle, as long as there is only one. <code>[...path: string[], amount: number]</code> describes "any number of strings, then exactly one number at the end", which fits a ledger path like <code>["assets", "bank", "gtbank", 500000]</code>:</p>
 <example file="leading-rest.ts" project="optional-rest">
@@ -353,6 +350,10 @@ export function parseLine(line: string): ParseResult {
   const kobo = Math.round(naira * 100);
   return [null, reference ? [date, description, kobo, reference] : [date, description, kobo]];
 }
+</example>
+<p>The parser lives in its own module, so the tests can import it. A small script runs it over a sample statement:</p>
+<example file="main.ts" project="statement">
+import { parseLine } from "./statement.js";
 
 const csv = `2026-09-01,POS purchase,-2500.00
 2026-09-02,Salary,450000.00,PAY-0925
@@ -374,18 +375,12 @@ for (const [lineNo, line] of csv.split("\n").entries()) {
 console.log(`balance: ₦${(balance / 100).toFixed(2)}`);
 </example>
 <output>
-2026-09-01 POS purchase       -250000
-2026-09-02 Salary            45000000 PAY-0925
-line 3: expected 3 or 4 columns, got 2
-line 4: bad amount "abc"
-line 5: bad amount "Yaba"
-balance: ₦447500.00
 </output>
 <p>Read how the tuples work together:</p>
 <ul>
 <li><code>ParseResult</code> is a union of two tuples, and the first element is <code>string</code> in one and <code>null</code> in the other. <code>null</code> is a unit type, so it works as a discriminant: after <code>if (error !== null) continue</code>, TypeScript knows <code>row</code> is a <code>Row</code>, even though both came from destructuring.</li>
 <li><code>cells</code> is a <code>string[]</code>, not a tuple, so destructuring it gives four <code>string</code>s. That is not quite true: on a three-column line, <code>reference</code> is <code>undefined</code>. The truthiness check <code>reference ? … : …</code> handles it (an empty reference counts as none), but the compiler did not make you write it. The <code>noUncheckedIndexedAccess</code> option, covered in <a href="/learn/ts-tsconfig">tsconfig in depth</a>, makes every such element <code>string | undefined</code> so you cannot forget.</li>
-<li>The last line has a comma inside the description and produced four columns: <code>" Yaba"</code> became the amount and was refused. Without the column count and amount checks, it would have been stored as a real transaction. Supporting quoted CSV properly is a job for a CSV library.</li>
+<li>The last line has a comma inside the description and produced four columns: <code>"Yaba"</code> became the amount and was refused. Without the column count and amount checks, it would have been stored as a real transaction. Supporting quoted CSV properly is a job for a CSV library.</li>
 </ul>
 </section>
 
@@ -409,17 +404,6 @@ for (const [line, expected] of cases) {
 }
 </example>
 <output>
-2026-09-01 POS purchase       -250000
-2026-09-02 Salary            45000000 PAY-0925
-line 3: expected 3 or 4 columns, got 2
-line 4: bad amount "abc"
-line 5: bad amount "Yaba"
-balance: ₦447500.00
-PASS 2026-09-01,POS purchase,-2500.00
-PASS 2026-09-02,Salary,450000,PAY-1
-PASS 2026-09-03,Airtime
-PASS 01/09/2026,Rent,-100000
-PASS 2026-09-04,Refund,
 </output>
 <p>Notice <code>"2026-09-04,Refund,"</code>: <code>Number("")</code> is <code>0</code>, not <code>NaN</code>, so without the explicit <code>amount === ""</code> check an empty amount would have become a ₦0 transaction. The test table is where you find out. In a Vitest suite, <code>expect(parseLine(line)).toEqual(expected)</code> does the deep comparison for you.</p>
 </section>
