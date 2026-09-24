@@ -35,6 +35,9 @@ const loans: LoanRequest[] = [
 for (const loan of loans) console.log(describe(loan));
 </example>
 <output>
+#1: approved by Ngozi
+#2: approved by undefined
+#3: waiting for review
 </output>
 <p>This file passes <code>tsc</code> with no errors, and it is full of nonsense. Loan 2 is approved <em>and</em> rejected, and has no approver. Loan 3 is waiting for review but already has an approver. The type allowed all of it.</p>
 <p>Count what the type permits: two booleans give four combinations, and each optional field may be there or not, which doubles it twice more: sixteen shapes. The business has exactly three states: pending, approved, rejected. Thirteen of the sixteen are bugs waiting to happen, and every function that reads a loan has to guess which ones are real. This lesson replaces that with <strong>union types</strong> that allow the three real states and nothing else. You met unions, literal types and discriminated unions in <a href="/learn/ts-objects#unions">Interfaces, unions and literal types</a>; this lesson goes much deeper.</p>
@@ -58,6 +61,14 @@ function formatAmount(amount: number | string): string {
 }
 </example>
 <output kind="tsc">
+amount.ts:2:21 - error TS2339: Property 'toFixed' does not exist on type 'string | number'.
+  Property 'toFixed' does not exist on type 'string'.
+
+2   return `₦${amount.toFixed(2)}`;
+                      ~~~~~~~
+
+
+Found 1 error in amount.ts:2
 </output>
 <p><strong>Rule 2: a member fits the union, but the union does not fit a member.</strong> <code>"approved"</code> can go where <code>"pending" | "approved"</code> is expected, because it is in the set. A <code>"pending" | "approved"</code> cannot go where only <code>"approved"</code> is expected, because it might be <code>"pending"</code>. To get from the wide type to the narrow one, you check the value, which is <strong>narrowing</strong>:</p>
 <example file="amount.ts" project="sets">
@@ -69,6 +80,7 @@ function formatAmount(amount: number | string): string {
 console.log(formatAmount(2500), formatAmount("12,000"));
 </example>
 <output>
+₦2500.00 ₦12000.00
 </output>
 <p>After <code>typeof amount === "number"</code>, the true branch sees <code>number</code> and the false branch sees what is left, <code>string</code>. <a href="/learn/ts-narrowing">Narrowing</a> covers every way to do this; this lesson uses the simplest ones.</p>
 </section>
@@ -127,6 +139,28 @@ const pendingWithApprover: LoanRequest = { id: 3, customer: "Chidi", amount: 200
 const unknownStatus: LoanRequest = { id: 4, customer: "Ada", amount: 5000, status: "approvd" };
 </example>
 <output kind="tsc">
+bad.ts:3:7 - error TS2322: Type '{ id: number; customer: string; amount: number; status: "approved"; }' is not assignable to type 'LoanRequest'.
+  Type '{ id: number; customer: string; amount: number; status: "approved"; }' is missing the following properties from type 'ApprovedLoan': approvedBy, approvedOn
+
+3 const approvedNoApprover: LoanRequest = { id: 2, customer: "Bola", amount: 80000, status: "approved" };
+        ~~~~~~~~~~~~~~~~~~
+
+bad.ts:4:104 - error TS2353: Object literal may only specify known properties, and 'approvedBy' does not exist in type 'PendingLoan'.
+
+4 const pendingWithApprover: LoanRequest = { id: 3, customer: "Chidi", amount: 20000, status: "pending", approvedBy: "Tunde" };
+                                                                                                         ~~~~~~~~~~
+
+bad.ts:5:76 - error TS2820: Type '"approvd"' is not assignable to type '"approved" | "pending" | "rejected"'. Did you mean '"approved"'?
+
+5 const unknownStatus: LoanRequest = { id: 4, customer: "Ada", amount: 5000, status: "approvd" };
+                                                                             ~~~~~~
+
+  loan.types.ts:12:12 - The expected type comes from property 'status' which is declared here on type 'LoanRequest'
+    12   readonly status: "approved";
+                  ~~~~~~
+
+
+Found 3 errors in the same file, starting at: bad.ts:3
 </output>
 <p>Read the messages: TypeScript used the <code>status</code> to pick the member you meant, then checked the rest against that member alone. A missing approver, an approver on a pending loan and a misspelt status are all caught where the object is written.</p>
 <p>Reading a loan is now honest, too. After you check the discriminant, only that member's fields are available:</p>
@@ -153,6 +187,9 @@ const loans: LoanRequest[] = [
 for (const loan of loans) console.log(describe(loan));
 </example>
 <output>
+#1 Ada: approved by Ngozi on 2026-09-01
+#2 Bola: rejected (income too low)
+#3 Chidi: ₦20000 waiting for review
 </output>
 <p>Sixteen possible shapes became exactly three. Each function that reads a loan no longer guesses; it asks the discriminant and the compiler tells it what it has.</p>
 </section>
@@ -176,6 +213,7 @@ const approved = approve(request, "Ngozi", "2026-09-24");
 console.log(approved.status, approved.approvedBy);
 </example>
 <output>
+approved Ngozi
 </output>
 <p><code>approve</code> takes a <code>PendingLoan</code> and returns an <code>ApprovedLoan</code>. Try to approve a loan that was already rejected, or reject it twice:</p>
 <example file="wrong-move.ts" project="loans" check="tsc-error">
@@ -188,6 +226,23 @@ function review(loan: LoanRequest) {
 }
 </example>
 <output kind="tsc">
+wrong-move.ts:5:27 - error TS2345: Argument of type 'LoanRequest' is not assignable to parameter of type 'PendingLoan'.
+  Type 'ApprovedLoan' is not assignable to type 'PendingLoan'.
+    Types of property 'status' are incompatible.
+      Type '"approved"' is not assignable to type '"pending"'.
+
+5   const rejected = reject(loan, "missing documents");
+                            ~~~~
+
+wrong-move.ts:6:18 - error TS2345: Argument of type 'RejectedLoan' is not assignable to parameter of type 'PendingLoan'.
+  Types of property 'status' are incompatible.
+    Type '"rejected"' is not assignable to type '"pending"'.
+
+6   return approve(rejected, "Ngozi", "2026-09-24");
+                   ~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: wrong-move.ts:5
 </output>
 <p>Two illegal moves, two errors. The first says a general <code>LoanRequest</code> might not be pending, so you must check its status before rejecting. The second says a rejected loan can never be approved. Your business rules from the reasoning step are now part of the types. This pattern is sometimes called a <strong>type-level state machine</strong>: a state machine is a set of states plus the allowed moves between them, and here the compiler checks both.</p>
 <note>The transition functions build a <em>new</em> object instead of changing <code>loan.status</code>. Every property is <code>readonly</code>, so they have to. Changing the status in place would leave the object half in one state and half in another: a pending loan with <code>status: "approved"</code> but no approver.</note>
@@ -217,6 +272,13 @@ function describe(loan: Loan): string {
 }
 </example>
 <output kind="tsc">
+loan4.ts:7:32 - error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+
+7 function describe(loan: Loan): string {
+                                 ~~~~~~
+
+
+Found 1 error in loan4.ts:7
 </output>
 <p>It works, but the error points at the return type, not at the missing case, and it only works when every case returns.</p>
 <h3>2. An assertNever helper</h3>
@@ -245,6 +307,13 @@ function fee(loan: Loan): number {
 }
 </example>
 <output kind="tsc">
+never.ts:19:26 - error TS2345: Argument of type '{ status: "disbursed"; amount: number; reference: string; }' is not assignable to parameter of type 'never'.
+
+19       return assertNever(loan);
+                            ~~~~
+
+
+Found 1 error in never.ts:19
 </output>
 <p>The error names the exact member that was forgotten, <code>"disbursed"</code>, on the line of the <code>default</code>. Here is the fixed version, with the runtime safety net shown working on a value that bypassed the types:</p>
 <example file="never.ts" project="exhaustive">
@@ -282,6 +351,9 @@ try {
 }
 </example>
 <output>
+500
+800
+Error: Unhandled value: {"status":"on-hold","amount":1000}
 </output>
 <p><code>JSON.parse</code> returns <code>any</code>, so the <code>"on-hold"</code> loan slipped past the compiler, exactly the kind of outside data that <a href="/learn/ts-runtime#gap">TypeScript and JavaScript together</a> warns about. The helper turned a silent wrong answer into a clear error.</p>
 <h3>3. A Record lookup</h3>
@@ -296,6 +368,13 @@ const badgeColour: Record<LoanStatus, string> = {
 };
 </example>
 <output kind="tsc">
+labels.ts:3:7 - error TS2741: Property 'disbursed' is missing in type '{ pending: string; approved: string; rejected: string; }' but required in type 'Record<LoanStatus, string>'.
+
+3 const badgeColour: Record<LoanStatus, string> = {
+        ~~~~~~~~~~~
+
+
+Found 1 error in labels.ts:3
 </output>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Technique</th><th>Best for</th><th>Runtime safety net</th></tr></thead>
@@ -355,6 +434,9 @@ for (const amount of [12000, 45000, 250000]) {
 }
 </example>
 <output>
+sent, balance now ₦18000 (TRF-12000)
+You have ₦30000, but tried to send ₦45000.
+Transfers are limited to ₦200000 per day.
 </output>
 <p>Two unions work together here. <code>TransferResult</code> is discriminated by <code>ok</code> (the literal types <code>true</code> and <code>false</code>), and <code>TransferError</code> by <code>code</code>. Each error carries exactly the data needed to explain it: the insufficient-funds case has the balance, the limit case has the limit. Because <code>message</code> is exhaustive over <code>code</code>, adding a fourth error kind makes the compiler list every place that must explain it to the customer.</p>
 <p>Use exceptions for things the caller cannot reasonably handle (the database is down, a bug), and result unions for outcomes that are part of the business: a declined transfer is not a crash. <a href="/learn/ts-generics#result">Generics</a> turns this into one reusable <code>Result&lt;T, E&gt;</code> type, and <a href="/learn/ts-errors">Typed error handling</a> builds a whole error system on it.</p>
@@ -383,6 +465,8 @@ console.log(trail({ status: "pending", amount: 9000, createdAt: "2026-09-20", cr
 console.log(trail({ status: "approved", amount: 9000, approvedBy: "Ngozi", createdAt: "2026-09-20", createdBy: "app" }));
 </example>
 <output>
+created 2026-09-20 by app
+created 2026-09-20 by app, approved by Ngozi
 </output>
 <h3>When an intersection is empty</h3>
 <p>Because an intersection keeps only the values in <em>both</em> sets, two types that share no values intersect to <code>never</code>. <code>string &amp; number</code> is <code>never</code>. For objects, the clash happens property by property:</p>
@@ -393,6 +477,17 @@ type WithTextId = { id: string };
 const record: WithNumericId & WithTextId = { id: 7, amount: 5000 };
 </example>
 <output kind="tsc">
+clash.ts:4:46 - error TS2322: Type 'number' is not assignable to type 'never'.
+
+4 const record: WithNumericId & WithTextId = { id: 7, amount: 5000 };
+                                               ~~
+
+  clash.ts:1:24 - The expected type comes from property 'id' which is declared here on type 'WithNumericId & WithTextId'
+    1 type WithNumericId = { id: number; amount: number };
+                             ~~
+
+
+Found 1 error in clash.ts:4
 </output>
 <p><code>id</code> must be a number and a string at the same time, so its type is <code>never</code> and no value fits. When two object types disagree on a discriminant, such as <code>{ status: "pending" } &amp; { status: "approved" }</code>, TypeScript reduces the whole object type to <code>never</code>. If you ever see <code>never</code> where you expected an object, look for two intersected types that disagree.</p>
 <p>Interfaces offer <code>extends</code> for the same job, and it reports such a clash where the interface is declared instead of where a value is written. <a href="/learn/ts-aliases-interfaces">Type aliases and interfaces</a>, next, compares the two properly.</p>
@@ -413,6 +508,20 @@ function approver(loan: Loan): string {
 }
 </example>
 <output kind="tsc">
+field-check.ts:6:12 - error TS2339: Property 'approvedBy' does not exist on type 'Loan'.
+  Property 'approvedBy' does not exist on type '{ status: "pending"; amount: number; }'.
+
+6   if (loan.approvedBy) return loan.approvedBy;
+             ~~~~~~~~~~
+
+field-check.ts:6:36 - error TS2339: Property 'approvedBy' does not exist on type 'Loan'.
+  Property 'approvedBy' does not exist on type '{ status: "pending"; amount: number; }'.
+
+6   if (loan.approvedBy) return loan.approvedBy;
+                                     ~~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: field-check.ts:6
 </output>
 <p>Check the discriminant, <code>loan.status === "approved"</code>, which is exactly what it is for. (<code>"approvedBy" in loan</code> would also narrow, but the discriminant says what you mean.)</p>
 <h3>2. Adding string to a literal union</h3>
@@ -424,6 +533,13 @@ const typo: Status = "aproved";
 const probe: never = typo;
 </example>
 <output kind="tsc">
+collapse.ts:4:7 - error TS2322: Type 'string' is not assignable to type 'never'.
+
+4 const probe: never = typo;
+        ~~~~~
+
+
+Found 1 error in collapse.ts:4
 </output>
 <p>Only the probe complains, and it shows the type is now just <code>string</code>: <code>"aproved"</code> compiled. If you really need open-ended values, model them as their own member: <code>{ status: "other"; label: string }</code>.</p>
 <h3>3. An else branch that swallows new members</h3>
@@ -441,6 +557,8 @@ console.log("rejected:", canReapply("rejected"));
 console.log("cancelled:", canReapply("cancelled"));
 </example>
 <output>
+rejected: true
+cancelled: true
 </output>
 <p>When <code>"cancelled"</code> was added, it compiled without a word, and landed in the <code>else</code> that was written for rejected loans. Maybe that is right; maybe a cancelled loan should be reapplied through a different form. Nobody decided. With a <code>switch</code> and <code>assertNever</code>, the compiler would have forced that decision.</p>
 <h3>4. A discriminant that widened</h3>
@@ -538,6 +656,11 @@ const declined = review(large, "Ngozi", "reject", "income too low");
 if (declined.ok) console.log(describe(declined.loan));
 </example>
 <output>
+#1 Ada ₦45000: approved by Ngozi
+#1 Ada ₦45000: paid out, ref TRF-5521
+second review refused: { code: 'not-pending', status: 'approved' }
+{ code: 'over-officer-limit', limit: 100000 }
+#2 Bola ₦250000: rejected (income too low)
 </output>
 <p>Notice what the types enforce: <code>disburse</code> only accepts an approved loan, so <code>main.ts</code> has to check <code>status === "approved"</code> first. <code>review</code> may be called with any loan, because a reviewer might click on anything, so it checks at runtime and returns a typed error instead. Both styles are useful: typed parameters where the caller already knows the state, result unions where the state comes from data.</p>
 </section>
@@ -574,6 +697,10 @@ for (const [label, loan, expected] of cases) {
 }
 </example>
 <output>
+PASS pending pays nothing: 0
+PASS approved pays 1%: 500
+PASS approved rounds: 123
+PASS rejected pays nothing: 0
 </output>
 <p>The type <code>Loan</code> also makes the test data honest: you cannot write a test case for a state that cannot exist. For the rules that must stay illegal, add type tests with <code>// @ts-expect-error</code> (from <a href="/learn/ts-compiler#testing">What the TypeScript compiler does</a>), for example that an approved loan without an approver does not compile. With Vitest, which you met in <a href="/learn/testing-basics">Testing basics</a>, the same table becomes <code>it.each(cases)</code>.</p>
 </section>
@@ -629,6 +756,8 @@ console.log(describe(loan));
 console.log(describe(cancel(loan, "2026-09-24")));
 </example>
 <output>
+#9 pending
+#9 cancelled on 2026-09-24
 </output>
 <p>Because <code>cancel</code> takes a <code>Pending</code>, cancelling an approved loan does not compile. Before adding the case, the <code>default</code> branch reported <code>"cancelled"</code> as unhandled.</p>
 </solution>
@@ -666,6 +795,9 @@ console.log(nextStep({ kind: "declined", reason: "expired-card" }));
 console.log(nextStep({ kind: "otp-required", sentTo: "080****5521" }));
 </example>
 <output>
+Paid (auth A81F2).
+This card has expired. Please use another card.
+Enter the code sent to 080****5521.
 </output>
 <p>Two unions again: one for the outcome, one for the reason. The <code>Record</code> guarantees a message for every reason, and the <code>switch</code> is exhaustive because every case returns and the return type is <code>string</code>.</p>
 </solution>
@@ -706,6 +838,8 @@ const bookings: Booking[] = [
 for (const b of bookings) console.log(summary(b));
 </example>
 <output>
+#1 held until 18:00
+#2 in room 304
 </output>
 <p>The <code>paid</code> flag disappeared: "paid" is simply what <code>confirmed</code> and <code>checked-in</code> mean. When a boolean can be derived from the state, it should not be stored next to it.</p>
 </solution>
