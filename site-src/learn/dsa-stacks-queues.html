@@ -1,0 +1,926 @@
+---
+title: Stacks and queues
+description: Build stacks, queues, a ring buffer and a deque in JavaScript, then use them for undo and redo, bracket checking and a retrying job queue.
+minutes: 55
+youNeed: Big O and complexity, Arrays and strings under the hood, Classes and Async and await
+youBuild: An invoice editor with undo and redo, a bracket checker, three O(1) queues (two-stack, ring buffer, deque) and a job queue worker with retries
+keywords: stack data structure, queue data structure, lifo, fifo, undo redo, balanced brackets, javascript queue shift performance, ring buffer, circular buffer, two stack queue, deque, job queue, retries, dead letter queue
+objectives: Explain LIFO and FIFO and pick the right one for a problem | Implement a stack and use two stacks for undo and redo | Check balanced brackets and report where they break | Explain why push plus shift makes a slow queue, and build O(1) queues with two stacks and a ring buffer | Implement a deque and a job queue worker with retries and a dead-letter list
+---
+<section>
+<h2 id="two-features">Two features, two orders</h2>
+<p>A small invoicing app has two features on its list this week.</p>
+<ol>
+<li><strong>Undo in the invoice editor.</strong> A user adds a line, changes a discount, deletes a line, then presses Ctrl+Z three times. The first undo must reverse the <em>most recent</em> change (the deletion), the next one the discount, and so on backwards.</li>
+<li><strong>Sending receipt emails.</strong> When a customer pays, the app does not send the email inside the payment request (the email service might be slow or down). It adds a job to a list, and a background worker sends them. Customers who paid first should get their receipt first.</li>
+</ol>
+<p>Both features keep a list of pending things. What differs is <em>which item comes out next</em>:</p>
+<pre>
+ undo history: last in, first out (LIFO)      receipt jobs: first in, first out (FIFO)
+
+        push  pop                                 enqueue                 dequeue
+          \   ^                                     |                        ^
+           v /                                      v                        |
+        +-------+  &lt;- top: newest                 +-----+-----+-----+-----+-----+
+        | del 2 |                                 | J-5 | J-4 | J-3 | J-2 | J-1 |
+        +-------+                                 +-----+-----+-----+-----+-----+
+        | disc  |                                  back (newest)      front (oldest)
+        +-------+
+        | add 1 |
+        +-------+
+</pre>
+<p>A <strong>stack</strong> gives you LIFO: you only ever touch the top. A <strong>queue</strong> gives you FIFO: items join at the back and leave from the front. Both are <strong>abstract data types</strong> (ADTs): a set of operations with promised behaviour and costs, independent of how they are built. This lesson builds each one, shows which obvious implementation is secretly slow, and uses them for undo and redo, bracket checking and a job queue with retries.</p>
+</section>
+
+<section>
+<h2 id="stack">The stack</h2>
+<p>A stack needs four operations, all O(1): <code>push</code> (add on top), <code>pop</code> (remove the top and return it), <code>peek</code> (look at the top without removing it) and <code>size</code>. A JavaScript array already does this at its end, because <code>push</code> and <code>pop</code> never move other items (see <a href="/learn/dsa-arrays-strings#insert-delete">the previous lesson</a>). Wrapping the array in a class hides the other array methods, so no one can reach into the middle of your stack by accident:</p>
+<file name="stack.js" project="sq">
+export class Stack {
+  #items = [];
+
+  push(item) {
+    this.#items.push(item);
+    return this;
+  }
+
+  pop() {
+    if (this.#items.length === 0) throw new RangeError("pop from an empty stack");
+    return this.#items.pop();
+  }
+
+  peek() {
+    return this.#items.at(-1);
+  }
+
+  get size() {
+    return this.#items.length;
+  }
+
+  isEmpty() {
+    return this.#items.length === 0;
+  }
+
+  clear() {
+    this.#items.length = 0;
+  }
+}
+</file>
+<example file="stack-demo.js" project="sq">
+import { Stack } from "./stack.js";
+
+const plates = new Stack();
+plates.push("invoice 1").push("invoice 2").push("invoice 3");
+console.log(plates.peek(), plates.size);
+console.log(plates.pop(), plates.pop(), plates.size);
+plates.pop();
+try {
+  plates.pop();
+} catch (error) {
+  console.log(error.name + ": " + error.message);
+}
+</example>
+<output>
+invoice 3 3
+invoice 3 invoice 2 1
+RangeError: pop from an empty stack
+</output>
+<p>Popping an empty stack throws instead of returning <code>undefined</code>. A stack that silently returns <code>undefined</code> hides bugs: the caller carries on with a missing value and fails somewhere far away. Callers that expect emptiness check <code>isEmpty()</code> first.</p>
+<p>You already use a stack every day: the <strong>call stack</strong>. Each function call pushes a frame; each <code>return</code> pops one. That is why the most recently called function always finishes first, and why deep recursion overflows it (see <a href="/learn/js-recursion">the recursion lesson</a>).</p>
+</section>
+
+<section>
+<h2 id="undo-redo">Undo and redo with two stacks</h2>
+<p>To undo a change, you must know how to reverse it. The <strong>command pattern</strong> stores each change as an object with two functions: <code>do</code> applies it, <code>undo</code> reverses it. The editor keeps two stacks:</p>
+<ul>
+<li>the <strong>undo stack</strong> holds commands that have been applied, newest on top;</li>
+<li>the <strong>redo stack</strong> holds commands that were undone, most recently undone on top.</li>
+</ul>
+<p>Undo pops from the undo stack, reverses the command and pushes it onto the redo stack. Redo does the opposite. And any <em>new</em> change clears the redo stack: once you type something new, the undone future no longer makes sense.</p>
+<file name="invoice-editor.js" project="sq">
+import { Stack } from "./stack.js";
+
+export class InvoiceEditor {
+  lines = [];
+  discountKobo = 0;
+  #undo = new Stack();
+  #redo = new Stack();
+
+  #run(command) {
+    command.do();
+    this.#undo.push(command);
+    this.#redo.clear(); // a new change forgets the undone future
+  }
+
+  addLine(description, kobo) {
+    this.#run({
+      label: `add ${description}`,
+      do: () => this.lines.push({ description, kobo }),
+      undo: () => this.lines.pop(),
+    });
+  }
+
+  removeLine(index) {
+    const removed = this.lines[index];
+    this.#run({
+      label: `remove ${removed.description}`,
+      do: () => this.lines.splice(index, 1),
+      undo: () => this.lines.splice(index, 0, removed),
+    });
+  }
+
+  setDiscount(kobo) {
+    const previous = this.discountKobo;
+    this.#run({
+      label: `discount ${kobo / 100}`,
+      do: () => (this.discountKobo = kobo),
+      undo: () => (this.discountKobo = previous),
+    });
+  }
+
+  undo() {
+    if (this.#undo.isEmpty()) return null;
+    const command = this.#undo.pop();
+    command.undo();
+    this.#redo.push(command);
+    return command.label;
+  }
+
+  redo() {
+    if (this.#redo.isEmpty()) return null;
+    const command = this.#redo.pop();
+    command.do();
+    this.#undo.push(command);
+    return command.label;
+  }
+
+  summary() {
+    const total = this.lines.reduce((sum, line) => sum + line.kobo, 0) - this.discountKobo;
+    return `${this.lines.map((l) => l.description).join(", ") || "(empty)"} | total ₦${total / 100}`;
+  }
+}
+</file>
+<example file="undo-demo.js" project="sq">
+import { InvoiceEditor } from "./invoice-editor.js";
+
+const editor = new InvoiceEditor();
+editor.addLine("Logo design", 15000000);
+editor.addLine("Business cards", 4500000);
+editor.setDiscount(1000000);
+editor.removeLine(0);
+console.log(editor.summary());
+
+console.log("undo:", editor.undo(), "->", editor.summary());
+console.log("undo:", editor.undo(), "->", editor.summary());
+console.log("redo:", editor.redo(), "->", editor.summary());
+
+editor.addLine("Flyers", 2000000); // a new change clears the redo stack
+console.log("redo:", editor.redo(), "->", editor.summary());
+console.log("undo x4:", editor.undo(), editor.undo(), editor.undo(), editor.undo());
+console.log("undo on empty history:", editor.undo(), "->", editor.summary());
+</example>
+<output>
+Business cards | total ₦35000
+undo: remove Logo design -> Logo design, Business cards | total ₦185000
+undo: discount 10000 -> Logo design, Business cards | total ₦195000
+redo: discount 10000 -> Logo design, Business cards | total ₦185000
+redo: null -> Logo design, Business cards, Flyers | total ₦205000
+undo x4: add Flyers discount 10000 add Business cards add Logo design
+undo on empty history: null -> (empty) | total ₦0
+</output>
+<p>Every undo and redo is O(1) stack work plus the cost of the command itself. Notice that <code>removeLine</code> captured <code>removed</code> and <code>index</code> in a closure when the change was made, so <code>undo</code> can put the exact line back in the exact place.</p>
+<warn>Real editors cap the history (say, the last 100 changes). With an array-based stack, dropping the <em>oldest</em> command means removing from the bottom: a <code>shift</code>, O(n). The <a href="#deque">deque</a> later in this lesson removes from both ends in O(1), which is what a capped history needs.</warn>
+</section>
+
+<section>
+<h2 id="brackets">Checking balanced brackets</h2>
+<p>The invoicing app lets accountants write pricing formulas such as <code>(base * (1 + vat)) - [discount]</code>. Before evaluating one, the app must check that every bracket is closed by the right kind of bracket, in the right order. That is a stack problem: the bracket that must close next is always the most recently opened one.</p>
+<reason title="What can go wrong in a formula?">
+<p>List every way the brackets in a formula can be wrong before you read the code. For each, what should the error message say so the accountant can fix it?</p>
+<answer>
+<ol>
+<li><strong>A closer with no opener</strong>: <code>base * vat)</code>. The stack is empty when the <code>)</code> arrives. Report the position of the <code>)</code>.</li>
+<li><strong>The wrong kind of closer</strong>: <code>(base * vat]</code>. The top of the stack is <code>(</code> but a <code>]</code> arrived. Report both positions, because the mistake could be either one.</li>
+<li><strong>An opener that is never closed</strong>: <code>(base * (1 + vat)</code>. The text ends with items still on the stack. Report the most recent unclosed opener, because that is usually the one that is missing its partner.</li>
+<li><strong>Crossed pairs</strong>: <code>([)]</code>. Each kind appears once opened and once closed, so a simple counter per kind would say "balanced". The stack sees <code>)</code> arrive while <code>[</code> is on top: case 2.</li>
+<li><strong>Empty text or no brackets at all</strong>: balanced. Nothing is open.</li>
+</ol>
+<p>Case 4 is why counting is not enough: order matters, and a stack remembers order.</p>
+</answer>
+</reason>
+<example file="brackets.js">
+const CLOSES = new Map([[")", "("], ["]", "["], ["}", "{"]]);
+const OPENERS = new Set(CLOSES.values());
+
+function checkBrackets(text) {
+  const open = []; // a stack of { ch, at }
+  for (let at = 0; at < text.length; at++) {
+    const ch = text[at];
+    if (OPENERS.has(ch)) {
+      open.push({ ch, at });
+    } else if (CLOSES.has(ch)) {
+      const top = open.pop();
+      if (!top) return `unexpected "${ch}" at ${at}`;
+      if (top.ch !== CLOSES.get(ch)) return `"${ch}" at ${at} does not close "${top.ch}" at ${top.at}`;
+    }
+  }
+  if (open.length > 0) {
+    const last = open.at(-1);
+    return `"${last.ch}" at ${last.at} is never closed`;
+  }
+  return "ok";
+}
+
+const formulas = [
+  "(base * (1 + vat)) - [discount]",
+  "base * vat)",
+  "(base * vat]",
+  "(base * (1 + vat)",
+  "([)]",
+  "{shipping: [zone1, zone2]}",
+  "",
+];
+for (const formula of formulas) console.log(JSON.stringify(formula).padEnd(34), checkBrackets(formula));
+</example>
+<output>
+"(base * (1 + vat)) - [discount]"  ok
+"base * vat)"                      unexpected ")" at 10
+"(base * vat]"                     "]" at 11 does not close "(" at 0
+"(base * (1 + vat)"                "(" at 0 is never closed
+"([)]"                             ")" at 2 does not close "[" at 1
+"{shipping: [zone1, zone2]}"       ok
+""                                 ok
+</output>
+<p>One pass, O(1) work per character: O(n) time. The stack holds at most every opener at once, so O(n) extra space in the worst case (<code>((((((…</code>). The same idea checks HTML tags, JSON nesting and indentation blocks; parsers and compilers are full of stacks.</p>
+</section>
+
+<section>
+<h2 id="queue">The queue, and why push plus shift is slow</h2>
+<p>A queue needs <code>enqueue</code> (join at the back), <code>dequeue</code> (leave from the front), <code>peek</code> and <code>size</code>. The obvious JavaScript version uses an array with <code>push</code> and <code>shift</code>:</p>
+<example file="shift-queue.js">
+class ShiftQueue {
+  #items = [];
+  enqueue(item) {
+    this.#items.push(item);
+  }
+  dequeue() {
+    return this.#items.shift();
+  }
+  get size() {
+    return this.#items.length;
+  }
+}
+
+const printer = new ShiftQueue();
+printer.enqueue("invoice-101.pdf");
+printer.enqueue("invoice-102.pdf");
+printer.enqueue("receipt-7.pdf");
+console.log(printer.dequeue(), printer.dequeue(), printer.size);
+</example>
+<output>
+invoice-101.pdf invoice-102.pdf 1
+</output>
+<p>It is correct, and for a print queue in one office it is fine. But <code>shift</code> moves every remaining item one place (O(n)), so a queue that holds tens of thousands of jobs pays for every dequeue with a full pass over the array. You measured this in <a href="/learn/dsa-arrays-strings#shift">the previous lesson</a>. The fix is to stop moving items. There are three standard ways.</p>
+
+<h3>1. Two stacks</h3>
+<p>Keep an <em>inbox</em> stack for arrivals and an <em>outbox</em> stack for departures. <code>enqueue</code> pushes onto the inbox. <code>dequeue</code> pops from the outbox; when the outbox is empty, pour the whole inbox into it first. Pouring reverses the order, which turns the oldest item into the top of the outbox:</p>
+<pre>
+ enqueue J-1, J-2, J-3        dequeue (outbox empty: pour)       dequeue again
+ inbox:  [J-1, J-2, J-3]      inbox:  []                         inbox:  []
+ outbox: []                   outbox: [J-3, J-2, J-1] -> pop J-1  outbox: [J-3, J-2] -> pop J-2
+</pre>
+<example file="two-stack-queue.js">
+class TwoStackQueue {
+  #inbox = [];
+  #outbox = [];
+  moves = 0;
+
+  enqueue(item) {
+    this.#inbox.push(item);
+  }
+
+  dequeue() {
+    if (this.#outbox.length === 0) {
+      while (this.#inbox.length > 0) {
+        this.#outbox.push(this.#inbox.pop());
+        this.moves++;
+      }
+    }
+    if (this.#outbox.length === 0) throw new RangeError("dequeue from an empty queue");
+    return this.#outbox.pop();
+  }
+
+  get size() {
+    return this.#inbox.length + this.#outbox.length;
+  }
+}
+
+const jobs = new TwoStackQueue();
+for (const id of ["J-1", "J-2", "J-3"]) jobs.enqueue(id);
+console.log(jobs.dequeue(), "moves so far:", jobs.moves);
+jobs.enqueue("J-4");
+console.log(jobs.dequeue(), jobs.dequeue(), jobs.dequeue(), "moves:", jobs.moves);
+
+const busy = new TwoStackQueue();
+for (let i = 0; i < 10000; i++) {
+  busy.enqueue(i);
+  busy.enqueue(i);
+  busy.dequeue();
+}
+console.log(`20000 enqueues and 10000 dequeues: ${busy.moves} moves, ${busy.size} left`);
+</example>
+<output>
+J-1 moves so far: 3
+J-2 J-3 J-4 moves: 4
+20000 enqueues and 10000 dequeues: 16382 moves, 10000 left
+</output>
+<p>One dequeue can cost O(n) when it pours. But each item is poured <em>at most once</em> in its life (it is pushed onto the inbox once, moved once, popped from the outbox once), so any sequence of <code>n</code> operations costs O(n) in total: <strong>amortized O(1)</strong> per operation, the same argument as <a href="/learn/dsa-complexity#amortized">amortized push</a>.</p>
+
+<h3>2. A ring buffer</h3>
+<p>A <strong>ring buffer</strong> (or <em>circular buffer</em>) is a fixed-size array with two numbers: <code>head</code>, the index of the front item, and <code>size</code>. The back is at <code>(head + size) % capacity</code>. When an index reaches the end of the array, the modulo wraps it around to 0, so the free space left behind by dequeued items is reused and nothing ever moves:</p>
+<pre>
+ capacity 5, after enqueue A B C D, dequeue A B, enqueue E F
+
+ index:    0     1     2     3     4
+         +-----+-----+-----+-----+-----+
+         |  F  |     |  C  |  D  |  E  |
+         +-----+-----+-----+-----+-----+
+            ^           ^
+          back        head (front)       size 4, next write at (2 + 4) % 5 = 1
+</pre>
+<file name="ring-buffer.js" project="sq">
+export class RingBuffer {
+  #slots;
+  #head = 0;
+  #size = 0;
+
+  constructor(capacity) {
+    if (!Number.isInteger(capacity) || capacity < 1) throw new RangeError("capacity must be a positive integer");
+    this.#slots = new Array(capacity);
+  }
+
+  get size() {
+    return this.#size;
+  }
+
+  get capacity() {
+    return this.#slots.length;
+  }
+
+  isFull() {
+    return this.#size === this.#slots.length;
+  }
+
+  enqueue(item) {
+    if (this.isFull()) return false; // the caller decides: wait, drop or reject
+    this.#slots[(this.#head + this.#size) % this.#slots.length] = item;
+    this.#size++;
+    return true;
+  }
+
+  dequeue() {
+    if (this.#size === 0) throw new RangeError("dequeue from an empty queue");
+    const item = this.#slots[this.#head];
+    this.#slots[this.#head] = undefined; // let the garbage collector free it
+    this.#head = (this.#head + 1) % this.#slots.length;
+    this.#size--;
+    return item;
+  }
+
+  peek() {
+    return this.#size === 0 ? undefined : this.#slots[this.#head];
+  }
+
+  toArray() {
+    return Array.from({ length: this.#size }, (_, i) => this.#slots[(this.#head + i) % this.#slots.length]);
+  }
+}
+</file>
+<example file="ring-demo.js" project="sq">
+import { RingBuffer } from "./ring-buffer.js";
+
+const printer = new RingBuffer(3);
+console.log(printer.enqueue("A.pdf"), printer.enqueue("B.pdf"), printer.enqueue("C.pdf"), printer.enqueue("D.pdf"));
+console.log(printer.dequeue(), printer.toArray());
+printer.enqueue("D.pdf"); // reuses the slot A.pdf left behind
+console.log(printer.toArray(), printer.size, printer.isFull());
+while (printer.size > 0) printer.dequeue();
+console.log(printer.peek(), printer.size);
+</example>
+<output>
+true true true false
+A.pdf [ 'B.pdf', 'C.pdf' ]
+[ 'B.pdf', 'C.pdf', 'D.pdf' ] 3 true
+undefined 0
+</output>
+<p>Every operation is O(1), worst case, not just amortized, and the memory is allocated once. The fixed capacity is a feature, not only a limit: a <strong>bounded queue</strong> tells producers "I am full" instead of growing until the server runs out of memory. That signal is called <strong>backpressure</strong>. When you do want an unbounded ring buffer, grow it by doubling when full and copy the items into the new array in queue order; the <a href="#deque">deque</a> below does exactly that.</p>
+
+<h3>3. An array with a head index</h3>
+<p>The third option keeps a plain array and a <code>head</code> index instead of shifting, and occasionally slices off the consumed part (for example when more than half of the array is consumed). It is simple and amortized O(1). The ring buffer and the two-stack queue are the ones you will see in interviews and libraries, so the exercises focus on them.</p>
+
+<h3>Comparing them</h3>
+<example file="queue-timing.js">
+class ShiftQueue {
+  #items = [];
+  enqueue(item) {
+    this.#items.push(item);
+  }
+  dequeue() {
+    return this.#items.shift();
+  }
+}
+
+class TwoStackQueue {
+  #inbox = [];
+  #outbox = [];
+  enqueue(item) {
+    this.#inbox.push(item);
+  }
+  dequeue() {
+    if (this.#outbox.length === 0) while (this.#inbox.length > 0) this.#outbox.push(this.#inbox.pop());
+    return this.#outbox.pop();
+  }
+}
+
+function workload(queue, n) {
+  let checksum = 0;
+  for (let i = 0; i < n; i++) queue.enqueue({ id: i, kobo: 100 });
+  for (let i = 0; i < n; i++) {
+    checksum += queue.dequeue().kobo;
+    queue.enqueue({ id: n + i, kobo: 1 }); // new jobs keep arriving
+  }
+  return checksum;
+}
+
+function timeIt(Queue, n) {
+  const start = performance.now();
+  const checksum = workload(new Queue(), n);
+  return { ms: performance.now() - start, checksum };
+}
+
+timeIt(TwoStackQueue, 1000); // warm-up
+const n = 40000;
+const shift = timeIt(ShiftQueue, n);
+const twoStacks = timeIt(TwoStackQueue, n);
+console.log("same work done:", shift.checksum === twoStacks.checksum, shift.checksum);
+console.log(`with ${n} jobs waiting, the two-stack queue is over 5 times faster:`, shift.ms > 5 * twoStacks.ms);
+</example>
+<output>
+same work done: true 4000000
+with 40000 jobs waiting, the two-stack queue is over 5 times faster: true
+</output>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Queue</th><th>enqueue</th><th>dequeue</th><th>memory</th><th>use it when</th></tr></thead>
+<tbody>
+<tr><td>array + <code>shift</code></td><td>O(1) amortized</td><td>O(n)</td><td>grows</td><td>the queue stays small (tens or hundreds of items)</td></tr>
+<tr><td>two stacks</td><td>O(1)</td><td>O(1) amortized</td><td>grows</td><td>unbounded queue, simple code</td></tr>
+<tr><td>ring buffer</td><td>O(1)</td><td>O(1)</td><td>fixed</td><td>bounded queue, backpressure, "keep the last N"</td></tr>
+<tr><td>growable ring buffer (deque)</td><td>O(1) amortized</td><td>O(1)</td><td>grows by doubling</td><td>unbounded queue, both ends</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="deque">The deque: both ends in O(1)</h2>
+<p>A <strong>deque</strong> (double-ended queue, pronounced "deck") adds and removes at <em>both</em> ends in O(1). It is a stack and a queue at once. A growable ring buffer implements it: <code>pushFront</code> moves <code>head</code> one step backwards (wrapping below 0), <code>pushBack</code> writes after the last item, and when the array is full it doubles, copying the items in order so that <code>head</code> starts again at 0.</p>
+<file name="deque.js" project="sq">
+export class Deque {
+  #slots = new Array(4);
+  #head = 0;
+  #size = 0;
+
+  get size() {
+    return this.#size;
+  }
+
+  #index(offset) {
+    return (this.#head + offset + this.#slots.length) % this.#slots.length;
+  }
+
+  #growIfFull() {
+    if (this.#size < this.#slots.length) return;
+    const bigger = new Array(this.#slots.length * 2);
+    for (let i = 0; i < this.#size; i++) bigger[i] = this.#slots[this.#index(i)];
+    this.#slots = bigger;
+    this.#head = 0;
+  }
+
+  pushBack(item) {
+    this.#growIfFull();
+    this.#slots[this.#index(this.#size)] = item;
+    this.#size++;
+  }
+
+  pushFront(item) {
+    this.#growIfFull();
+    this.#head = this.#index(-1);
+    this.#slots[this.#head] = item;
+    this.#size++;
+  }
+
+  popFront() {
+    if (this.#size === 0) throw new RangeError("popFront on an empty deque");
+    const item = this.#slots[this.#head];
+    this.#slots[this.#head] = undefined;
+    this.#head = this.#index(1);
+    this.#size--;
+    return item;
+  }
+
+  popBack() {
+    if (this.#size === 0) throw new RangeError("popBack on an empty deque");
+    const i = this.#index(this.#size - 1);
+    const item = this.#slots[i];
+    this.#slots[i] = undefined;
+    this.#size--;
+    return item;
+  }
+
+  peekFront() {
+    return this.#size === 0 ? undefined : this.#slots[this.#head];
+  }
+
+  peekBack() {
+    return this.#size === 0 ? undefined : this.#slots[this.#index(this.#size - 1)];
+  }
+
+  toArray() {
+    return Array.from({ length: this.#size }, (_, i) => this.#slots[this.#index(i)]);
+  }
+}
+</file>
+<p>A shop's "recently viewed" strip shows the last four products, newest first. Viewing a product pushes it to the front; when there are more than four, the oldest falls off the back. Both ends, O(1) each:</p>
+<example file="recently-viewed.js" project="sq">
+import { Deque } from "./deque.js";
+
+function recentlyViewed(limit) {
+  const items = new Deque();
+  return {
+    view(sku) {
+      items.pushFront(sku);
+      if (items.size > limit) items.popBack();
+    },
+    list: () => items.toArray(),
+  };
+}
+
+const strip = recentlyViewed(4);
+for (const sku of ["RICE", "OIL", "SALT", "BEANS", "SUGAR", "FLOUR"]) strip.view(sku);
+console.log(strip.list());
+
+const d = new Deque();
+for (let i = 1; i <= 6; i++) (i % 2 ? d.pushBack(i) : d.pushFront(i)); // grows past 4 while wrapped
+console.log(d.toArray(), d.peekFront(), d.peekBack(), d.popFront(), d.popBack(), d.size);
+</example>
+<output>
+[ 'FLOUR', 'SUGAR', 'BEANS', 'SALT' ]
+[ 6, 4, 2, 1, 3, 5 ] 6 5 6 5 4
+</output>
+<p>The same deque is what a capped undo history needs (push new commands at one end, drop the oldest from the other), and it is the core of the <a href="/learn/pattern-sliding-window">sliding window</a> maximum technique later in the course. The <code>recentlyViewed</code> strip still allows duplicates; making it move an already-viewed product to the front in O(1) needs a hash map plus a linked list, which is exactly <a href="/learn/dsa-linked-lists">the next lesson's</a> LRU cache.</p>
+</section>
+
+<section>
+<h2 id="job-queue">Build: a job queue with retries</h2>
+<p>Back to the receipt emails. A <strong>worker</strong> takes jobs from the front of the queue one at a time and calls a <strong>handler</strong>, an async function that does the actual work. Real handlers fail: the email service times out, or an address bounces.</p>
+<reason title="Before you write the worker">
+<ol>
+<li>A job fails because the email service timed out. Should the worker try it again immediately?</li>
+<li>A job fails every time (the address does not exist). What stops it from being retried forever?</li>
+<li>The worker process crashes with 5,000 jobs in its in-memory queue. What happens to them?</li>
+<li>The handler sent the email, then crashed before the worker marked the job as done. The job runs again. What does the customer see?</li>
+<li>Payments arrive faster than emails can be sent, all day. What happens to the queue?</li>
+</ol>
+<answer>
+<ol>
+<li>Not immediately: a service that just timed out will probably time out again. Put the job at the <em>back</em> of the queue, so other jobs run first and the service gets time to recover. Production systems also add a growing delay between attempts (exponential backoff).</li>
+<li>A maximum number of attempts. After the last failure, move the job to a <strong>dead-letter list</strong> (often called a dead-letter queue) where a person or a separate process can inspect it, instead of dropping it silently.</li>
+<li>They are lost. An in-memory queue is only as durable as the process. Jobs that must survive a crash live in a database or a broker such as Redis or RabbitMQ.</li>
+<li>Two identical receipts. Durable queues deliver jobs <strong>at least once</strong>, so handlers must be <strong>idempotent</strong>: running them twice has the same effect as once, for example by recording "receipt sent for PAY-12" and checking it first.</li>
+<li>It grows without limit until memory runs out. Bound it (a ring buffer that says "full"), add workers, or slow the producers: backpressure.</li>
+</ol>
+</answer>
+</reason>
+<example file="job-queue.js" project="sq">
+import { Deque } from "./deque.js";
+
+class JobQueue {
+  #jobs = new Deque();
+  #nextId = 1;
+
+  add(data) {
+    const job = { id: `JOB-${this.#nextId++}`, data, attempts: 0 };
+    this.#jobs.pushBack(job);
+    return job.id;
+  }
+
+  async run(handler, { maxAttempts = 3, log = console.log } = {}) {
+    const deadLetters = [];
+    while (this.#jobs.size > 0) {
+      const job = this.#jobs.popFront();
+      job.attempts++;
+      try {
+        await handler(job.data);
+        log(`done  ${job.id} (attempt ${job.attempts})`);
+      } catch (error) {
+        if (job.attempts < maxAttempts) {
+          log(`retry ${job.id}: ${error.message}`);
+          this.#jobs.pushBack(job); // to the back: other jobs go first
+        } else {
+          log(`dead  ${job.id}: ${error.message}`);
+          deadLetters.push({ ...job, error: error.message });
+        }
+      }
+    }
+    return deadLetters;
+  }
+}
+
+const sendAttempts = new Map();
+async function sendReceipt({ email, paymentId }) {
+  const attempt = (sendAttempts.get(paymentId) ?? 0) + 1;
+  sendAttempts.set(paymentId, attempt);
+  if (email.endsWith("@bounce.test")) throw new Error("address does not exist");
+  if (email.startsWith("slow") && attempt < 3) throw new Error("email service timed out");
+}
+
+const queue = new JobQueue();
+queue.add({ paymentId: "PAY-1", email: "ada@shop.ng" });
+queue.add({ paymentId: "PAY-2", email: "slow.bola@shop.ng" });
+queue.add({ paymentId: "PAY-3", email: "ghost@bounce.test" });
+queue.add({ paymentId: "PAY-4", email: "chidi@shop.ng" });
+
+const dead = await queue.run(sendReceipt);
+console.log("dead letters:", dead.map((job) => `${job.id} ${job.data.email} (${job.error})`));
+</example>
+<output>
+done  JOB-1 (attempt 1)
+retry JOB-2: email service timed out
+retry JOB-3: address does not exist
+done  JOB-4 (attempt 1)
+retry JOB-2: email service timed out
+retry JOB-3: address does not exist
+done  JOB-2 (attempt 3)
+dead  JOB-3: address does not exist
+dead letters: [ 'JOB-3 ghost@bounce.test (address does not exist)' ]
+</output>
+<p>Read the log in order: <code>JOB-4</code> was not held up by the failing jobs ahead of it, because failures go to the back. <code>JOB-2</code> succeeded on its third attempt; <code>JOB-3</code> used up its three attempts and landed in the dead-letter list. The worker is O(1) per queue operation, and the whole run is O(jobs × maxAttempts) handler calls.</p>
+<p>ZudoJS ships a production version of this idea, with persistence, concurrency, delays and retries, in <a href="/learn/zudo-queue"><code>@zudojs/queue</code></a>. The concepts are the same: a FIFO of jobs, workers, attempts and a place for jobs that keep failing.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing stacks and queues</h2>
+<p>The riskiest code in this lesson is index arithmetic: the modulo in the ring buffer and the deque. Bugs there only show after the indexes <em>wrap around</em> the end of the array, and after a deque grows while wrapped. A random test against a trivially correct reference (a plain array, where speed does not matter) finds them, as long as you check that wrapping really happened:</p>
+<example file="queue-tests.js" project="sq">
+import { Deque } from "./deque.js";
+import { RingBuffer } from "./ring-buffer.js";
+
+function check(label, condition) {
+  console.log(`${condition ? "PASS" : "FAIL"} ${label}`);
+}
+
+function xorshift(seed) {
+  return () => {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return (seed >>> 0) / 4294967296;
+  };
+}
+
+// Deque against an array, 20,000 random operations at both ends
+const random = xorshift(7);
+const deque = new Deque();
+const reference = [];
+let mismatches = 0;
+let maxSize = 0;
+for (let i = 0; i < 20000; i++) {
+  const r = random();
+  if (r < 0.3) {
+    deque.pushBack(i);
+    reference.push(i);
+  } else if (r < 0.6) {
+    deque.pushFront(i);
+    reference.unshift(i);
+  } else if (reference.length > 0 && r < 0.8) {
+    if (deque.popFront() !== reference.shift()) mismatches++;
+  } else if (reference.length > 0) {
+    if (deque.popBack() !== reference.pop()) mismatches++;
+  }
+  if (deque.size !== reference.length || deque.peekFront() !== reference[0] || deque.peekBack() !== reference.at(-1)) mismatches++;
+  maxSize = Math.max(maxSize, deque.size);
+}
+check(`deque matches an array (grew to ${maxSize} items)`, mismatches === 0);
+check("deque contents match at the end", JSON.stringify(deque.toArray()) === JSON.stringify(reference));
+
+// Ring buffer: wrap around many times
+const ring = new RingBuffer(5);
+const expected = [];
+let wrongOrder = 0;
+for (let i = 0; i < 1000; i++) {
+  if (!ring.isFull() && i % 3 !== 2) {
+    ring.enqueue(i);
+    expected.push(i);
+  } else if (ring.size > 0 && ring.dequeue() !== expected.shift()) {
+    wrongOrder++;
+  }
+}
+check("ring buffer keeps FIFO order through hundreds of wrap-arounds", wrongOrder === 0);
+check("ring buffer refuses when full", !(() => { const r = new RingBuffer(1); r.enqueue("a"); return r.enqueue("b"); })());
+
+// Edge cases
+let threw = 0;
+for (const fn of [() => new Deque().popFront(), () => new Deque().popBack(), () => new RingBuffer(2).dequeue(), () => new RingBuffer(0)]) {
+  try {
+    fn();
+  } catch (error) {
+    if (error instanceof RangeError) threw++;
+  }
+}
+check("empty pops and a zero capacity throw RangeError", threw === 4);
+</example>
+<output>
+PASS deque matches an array (grew to 3601 items)
+PASS deque contents match at the end
+PASS ring buffer keeps FIFO order through hundreds of wrap-arounds
+PASS ring buffer refuses when full
+PASS empty pops and a zero capacity throw RangeError
+</output>
+<p>The reference uses <code>unshift</code> and <code>shift</code>, which are slow, and that is fine: a reference implementation only needs to be obviously correct. Reporting how large the deque grew shows that it went through several resizes while wrapped, the case most likely to hide a bug.</p>
+</section>
+
+<section>
+<h2 id="production">Stacks and queues in production</h2>
+<ul>
+<li><strong>In-memory queues lose jobs on a crash or deploy.</strong> Use a durable queue (a database table, Redis, a message broker) for anything that must happen, such as receipts, payouts and webhooks. Keep in-memory queues for work you can afford to lose or recompute.</li>
+<li><strong>Design for at-least-once delivery.</strong> Durable queues redeliver a job whose worker died mid-way. Make handlers idempotent with a unique key per job (the payment ID) and a record of what is already done.</li>
+<li><strong>Bound everything.</strong> Every queue needs a maximum length or a policy when producers outrun consumers: reject with an error (HTTP 429 or 503), drop the oldest (logs, metrics), or block the producer.</li>
+<li><strong>Watch the queue length.</strong> The number of waiting jobs, and the age of the oldest one, are the two most useful metrics for any worker system. A length that only grows means the workers cannot keep up.</li>
+<li><strong>FIFO is not always fair.</strong> A password-reset email should not wait behind 50,000 marketing emails. Separate queues per kind of work, or a priority queue, which <a href="/learn/dsa-heaps">the heaps lesson</a> builds.</li>
+<li><strong>Recursion is a stack you do not control.</strong> Very deep recursion over user data (a deeply nested JSON body, a long chain of replies) can overflow the call stack. An explicit <code>Stack</code> in a loop has no such limit.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A stack that knows its minimum">
+<p>A price tracker pushes each day's price for a product onto a stack and pops when a day's entry is corrected. It must answer "what is the lowest price currently on the stack?" in O(1). Write <code>MinStack</code> with <code>push</code>, <code>pop</code> and <code>min</code>.</p>
+<solution>
+<example file="min-stack.js">
+class MinStack {
+  #items = [];
+  #mins = []; // mins[i] = smallest of items[0..i]
+
+  push(price) {
+    this.#items.push(price);
+    const currentMin = this.#mins.length === 0 ? price : Math.min(price, this.#mins.at(-1));
+    this.#mins.push(currentMin);
+  }
+
+  pop() {
+    if (this.#items.length === 0) throw new RangeError("pop from an empty stack");
+    this.#mins.pop();
+    return this.#items.pop();
+  }
+
+  min() {
+    return this.#mins.at(-1);
+  }
+}
+
+const prices = new MinStack();
+for (const kobo of [52000, 49000, 55000, 47000]) prices.push(kobo);
+console.log(prices.min());
+prices.pop(); // correct the last entry
+console.log(prices.min());
+prices.pop();
+prices.pop();
+console.log(prices.min());
+</example>
+<output>
+47000
+49000
+52000
+</output>
+<p>A second stack remembers the minimum <em>at each height</em>. Popping both stacks together restores the previous minimum automatically. Every operation is O(1); the extra space is O(n).</p>
+</solution>
+</exercise>
+
+<exercise title="Back and forward">
+<p>An admin dashboard has Back and Forward buttons. Write <code>History</code> with <code>visit(page)</code>, <code>back()</code> and <code>forward()</code>, each returning the current page. Visiting a new page after going back must clear the forward history, like a browser.</p>
+<solution>
+<example file="history.js">
+class History {
+  #back = [];
+  #forward = [];
+  current;
+
+  constructor(start) {
+    this.current = start;
+  }
+
+  visit(page) {
+    this.#back.push(this.current);
+    this.current = page;
+    this.#forward.length = 0;
+    return this.current;
+  }
+
+  back() {
+    if (this.#back.length > 0) {
+      this.#forward.push(this.current);
+      this.current = this.#back.pop();
+    }
+    return this.current;
+  }
+
+  forward() {
+    if (this.#forward.length > 0) {
+      this.#back.push(this.current);
+      this.current = this.#forward.pop();
+    }
+    return this.current;
+  }
+}
+
+const nav = new History("/dashboard");
+nav.visit("/orders");
+nav.visit("/orders/ORD-7");
+console.log(nav.back(), nav.back(), nav.back());
+console.log(nav.forward());
+console.log(nav.visit("/customers"), nav.forward());
+</example>
+<output>
+/orders /dashboard /dashboard
+/orders
+/customers /customers
+</output>
+<p>It is the undo/redo design with pages instead of commands: two stacks, and a new action clears the forward stack. At the start of history, <code>back()</code> stays where it is instead of throwing, because that is what users expect from a button.</p>
+</solution>
+</exercise>
+
+<exercise title="Evaluate a postfix formula">
+<p>Some calculators and pricing engines store formulas in <strong>postfix</strong> (reverse Polish) notation, where the operator comes after its two operands: <code>"2 3 + 4 *"</code> means <code>(2 + 3) * 4</code>. There are no brackets to check. Write <code>evaluate(formula)</code> with a stack: numbers are pushed; an operator pops two numbers, applies itself and pushes the result. Throw a clear error for a malformed formula.</p>
+<solution>
+<example file="postfix.js">
+const OPS = new Map([
+  ["+", (a, b) => a + b],
+  ["-", (a, b) => a - b],
+  ["*", (a, b) => a * b],
+  ["/", (a, b) => a / b],
+]);
+
+function evaluate(formula) {
+  const stack = [];
+  for (const token of formula.split(/\s+/).filter(Boolean)) {
+    if (OPS.has(token)) {
+      if (stack.length < 2) throw new SyntaxError(`"${token}" needs two numbers`);
+      const b = stack.pop(); // the top is the RIGHT operand
+      const a = stack.pop();
+      stack.push(OPS.get(token)(a, b));
+    } else {
+      const value = Number(token);
+      if (Number.isNaN(value)) throw new SyntaxError(`unknown token "${token}"`);
+      stack.push(value);
+    }
+  }
+  if (stack.length !== 1) throw new SyntaxError(`expected one result, found ${stack.length}`);
+  return stack[0];
+}
+
+console.log(evaluate("2 3 + 4 *"));
+console.log(evaluate("150000 7.5 100 / * 150000 +")); // price plus 7.5% VAT, in kobo
+console.log(evaluate("10 4 -"));
+for (const bad of ["1 +", "1 2", "2 x *"]) {
+  try {
+    evaluate(bad);
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</example>
+<output>
+20
+161250
+6
+"+" needs two numbers
+expected one result, found 2
+unknown token "x"
+</output>
+<p>Pop order matters: the first number popped is the <em>right</em> operand, so <code>"10 4 -"</code> is 6 and not -4. One pass with O(1) work per token: O(n) time, O(n) stack space in the worst case.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="summary">Summary</h2>
+<ul>
+<li>A stack is LIFO: push, pop and peek at the top, all O(1). An array's end is a perfect stack.</li>
+<li>Undo and redo are two stacks of commands; a new change clears the redo stack.</li>
+<li>Balanced brackets need a stack, not counters, because the order of opening decides which closer is valid.</li>
+<li>A queue is FIFO. <code>push</code> plus <code>shift</code> is correct but O(n) per dequeue.</li>
+<li>O(1) queues: two stacks (amortized, each item moves once), a ring buffer (fixed capacity, worst-case O(1), natural backpressure), and a growable ring buffer.</li>
+<li>A deque adds and removes at both ends in O(1): recently-viewed lists, capped histories, sliding windows.</li>
+<li>A job queue worker retries failures at the back of the queue, gives up after a maximum number of attempts, and keeps a dead-letter list. In production, queues must be durable, bounded and paired with idempotent handlers.</li>
+</ul>
+<p>Next: <a href="/learn/dsa-linked-lists">Linked lists</a>, which remove items from the middle in O(1) and power the LRU cache.</p>
+</section>

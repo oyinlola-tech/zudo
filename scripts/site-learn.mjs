@@ -6,7 +6,7 @@
  *   pnpm site:learn:check            build, then run every example in Node (npm packages,
  *                                    tsx, tsc) and in the browser terminal, and check the
  *                                    terminal's Node-style formatter against util.inspect
- *   node scripts/site-learn.mjs --node|--browser|--inspect|--quiz [--only <slug>[,<slug>…]]
+ *   node scripts/site-learn.mjs --node|--browser|--inspect|--quiz|--links [--only <slug>[,<slug>…]]
  *
  * Lesson tests live in site-src/learn/quiz/<slug>.html (see scripts/learn/quiz.mjs);
  * --quiz checks them in Node and in the browser terminal (--check includes it).
@@ -119,6 +119,27 @@ function checkInspect() {
   });
 }
 
+/*
+ * Every /learn/<slug> link in a lesson must point at a course or a lesson in
+ * course.json (a failure otherwise). Links to planned lessons that are not
+ * written yet are listed as a warning, so they are fixed before release.
+ */
+function checkLinks(course, lessons, only) {
+  const planned = new Set(["index", ...course.courses.flatMap((c) => [c.id, ...c.modules.flatMap((m) => m.lessons)])]);
+  const written = new Set(["index", ...course.courses.filter((c) => c.lessons.length).map((c) => c.id), ...lessons.map((l) => l.slug)]);
+  const results = [];
+  const pending = new Set();
+  for (const l of lessons) {
+    if (only && !only.includes(l.slug)) continue;
+    for (const m of l.body.matchAll(/href="\/learn\/([\w-]+)/g)) {
+      if (!planned.has(m[1])) results.push({ label: `${l.slug} links to /learn/${m[1]}`, ok: false, detail: "no such course or lesson in course.json" });
+      else if (!written.has(m[1])) pending.add(m[1]);
+    }
+  }
+  if (pending.size) console.log(`links to lessons not written yet: ${[...pending].sort().join(", ")}`);
+  return results.length ? results : [{ label: "links", ok: true }];
+}
+
 function report(name, results) {
   const failed = results.filter((r) => !r.ok);
   for (const r of failed) console.log(`✗ ${r.label}\n${r.detail}\n`);
@@ -130,6 +151,10 @@ const lessons = build();
 const wantQuiz = wantAll || args.includes("--quiz");
 const quizzes = new Map([...readQuizzes(ROOT, lessons)].filter(([slug]) => !only || only.includes(slug)));
 let failures = 0;
+if (wantAll || args.includes("--links")) {
+  const { course, lessons: read } = readCourse(ROOT);
+  failures += report("links to lessons", checkLinks(course, read, only));
+}
 if (wantAll || args.includes("--inspect")) failures += report("formatter vs util.inspect", checkInspect());
 if (wantAll || args.includes("--node")) failures += report("examples in Node", checkNode(lessons, { only, root: ROOT }));
 if (wantQuiz) failures += report("tests in Node", await checkQuizNode(quizzes, { lessons, root: ROOT }));

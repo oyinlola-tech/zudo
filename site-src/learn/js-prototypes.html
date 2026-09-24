@@ -1,6 +1,6 @@
 ---
 title: Prototypes in depth
-description: Follow the prototype chain step by step, build objects with Object.create and constructor functions, rewrite new, instanceof and extends yourself, and see exactly what a class becomes.
+description: Follow the prototype chain step by step, rewrite new, instanceof and extends yourself, see what a class becomes, and block prototype pollution.
 minutes: 55
 youNeed: this in depth, this, prototypes and classes, and Objects in depth
 youBuild: Working versions of new, instanceof and extends written from scratch and tested against the real ones, plus a merge function that blocks prototype pollution
@@ -40,7 +40,9 @@ console.log("distinct function objects:", functions.size);
 console.log(orders[0].describe === orders[1].describe);
 </example>
 <output>
-₦8500 is wrong
+ORD-1: ₦8500
+distinct function objects: 200000
+false
 </output>
 <p>Every order carries its own copy of <code>totalKobo</code> and <code>describe</code>: 200,000 function objects that all do the same thing. That wastes memory, and it has a second cost: if the report later needs a new method, or a fix to <code>describe</code>, the 100,000 existing orders do not get it, because each one holds the old function.</p>
 <p>What you want is for all orders to <em>share</em> one <code>describe</code>, found when it is needed. JavaScript's answer is the <strong>prototype</strong>: every object can point at another object, and when a property is missing, JavaScript looks there. <a href="/learn/js-classes#prototypes">this, prototypes and classes</a> introduced prototypes and showed that classes use them. This lesson takes them apart: the exact lookup rules for reading and writing, building objects on prototypes by hand, what <code>new</code> and <code>instanceof</code> really do, what a <code>class</code> turns into, and a security bug that only exists because of prototypes.</p>
@@ -83,6 +85,12 @@ console.log(Object.getPrototypeOf(accountMethods) === Object.prototype);
 console.log(Object.getPrototypeOf(Object.prototype));
 </example>
 <output>
+Ada: ₦10200 (savings)
+[ 'owner', 'balanceKobo' ]
+true
+true
+true
+null
 </output>
 <p>Trace <code>ada.describe()</code> with the lookup rule. <code>ada</code> has no own <code>describe</code>, neither does <code>savingsMethods</code>; <code>accountMethods</code> does. Inside it, <code>this</code> is still <code>ada</code>, because <code>this</code> comes from the call, not from where the method was found (<a href="/learn/js-this#implicit">this in depth</a>). Then <code>this.kind</code> is looked up the same way and found one step up, on <code>savingsMethods</code>, which <strong>shadows</strong> (hides) the <code>kind</code> further up the chain.</p>
 <pre>
@@ -145,6 +153,10 @@ delete ada.currency;
 console.log(ada.currency);
 </example>
 <output>
+USD NGN true
+[ 'currency', 'pinHash' ]
+TypeError: Cannot assign to read only property 'bank' of object '#<Object>'
+NGN
 </output>
 <ul>
 <li><code>ada.currency = "USD"</code> added an own property. <code>defaults.currency</code> is still <code>"NGN"</code>, and every other object that inherits from <code>defaults</code> still sees <code>"NGN"</code>.</li>
@@ -185,6 +197,8 @@ a.add("RICE-5");
 console.log(a.items, b.items);
 </example>
 <output>
+[ 'RICE-5', 'OIL-1' ] [ 'RICE-5', 'OIL-1' ] true
+[ 'RICE-5' ] []
 </output>
 <p>Ada and Chidi share one basket. The rule: <strong>prototypes hold behaviour (methods) and constants; each instance holds its own data.</strong> Classes enforce this naturally, because fields and <code>this.x = …</code> in the constructor create own properties.</p>
 </section>
@@ -214,6 +228,13 @@ const dictionary = Object.create(null);
 console.log("null proto:", chainOf(dictionary) || "(empty chain)", typeof dictionary.toString);
 </example>
 <output>
+object  : Object
+array   : Array -> Object
+function: Function -> Object
+date    : Date -> Object
+map     : Map -> Object
+string  : String -> Object
+null proto: (empty chain) undefined
 </output>
 <p><code>chainOf("NGN")</code> works on a primitive because <code>Object.getPrototypeOf</code>, like any property access on a primitive, temporarily wraps the string in a <code>String</code> object; that is how <code>"NGN".toLowerCase()</code> finds its method on <code>String.prototype</code>. An object made with <code>Object.create(null)</code> has an empty chain: no <code>toString</code>, which is exactly why it is a safe dictionary.</p>
 <tip>Because <code>hasOwnProperty</code> is inherited, it is missing on null-prototype objects and can be shadowed by data (a product with a field named <code>hasOwnProperty</code>). <code>Object.hasOwn(obj, key)</code> is a static function, so it always works. Prefer it.</tip>
@@ -254,6 +275,10 @@ console.log(Order.prototype.constructor === Order, mine.constructor === Order);
 console.log(Object.keys(Order.prototype));
 </example>
 <output>
+ORD-7: ₦11700 ORD-8: ₦5000
+true true
+true true
+[ 'describe' ]
 </output>
 <p>The two objects behave the same. The last line shows one difference from classes: <code>describe</code> was added by assignment, so it is <em>enumerable</em>, and it shows up in <code>Object.keys(Order.prototype)</code> (and in <code>for...in</code> over every order, as you will see below).</p>
 <h3>The two "prototypes" of a function</h3>
@@ -277,6 +302,11 @@ const arrow = () => {};
 console.log("prototype" in arrow, typeof Order.prototype);
 </example>
 <output>
+true
+true
+false
+function undefined
+false object
 </output>
 <p>Arrow functions and methods have no <code>prototype</code> property, because they cannot be used with <code>new</code>.</p>
 <h3>When a constructor returns an object, or is called without new</h3>
@@ -306,6 +336,10 @@ function SafeAccount(owner) {
 console.log(SafeAccount("Ada") instanceof SafeAccount);
 </example>
 <output>
+Session { user: 'ada' }
+{ error: 'not allowed' }
+TypeError: Cannot set properties of undefined (setting 'owner')
+true
 </output>
 <ul>
 <li>Returning a primitive from a constructor is ignored (step 4). Returning an object replaces the new object (step 3). The <code>"banned"</code> session is not even a <code>Session</code>. This is legal but surprising; avoid it.</li>
@@ -343,6 +377,10 @@ console.log(ada.constructor.name);
 console.log(Object.keys(ada));
 </example>
 <output>
+Ada: ₦10000 at 2%
+true true
+SavingsAccount
+[ 'owner', 'balanceKobo', 'ratePercent' ]
 </output>
 <ul>
 <li><code>Account.call(this, …)</code> is what <code>super(…)</code> does: run the parent's constructor on the new object, so it gets <code>owner</code> and <code>balanceKobo</code> as own properties.</li>
@@ -384,6 +422,12 @@ console.log(Object.create(null) instanceof Object, "NGN" instanceof String);
 console.log(Array.isArray([]), [] instanceof Array);
 </example>
 <output>
+true true
+true true
+true undefined
+false true
+false false
+true true
 </output>
 <ul>
 <li><code>fake</code> was never passed through the constructor, so it has no <code>id</code>, but <code>instanceof</code> says yes: the prototype is on its chain. <code>instanceof</code> checks the chain, not the shape of the data.</li>
@@ -426,13 +470,20 @@ const ada = new SavingsAccount("Ada");
 
 console.log(typeof Account);
 console.log(Object.getOwnPropertyNames(Account.prototype));
-console.log(Object.getOwnPropertyNames(Account).filter((n) => !["length", "name"].includes(n)));
+console.log(Object.getOwnPropertyNames(Account).filter((n) => !["length", "name", "prototype"].includes(n)));
 console.log(Object.keys(ada));
 console.log(Object.getOwnPropertyDescriptor(Account.prototype, "describe").enumerable);
 console.log(Object.getPrototypeOf(SavingsAccount.prototype) === Account.prototype);
 console.log(Object.getPrototypeOf(SavingsAccount) === Account, SavingsAccount.fromJSON === Account.fromJSON);
 </example>
 <output>
+function
+[ 'constructor', 'describe', 'masked' ]
+[ 'fromJSON', 'count' ]
+[ 'currency', 'owner' ]
+false
+true
+true true
 </output>
 <p>Mapped onto what you built by hand:</p>
 <div class="lx-table-wrap"><table>
@@ -487,6 +538,9 @@ try {
 class AuditedAccount extends NewAccount {}
 </example>
 <output>
+[ 'owner', 'describe' ] [ 'owner' ]
+TypeError: Class constructor NewAccount cannot be invoked without 'new'
+ReferenceError: Cannot access 'AuditedAccount' before initialization
 </output>
 <ul>
 <li>Methods are non-enumerable, so a <code>for...in</code> loop over an instance lists only data. With the old pattern, it also lists every inherited method, which broke many loops that copied objects.</li>
@@ -527,6 +581,9 @@ try {
 console.log({}.isAdmin);
 </example>
 <output>
+[ 'theme', '__proto__' ]
+dark true true
+undefined
 </output>
 <p>Step by step: <code>JSON.parse</code> treats <code>"__proto__"</code> as an ordinary key, so <code>body</code> has an own property with that name. The merge reads <code>target["__proto__"]</code>, which is not an own property of <code>target</code>: it is the old <code>__proto__</code> getter on <code>Object.prototype</code>, and it returns <code>Object.prototype</code> itself. The recursive call then writes <code>isAdmin = true</code> straight onto <code>Object.prototype</code>. From that moment, <code>someUser.isAdmin</code>, and <code>isAdmin</code> on every object in the process, is <code>true</code>. The <code>finally</code> block removes the property so the rest of this page keeps working; a real server would stay polluted until it restarted.</p>
 <p>The defences all come from this lesson:</p>
@@ -548,6 +605,9 @@ console.log(findUnsafeKey(normal));
 console.log(findUnsafeKey(JSON.parse('{"constructor":{"prototype":{"isAdmin":true}}}')));
 </example>
 <output>
+__proto__
+undefined
+constructor
 </output>
 </section>
 
@@ -656,6 +716,11 @@ const settings = safeMerge({ theme: "light", alerts: { email: true } },
 console.log(settings, {}.isAdmin);
 </example>
 <output>
+Ada: ₦10000 at 2%
+true true false
+SavingsAccount [ 'describe' ]
+Chidi: ₦0 at undefined%
+{ theme: 'light', alerts: { email: true, sms: true } } undefined
 </output>
 <p><code>SavingsAccount.open("Chidi")</code> is a detail worth a second look. <code>open</code> is defined on <code>Account</code>, but <code>inherit</code> linked <code>SavingsAccount</code> to <code>Account</code>, so the static method is found on the chain, and inside it <code>this</code> is <code>SavingsAccount</code>. The result is a savings account, although its rate is <code>undefined</code> because <code>open</code> only passes two arguments. Static inheritance works exactly like instance inheritance, one level up.</p>
 <h3>Testing against the real thing</h3>
@@ -663,8 +728,14 @@ console.log(settings, {}.isAdmin);
 <example file="object-model.test.js" project="model">
 import { construct, inherit, isInstance, safeMerge } from "./object-model.js";
 
+function show(value) {
+  if (typeof value === "function") return `function ${value.name}`;
+  if (typeof value === "object" && value !== null) return "(an object)";
+  return String(value);
+}
+
 function check(label, actual, expected) {
-  console.log(`${Object.is(actual, expected) ? "PASS" : "FAIL"} ${label} -> ${String(actual)}`);
+  console.log(`${Object.is(actual, expected) ? "PASS" : "FAIL"} ${label} -> ${show(actual)}`);
 }
 
 function Plain(x) { this.x = x; }
@@ -705,6 +776,36 @@ check("no pollution", {}.polluted, undefined);
 check("prototype of target untouched", Object.getPrototypeOf(merged), Object.prototype);
 </example>
 <output>
+PASS same data as new -> 5
+PASS same prototype as new -> (an object)
+PASS returned object wins -> true
+PASS returned null ignored -> 2
+PASS returned function wins -> function
+PASS arrow is not a constructor -> TypeError
+PASS isInstance matches instanceof #0 -> true
+PASS isInstance(Object) matches #0 -> true
+PASS isInstance matches instanceof #1 -> true
+PASS isInstance(Object) matches #1 -> true
+PASS isInstance matches instanceof #2 -> false
+PASS isInstance(Object) matches #2 -> false
+PASS isInstance matches instanceof #3 -> false
+PASS isInstance(Object) matches #3 -> true
+PASS isInstance matches instanceof #4 -> false
+PASS isInstance(Object) matches #4 -> false
+PASS isInstance matches instanceof #5 -> false
+PASS isInstance(Object) matches #5 -> false
+PASS isInstance matches instanceof #6 -> false
+PASS isInstance(Object) matches #6 -> false
+PASS isInstance matches instanceof #7 -> false
+PASS isInstance(Object) matches #7 -> false
+PASS inherits methods -> hi
+PASS keeps own methods -> own
+PASS inherits statics -> base
+PASS constructor restored -> function Derived
+PASS constructor hidden -> false
+PASS nested values merged -> 1
+PASS no pollution -> undefined
+PASS prototype of target untouched -> (an object)
 </output>
 <h3>In production</h3>
 <ul>
@@ -738,6 +839,10 @@ console.log(describeChain(Object.create(null)));
 console.log(describeChain(Object.create({ plan: "gold" })));
 </example>
 <output>
+SavingsAccount.prototype -> Account.prototype -> Object.prototype -> null
+Array.prototype -> Object.prototype -> null
+null
+(anonymous) -> Object.prototype -> null
 </output>
 <p>The last object's prototype is a plain object literal: it has no own <code>constructor</code>, so it is shown as anonymous, and then the chain continues to <code>Object.prototype</code>.</p>
 </solution>
@@ -759,6 +864,7 @@ ada.add("RICE-5");
 console.log(chidi.items);
 </example>
 <output>
+[ 'RICE-5' ]
 </output>
 <solution>
 <p><code>this.items.push</code> <em>reads</em> <code>items</code>, finds the one array on <code>Cart.prototype</code>, and changes it. No cart ever gets an own <code>items</code>. Data belongs on the instance, created in the constructor; only the method stays on the prototype:</p>
@@ -777,6 +883,7 @@ ada.add("RICE-5");
 console.log(ada.items, chidi.items, ada.add === chidi.add);
 </example>
 <output>
+[ 'RICE-5' ] [] true
 </output>
 </solution>
 </exercise>
@@ -799,6 +906,7 @@ for (const key in invoice) keys.push(key);
 console.log(invoice.describe(), keys);
 </example>
 <output>
+INV-9: ₦2500 [ 'id', 'totalKobo' ]
 </output>
 <solution>
 <example file="class-by-hand.js">
@@ -828,6 +936,8 @@ try {
 }
 </example>
 <output>
+INV-9: ₦2500 [ 'id', 'totalKobo' ]
+TypeError: Class constructor Invoice cannot be invoked without 'new'
 </output>
 <p>Still missing compared with the real class: strict mode for the body (it is strict here only because the file is a module), the temporal dead zone, and <code>super</code> support. That is why <code>class</code> is more than a shortcut.</p>
 </solution>

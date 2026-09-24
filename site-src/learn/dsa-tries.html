@@ -47,6 +47,12 @@ for (const typed of ["s", "sa", "sam", "sams", "samsung ch"]) {
 }
 </example>
 <output>
+products: 24000
+"s": 4800 matches, 24000 character comparisons
+"sa": 1200 matches, 28800 character comparisons
+"sam": 1200 matches, 30000 character comparisons
+"sams": 1200 matches, 31200 character comparisons
+"samsung ch": 100 matches, 37300 character comparisons
 </output>
 <p>Every keystroke scans all 24,000 names, and the work never drops below one comparison per product, even when only 100 products can possibly match. The cost is O(n × L) per keystroke, for n products and a typed prefix of length L. It also builds the full list of matches when the box only shows five.</p>
 <p>A <strong>trie</strong> (pronounced "try", from re<em>trie</em>val), also called a <strong>prefix tree</strong>, turns this around: finding the products that start with "sam" costs about 3 steps, one per typed character, however big the catalogue is.</p>
@@ -168,6 +174,12 @@ export class Trie {
     for (const child of node.children.values()) total += this.nodeCount(child);
     return total;
   }
+
+  radixNodeCount(node = this.#root) {
+    let total = node === this.#root || node.end || node.children.size !== 1 ? 1 : 0;
+    for (const child of node.children.values()) total += this.radixNodeCount(child);
+    return total;
+  }
 }
 </file>
 <p>Some details worth reading slowly:</p>
@@ -176,14 +188,14 @@ export class Trie {
 <li><code>insert</code> first checks whether the word is already there. Without that, inserting "Samsung Phone 1" twice would increase every count on its path twice, and <code>size</code> would be wrong forever after.</li>
 <li><code>withPrefix</code> is a <strong>generator</strong>: it produces results one at a time, and the caller can stop whenever it likes. It walks the subtree depth-first with a stack, pushing children in reverse alphabetical order so they come off the stack alphabetically. The root's <code>count</code> is the number of words, so <code>size</code> needs no separate counter.</li>
 <li><code>suggest</code> stops after <code>limit</code> results. The customer sees five suggestions; collecting all 2,400 Samsung products first would waste most of the work.</li>
-<li><code>visits</code> counts how many nodes were touched, so you can compare costs with the naive search.</li>
+<li><code>visits</code> counts how many nodes were touched, so you can compare costs with the naive search. <code>nodeCount</code> and <code>radixNodeCount</code> are there for the memory section.</li>
 </ul>
 <example file="basics.js" project="trie">
 import { Trie } from "./trie.js";
 
 const trie = new Trie();
 for (const word of ["cap", "car", "card", "care", "cat"]) trie.insert(word);
-console.log("added again:", trie.insert("CAR"));
+console.log("added again:", trie.insert("car"));
 
 console.log("size:", trie.size, "nodes:", trie.nodeCount());
 console.log("has car:", trie.has("car"), "| has ca:", trie.has("ca"), "| has Card:", trie.has("Card"));
@@ -192,8 +204,14 @@ console.log("words starting with car:", [...trie.withPrefix("car")].join(", "));
 console.log("words starting with cup:", [...trie.withPrefix("cup")].length);
 </example>
 <output>
+added again: false
+size: 5 nodes: 8
+has car: true | has ca: false | has Card: true
+words starting with ca: 5
+words starting with car: car, card, care
+words starting with cup: 0
 </output>
-<p>"CAR" was not added again: its key is "car", which is already there. "ca" is a prefix but not a word, so <code>has</code> is <code>false</code>, while <code>countPrefix("ca")</code> knows that 5 words start with it. Five words share 7 nodes instead of 17 characters.</p>
+<p>Inserting "car" a second time returns <code>false</code> and changes no counts. Lookups are case-insensitive because the key is lower-cased, so <code>has("Card")</code> finds "card". "ca" is a prefix but not a word, so <code>has</code> is <code>false</code>, while <code>countPrefix("ca")</code> knows that 5 words start with it. The five words, 17 characters in total, share 8 nodes (counting the root).</p>
 </section>
 
 <section>
@@ -214,6 +232,11 @@ for (const typed of ["s", "sa", "sam", "sams", "samsung ch"]) {
 }
 </example>
 <output>
+"s": 4800 matches, 21 nodes visited -> Samsung Blender 1 | Samsung Blender 10 | Samsung Blender 100
+"sa": 1200 matches, 22 nodes visited -> Samsung Blender 1 | Samsung Blender 10 | Samsung Blender 100
+"sam": 1200 matches, 23 nodes visited -> Samsung Blender 1 | Samsung Blender 10 | Samsung Blender 100
+"sams": 1200 matches, 24 nodes visited -> Samsung Blender 1 | Samsung Blender 10 | Samsung Blender 100
+"samsung ch": 100 matches, 30 nodes visited -> Samsung Charger 1 | Samsung Charger 10 | Samsung Charger 100
 </output>
 <p>Compare the node visits with the 24,000 or more character comparisons of the naive search. The trie's cost is the length of the prefix plus the part of the subtree it walks before it has 3 results, and neither depends on the size of the catalogue. Double the catalogue and the naive search doubles; the trie does not notice.</p>
 <p>The suggestions are alphabetical, so "Samsung Blender 1" comes before "Samsung Phone 1", and "Samsung Blender 10" comes right after "Samsung Blender 1", because character by character "10" sorts before "2". Both are correct for a trie and both are poor for customers, who want popular products first and numbers in numeric order. Ranking is the next step.</p>
@@ -268,6 +291,10 @@ console.log("samsung s:", suggest("samsung s").join(", "));
 console.log("x:", suggest("x").length);
 </example>
 <output>
+s: Samsung Galaxy A05 (1200), Samsung Galaxy A15 (950), Sony Headphones (620)
+sam: Samsung Galaxy A05 (1200), Samsung Galaxy A15 (950), Samsung Galaxy S24 (310)
+samsung s: Samsung Soundbar (140)
+x: 0
 </output>
 <p>Each insert updates the lists on its path: O(L × k log k) with this simple sort. A suggestion is O(L) plus copying k entries. Large search services do exactly this, recomputing the lists in a nightly batch job rather than on every sale, because popularity changes slowly and search traffic is heavy.</p>
 </section>
@@ -309,6 +336,11 @@ trie.delete("care");
 show("after delete care");
 </example>
 <output>
+start              words: car,card,care,cat nodes: 7  "car" prefix count: 3
+delete ca: false
+after delete card  words: car,care,cat      nodes: 6  "car" prefix count: 2
+after delete car   words: care,cat          nodes: 6  "car" prefix count: 1
+after delete care  words: cat               nodes: 4  "car" prefix count: 0
 </output>
 <p>Deleting "card" removed one node. Deleting "car" removed none, because "care" still passes through it. Deleting "care" then removed the "r" and "e" nodes, which nothing uses any more. Every step is O(L).</p>
 </section>
@@ -329,6 +361,11 @@ const phone = "Phone 📱";
 console.log("split:", phone.split("").length, "for...of:", [...phone].length);
 </example>
 <output>
+Café Café false
+lengths: 4 5
+after NFC: true
+case: true
+split: 8 for...of: 7
 </output>
 <ul>
 <li>"é" can be stored as one code point (U+00E9) or as "e" followed by a combining accent (U+0301). Text pasted from different apps uses either form. <code>normalize("NFC")</code> converts both to the same form, which is why <code>Trie.key</code> calls it.</li>
@@ -353,21 +390,18 @@ console.log("products:", products.length);
 console.log("characters in all names:", characters);
 console.log("trie nodes:", trie.nodeCount());
 
-function chainNodes(trie) {
-  let singleChild = 0;
-  const walk = (node) => {
-    if (node.children.size === 1 && !node.end) singleChild++;
-    for (const child of node.children.values()) walk(child);
-  };
-  return walk;
-}
+console.log("radix tree nodes:", trie.radixNodeCount());
 </example>
 <output>
+products: 24000
+characters in all names: 400880
+trie nodes: 26062
+radix tree nodes: 24326
 </output>
-<p>Shared prefixes save a lot: all 2,400 Samsung products share the path for "samsung ", and 12 kinds share each brand. But each node is a whole object plus a <code>Map</code>, where the array of names stores each character in a byte or two. A trie of short, similar keys is compact; a trie of long, unrelated keys (URLs, email addresses) can use many times more memory than the strings themselves.</p>
+<p>Sharing prefixes cut 400,880 stored characters down to 26,062 nodes: all 2,400 Samsung products share the path for "samsung ", and each brand's 100 phones share "… phone ". That looks like a big win, but a node is not a character. Each node is a whole object plus a <code>Map</code>, easily a hundred bytes or more, where a string stores a character in one or two bytes. So even this well-shared trie uses several times the memory of the plain array of names. A trie of long keys with little sharing (URLs, email addresses) is far worse.</p>
 <p>Ways to shrink it:</p>
 <ul>
-<li><strong>Compressed trie (radix tree)</strong>: a chain of nodes with one child each is merged into one edge labelled with a whole string. "samsung " becomes one edge instead of eight nodes. Web frameworks' routers (for example the one Fastify uses) store URL paths this way.</li>
+<li><strong>Compressed trie (radix tree)</strong>: a chain of nodes with one child each is merged into one edge labelled with a whole string, so "samsung " becomes one edge instead of eight nodes. Here that only saves about 1,700 nodes, because most nodes are the model numbers at the ends of the names, where words end or branch. For long keys with little sharing, such as URL paths, compression removes most of the nodes, which is why web frameworks' routers (for example the one Fastify uses) are radix trees.</li>
 <li><strong>Fixed arrays</strong>: when the alphabet is small and known (digits, 26 lowercase letters), an array of children indexed by character is faster than a <code>Map</code>, but wastes slots for missing children.</li>
 <li><strong>Do you need a trie at all?</strong> A sorted array of names with binary search finds the first name with a given prefix in O(L log n), and the matches are the names that follow it: very compact and fast enough for most catalogues. You will build exactly that "lower bound" search in <a href="/learn/dsa-searching#bounds">Searching</a>. Databases do the same with an index and <code>LIKE 'sam%'</code>. Tries win when there are many lookups per second, when you need per-prefix data (counts, top-k lists), or for longest-prefix matching.</li>
 </ul>
@@ -436,6 +470,11 @@ for (let step = 0; step < 1500; step++) {
 check("1500 random operations match an array of words", failures === 0);
 </example>
 <output>
+PASS empty trie
+PASS delete from empty trie
+PASS same key updates the value
+PASS prefix word deleted, longer word kept
+PASS 1500 random operations match an array of words
 </output>
 <p>The generated words are 1 to 4 letters from "abc", so almost every word is a prefix of another, the case that breaks careless <code>delete</code> code. The check compares the full, sorted result for 13 prefixes after every step, including the empty prefix (every word).</p>
 </section>
@@ -490,6 +529,11 @@ for (const postcode of ["100271", "101233", "112001", "200001", "900001"]) {
 }
 </example>
 <output>
+100271 ₦1,500
+101233 ₦2,000
+112001 ₦3,000
+200001 ₦4,500
+900001 no delivery
 </output>
 <p>One pass over the postcode, O(L), however many zones exist. This <strong>longest prefix match</strong> is exactly what network routers do with IP addresses, and what a router in a web framework does to pick the most specific route.</p>
 </solution>
@@ -525,6 +569,8 @@ for (const typed of ["s", "samsung earbuds"]) {
 }
 </example>
 <output>
+"s" looked at 4800: Sony Monitor 22 (4999), Scanfrost Smartwatch 43 (4998), Sony Power Bank 64 (4997)
+"samsung earbuds" looked at 100: Samsung Earbuds 32 (4989), Samsung Earbuds 20 (4961), Samsung Earbuds 8 (4933)
 </output>
 <p>The cost is the size of the subtree: after "s" it walks thousands of products, after "samsung earbuds" only 100. Keeping the best three in a small sorted array is fine for k = 3; for larger k use a size-k heap. When short prefixes are common (they are: every search starts with one letter), precompute the top list in each node, as the ranking section showed.</p>
 </solution>
@@ -550,6 +596,9 @@ for (const typed of ["cafe", "CAFÉ", "creme b"]) {
 }
 </example>
 <output>
+cafe -> CAFÉ Espresso Cups | Café Latte Mug | Cafeteria Tray
+CAFÉ -> CAFÉ Espresso Cups | Café Latte Mug | Cafeteria Tray
+creme b -> Crème Brûlée Set
 </output>
 <p><code>normalize("NFD")</code> splits each accented letter into the base letter plus a combining mark, and <code>\p{Mark}</code> (with the <code>u</code> flag) removes the marks. The folded text is the key; the original name is the value, so customers see "Crème Brûlée Set", not "creme brulee set". Apply the same <code>foldKey</code> to what the customer types, or nothing matches.</p>
 </solution>

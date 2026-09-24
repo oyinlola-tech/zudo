@@ -27,6 +27,7 @@ const basket = [
 console.log(format(total(basket)));
 </example>
 <output>
+₦25,040
 </output>
 <p>Later, the app started accepting dollars, and someone added <code>currency</code> to the objects. Everything still compiles, and the result is wrong: ₦25,000 plus $40 is not ₦25,040. The functions never heard about currencies, because each one had its own private idea of what money looks like. Nothing connected them.</p>
 <p>Now give the shape one name, and use that name everywhere:</p>
@@ -45,6 +46,17 @@ function total(items: Money[]): Money {
 }
 </example>
 <output kind="tsc">
+money.ts:11:3 - error TS2741: Property 'currency' is missing in type '{ amount: number; }' but required in type 'Money'.
+
+11   return { amount: items.reduce((sum, m) => sum + m.amount, 0) };
+     ~~~~~~
+
+  money.ts:3:3 - 'currency' is declared here.
+    3   currency: "NGN" | "USD";
+        ~~~~~~~~
+
+
+Found 1 error in money.ts:11
 </output>
 <p>The moment <code>currency</code> joined <code>Money</code>, the compiler found the one function that was building money without it, and forced someone to decide what the total of mixed currencies means. A named type is a single place where a concept is defined, so a change to the concept reaches every function that uses it. This lesson is about the two ways to create those names, <code>type</code> and <code>interface</code>, which you first met in <a href="/learn/ts-objects#interface-vs-type">Interfaces, unions and literal types</a>, and about what really separates them.</p>
 </section>
@@ -72,6 +84,7 @@ const owner: AccountId = "ACC-1001";
 console.log(owner, convert({ amount: 40, currency: "USD" }, "NGN"));
 </example>
 <output>
+ACC-1001 { amount: 62000, currency: 'NGN' }
 </output>
 <p>An alias is only a <em>name</em>. It does not create a new, separate type: everywhere you write <code>AccountId</code>, the compiler sees <code>string</code>. That matters when two aliases share the same underlying type:</p>
 <example file="units.ts" project="aliases">
@@ -86,6 +99,7 @@ const feeInKobo: Kobo = 5000;
 console.log(chargeFee(20000, feeInKobo));
 </example>
 <output>
+15000
 </output>
 <p>The fee was ₦50, stored in kobo as 5000. It was charged as ₦5,000, and the compiler did not blink, because <code>Naira</code> and <code>Kobo</code> are both just <code>number</code>. Aliases document intent; they do not enforce it. Making types like these truly distinct is possible with <strong>branded types</strong>, covered in <a href="/learn/ts-branded-types">Branded and nominal types</a>. Until then, the reliable fix is one unit everywhere (kobo, as whole numbers), and names that say it: <code>feeKobo</code>.</p>
 </section>
@@ -133,6 +147,7 @@ const savings: SavingsAccount = {
 console.log(monthlyInterest(savings));
 </example>
 <output>
+8000
 </output>
 <h3>extends is checked; &amp; is not</h3>
 <p>You can build the same shapes with intersections (<code>Account &amp; InterestTerms</code>), which is how type aliases combine. The two behave differently when the parts disagree. Say a new developer wants a "legacy" account whose id is a number:</p>
@@ -151,6 +166,24 @@ type LegacyAccount2 = Account & { id: number };
 const legacy: LegacyAccount2 = { id: 42, balance: 0 };
 </example>
 <output kind="tsc">
+conflict.ts:6:11 - error TS2430: Interface 'LegacyAccount' incorrectly extends interface 'Account'.
+  Types of property 'id' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+
+6 interface LegacyAccount extends Account {
+            ~~~~~~~~~~~~~
+
+conflict.ts:12:34 - error TS2322: Type 'number' is not assignable to type 'never'.
+
+12 const legacy: LegacyAccount2 = { id: 42, balance: 0 };
+                                    ~~
+
+  conflict.ts:2:3 - The expected type comes from property 'id' which is declared here on type 'LegacyAccount2'
+    2   id: string;
+        ~~
+
+
+Found 2 errors in the same file, starting at: conflict.ts:6
 </output>
 <p>With <code>extends</code>, the error appears on the declaration: <code>LegacyAccount</code> "incorrectly extends" <code>Account</code>, and the message explains why. With <code>&amp;</code>, the declaration is accepted, <code>id</code> quietly becomes <code>string &amp; number</code>, which is <code>never</code> (as you saw in <a href="/learn/ts-unions#intersections">Union types in depth</a>), and the error only appears later, far away, when someone tries to create a value. To change a property's type on purpose, remove it first: <code>interface LegacyAccount extends Omit&lt;Account, "id"&gt; { id: number }</code> (<code>Omit</code> is explained in <a href="/learn/ts-advanced#utility-types">Advanced and utility types</a>).</p>
 </section>
@@ -175,6 +208,27 @@ type Fee = { currency: string };
 const t: Transfer = { from: "Ada", to: "Bola" };
 </example>
 <output kind="tsc">
+merge.ts:6:6 - error TS2300: Duplicate identifier 'Fee'.
+
+6 type Fee = { amount: number };
+       ~~~
+
+merge.ts:12:6 - error TS2300: Duplicate identifier 'Fee'.
+
+12 type Fee = { currency: string };
+        ~~~
+
+merge.ts:14:7 - error TS2741: Property 'reference' is missing in type '{ from: string; to: string; }' but required in type 'Transfer'.
+
+14 const t: Transfer = { from: "Ada", to: "Bola" };
+         ~
+
+  merge.ts:9:3 - 'reference' is declared here.
+    9   reference: string;
+        ~~~~~~~~~
+
+
+Found 3 errors in the same file, starting at: merge.ts:6
 </output>
 <p>The duplicate <code>Fee</code> is reported where it is written. The second <code>Transfer</code> is accepted silently, and the error surfaces somewhere else: a transfer "is missing" a <code>reference</code> that nobody remembers adding. In a long file, that second declaration may be hundreds of lines away. That is the danger of merging: it is invisible at the place where it happens.</p>
 <h3>Where merging is the point: extending another module's types</h3>
@@ -218,6 +272,8 @@ for (const event of events.map(scoreTransfer)) {
 }
 </example>
 <output>
+TRF-1: ₦25000 ok
+TRF-2: ₦750000 REVIEW
 </output>
 <p><code>declare module "./events.js" { … }</code> reopens the other module's scope, and the <code>interface TransferEvent</code> inside it merges with the original. <code>main.ts</code> reads <code>event.riskScore</code>, a property that <code>events.ts</code> never declared, and it type-checks. Two rules make this safe:</p>
 <ul>
@@ -269,6 +325,11 @@ const assets: LedgerAccount = {
 print(assets);
 </example>
 <output>
+1000 Assets: ₦24500000
+  1100 Cash: ₦6500000
+    1110 Vault: ₦4000000
+    1120 ATMs: ₦2500000
+  1200 Loans to customers: ₦18000000
 </output>
 <p>The type and the function have the same structure: <code>children</code> refers back to <code>LedgerAccount</code>, and <code>totalBalance</code> calls itself on each child. The base case, which you met in <a href="/learn/js-functions#recursion">Functions</a>, is an account with no children: <code>reduce</code> over an empty array just returns the starting value, the account's own balance.</p>
 <h3>A recursive union: any JSON value</h3>
@@ -296,6 +357,7 @@ const statement: Json = {
 console.log(countLeaves(statement));
 </example>
 <output>
+8
 </output>
 <p><code>{ [key: string]: Json }</code> is an <strong>index signature</strong>: an object whose keys can be any string, each holding a <code>Json</code> value. The self-reference is allowed because it sits inside an array or an object type; a type that referred to itself directly, like <code>type Loop = Loop | string</code>, would be an error, since the compiler could never finish expanding it. <code>Json</code> is also a much more honest type than <code>any</code> for parsed data: it says exactly what JSON can contain, and still makes you check before use.</p>
 </section>
@@ -335,6 +397,14 @@ logFields(b);
 logFields(a);
 </example>
 <output kind="tsc">
+fields.ts:18:11 - error TS2345: Argument of type 'CustomerI' is not assignable to parameter of type 'Record<string, string>'.
+  Index signature for type 'string' is missing in type 'CustomerI'.
+
+18 logFields(a);
+             ~
+
+
+Found 1 error in fields.ts:18
 </output>
 <p>Because an interface can be merged with more members later (maybe a number), TypeScript will not promise that <em>every</em> property of <code>CustomerI</code> is a string. An alias is closed, so it can check. The same happens with <code>Record&lt;string, unknown&gt;</code>, a type many logging and serialisation libraries use for "any plain object". Two fixes: spread the value into a fresh object, <code>logFields({ ...a })</code>, whose type is a closed object literal type that can be checked; or, better, give the function a parameter type that says what it really needs, such as <code>{ name: string }</code>, or a generic (<a href="/learn/ts-generics">Generics</a>).</p>
 </section>
@@ -454,7 +524,7 @@ const tunde: StaffMember = { staffId: "S-9", branch: "Yaba", name: "Tunde", phon
 
 const history: Transaction[] = [
   { kind: "deposit", id: "T1", at: "09-01", money: { kobo: 15000000, currency: "NGN" }, channel: "transfer-in" },
-  { kind: "withdrawal", id: "T2", at: "09-02", money: { kobo: 2000000, currency: "NGN" }, atmId: "ATM-12" },
+  { kind: "withdrawal", id: "T2", at: "09-02", money: { kobo: 2000000, currency: "NGN" }, atmId: "YABA-02" },
   { kind: "transfer", id: "T3", at: "09-03", money: { kobo: 4550, currency: "USD" }, toAccount: "ACC-2001" },
 ];
 
@@ -463,6 +533,11 @@ console.log(smsLine(ada, "Your statement is ready"));
 console.log(smsLine(tunde, "3 statements sent"));
 </example>
 <output>
+09-01 +₦150,000.00 (transfer-in)
+09-02 -₦20,000.00 ATM YABA-02
+09-03 -$45.50 to ACC-2001
+to 0803 000 1111 (Ada): Your statement is ready
+to 0805 222 3333 (Tunde): 3 statements sent
 </output>
 <p><code>smsLine</code> asks only for <code>ContactDetails</code>, so it serves customers and staff alike. <code>formatMoney</code> is the one place that knows how to show money, and every amount is in kobo, so the naira/kobo mix-up from earlier cannot happen by accident.</p>
 </section>
@@ -487,6 +562,7 @@ const badKyc: Customer = { customerId: "C-2", kycLevel: 4, name: "Bola", phone: 
 console.log(ok.kind, noAtm.kind, wrongUnit.currency, badKyc.kycLevel);
 </example>
 <output>
+transfer withdrawal NGN 4
 </output>
 <p>Each <code>@ts-expect-error</code> line documents a rule of the domain, and fails the check if the rule is ever loosened, for example if someone makes <code>atmId</code> optional. (The file also runs: TypeScript's checks are erased, so the "invalid" values exist at runtime. That is fine for a type test, and a reminder that only runtime validation can reject bad data.)</p>
 </section>
@@ -526,6 +602,17 @@ interface Teller {
 console.log(greet({ id: "S-1", name: "Tunde" }));
 </example>
 <output kind="tsc">
+teller.ts:16:19 - error TS2741: Property 'branch' is missing in type '{ id: string; name: string; }' but required in type 'Teller'.
+
+16 console.log(greet({ id: "S-1", name: "Tunde" }));
+                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  teller.ts:13:3 - 'branch' is declared here.
+    13   branch: string;
+         ~~~~~~
+
+
+Found 1 error in teller.ts:16
 </output>
 <solution>
 <p>The two <code>interface Teller</code> declarations are in the same module, so they merged: every <code>Teller</code> now needs a <code>branch</code>. The second declaration was probably meant for a teller <em>assigned to</em> a branch. Give that its own name:</p>
@@ -547,6 +634,7 @@ const tunde: BranchTeller = { id: "S-1", name: "Tunde", branch: "Yaba" };
 console.log(greet({ id: "S-2", name: "Kemi" }), "|", greet(tunde), "at", tunde.branch);
 </example>
 <output>
+Hello, Kemi | Hello, Tunde at Yaba
 </output>
 </solution>
 </exercise>
@@ -581,6 +669,7 @@ const thread: Note = {
 console.log(countNotes(thread), authors(thread));
 </example>
 <output>
+4 [ 'Ada', 'Tunde', 'Kemi' ]
 </output>
 <p><code>flatMap(authors)</code> calls <code>authors</code> on every reply and flattens the resulting arrays into one; a <code>Set</code> removes the repeated "Ada".</p>
 </solution>

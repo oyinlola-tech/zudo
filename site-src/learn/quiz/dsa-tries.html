@@ -1,0 +1,949 @@
+<question id="tri-naive-cost" type="choice">
+<q>A search box filters all n product names with <code>startsWith</code> on every keystroke. The customer has typed L characters. What does one keystroke cost?</q>
+<option>O(L)</option>
+<option>O(log n)</option>
+<option correct>O(n × L) in the worst case, and never less than one comparison per product</option>
+<option>O(1), because <code>startsWith</code> is built in</option>
+<explain><p>Every name is checked, and each check compares up to L characters. Built-in methods still do that work. A trie makes finding the prefix O(L), independent of n.</p></explain>
+</question>
+
+<question id="tri-edge" type="choice">
+<q>In a trie, what does the path from the root to a node represent?</q>
+<option>The number of words stored</option>
+<option correct>A prefix: the characters on the edges, in order</option>
+<option>The alphabetical rank of a word</option>
+<option>A hash of the word</option>
+<explain><p>Each edge is one character, so a path spells a string. Every word that starts with that string passes through the same node.</p></explain>
+</question>
+
+<question id="tri-end-flag" type="choice">
+<q>Why does each trie node need an <code>end</code> flag?</q>
+<option>To know when to stop the whole trie</option>
+<option correct>Because a word can be a prefix of another word ("car" and "card"), so reaching a node does not mean a word ends there</option>
+<option>To mark leaves, since every word ends at a leaf</option>
+<option>To store the word's length</option>
+<explain><p>"car" ends at a node that also has children (for "card", "care"). Without a flag you could not tell a stored word from a mere prefix, and <code>has("ca")</code> would wrongly say yes.</p></explain>
+</question>
+
+<question id="tri-lookup-cost" type="choice">
+<q>A trie holds 5 million product names. What does checking whether a 12-character name is present cost?</q>
+<option>O(log 5,000,000), about 22 steps</option>
+<option correct>About 12 steps: one edge per character, whatever the number of names</option>
+<option>O(5,000,000)</option>
+<option>O(12 × 5,000,000)</option>
+<explain><p>Lookup follows one edge per character, each an O(1) average <code>Map</code> lookup. The number of stored words never enters the cost.</p></explain>
+</question>
+
+<question id="tri-nodes-output" type="output">
+<q>How many nodes (including the root) does this trie have?</q>
+<code file="nodes.js">
+const root = { children: new Map() };
+let nodes = 1;
+for (const word of ["tea", "ten", "to", "tea"]) {
+  let node = root;
+  for (const ch of word) {
+    if (!node.children.has(ch)) {
+      node.children.set(ch, { children: new Map() });
+      nodes++;
+    }
+    node = node.children.get(ch);
+  }
+}
+console.log(nodes);
+</code>
+<option correct>6</option>
+<option>9</option>
+<option>11</option>
+<option>7</option>
+<explain><p>root, t, e, a (tea), n (ten), o (to): 6 nodes. "tea" and "ten" share "te", all three share "t", and inserting "tea" twice creates nothing new.</p></explain>
+</question>
+
+<question id="tri-has-vs-prefix-output" type="output">
+<q>What does this print?</q>
+<code file="has.js">
+const root = { children: new Map(), end: false };
+function insert(word) {
+  let node = root;
+  for (const ch of word) {
+    if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), end: false });
+    node = node.children.get(ch);
+  }
+  node.end = true;
+}
+function find(text) {
+  let node = root;
+  for (const ch of text) {
+    node = node.children.get(ch);
+    if (!node) return null;
+  }
+  return node;
+}
+insert("card");
+insert("care");
+const has = (w) => find(w)?.end ?? false;
+const hasPrefix = (p) => find(p) !== null;
+console.log(has("car"), hasPrefix("car"), has("care"), hasPrefix("cart"));
+</code>
+<option correct>false true true false</option>
+<option>true true true false</option>
+<option>false true true true</option>
+<option>false false true false</option>
+<explain><p>The "car" path exists (it leads to card and care) but no word ends there, so it is a prefix and not a word. "cart" breaks off at the missing "t".</p></explain>
+</question>
+
+<question id="tri-count" type="choice">
+<q>How can a trie answer "how many products start with <em>sam</em>?" in O(L) instead of walking the whole subtree?</q>
+<option>By storing the words in a sorted array as well</option>
+<option correct>By keeping in every node a count of the words that pass through it, updated on insert and delete</option>
+<option>By hashing the prefix</option>
+<option>It cannot; counting always needs the subtree</option>
+<explain><p>Insert increments the count on every node of its path; delete decrements it. Then the count at the prefix node is the answer, found by walking only the prefix.</p></explain>
+</question>
+
+<question id="tri-count-output" type="output">
+<q>Each node counts the words passing through it. What does this print?</q>
+<code file="count.js">
+const root = { children: new Map(), count: 0 };
+function insert(word) {
+  let node = root;
+  node.count++;
+  for (const ch of word) {
+    if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), count: 0 });
+    node = node.children.get(ch);
+    node.count++;
+  }
+}
+function countPrefix(p) {
+  let node = root;
+  for (const ch of p) {
+    node = node.children.get(ch);
+    if (!node) return 0;
+  }
+  return node.count;
+}
+for (const w of ["sony tv", "sony radio", "samsung tv", "sharp tv"]) insert(w);
+console.log(countPrefix("s"), countPrefix("so"), countPrefix("sa"), countPrefix("x"), countPrefix(""));
+</code>
+<option correct>4 2 1 0 4</option>
+<option>4 2 1 0 0</option>
+<option>3 2 1 0 4</option>
+<option>4 1 1 0 4</option>
+<explain><p>All four words start with "s", two with "so", one with "sa". The empty prefix is the root, whose count is the number of words.</p></explain>
+</question>
+
+<question id="tri-duplicate-insert" type="choice">
+<q>Why does the lesson's <code>insert</code> first check whether the word already exists?</q>
+<option>To make insert faster</option>
+<option correct>Otherwise inserting the same word twice would increase every count on its path twice, and prefix counts and <code>size</code> would be wrong from then on</option>
+<option>Because Maps cannot hold duplicate keys</option>
+<option>To keep the words sorted</option>
+<explain><p>Creating nodes is idempotent (existing ones are reused), but incrementing counts is not. Checking first keeps the counts equal to the number of distinct words.</p></explain>
+</question>
+
+<question id="tri-generator" type="choice">
+<q>Why is <code>withPrefix</code> written as a generator, and <code>suggest</code> stops after <code>limit</code> results?</q>
+<option>Generators are faster than arrays</option>
+<option correct>The search box shows only a few suggestions; stopping early avoids walking the rest of a possibly huge subtree</option>
+<option>Generators sort the results automatically</option>
+<option>Because recursion is not allowed in classes</option>
+<explain><p>After one typed letter, thousands of products may match. A generator produces results one at a time, so the caller can stop after five, and the walk never touches the others.</p></explain>
+</question>
+
+<question id="tri-generator-output" type="output">
+<q>What does this print?</q>
+<code file="gen.js">
+let produced = 0;
+function* products() {
+  for (const name of ["Samsung Phone 1", "Samsung Phone 2", "Samsung Phone 3", "Samsung Phone 4"]) {
+    produced++;
+    yield name;
+  }
+}
+
+const shown = [];
+for (const name of products()) {
+  shown.push(name);
+  if (shown.length === 2) break;
+}
+console.log(shown.length, produced);
+</code>
+<option correct>2 2</option>
+<option>2 4</option>
+<option>4 4</option>
+<option>2 3</option>
+<explain><p>A generator runs only when the next value is requested. After <code>break</code> it is never resumed, so only two products were ever produced. That is how <code>suggest</code> avoids walking the rest of the subtree.</p></explain>
+</question>
+
+<question id="tri-alpha-order" type="output">
+<q>Children are visited in alphabetical order of their character. In what order do these names come out?</q>
+<code file="order.js">
+const names = ["Tecno Phone 2", "Tecno Phone 10", "Tecno Phone 1", "Tecno Phone 20"];
+console.log([...names].sort().join(" | "));
+</code>
+<option correct>Tecno Phone 1 | Tecno Phone 10 | Tecno Phone 2 | Tecno Phone 20</option>
+<option>Tecno Phone 1 | Tecno Phone 2 | Tecno Phone 10 | Tecno Phone 20</option>
+<option>Tecno Phone 2 | Tecno Phone 10 | Tecno Phone 1 | Tecno Phone 20</option>
+<option>Tecno Phone 20 | Tecno Phone 10 | Tecno Phone 2 | Tecno Phone 1</option>
+<explain><p>Character by character, "10" starts with "1", which sorts before "2". A trie walked alphabetically gives the same order as a plain string sort. Numeric order needs a different comparison (<code>localeCompare</code> with <code>{ numeric: true }</code>) or ranking.</p></explain>
+</question>
+
+<question id="tri-rank-options" type="choice">
+<q>You want the three best-selling products for any prefix, and short prefixes are typed constantly. Which design answers fastest?</q>
+<option>Walk the whole subtree and sort all matches by sales</option>
+<option correct>Store in every node the top three products of its subtree, updated when data changes</option>
+<option>Keep the products in a <code>Map</code> by name</option>
+<option>Sort the whole catalogue by sales once, and filter it by prefix on each keystroke</option>
+<explain><p>Precomputed lists make a suggestion O(L): walk the prefix, read the list. The cost moves to memory (k entries per node) and to updates, which is a good trade when reads vastly outnumber writes.</p></explain>
+</question>
+
+<question id="tri-delete-missing" type="choice">
+<q>A buggy <code>delete</code> decrements the counts along the path <em>before</em> checking that the word exists. What happens when you delete a word that is not in the trie?</q>
+<option>Nothing; the loop stops at the first missing character</option>
+<option correct>Counts on the part of the path that exists are decreased although no word was removed, so prefix counts become wrong</option>
+<option>The trie throws an error</option>
+<option>The root is deleted</option>
+<explain><p>Deleting "cart" when only "card" exists would decrement "c", "a" and "r" before discovering there is no "t". Check that the word exists (its end node has <code>end</code> set) before changing anything.</p></explain>
+</question>
+
+<question id="tri-delete-prefix-word" type="choice">
+<q>The trie holds "car" and "card". You delete "car". What should change?</q>
+<option>Remove the nodes c, a, r</option>
+<option>Remove only the r node</option>
+<option correct>Remove no nodes: clear the <code>end</code> flag on the r node and decrement the counts on the path</option>
+<option>Nothing, because "car" is a prefix of "card"</option>
+<explain><p>"card" still needs every node of "car". Only the fact that a word ends at r goes away. Removing nodes would delete "card" too.</p></explain>
+</question>
+
+<question id="tri-delete-output" type="output">
+<q>This delete prunes a node as soon as its count reaches 0. What does it print?</q>
+<code file="delete.js">
+const root = { children: new Map(), count: 0, end: false };
+let created = 0;
+function insert(word) {
+  let node = root;
+  node.count++;
+  for (const ch of word) {
+    if (!node.children.has(ch)) {
+      node.children.set(ch, { children: new Map(), count: 0, end: false });
+      created++;
+    }
+    node = node.children.get(ch);
+    node.count++;
+  }
+  node.end = true;
+}
+function remove(word) {
+  let node = root;
+  node.count--;
+  for (const ch of word) {
+    const child = node.children.get(ch);
+    if (--child.count === 0) {
+      node.children.delete(ch);
+      return;
+    }
+    node = child;
+  }
+  node.end = false;
+}
+function countNodes(node) {
+  let n = 1;
+  for (const c of node.children.values()) n += countNodes(c);
+  return n;
+}
+for (const w of ["car", "card", "cat"]) insert(w);
+remove("card");
+const afterCard = countNodes(root);
+remove("cat");
+console.log(created, afterCard, countNodes(root));
+</code>
+<option correct>5 5 4</option>
+<option>5 6 5</option>
+<option>6 5 4</option>
+<option>5 5 5</option>
+<explain><p>Nodes c, a, r, d, t were created (5, plus the root makes 6 in total). Deleting "card" prunes d (6 − 1 = 5). Deleting "cat" prunes t, leaving root, c, a, r: 4. The "car" nodes stay because "car" is still a word.</p></explain>
+</question>
+
+<question id="tri-prune-why" type="choice">
+<q>What goes wrong if <code>delete</code> clears the <code>end</code> flag but never removes unused nodes?</q>
+<option>Lookups return wrong answers</option>
+<option correct>Lookups stay correct, but memory grows forever as products come and go: a memory leak</option>
+<option>The trie becomes unbalanced</option>
+<option>Nothing at all</option>
+<explain><p>Unused nodes are harmless for <code>has</code>, but a catalogue with constant churn would keep every node ever created. Counts make pruning easy: a node with count 0 is used by no word.</p></explain>
+</question>
+
+<question id="tri-normalize-output" type="output">
+<q>What does this print?</q>
+<code file="normalize.js">
+const typed = "Café";
+const stored = "Café";
+console.log(typed === stored, typed.normalize("NFC") === stored.normalize("NFC"), typed.length, stored.length);
+</code>
+<option correct>false true 5 4</option>
+<option>true true 4 4</option>
+<option>false false 5 4</option>
+<option>false true 4 4</option>
+<explain><p>Both display as "Café", but one uses "e" plus a combining accent (two code points) and the other a single "é". A trie compares code points, so without normalising both to the same form (NFC) the search misses.</p></explain>
+</question>
+
+<question id="tri-same-key" type="choice">
+<q>Keys are lower-cased and NFC-normalised on insert. What must happen to the customer's query?</q>
+<option>Nothing; the trie handles it</option>
+<option correct>The exact same normalisation, or queries with capitals or the other Unicode form will not match</option>
+<option>It must be upper-cased</option>
+<option>It must be split into words</option>
+<explain><p>A trie only matches identical characters. Whatever folding you apply to keys (case, Unicode form, accents, spaces), apply the same function to the query. The lesson's class does this by calling <code>Trie.key</code> in every method.</p></explain>
+</question>
+
+<question id="tri-codepoints-output" type="output">
+<q>How many trie edges would each loop create for this product name?</q>
+<code file="emoji.js">
+const name = "Fan 🌀";
+let byIndex = 0;
+for (let i = 0; i < name.length; i++) byIndex++;
+let byCodePoint = 0;
+for (const ch of name) byCodePoint++;
+console.log(byIndex, byCodePoint);
+</code>
+<option correct>6 5</option>
+<option>5 5</option>
+<option>6 6</option>
+<option>5 6</option>
+<explain><p>The emoji is one code point but two UTF-16 units, so indexing sees 6 "characters" and would split the emoji into two meaningless halves. <code>for...of</code> iterates by code point, giving 5.</p></explain>
+</question>
+
+<question id="tri-accent-fold-output" type="output">
+<q>What does this print?</q>
+<code file="fold.js">
+const fold = (text) => text.normalize("NFD").replace(/\p{Mark}/gu, "").toLowerCase();
+console.log(fold("Crème Brûlée"), fold("CAFÉ") === fold("cafe"));
+</code>
+<option correct>creme brulee true</option>
+<option>crème brûlée true</option>
+<option>creme brulee false</option>
+<option>Creme Brulee true</option>
+<explain><p>NFD splits each accented letter into a base letter plus a combining mark; <code>\p{Mark}</code> removes the marks; then lower-casing. Use the folded form as the key and keep the original name as the value to display.</p></explain>
+</question>
+
+<question id="tri-memory" type="choice">
+<q>A trie of 24,000 product names has 26,062 nodes for 400,880 characters. Why can it still use more memory than the plain array of names?</q>
+<option>Because tries store every word twice</option>
+<option correct>Each node is an object with a <code>Map</code> (easily 100+ bytes), while a string stores a character in one or two bytes</option>
+<option>Because the counts are stored as BigInts</option>
+<option>It cannot; fewer nodes always means less memory</option>
+<explain><p>Node count is not memory. Per-node overhead dominates, so a trie is compact only relative to its number of nodes. Long keys with little sharing make it much worse.</p></explain>
+</question>
+
+<question id="tri-radix" type="choice">
+<q>What does a radix tree (compressed trie) change?</q>
+<option>It stores words in reverse</option>
+<option correct>It merges chains of single-child nodes into one edge labelled with a whole string</option>
+<option>It uses a hash of each word instead of characters</option>
+<option>It keeps nodes sorted by popularity</option>
+<explain><p>"samsung " as eight single-child nodes becomes one edge. It saves the most for long keys with little branching, such as URL paths, which is why web routers use radix trees.</p></explain>
+</question>
+
+<question id="tri-sorted-alt" type="choice">
+<q>What is the compact alternative to a trie for "first k names with this prefix"?</q>
+<option>A <code>Set</code> of names</option>
+<option correct>A sorted array: binary search for the first name ≥ the prefix, then read forward while names start with it</option>
+<option>A linked list</option>
+<option>A max-heap of names</option>
+<option>A hash map from each prefix to its names</option>
+<explain><p>All names with a prefix sit next to each other in sorted order. A lower-bound binary search finds the first in O(L log n), and the next k are the answer. It uses far less memory than a trie, but inserting costs O(n).</p></explain>
+</question>
+
+<question id="tri-map-no-prefix" type="choice">
+<q>Why can't a <code>Map</code> or <code>Set</code> of product names answer "names starting with <em>sam</em>" efficiently?</q>
+<option>Maps cannot store strings longer than 255 characters</option>
+<option correct>Hashing scatters similar strings, so there is no place where all names with a prefix sit together; you must scan every key</option>
+<option>Maps only support numeric keys</option>
+<option>It can, with <code>map.get("sam*")</code></option>
+<explain><p>A hash map is excellent for exact lookups but knows nothing about prefixes or order. Tries and sorted arrays keep strings with a common prefix together.</p></explain>
+</question>
+
+<question id="tri-typo" type="choice">
+<q>A customer types "smasung". What does a plain trie of product names suggest?</q>
+<option>Samsung products, because the letters are the same</option>
+<option correct>Nothing useful: only the prefix "s" matches, and "sm" leads nowhere</option>
+<option>An error</option>
+<option>Every product</option>
+<explain><p>Tries match exact prefixes. Typo tolerance needs fuzzy matching (edit distance), which search engines add on top; a trie is the fast first layer, not the whole search.</p></explain>
+</question>
+
+<question id="tri-longest-prefix" type="choice">
+<q>Postcode zones "1", "10" and "100" have different rates. For postcode "105500", which zone applies, and how does the trie find it?</q>
+<option>"100", the zone with the most digits</option>
+<option correct>"10": walk the postcode's digits, remember the last node that had a rate, and stop when the path ends</option>
+<option>"1", the first zone found</option>
+<option>None, because no zone is exactly "105500"</option>
+<explain><p>"100" does not match (the third digit is 5). Walking 1 → 0 → 5 passes rated nodes "1" and "10", and the path breaks at 5. The last rate seen belongs to the longest matching prefix. One pass, O(L).</p></explain>
+</question>
+
+<question id="tri-endpoint" type="choice">
+<q>Your autocomplete API is called on every keystroke by every visitor. Which production measure matters most?</q>
+<option>Returning every match so the client can choose</option>
+<option correct>Limiting the number of results and the query length, normalising the query, and rate-limiting the endpoint</option>
+<option>Rebuilding the trie on each request so it is always fresh</option>
+<option>Storing each request in the trie</option>
+<explain><p>High-frequency endpoints need bounded work per call: a result limit, a maximum prefix length and a rate limit. The trie should be built once (or in the background) and read many times.</p></explain>
+</question>
+
+<question id="tri-rebuild" type="choice">
+<q>A trie of 2 million products is rebuilt from the database every night. How should the service switch to the new one?</q>
+<option>Clear the live trie and insert the new products into it while requests keep arriving</option>
+<option correct>Build the new trie separately, then replace the reference to the old one in a single assignment</option>
+<option>Stop the service until the rebuild finishes</option>
+<option>Merge the two tries node by node</option>
+<explain><p>Building off to the side means requests always see a complete trie, old or new, never a half-filled one. The old trie is garbage-collected once nothing refers to it.</p></explain>
+</question>
+
+<question id="tri-model-test" type="choice">
+<q>The lesson's random test uses words of 1 to 4 letters from the alphabet "abc". Why such a tiny alphabet?</q>
+<option>To make the test run in the browser</option>
+<option correct>So that many words share prefixes and many are prefixes of other words, the cases where insert and delete bugs hide</option>
+<option>Because tries only work with three letters</option>
+<option>To avoid Unicode problems</option>
+<explain><p>With a large alphabet, random words rarely share prefixes and the tricky paths (delete "car" while "card" exists) are almost never exercised. Small alphabets make collisions the common case.</p></explain>
+</question>
+
+<question id="tri-code-insert-has" type="code" file="trie.js">
+<q><p>Finish <code>insert(word)</code> and <code>has(word)</code> for a trie of nodes <code>{ children: Map, end: boolean }</code>. It should print <code>true false true false</code>.</p></q>
+<starter>
+const root = { children: new Map(), end: false };
+
+function insert(word) {
+  // your code here
+}
+
+function has(word) {
+  // your code here
+}
+
+insert("tecno");
+insert("tecno spark");
+console.log(has("tecno"), has("tec"), has("tecno spark"), has("tecno camon"));
+</starter>
+<solution>
+const root = { children: new Map(), end: false };
+
+function insert(word) {
+  let node = root;
+  for (const ch of word) {
+    if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), end: false });
+    node = node.children.get(ch);
+  }
+  node.end = true;
+}
+
+function has(word) {
+  let node = root;
+  for (const ch of word) {
+    node = node.children.get(ch);
+    if (!node) return false;
+  }
+  return node.end;
+}
+
+insert("tecno");
+insert("tecno spark");
+console.log(has("tecno"), has("tec"), has("tecno spark"), has("tecno camon"));
+</solution>
+<expected>true false true false</expected>
+<explain><p>Insert creates missing children along the path and marks the last node. <code>has</code> follows the path and returns the <code>end</code> flag: "tec" exists as a path but is not a word, and "tecno camon" breaks off after "tecno ".</p></explain>
+</question>
+
+<question id="tri-code-count" type="code" file="count.js">
+<q><p>Finish <code>insert</code> (keeping a <code>count</code> on each node) and <code>countPrefix</code>. Inserting the same word twice must not change the counts. It should print <code>3 2 0 3</code>.</p></q>
+<starter>
+const newNode = () => ({ children: new Map(), end: false, count: 0 });
+const root = newNode();
+
+function find(text) {
+  let node = root;
+  for (const ch of text) {
+    node = node.children.get(ch);
+    if (!node) return null;
+  }
+  return node;
+}
+
+function insert(word) {
+  // your code here
+}
+
+function countPrefix(prefix) {
+  // your code here
+}
+
+for (const w of ["sony tv", "sony radio", "sharp tv", "sony tv"]) insert(w);
+console.log(countPrefix("s"), countPrefix("sony"), countPrefix("samsung"), countPrefix(""));
+</starter>
+<solution>
+const newNode = () => ({ children: new Map(), end: false, count: 0 });
+const root = newNode();
+
+function find(text) {
+  let node = root;
+  for (const ch of text) {
+    node = node.children.get(ch);
+    if (!node) return null;
+  }
+  return node;
+}
+
+function insert(word) {
+  if (find(word)?.end) return;
+  let node = root;
+  node.count++;
+  for (const ch of word) {
+    if (!node.children.has(ch)) node.children.set(ch, newNode());
+    node = node.children.get(ch);
+    node.count++;
+  }
+  node.end = true;
+}
+
+function countPrefix(prefix) {
+  return find(prefix)?.count ?? 0;
+}
+
+for (const w of ["sony tv", "sony radio", "sharp tv", "sony tv"]) insert(w);
+console.log(countPrefix("s"), countPrefix("sony"), countPrefix("samsung"), countPrefix(""));
+</solution>
+<expected>3 2 0 3</expected>
+<explain><p>Check for an existing word first, then increment the count of every node on the path, the root included. <code>countPrefix</code> is then one walk down the prefix: O(L).</p></explain>
+</question>
+
+<question id="tri-code-suggest" type="code" file="suggest.js">
+<q><p>Finish <code>suggest(prefix, limit)</code>: walk to the prefix node, then collect words below it in alphabetical order (visit children sorted by character), stopping as soon as you have <code>limit</code> words. It should print <code>oraimo freepods | oraimo powerbank</code> and then an empty line for <code>"x"</code>.</p></q>
+<starter>
+const root = { children: new Map(), end: false };
+function insert(word) {
+  let node = root;
+  for (const ch of word) {
+    if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), end: false });
+    node = node.children.get(ch);
+  }
+  node.end = true;
+}
+for (const w of ["oraimo smartwatch", "oraimo powerbank", "oraimo freepods", "oppo reno"]) insert(w);
+
+function suggest(prefix, limit) {
+  // your code here
+}
+
+console.log(suggest("ora", 2).join(" | "));
+console.log(suggest("x", 2).join(" | "));
+</starter>
+<solution>
+const root = { children: new Map(), end: false };
+function insert(word) {
+  let node = root;
+  for (const ch of word) {
+    if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), end: false });
+    node = node.children.get(ch);
+  }
+  node.end = true;
+}
+for (const w of ["oraimo smartwatch", "oraimo powerbank", "oraimo freepods", "oppo reno"]) insert(w);
+
+function suggest(prefix, limit) {
+  let node = root;
+  for (const ch of prefix) {
+    node = node.children.get(ch);
+    if (!node) return [];
+  }
+  const results = [];
+  const stack = [[node, prefix]];
+  while (stack.length > 0 && results.length < limit) {
+    const [current, text] = stack.pop();
+    if (current.end) results.push(text);
+    const keys = [...current.children.keys()].sort().reverse();
+    for (const ch of keys) stack.push([current.children.get(ch), text + ch]);
+  }
+  return results;
+}
+
+console.log(suggest("ora", 2).join(" | "));
+console.log(suggest("x", 2).join(" | "));
+</solution>
+<expected>oraimo freepods | oraimo powerbank</expected>
+<explain><p>Carry the text built so far with each node on the stack. Pushing children in reverse alphabetical order makes them come off the stack in alphabetical order. The loop stops at <code>limit</code>, so "oraimo smartwatch" is never visited. An unknown prefix returns an empty list, which prints as an empty line.</p></explain>
+</question>
+
+<question id="tri-code-delete" type="code" file="delete.js">
+<q><p>Finish <code>remove(word)</code>: return <code>false</code> and change nothing if the word is not stored; otherwise decrement counts along the path, prune the first node whose count reaches 0, or clear the <code>end</code> flag, and return <code>true</code>. It should print <code>false true true | car,care | 5</code>.</p></q>
+<starter>
+const newNode = () => ({ children: new Map(), end: false, count: 0 });
+const root = newNode();
+function find(text) {
+  let node = root;
+  for (const ch of text) {
+    node = node.children.get(ch);
+    if (!node) return null;
+  }
+  return node;
+}
+function insert(word) {
+  let node = root;
+  node.count++;
+  for (const ch of word) {
+    if (!node.children.has(ch)) node.children.set(ch, newNode());
+    node = node.children.get(ch);
+    node.count++;
+  }
+  node.end = true;
+}
+function words(node = root, text = "", out = []) {
+  if (node.end) out.push(text);
+  for (const [ch, child] of [...node.children].sort()) words(child, text + ch, out);
+  return out;
+}
+function nodes(node = root) {
+  let n = 1;
+  for (const c of node.children.values()) n += nodes(c);
+  return n;
+}
+
+function remove(word) {
+  // your code here
+}
+
+for (const w of ["car", "card", "care"]) insert(w);
+const results = [remove("ca"), remove("card"), remove("cat") === false];
+console.log(results.join(" "), "|", words().join(","), "|", nodes());
+</starter>
+<solution>
+const newNode = () => ({ children: new Map(), end: false, count: 0 });
+const root = newNode();
+function find(text) {
+  let node = root;
+  for (const ch of text) {
+    node = node.children.get(ch);
+    if (!node) return null;
+  }
+  return node;
+}
+function insert(word) {
+  let node = root;
+  node.count++;
+  for (const ch of word) {
+    if (!node.children.has(ch)) node.children.set(ch, newNode());
+    node = node.children.get(ch);
+    node.count++;
+  }
+  node.end = true;
+}
+function words(node = root, text = "", out = []) {
+  if (node.end) out.push(text);
+  for (const [ch, child] of [...node.children].sort()) words(child, text + ch, out);
+  return out;
+}
+function nodes(node = root) {
+  let n = 1;
+  for (const c of node.children.values()) n += nodes(c);
+  return n;
+}
+
+function remove(word) {
+  if (!find(word)?.end) return false;
+  let node = root;
+  node.count--;
+  for (const ch of word) {
+    const child = node.children.get(ch);
+    if (--child.count === 0) {
+      node.children.delete(ch);
+      return true;
+    }
+    node = child;
+  }
+  node.end = false;
+  return true;
+}
+
+for (const w of ["car", "card", "care"]) insert(w);
+const results = [remove("ca"), remove("card"), remove("cat") === false];
+console.log(results.join(" "), "|", words().join(","), "|", nodes());
+</solution>
+<expected>false true true | car,care | 5</expected>
+<explain><p>"ca" is only a prefix and "cat" is missing, so both are refused before any count changes. Deleting "card" prunes the d node; root, c, a, r and e remain: 5 nodes.</p></explain>
+</question>
+
+<question id="tri-code-longest-prefix" type="code" file="zones.js">
+<q><p>Finish <code>rateFor(postcode)</code>: walk the trie of zone prefixes along the postcode and return the rate of the longest matching prefix, or <code>undefined</code>. It should print <code>1500 2000 3000 undefined</code>.</p></q>
+<starter>
+const root = { children: new Map(), rate: undefined };
+function addZone(prefix, rate) {
+  let node = root;
+  for (const ch of prefix) {
+    if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), rate: undefined });
+    node = node.children.get(ch);
+  }
+  node.rate = rate;
+}
+addZone("1", 3000);
+addZone("10", 2000);
+addZone("100", 1500);
+
+function rateFor(postcode) {
+  // your code here
+}
+
+console.log(["100271", "105500", "190001", "900001"].map(rateFor).map(String).join(" "));
+</starter>
+<solution>
+const root = { children: new Map(), rate: undefined };
+function addZone(prefix, rate) {
+  let node = root;
+  for (const ch of prefix) {
+    if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), rate: undefined });
+    node = node.children.get(ch);
+  }
+  node.rate = rate;
+}
+addZone("1", 3000);
+addZone("10", 2000);
+addZone("100", 1500);
+
+function rateFor(postcode) {
+  let node = root;
+  let best;
+  for (const ch of postcode) {
+    node = node.children.get(ch);
+    if (!node) break;
+    if (node.rate !== undefined) best = node.rate;
+  }
+  return best;
+}
+
+console.log(["100271", "105500", "190001", "900001"].map(rateFor).map(String).join(" "));
+</solution>
+<expected>1500 2000 3000 undefined</expected>
+<explain><p>Remember the last rate passed and stop when the path breaks. Returning only when the whole postcode matches would find nothing; returning the first rate would always give the shortest prefix.</p></explain>
+</question>
+
+<question id="tri-code-display" type="code" file="display.js">
+<q><p>Customers type in any case. Finish <code>add(name)</code> and <code>lookup(query)</code> so keys are lower-cased and NFC-normalised, but <code>lookup</code> returns the product's original name. It should print <code>Samsung Galaxy A15 | Café Latte Mug | undefined</code>.</p></q>
+<starter>
+const root = { children: new Map(), name: undefined };
+const key = (text) => text.normalize("NFC").toLowerCase();
+
+function add(name) {
+  // your code here
+}
+
+function lookup(query) {
+  // your code here
+}
+
+add("Samsung Galaxy A15");
+add("Café Latte Mug");
+console.log([lookup("SAMSUNG galaxy a15"), lookup("café latte mug"), lookup("samsung")].map(String).join(" | "));
+</starter>
+<solution>
+const root = { children: new Map(), name: undefined };
+const key = (text) => text.normalize("NFC").toLowerCase();
+
+function add(name) {
+  let node = root;
+  for (const ch of key(name)) {
+    if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), name: undefined });
+    node = node.children.get(ch);
+  }
+  node.name = name;
+}
+
+function lookup(query) {
+  let node = root;
+  for (const ch of key(query)) {
+    node = node.children.get(ch);
+    if (!node) return undefined;
+  }
+  return node.name;
+}
+
+add("Samsung Galaxy A15");
+add("Café Latte Mug");
+console.log([lookup("SAMSUNG galaxy a15"), lookup("café latte mug"), lookup("samsung")].map(String).join(" | "));
+</solution>
+<expected>Samsung Galaxy A15 | Café Latte Mug | undefined</expected>
+<explain><p>The same <code>key</code> function is applied on the way in and on the way out, so different capitals and the decomposed "é" still reach the same node. The stored <code>name</code> doubles as the end marker: "samsung" is only a prefix, so its node has no name.</p></explain>
+</question>
+
+<question id="tri-code-lcp" type="code" file="lcp.js">
+<q><p>Finish <code>commonPrefix(words)</code>: insert all words into a trie, then walk down from the root while the current node has exactly one child and is not the end of a word. It should print <code>ORD-2024-0</code> and then <code>(none)</code>.</p></q>
+<starter>
+function commonPrefix(words) {
+  // your code here
+}
+
+console.log(commonPrefix(["ORD-2024-0017", "ORD-2024-0102", "ORD-2024-0099"]));
+console.log(commonPrefix(["INV-1", "ORD-1"]) || "(none)");
+</starter>
+<solution>
+function commonPrefix(words) {
+  const root = { children: new Map(), end: false };
+  for (const word of words) {
+    let node = root;
+    for (const ch of word) {
+      if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), end: false });
+      node = node.children.get(ch);
+    }
+    node.end = true;
+  }
+  let prefix = "";
+  let node = root;
+  while (node.children.size === 1 && !node.end) {
+    const [[ch, child]] = node.children;
+    prefix += ch;
+    node = child;
+  }
+  return prefix;
+}
+
+console.log(commonPrefix(["ORD-2024-0017", "ORD-2024-0102", "ORD-2024-0099"]));
+console.log(commonPrefix(["INV-1", "ORD-1"]) || "(none)");
+</solution>
+<expected>
+ORD-2024-0
+(none)
+</expected>
+<explain><p>The common prefix is the chain from the root that never branches. Stopping at an <code>end</code> node matters too: the common prefix of "car" and "card" is "car", not "card". Building the trie is O(total characters).</p></explain>
+</question>
+
+<question id="tri-radix-output" type="output">
+<q>How many nodes does the trie have, and how many would a radix tree keep (the root, nodes where a word ends, and nodes that branch)?</q>
+<code file="radix.js">
+const root = { children: new Map(), end: false };
+for (const w of ["phone", "phones", "photo", "photos"]) {
+  let node = root;
+  for (const ch of w) {
+    if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), end: false });
+    node = node.children.get(ch);
+  }
+  node.end = true;
+}
+let all = 0, kept = 0;
+(function walk(node, isRoot) {
+  all++;
+  if (isRoot || node.end || node.children.size !== 1) kept++;
+  for (const c of node.children.values()) walk(c, false);
+})(root, true);
+console.log(all, kept);
+</code>
+<option correct>10 6</option>
+<option>10 4</option>
+<option>20 6</option>
+<option>6 10</option>
+<explain><p>root, p, h, o, n, e, s, t, o, s: 10 nodes. A radix tree keeps the root, the "o" after "pho" (it branches to n and t), and the four word ends. The chains "ph" and single steps like "n", "t" become labels on edges: "pho" → "ne" → "s" and "pho" → "to" → "s".</p></explain>
+</question>
+
+<question id="tri-top-output" type="output">
+<q>Every node keeps the top 2 products of its subtree by sales. What does this print?</q>
+<code file="top.js">
+const node = () => ({ children: new Map(), top: [] });
+const root = node();
+function insert(name, sales) {
+  let current = root;
+  const path = [root];
+  for (const ch of name) {
+    if (!current.children.has(ch)) current.children.set(ch, node());
+    current = current.children.get(ch);
+    path.push(current);
+  }
+  for (const n of path) {
+    n.top.push({ name, sales });
+    n.top.sort((a, b) => b.sales - a.sales);
+    if (n.top.length > 2) n.top.pop();
+  }
+}
+function top(prefix) {
+  let current = root;
+  for (const ch of prefix) {
+    current = current.children.get(ch);
+    if (!current) return "-";
+  }
+  return current.top.map((e) => e.name).join(",");
+}
+insert("tv", 50);
+insert("tablet", 80);
+insert("toaster", 20);
+insert("tripod", 65);
+console.log(top("t"), "|", top("ta"), "|", top("to"), "|", top("z"));
+</code>
+<option correct>tablet,tripod | tablet | toaster | -</option>
+<option>tv,tablet | tablet | toaster | -</option>
+<option>tablet,tripod | tablet,tv | toaster | -</option>
+<option>tablet,tripod,tv | tablet | toaster | </option>
+<explain><p>Every insert offers the product to every node on its path, and each node keeps its best two. "t" sees all four and keeps tablet (80) and tripod (65). "ta" and "to" each only ever saw one product. A suggestion is now just a walk down the prefix: O(L).</p></explain>
+</question>
+
+<question id="tri-visits-output" type="output">
+<q>Both searches find the products starting with "son". What does this print?</q>
+<code file="visits.js">
+const products = ["sony tv", "sony radio", "samsung tv", "sharp tv", "tecno phone", "itel phone"];
+
+let comparisons = 0;
+const naive = products.filter((name) => {
+  for (let i = 0; i < 3; i++) {
+    comparisons++;
+    if (name[i] !== "son"[i]) return false;
+  }
+  return true;
+});
+
+const root = { children: new Map() };
+for (const name of products) {
+  let node = root;
+  for (const ch of name) {
+    if (!node.children.has(ch)) node.children.set(ch, { children: new Map() });
+    node = node.children.get(ch);
+  }
+}
+let steps = 0;
+let node = root;
+for (const ch of "son") {
+  steps++;
+  node = node.children.get(ch);
+}
+console.log(naive.length, comparisons, steps, node.children.size);
+</code>
+<option correct>2 12 3 1</option>
+<option>2 18 3 1</option>
+<option>2 12 3 2</option>
+<option>2 6 3 1</option>
+<explain><p>The naive filter compares 3 characters for each "sony" name, 2 for "samsung" and "sharp" (they fail at the second letter), and 1 for the others: 3 + 3 + 2 + 2 + 1 + 1 = 12. The trie takes 3 steps to reach the "son" node, which has one child ("y"), however many products exist.</p></explain>
+</question>
+
+<question id="tri-code-distinct-prefixes" type="code" file="prefixes.js">
+<q><p>The analytics team wants to know how many <em>distinct</em> prefixes customers' search terms have (every prefix of every term, not counting the empty one). That is exactly the number of nodes in a trie of the terms, minus the root. Finish <code>distinctPrefixes(terms)</code>. It should print <code>7</code>.</p></q>
+<starter>
+function distinctPrefixes(terms) {
+  // your code here
+}
+
+console.log(distinctPrefixes(["tv", "tablet", "tab", "tv"]));
+</starter>
+<solution>
+function distinctPrefixes(terms) {
+  const root = { children: new Map() };
+  let created = 0;
+  for (const term of terms) {
+    let node = root;
+    for (const ch of term) {
+      if (!node.children.has(ch)) {
+        node.children.set(ch, { children: new Map() });
+        created++;
+      }
+      node = node.children.get(ch);
+    }
+  }
+  return created;
+}
+
+console.log(distinctPrefixes(["tv", "tablet", "tab", "tv"]));
+</solution>
+<expected>7</expected>
+<explain><p>Each node below the root is one distinct prefix. "tv" and "tablet" share "t": t, tv, ta, tab, tabl, table, tablet = 7; "tab" and the second "tv" add nothing. A <code>Set</code> of all prefixes would give the same answer but store every prefix as a separate string.</p></explain>
+</question>
