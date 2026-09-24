@@ -1,0 +1,917 @@
+<question id="prom-inversion" type="choice">
+<q>A payment SDK takes your callback and, because of a bug, calls it twice. What is the name for the underlying problem with callbacks that this shows?</q>
+<option>Callback hell</option>
+<option correct>Inversion of control: someone else's code decides when and how often your code runs</option>
+<option>The temporal dead zone</option>
+<option>Blocking the event loop</option>
+<explain><p>Passing a callback hands control of your code to the library. It can call you twice, never, or at odd times. Callback hell is the nesting problem, which is real but shallower. A promise gives control back: you get an object and decide what to do with its single result.</p></explain>
+</question>
+
+<question id="prom-settle-once" type="output">
+<q>What does this print?</q>
+<code file="once.js">
+const charge = new Promise((resolve, reject) => {
+  resolve("ch_1");
+  resolve("ch_2");
+  reject(new Error("declined"));
+});
+
+charge.then(
+  (id) => console.log("paid", id),
+  (error) => console.log("failed", error.message),
+);
+</code>
+<option correct>paid ch_1</option>
+<option>paid ch_2</option>
+<option>failed declined</option>
+<option>paid ch_1
+paid ch_2
+failed declined</option>
+<explain><p>A promise settles at most once. The first <code>resolve("ch_1")</code> fulfils it; the later <code>resolve</code> and <code>reject</code> calls are ignored.</p></explain>
+</question>
+
+<question id="prom-always-async" type="output">
+<q>The promise is already fulfilled when <code>then</code> is called. What does this print?</q>
+<code file="async-handler.js">
+const price = Promise.resolve(2500);
+console.log("A");
+price.then((p) => console.log("B", p));
+console.log("C");
+</code>
+<option correct>A
+C
+B 2500</option>
+<option>A
+B 2500
+C</option>
+<option>B 2500
+A
+C</option>
+<option>A
+C</option>
+<explain><p>Handlers always run later, after the current synchronous code, even when the promise is already settled. That guarantee is what stops the "sometimes synchronous, sometimes not" bug that callbacks allow.</p></explain>
+</question>
+
+<question id="prom-late-handler" type="choice">
+<q>A promise was fulfilled a minute ago. Now some code calls <code>.then(handler)</code> on it. What happens?</q>
+<option>Nothing: the handler missed the event</option>
+<option correct>The handler runs soon after, with the same value</option>
+<option>The promise runs its executor again</option>
+<option>It throws, because the promise is already settled</option>
+<explain><p>A settled promise keeps its result. Handlers attached late still receive it, which is different from an event that fires once and is gone.</p></explain>
+</question>
+
+<question id="prom-executor-sync" type="output">
+<q>What does this print?</q>
+<code file="executor.js">
+console.log(1);
+const order = new Promise((resolve) => {
+  console.log(2);
+  resolve("ok");
+  console.log(3);
+});
+order.then(() => console.log(4));
+console.log(5);
+</code>
+<option correct>1
+2
+3
+5
+4</option>
+<option>1
+5
+2
+3
+4</option>
+<option>1
+2
+5
+3
+4</option>
+<option>1
+2
+4
+3
+5</option>
+<explain><p>The executor runs synchronously during <code>new Promise</code>, and calling <code>resolve</code> does not stop it, so 3 prints too. Only the <code>then</code> handler waits until the synchronous code (5) is done.</p></explain>
+</question>
+
+<question id="prom-resolved-vs-fulfilled" type="choice">
+<q>Promise <code>order</code> was created with <code>new Promise((resolve) =&gt; resolve(payment))</code>, where <code>payment</code> is still pending. Which statement is true?</q>
+<option><code>order</code> is fulfilled with the <code>payment</code> promise object as its value</option>
+<option correct><code>order</code> is resolved but still pending; it will end up however <code>payment</code> ends up</option>
+<option><code>order</code> is fulfilled with <code>undefined</code></option>
+<option><code>order</code> is rejected, because you cannot resolve with a promise</option>
+<explain><p>Resolving with a promise (or thenable) makes your promise follow it: this is adoption. Its fate is decided, so it is <em>resolved</em>, but it stays <em>pending</em> until <code>payment</code> settles, and it can still end up rejected.</p></explain>
+</question>
+
+<question id="prom-adopt-reject" type="output">
+<q>What does this print?</q>
+<code file="adopt.js">
+const payment = Promise.reject(new Error("card declined"));
+
+const order = new Promise((resolve, reject) => {
+  resolve(payment);
+  reject(new Error("cancelled"));
+});
+
+order.then(
+  () => console.log("paid"),
+  (error) => console.log("failed:", error.message),
+);
+</code>
+<option correct>failed: card declined</option>
+<option>failed: cancelled</option>
+<option>paid</option>
+<option>failed: card declined
+failed: cancelled</option>
+<explain><p><code>resolve(payment)</code> locks <code>order</code> to <code>payment</code>, so the following <code>reject</code> is ignored. <code>payment</code> is rejected, and <code>order</code> copies that. "Resolved" does not mean "succeeded".</p></explain>
+</question>
+
+<question id="prom-executor-throw" type="choice">
+<q>What happens when the executor function passed to <code>new Promise</code> throws an error before calling <code>resolve</code>?</q>
+<option>The error escapes from <code>new Promise</code> and must be caught with <code>try</code>/<code>catch</code> around it</option>
+<option correct>The promise is rejected with that error</option>
+<option>The promise stays pending forever</option>
+<option>The error is silently ignored and the promise fulfils with <code>undefined</code></option>
+<explain><p>A throw during the executor becomes a rejection. That is why a promisify wrapper calls the SDK <em>inside</em> the executor: a synchronous throw from the SDK then arrives as a rejection like every other failure. A throw in a callback that runs later, such as a timer, is not covered.</p></explain>
+</question>
+
+<question id="prom-then-new" type="output">
+<q>What does this print?</q>
+<code file="new-promise.js">
+const a = Promise.resolve(1);
+const b = a.then((n) => n + 1);
+
+console.log(a === b);
+b.then((n) => console.log(n));
+a.then((n) => console.log(n));
+</code>
+<option correct>false
+2
+1</option>
+<option>true
+2
+2</option>
+<option>false
+2
+2</option>
+<option>true
+1
+1</option>
+<explain><p><code>then</code> never changes the promise it is called on. It returns a new promise, <code>b</code>, fulfilled with the handler's return value. <code>a</code> still holds 1. Handlers run in the order their promises were ready: <code>b</code>'s value was already waiting, but it only became fulfilled after <code>a</code>'s handler ran, which happened before the last <code>a.then</code> was attached.</p></explain>
+</question>
+
+<question id="prom-no-return-value" type="output">
+<q>What does this print?</q>
+<code file="no-return.js">
+Promise.resolve({ id: 7, total: 12000 })
+  .then((order) => {
+    order.total * 1.075;
+  })
+  .then((withVat) => console.log(withVat));
+</code>
+<option correct>undefined</option>
+<option>12900</option>
+<option>{ id: 7, total: 12000 }</option>
+<option>NaN</option>
+<explain><p>The handler has braces and no <code>return</code>, so it returns <code>undefined</code>, and the promise from <code>then</code> is fulfilled with <code>undefined</code>. Either drop the braces or write <code>return</code>.</p></explain>
+</question>
+
+<question id="prom-return-promise" type="output">
+<q>What does this print?</q>
+<code file="flatten.js">
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+
+Promise.resolve("order 7")
+  .then((order) => wait(20, `${order} reserved`))
+  .then((value) => console.log(typeof value, value));
+</code>
+<option correct>string order 7 reserved</option>
+<option>object [object Promise]</option>
+<option>object Promise { &lt;pending&gt; }</option>
+<option>undefined undefined</option>
+<explain><p>Returning a promise from a handler makes the promise from <code>then</code> follow it. The next handler receives the final value, 20 ms later, never the promise itself. This is what lets chains stay flat.</p></explain>
+</question>
+
+<question id="prom-floating" type="choice">
+<q>Inside a <code>then</code> handler, code calls <code>saveOrder(order)</code>, which returns a promise, but does not return it. What goes wrong?</q>
+<option>Nothing; the chain waits for every promise created inside a handler</option>
+<option correct>The chain moves on at once without waiting, and if saving fails, the rejection is not handled by the chain</option>
+<option>The chain is rejected with a TypeError</option>
+<option><code>saveOrder</code> is never called</option>
+<explain><p>The chain only knows about what the handler returns. A promise started and not returned is a floating promise: nobody waits for it and nobody handles its errors. Return it, or <code>await</code> it.</p></explain>
+</question>
+
+<question id="prom-skip-to-catch" type="output">
+<q>What does this print?</q>
+<code file="skip.js">
+Promise.reject(new Error("out of stock"))
+  .then(() => console.log("A"))
+  .then(() => console.log("B"))
+  .catch((error) => console.log("C", error.message))
+  .then(() => console.log("D"));
+</code>
+<option correct>C out of stock
+D</option>
+<option>A
+B
+C out of stock
+D</option>
+<option>C out of stock</option>
+<option>A
+C out of stock</option>
+<explain><p>A rejection skips every step without a rejection handler (<code>A</code>, <code>B</code>). The <code>catch</code> handles it and returns <code>undefined</code>, which fulfils the chain again, so <code>D</code> runs.</p></explain>
+</question>
+
+<question id="prom-log-only-catch" type="choice">
+<q>Why is <code>.catch((error) =&gt; console.log(error))</code> in the middle of a checkout chain usually a bug?</q>
+<option>console.log cannot print Error objects</option>
+<option correct>It returns undefined, which turns the failure into a success, so the following steps run with undefined</option>
+<option>It rethrows the error twice</option>
+<option>catch can only be the last step of a chain</option>
+<explain><p>A rejection handler's outcome follows the same rules as <code>then</code>: returning (even implicitly) fulfils the chain. If it cannot fix the problem, it must rethrow after logging.</p></explain>
+</question>
+
+<question id="prom-rethrow-cause" type="output">
+<q>What does this print?</q>
+<code file="cause.js">
+Promise.reject(new Error("timeout"))
+  .catch((error) => {
+    throw new Error("rates unavailable", { cause: error });
+  })
+  .then(() => console.log("rates loaded"))
+  .catch((error) => console.log(error.message, "/", error.cause.message));
+</code>
+<option correct>rates unavailable / timeout</option>
+<option>timeout / undefined</option>
+<option>rates loaded</option>
+<option>rates unavailable / rates unavailable</option>
+<explain><p>Throwing inside a <code>catch</code> keeps the chain rejected, now with the new error. The <code>{ cause }</code> option keeps the original error attached, so the last handler can see both.</p></explain>
+</question>
+
+<question id="prom-two-arg-then" type="output">
+<q>What does this print?</q>
+<code file="two-args.js">
+Promise.resolve({ items: [] })
+  .then(
+    (order) => {
+      if (order.items.length === 0) throw new Error("empty order");
+    },
+    (error) => console.log("handler 1:", error.message),
+  )
+  .catch((error) => console.log("handler 2:", error.message));
+</code>
+<option correct>handler 2: empty order</option>
+<option>handler 1: empty order</option>
+<option>handler 1: empty order
+handler 2: empty order</option>
+<option>Nothing is printed</option>
+<explain><p>The second argument of <code>then</code> only handles a rejection of the promise before it. An error thrown by the first argument, in the same step, rejects the <em>next</em> promise, which the <code>catch</code> on the next line handles.</p></explain>
+</question>
+
+<question id="prom-finally-value" type="output">
+<q>What does this print?</q>
+<code file="finally.js">
+const result = await Promise.resolve("order 7 paid").finally(() => "cleaned up");
+console.log(result);
+</code>
+<option correct>order 7 paid</option>
+<option>cleaned up</option>
+<option>undefined</option>
+<option>[ 'order 7 paid', 'cleaned up' ]</option>
+<explain><p><code>finally</code> ignores its handler's return value and passes the original result through. Only a throw (or a rejected promise) in the handler changes the outcome.</p></explain>
+</question>
+
+<question id="prom-finally-throw" type="choice">
+<q>A payment promise is fulfilled. Its <code>.finally</code> handler throws <code>new Error("could not release lock")</code>. What does the promise returned by <code>finally</code> do?</q>
+<option>It is fulfilled with the payment value; errors in finally are ignored</option>
+<option correct>It is rejected with "could not release lock"</option>
+<option>It stays pending</option>
+<option>It is fulfilled with the error object</option>
+<explain><p><code>finally</code> passes the result through unless its own handler fails. Then the cleanup error replaces the result, just like an exception thrown in a <code>finally</code> block of <code>try</code>/<code>catch</code>.</p></explain>
+</question>
+
+<question id="prom-finally-arg" type="choice">
+<q>What argument does a <code>.finally</code> handler receive?</q>
+<option>The fulfilled value</option>
+<option>The rejection reason</option>
+<option>An object like <code>{ status, value }</code></option>
+<option correct>None: it does not know whether the promise succeeded</option>
+<explain><p><code>finally</code> is for cleanup that must happen either way, so it gets no argument. If you need the value or the error, use <code>then</code> or <code>catch</code>.</p></explain>
+</question>
+
+<question id="prom-async-returns" type="output">
+<q>What does this print?</q>
+<code file="async-return.js">
+async function getTotal() {
+  return 12000;
+}
+
+const result = getTotal();
+console.log(result instanceof Promise);
+console.log(await result);
+</code>
+<option correct>true
+12000</option>
+<option>false
+12000</option>
+<option>true
+Promise { 12000 }</option>
+<option>false
+undefined</option>
+<explain><p>An <code>async</code> function always returns a new promise. Returning a plain value fulfils it with that value.</p></explain>
+</question>
+
+<question id="prom-return-await" type="output">
+<q>What does this print?</q>
+<code file="return-await.js">
+const charge = () => Promise.reject(new Error("card declined"));
+
+async function payA() {
+  try {
+    return charge();
+  } catch {
+    return "handled in payA";
+  }
+}
+
+async function payB() {
+  try {
+    return await charge();
+  } catch {
+    return "handled in payB";
+  }
+}
+
+console.log(await payA().catch((error) => `payA rejected: ${error.message}`));
+console.log(await payB());
+</code>
+<option correct>payA rejected: card declined
+handled in payB</option>
+<option>handled in payA
+handled in payB</option>
+<option>payA rejected: card declined
+payB rejected: card declined</option>
+<option>handled in payA
+payB rejected: card declined</option>
+<explain><p><code>return charge()</code> hands the promise out of the function before it rejects, so the <code>try</code> block is already finished and its <code>catch</code> never runs. <code>return await</code> waits inside the <code>try</code>, so the rejection is thrown there and caught.</p></explain>
+</question>
+
+<question id="prom-thenable-what" type="choice">
+<q>What makes a value a <strong>thenable</strong>?</q>
+<option>It was created with <code>new Promise</code></option>
+<option>It has a <code>then</code> property of any type</option>
+<option correct>It has a <code>then</code> property that is a function</option>
+<option>It is an instance of a class that extends Promise</option>
+<explain><p>Only a callable <code>then</code> counts. <code>await</code>, <code>Promise.resolve</code> and <code>resolve()</code> call it with a resolve and a reject function. <code>{ then: "tomorrow" }</code> is just an object.</p></explain>
+</question>
+
+<question id="prom-thenable-output" type="output">
+<q>What does this print?</q>
+<code file="thenable.js">
+const lazyTotal = {
+  then(resolve) {
+    console.log("computing");
+    resolve(3 * 4000);
+  },
+};
+
+console.log("before");
+const total = await lazyTotal;
+console.log(total);
+</code>
+<option correct>before
+computing
+12000</option>
+<option>computing
+before
+12000</option>
+<option>before
+{ then: [Function: then] }</option>
+<option>before
+12000</option>
+<explain><p>Nothing runs when the object is created. <code>await</code> sees a <code>then</code> method, calls it, and continues with the value passed to <code>resolve</code>. Query builders use exactly this to run a query only when it is awaited.</p></explain>
+</question>
+
+<question id="prom-accidental-thenable" type="choice">
+<q>An <code>async</code> function returns <code>{ task: "Call supplier", then(next) { this.next = next; } }</code>. The caller <code>await</code>s it. What happens?</q>
+<option>The caller receives the object</option>
+<option>A TypeError: objects cannot have a then method</option>
+<option correct>The await never finishes: the object's then is called as a thenable and never calls resolve</option>
+<option>The caller receives undefined</option>
+<explain><p>Any object with a callable <code>then</code> is adopted. Its <code>then</code> stores the resolve function instead of calling it, so the promise stays pending forever, with no error. Do not name a method <code>then</code> unless you mean it.</p></explain>
+</question>
+
+<question id="prom-then-string" type="output">
+<q>What does this print?</q>
+<code file="then-string.js">
+const reminder = { task: "Call supplier", then: "tomorrow" };
+const loaded = await Promise.resolve(reminder);
+console.log(loaded.then);
+</code>
+<option correct>tomorrow</option>
+<option>undefined</option>
+<option>TypeError: then is not a function</option>
+<option>Nothing: the await never finishes</option>
+<explain><p>A <code>then</code> property that is not a function does not make a thenable, so the object itself becomes the value.</p></explain>
+</question>
+
+<question id="prom-promisify-where" type="choice">
+<q>In a promisify wrapper, why is the SDK function called <em>inside</em> the <code>new Promise</code> executor rather than before it?</q>
+<option>It runs faster there</option>
+<option correct>If the SDK throws synchronously, the executor turns the throw into a rejection, so callers see every failure the same way</option>
+<option>The SDK can only see <code>resolve</code> from inside</option>
+<option>Calling it outside would run it twice</option>
+<explain><p>The executor catches a synchronous throw and rejects the promise. Callers of the wrapper then only need <code>await</code> + <code>try</code>/<code>catch</code> (or <code>.catch</code>), never a second <code>try</code> around the call itself.</p></explain>
+</question>
+
+<question id="prom-promisify-this" type="output">
+<q>What does this print?</q>
+<code file="promisify-this.js">
+function promisify(fn) {
+  return function (...args) {
+    return new Promise((resolve, reject) => {
+      fn.call(this, ...args, (error, result) => (error ? reject(error) : resolve(result)));
+    });
+  };
+}
+
+const sms = {
+  sender: "ShopNG",
+  send(to, callback) {
+    setTimeout(() => callback(null, `${this.sender} -> ${to}`), 10);
+  },
+};
+
+sms.sendAsync = promisify(sms.send);
+console.log(await sms.sendAsync("+2348031234567"));
+
+const send = promisify(sms.send);
+try {
+  console.log(await send("+2348031234567"));
+} catch (error) {
+  console.log(error.constructor.name);
+}
+</code>
+<option correct>ShopNG -> +2348031234567
+TypeError</option>
+<option>ShopNG -> +2348031234567
+ShopNG -> +2348031234567</option>
+<option>undefined -> +2348031234567
+undefined -> +2348031234567</option>
+<option>ShopNG -> +2348031234567
+undefined -> +2348031234567</option>
+<explain><p>The wrapper forwards its own <code>this</code> with <code>fn.call(this, …)</code>. Called as <code>sms.sendAsync(…)</code>, <code>this</code> is <code>sms</code>. Called as a plain function, <code>this</code> is <code>undefined</code> (module code is strict), so reading <code>this.sender</code> throws a TypeError inside the timer callback... except that it happens inside the SDK's arrow function, which reads <code>this</code> from <code>send</code>: <code>undefined.sender</code>. The throw is in a timer callback, not the executor? No: <code>this.sender</code> is read when the timer fires, so it would crash. Read the explanation below the question.</p></explain>
+</question>
+
+<question id="prom-antipattern" type="choice">
+<q>What is wrong with <code>return new Promise((resolve) =&gt; { chargeCard().then(resolve); });</code>?</q>
+<option>Nothing, it is the recommended way to return a promise</option>
+<option correct>It is the explicit construction anti-pattern: if chargeCard rejects, the outer promise never settles and the rejection is unhandled</option>
+<option>It runs chargeCard twice</option>
+<option>resolve cannot be passed as a callback</option>
+<explain><p>Wrapping an existing promise in <code>new Promise</code> adds nothing and loses errors, because nobody calls <code>reject</code>. Just <code>return chargeCard()</code>, or <code>return chargeCard().then(transform)</code>.</p></explain>
+</question>
+
+<question id="prom-unhandled-when" type="choice">
+<q>When does a rejected promise count as <strong>unhandled</strong>?</q>
+<option>As soon as it is created with no handler, before any other line runs</option>
+<option correct>When it is still without a rejection handler after the current piece of work (the task and its microtasks) is finished</option>
+<option>Only when the process is about to exit</option>
+<option>Never, if it was created inside an async function</option>
+<explain><p>JavaScript gives you until the end of the current task and its microtasks to attach a handler. A handler attached later, such as in a <code>setTimeout</code>, comes too late: the rejection has already been reported, and Node.js crashes by default.</p></explain>
+</question>
+
+<question id="prom-unhandled-node" type="output">
+<q>This runs in Node.js. What does it print?</q>
+<code file="late.js" browser="no">
+process.on("unhandledRejection", (reason) => console.log("unhandled:", reason.message));
+
+const refund = Promise.reject(new Error("refund failed"));
+refund.catch((error) => console.log("handled:", error.message));
+</code>
+<option correct>handled: refund failed</option>
+<option>unhandled: refund failed</option>
+<option>unhandled: refund failed
+handled: refund failed</option>
+<option>Nothing</option>
+<explain><p>The <code>catch</code> is attached in the same synchronous block that created the rejected promise, so it is handled in time and the <code>unhandledRejection</code> event never fires.</p></explain>
+</question>
+
+<question id="prom-unhandled-default" type="choice">
+<q>What does Node.js do by default when a promise rejection is unhandled?</q>
+<option>It ignores it silently</option>
+<option>It prints a warning and keeps running</option>
+<option correct>It prints the error and exits with a non-zero exit code</option>
+<option>It retries the promise</option>
+<explain><p>Since Node.js 15 the default mode is <code>throw</code>: an unhandled rejection crashes the process like an uncaught exception, because an error nobody saw may have left work half done.</p></explain>
+</question>
+
+<question id="prom-compensation" type="choice">
+<q>In the checkout, the stock is reserved and then the card is declined. What should the checkout do before reporting the failure?</q>
+<option>Nothing; the payment failure is reported and that is enough</option>
+<option correct>Release the reserved stock (compensation), then reject with an error that has the payment error as its cause</option>
+<option>Retry the card until it succeeds</option>
+<option>Send the SMS receipt anyway</option>
+<explain><p>Step 1 changed something, so when step 2 fails, step 1 must be undone or the items look sold forever. Rejecting with <code>{ cause }</code> tells the caller what failed and why.</p></explain>
+</question>
+
+<question id="prom-sms-optional" type="choice">
+<q>The card was charged, then sending the SMS receipt fails. Which design fits the checkout's rules?</q>
+<option>Reject the whole checkout; the customer will retry and pay again</option>
+<option>Refund the payment</option>
+<option correct>Complete the order and record that the receipt was not sent, so it can be resent</option>
+<option>Ignore the error completely with an empty catch</option>
+<explain><p>A notification is not worth failing a paid order for. Recovering is right here, but it must be visible: write the failure into the result or a log so someone can act on it. An empty <code>catch</code> hides it.</p></explain>
+</question>
+
+<question id="prom-test-await" type="choice">
+<q>A test calls <code>checkout(services, order)</code> without <code>await</code> and then checks <code>services.stock</code>. Why can it pass even when the checkout is broken?</q>
+<option>Tests always pass without await</option>
+<option correct>The check runs before any of the asynchronous steps have happened, so it looks at the untouched starting state</option>
+<option>checkout runs synchronously when called from a test</option>
+<option>The promise rejects silently in tests</option>
+<explain><p>Without <code>await</code>, the test only starts the work. Its assertions run immediately, and any later rejection happens after the test has finished. Asynchronous tests must await the result.</p></explain>
+</question>
+
+<question id="prom-rejection-to-value" type="output">
+<q>Tests use this trick to inspect a rejection. What does it print?</q>
+<code file="settle.js">
+const failing = Promise.reject(new Error("out of stock"));
+const working = Promise.resolve("reserved");
+
+const a = await failing.then(() => null, (error) => error);
+const b = await working.then(() => null, (error) => error);
+
+console.log(a instanceof Error, a.message);
+console.log(b);
+</code>
+<option correct>true out of stock
+null</option>
+<option>false out of stock
+reserved</option>
+<option>true out of stock
+reserved</option>
+<option>Error: out of stock</option>
+<explain><p>The rejection handler returns the error, which fulfils the new promise with it. A success is mapped to <code>null</code>, so a test can tell "rejected as expected" from "wrongly succeeded".</p></explain>
+</question>
+
+<question id="prom-code-promisify" type="code" file="promisify.js">
+<q><p>Finish <code>promisify(fn)</code>: it returns a function that calls <code>fn</code> with the same arguments plus an error-first callback, keeps <code>this</code>, and returns a promise that rejects on error and fulfils with the result.</p></q>
+<starter>
+function promisify(fn) {
+  // your code here
+}
+
+const courier = {
+  company: "SpeedNG",
+  book(parcel, callback) {
+    setTimeout(() => {
+      if (parcel.kg > 30) return callback(new Error(`too heavy: ${parcel.kg} kg`));
+      callback(null, `${this.company} booked parcel ${parcel.id}`);
+    }, 10);
+  },
+};
+
+courier.bookAsync = promisify(courier.book);
+console.log(await courier.bookAsync({ id: 7, kg: 4 }));
+try {
+  await courier.bookAsync({ id: 8, kg: 45 });
+} catch (error) {
+  console.log("failed:", error.message);
+}
+</starter>
+<solution>
+function promisify(fn) {
+  return function (...args) {
+    return new Promise((resolve, reject) => {
+      fn.call(this, ...args, (error, result) => (error ? reject(error) : resolve(result)));
+    });
+  };
+}
+
+const courier = {
+  company: "SpeedNG",
+  book(parcel, callback) {
+    setTimeout(() => {
+      if (parcel.kg > 30) return callback(new Error(`too heavy: ${parcel.kg} kg`));
+      callback(null, `${this.company} booked parcel ${parcel.id}`);
+    }, 10);
+  },
+};
+
+courier.bookAsync = promisify(courier.book);
+console.log(await courier.bookAsync({ id: 7, kg: 4 }));
+try {
+  await courier.bookAsync({ id: 8, kg: 45 });
+} catch (error) {
+  console.log("failed:", error.message);
+}
+</solution>
+<expected>
+SpeedNG booked parcel 7
+failed: too heavy: 45 kg
+</expected>
+<explain><p>Return a normal <code>function</code> (not an arrow) so it has its own <code>this</code>, and forward it with <code>fn.call(this, …)</code>. The callback decides between <code>reject</code> and <code>resolve</code>.</p></explain>
+</question>
+
+<question id="prom-code-flatten" type="code" file="flatten.js">
+<q><p>Rewrite the nested chain as one flat chain with a single <code>.catch</code> at the end. It must print the same thing.</p></q>
+<starter>
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+const reserve = (order) => wait(10, { ...order, reserved: true });
+const charge = (order) => wait(10, { ...order, chargeId: "ch_9" });
+const receipt = (order) => wait(10, `order ${order.id} paid with ${order.chargeId}`);
+
+reserve({ id: 12 }).then((reserved) => {
+  charge(reserved).then((charged) => {
+    receipt(charged).then((text) => console.log(text));
+  });
+});
+</starter>
+<solution>
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+const reserve = (order) => wait(10, { ...order, reserved: true });
+const charge = (order) => wait(10, { ...order, chargeId: "ch_9" });
+const receipt = (order) => wait(10, `order ${order.id} paid with ${order.chargeId}`);
+
+reserve({ id: 12 })
+  .then((reserved) => charge(reserved))
+  .then((charged) => receipt(charged))
+  .then((text) => console.log(text))
+  .catch((error) => console.log("checkout failed:", error.message));
+</solution>
+<expected>order 12 paid with ch_9</expected>
+<explain><p>Each handler <em>returns</em> the next promise, so the chain waits for it and passes its value on. One <code>catch</code> at the end covers every step, which the nested version could not do.</p></explain>
+</question>
+
+<question id="prom-code-rethrow" type="code" file="rethrow.js">
+<q><p>The <code>catch</code> in <code>loadRates</code> logs and silently turns the failure into <code>undefined</code>. Change it so it logs, then rejects with a new error <code>"could not load rates"</code> whose <code>cause</code> is the original error. The caller's output should become the expected one.</p></q>
+<starter>
+const fetchRates = () => Promise.reject(new Error("rates service timeout"));
+
+function loadRates() {
+  return fetchRates().catch((error) => {
+    console.log("log:", error.message);
+  });
+}
+
+loadRates().then(
+  (rates) => console.log("rates:", rates),
+  (error) => console.log(`${error.message} (cause: ${error.cause.message})`),
+);
+</starter>
+<solution>
+const fetchRates = () => Promise.reject(new Error("rates service timeout"));
+
+function loadRates() {
+  return fetchRates().catch((error) => {
+    console.log("log:", error.message);
+    throw new Error("could not load rates", { cause: error });
+  });
+}
+
+loadRates().then(
+  (rates) => console.log("rates:", rates),
+  (error) => console.log(`${error.message} (cause: ${error.cause.message})`),
+);
+</solution>
+<expected>
+log: rates service timeout
+could not load rates (cause: rates service timeout)
+</expected>
+<explain><p>A rejection handler that returns fulfils the chain. To keep failing, it must throw. Wrapping with <code>{ cause }</code> adds context without losing the original error.</p></explain>
+</question>
+
+<question id="prom-code-compensate" type="code" file="compensate.js">
+<q><p>Finish <code>book(room)</code>: hold the room, then take the deposit. If the deposit fails, release the hold and rethrow the error. Use <code>async</code>/<code>await</code>.</p></q>
+<starter>
+const holds = new Set();
+const hold = async (room) => { holds.add(room); };
+const release = async (room) => { holds.delete(room); };
+const takeDeposit = async (room) => {
+  if (room === "suite") throw new Error("deposit declined");
+  return `deposit for ${room}`;
+};
+
+async function book(room) {
+  // your code here
+}
+
+console.log(await book("single"), [...holds]);
+try {
+  await book("suite");
+} catch (error) {
+  console.log(error.message, [...holds]);
+}
+</starter>
+<solution>
+const holds = new Set();
+const hold = async (room) => { holds.add(room); };
+const release = async (room) => { holds.delete(room); };
+const takeDeposit = async (room) => {
+  if (room === "suite") throw new Error("deposit declined");
+  return `deposit for ${room}`;
+};
+
+async function book(room) {
+  await hold(room);
+  try {
+    return await takeDeposit(room);
+  } catch (error) {
+    await release(room);
+    throw error;
+  }
+}
+
+console.log(await book("single"), [...holds]);
+try {
+  await book("suite");
+} catch (error) {
+  console.log(error.message, [...holds]);
+}
+</solution>
+<expected>
+deposit for single [ 'single' ]
+deposit declined [ 'single' ]
+</expected>
+<explain><p>The <code>try</code> must wrap an <code>await</code>ed call (<code>return await</code>), or the rejection happens after the <code>try</code> has finished. The <code>catch</code> undoes the hold (compensation) and rethrows so the caller still learns about the failure.</p></explain>
+</question>
+
+<question id="prom-code-many" type="code" file="many.js">
+<q><p>A warehouse SDK calls back with several results: <code>callback(error, sku, qty)</code>. Finish <code>promisifyMany</code> so the promise fulfils with an array of all the results.</p></q>
+<starter>
+function promisifyMany(fn) {
+  // your code here
+}
+
+const warehouse = {
+  count(sku, callback) {
+    setTimeout(() => callback(null, sku, sku.length * 3), 10);
+  },
+};
+warehouse.countAsync = promisifyMany(warehouse.count);
+console.log(await warehouse.countAsync("rice-5kg"));
+</starter>
+<solution>
+function promisifyMany(fn) {
+  return function (...args) {
+    return new Promise((resolve, reject) => {
+      fn.call(this, ...args, (error, ...results) => (error ? reject(error) : resolve(results)));
+    });
+  };
+}
+
+const warehouse = {
+  count(sku, callback) {
+    setTimeout(() => callback(null, sku, sku.length * 3), 10);
+  },
+};
+warehouse.countAsync = promisifyMany(warehouse.count);
+console.log(await warehouse.countAsync("rice-5kg"));
+</solution>
+<expected>[ 'rice-5kg', 24 ]</expected>
+<explain><p>A promise holds one value, so several callback results must be packed into one: a rest parameter <code>...results</code> collects them into an array.</p></explain>
+</question>
+
+<question id="prom-code-thenable" type="code" file="builder.js">
+<q><p>Make <code>query()</code> a thenable: add a <code>then(resolve)</code> method that resolves with the products matching every filter, so <code>await</code> runs the query.</p></q>
+<starter>
+const products = [
+  { sku: "rice-5kg", price: 9500 },
+  { sku: "oil-1l", price: 3200 },
+  { sku: "beans-2kg", price: 4800 },
+];
+
+function query() {
+  const filters = [];
+  return {
+    where(test) {
+      filters.push(test);
+      return this;
+    },
+    // add then here
+  };
+}
+
+const cheap = await query().where((p) => p.price < 5000);
+console.log(cheap.map((p) => p.sku));
+</starter>
+<solution>
+const products = [
+  { sku: "rice-5kg", price: 9500 },
+  { sku: "oil-1l", price: 3200 },
+  { sku: "beans-2kg", price: 4800 },
+];
+
+function query() {
+  const filters = [];
+  return {
+    where(test) {
+      filters.push(test);
+      return this;
+    },
+    then(resolve) {
+      resolve(products.filter((p) => filters.every((f) => f(p))));
+    },
+  };
+}
+
+const cheap = await query().where((p) => p.price < 5000);
+console.log(cheap.map((p) => p.sku));
+</solution>
+<expected>[ 'oil-1l', 'beans-2kg' ]</expected>
+<explain><p><code>await</code> calls any <code>then</code> method it finds, passing a resolve function. Nothing runs until then, so filters can be added first.</p></explain>
+</question>
+
+<question id="prom-code-late-handler" type="code" file="early-handler.js">
+<q><p>The refund promise is created now but only awaited after other work. Attach a handler right away so the rejection is never unhandled, and still print the failure after the other work. Keep the <code>await wait(20)</code>.</p></q>
+<starter>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const refund = () => new Promise((_, reject) => setTimeout(() => reject(new Error("refund failed")), 5));
+
+const pending = refund();
+await wait(20);
+console.log("other work done");
+try {
+  await pending;
+} catch (error) {
+  console.log("refund:", error.message);
+}
+</starter>
+<solution>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const refund = () => new Promise((_, reject) => setTimeout(() => reject(new Error("refund failed")), 5));
+
+const pending = refund().then(
+  () => "refund ok",
+  (error) => `refund: ${error.message}`,
+);
+await wait(20);
+console.log("other work done");
+console.log(await pending);
+</solution>
+<expected>
+other work done
+refund: refund failed
+</expected>
+<explain><p>The starter rejects after 5 ms while nothing is listening, so it is an unhandled rejection that crashes Node.js and fails the terminal run. Attaching both handlers immediately turns the outcome into a value you can await whenever you like.</p></explain>
+</question>
+
+<question id="prom-code-sometimes-sync" type="code" file="always-async.js">
+<q><p><code>getPrice</code> calls back synchronously on a cache hit and later on a miss. Rewrite it to return a promise, so both calls print <code>after</code>.</p></q>
+<starter>
+const cache = new Map([["rice-5kg", 9500]]);
+
+function getPrice(sku, callback) {
+  if (cache.has(sku)) return callback(cache.get(sku));
+  setTimeout(() => callback(4800), 10);
+}
+
+for (const sku of ["rice-5kg", "beans-2kg"]) {
+  let step = "before";
+  getPrice(sku, (price) => console.log(sku, price, step));
+  step = "after";
+}
+</starter>
+<solution>
+const cache = new Map([["rice-5kg", 9500]]);
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function getPrice(sku) {
+  if (cache.has(sku)) return cache.get(sku);
+  await wait(10);
+  return 4800;
+}
+
+for (const sku of ["rice-5kg", "beans-2kg"]) {
+  let step = "before";
+  getPrice(sku).then((price) => console.log(sku, price, step));
+  step = "after";
+}
+</solution>
+<expected>
+rice-5kg 9500 after
+beans-2kg 4800 after
+</expected>
+<explain><p>Promise handlers always run after the current synchronous code, even when the value is ready at once. So the order is the same for a cache hit and a cache miss.</p></explain>
+</question>
+
+<question id="prom-thenable-adopt-choice" type="choice">
+<q>Which of these does <strong>not</strong> check its argument for a <code>then</code> method and adopt it?</q>
+<option><code>await value</code></option>
+<option><code>Promise.resolve(value)</code></option>
+<option>Returning <code>value</code> from a <code>then</code> handler</option>
+<option correct><code>console.log(value)</code></option>
+<explain><p>Adoption happens wherever a promise is resolved with a value: <code>await</code>, <code>Promise.resolve</code>, the executor's <code>resolve</code>, returning from a handler or an async function. Logging a value just prints it.</p></explain>
+</question>
+
+<question id="prom-util-promisify" type="choice">
+<q>In Node.js, which is the best way to read a file with <code>await</code>?</q>
+<option>Write your own promisify around <code>fs.readFile</code></option>
+<option>Wrap <code>fs.readFileSync</code> in <code>new Promise</code></option>
+<option correct>Import <code>readFile</code> from <code>node:fs/promises</code></option>
+<option>Pass <code>await</code> as the callback to <code>fs.readFile</code></option>
+<explain><p>Node ships promise versions of its APIs (<code>node:fs/promises</code>, <code>node:timers/promises</code>). Use <code>util.promisify</code> or your own wrapper only for callback APIs that have no promise version. Wrapping the sync version still blocks the thread.</p></explain>
+</question>

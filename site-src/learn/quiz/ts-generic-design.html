@@ -1,0 +1,740 @@
+<question id="gd-appear-twice" type="choice">
+<q>Which signature has a type parameter that does <strong>not</strong> earn its place?</q>
+<option><code>function first&lt;T&gt;(items: readonly T[]): T | undefined</code></option>
+<option correct><code>function logAll&lt;T&gt;(items: readonly T[]): void</code></option>
+<option><code>function indexBy&lt;T, K&gt;(items: readonly T[], keyOf: (item: T) =&gt; K): Map&lt;K, T&gt;</code></option>
+<option><code>function pluck&lt;T, K extends keyof T&gt;(items: readonly T[], key: K): T[K][]</code></option>
+<explain><p>In <code>logAll</code>, <code>T</code> appears once and connects nothing; <code>readonly unknown[]</code> says the same thing more simply. In the others, the type parameter links an input to an output or to another argument.</p></explain>
+</question>
+
+<question id="gd-return-only" type="choice">
+<q>Why is <code>function parseJson&lt;T&gt;(text: string): T</code> dangerous?</q>
+<option>Because generic functions are slow</option>
+<option correct>Because <code>T</code> appears only in the return type, so the caller picks any type and nothing checks it: it is <code>as T</code> in disguise</option>
+<option>Because <code>JSON.parse</code> cannot return objects</option>
+<option>Because <code>T</code> must always have a default</option>
+<explain><p>A return-only type parameter cannot be inferred from anything, so it just becomes whatever the caller writes. The honest signature returns <code>unknown</code>, followed by a guard or a validator.</p></explain>
+</question>
+
+<question id="gd-return-only-output" type="output">
+<q>This compiles. What does it print?</q>
+<code file="parse-json.ts">
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
+}
+
+const account = parseJson<{ id: string; kobo: number }>('{"id": "ACC-1", "kobo": "5000"}');
+console.log(typeof account.kobo, account.kobo + 100);
+</code>
+<option correct>string 5000100</option>
+<option>number 5100</option>
+<option>string 5100</option>
+<option>A runtime error: kobo is not a number</option>
+<explain><p>The JSON holds the string <code>"5000"</code>. The type parameter only told the compiler to call it a number, so <code>+ 100</code> joins text. Nothing checked the data.</p></explain>
+</question>
+
+<question id="gd-noinfer-purpose" type="choice">
+<q>In <code>function choose&lt;C extends string&gt;(allowed: readonly C[], fallback: NoInfer&lt;C&gt;): C</code>, what does <code>NoInfer</code> do?</q>
+<option>It turns off type checking for <code>fallback</code></option>
+<option correct>It stops TypeScript from using <code>fallback</code> to infer <code>C</code>, so <code>C</code> comes from <code>allowed</code> alone and <code>fallback</code> is only checked against it</option>
+<option>It makes <code>fallback</code> optional</option>
+<option>It converts <code>fallback</code> to a string at runtime</option>
+<explain><p>Without <code>NoInfer</code>, a fallback of <code>"GBP"</code> would widen <code>C</code> to include it. With it, <code>"GBP"</code> is rejected because it is not one of the allowed currencies.</p></explain>
+</question>
+
+<question id="gd-noinfer-output" type="output">
+<q>This compiles (no <code>NoInfer</code>). What does it print?</q>
+<code file="choose.ts">
+function choose<C extends string>(allowed: readonly C[], wanted: string, fallback: C): C {
+  return allowed.find((c) => c === wanted) ?? fallback;
+}
+
+console.log(choose(["NGN", "USD"], "USD", "GBP"), choose(["NGN", "USD"], "EUR", "GBP"));
+</code>
+<option correct>USD GBP</option>
+<option>USD NGN</option>
+<option>USD undefined</option>
+<option>GBP GBP</option>
+<explain><p><code>C</code> was inferred from both arguments, so <code>"GBP"</code> is accepted as a fallback even though it is not allowed, and it is returned when nothing matches. <code>NoInfer&lt;C&gt;</code> on the fallback turns this into a compile error.</p></explain>
+</question>
+
+<question id="gd-inference-site" type="choice">
+<q>Why is <code>groupBy(items, keyOf)</code> a better parameter order than <code>groupBy(keyOf, items)</code>?</q>
+<option>Because TypeScript cannot infer anything from callbacks</option>
+<option correct>Because <code>T</code> is inferred from <code>items</code> first, and the callback's parameter is then typed from <code>T</code>, which also gives it autocompletion</option>
+<option>Because callbacks must always come first</option>
+<option>Because arrays cannot be the second argument</option>
+<explain><p>Inference works best when a value reveals the type parameter and callbacks are then contextually typed from it. With the callback first, its parameter may have to be annotated by hand.</p></explain>
+</question>
+
+<question id="gd-too-tight" type="choice">
+<q><code>class Emitter&lt;Events extends Record&lt;string, unknown&gt;&gt;</code> rejects <code>interface BankEvents { "transfer.completed": { kobo: number } }</code>. Why?</q>
+<option>Interfaces cannot have quoted property names</option>
+<option correct><code>Record&lt;string, unknown&gt;</code> requires an index signature (any string key), and an interface only promises its listed keys</option>
+<option>Event maps must be classes</option>
+<option>The payload must be a primitive</option>
+<explain><p>The constraint asked for more than the class needs. It only uses <code>keyof Events</code> and <code>Events[K]</code>, so <code>Events extends object</code> is enough and accepts interfaces.</p></explain>
+</question>
+
+<question id="gd-constraint-principle" type="choice">
+<q>What is a good rule for choosing a constraint on a type parameter?</q>
+<option>Always use <code>extends any</code> so every caller is accepted</option>
+<option correct>Require exactly what the implementation uses, and nothing more</option>
+<option>Always require <code>Record&lt;string, unknown&gt;</code></option>
+<option>Never use constraints; check the types at runtime</option>
+<explain><p>Too loose and the code cannot do its job (you cannot read <code>item.id</code>); too tight and good types are refused. <code>T extends { id: Id }</code> for a repository is the right size.</p></explain>
+</question>
+
+<question id="gd-defaults-order" type="choice">
+<q>Which declaration is <strong>invalid</strong>?</q>
+<option><code>type Result&lt;T, E = string&gt; = …</code></option>
+<option><code>interface Repository&lt;T, Id = string&gt; { … }</code></option>
+<option correct><code>type Page&lt;C = string, T&gt; = …</code></option>
+<option><code>class Cache&lt;K = string, V = unknown&gt; { … }</code></option>
+<explain><p>Type parameters with defaults must come after those without, just like optional function parameters. <code>C = string</code> before the required <code>T</code> is an error.</p></explain>
+</question>
+
+<question id="gd-defaults-meaning" type="choice">
+<q>With <code>interface Repository&lt;TEntity, TId = string, TCreateInput = Partial&lt;TEntity&gt;&gt;</code>, what is <code>Repository&lt;Account&gt;</code>?</q>
+<option>An error: all three type arguments are required</option>
+<option correct><code>Repository&lt;Account, string, Partial&lt;Account&gt;&gt;</code></option>
+<option><code>Repository&lt;Account, unknown, unknown&gt;</code></option>
+<option><code>Repository&lt;Account, Account, Account&gt;</code></option>
+<explain><p>Missing type arguments take their defaults, and a default may use earlier parameters: <code>Partial&lt;TEntity&gt;</code> becomes <code>Partial&lt;Account&gt;</code>. That is how <code>@zudojs/database</code> keeps its five-parameter contract short to use.</p></explain>
+</question>
+
+<question id="gd-keyof-findby" type="choice">
+<q>What does <code>findBy&lt;K extends keyof T&gt;(key: K, value: T[K])</code> guarantee?</q>
+<option>That <code>value</code> is a string</option>
+<option correct>That <code>key</code> is one of <code>T</code>'s property names and <code>value</code> has that property's type</option>
+<option>That the result is never empty</option>
+<option>That <code>key</code> exists in the database at runtime</option>
+<explain><p><code>K</code> is inferred from the key, and <code>T[K]</code> is the type of that property. So <code>findBy("frozen", "yes")</code> is refused when <code>frozen</code> is a boolean.</p></explain>
+</question>
+
+<question id="gd-findby-output" type="output">
+<q>What does this print?</q>
+<code file="find-by.ts">
+function findBy<T, K extends keyof T>(items: readonly T[], key: K, value: T[K]): T[] {
+  return items.filter((item) => item[key] === value);
+}
+
+const accounts = [
+  { id: "ACC-1", owner: "Ada", frozen: false },
+  { id: "ACC-2", owner: "Tunde", frozen: true },
+  { id: "ACC-3", owner: "Eve", frozen: true },
+];
+
+console.log(findBy(accounts, "frozen", true).map((a) => a.owner).join(","), findBy(accounts, "owner", "Ada").length);
+</code>
+<option correct>Tunde,Eve 1</option>
+<option>Ada 1</option>
+<option>Tunde,Eve 3</option>
+<option>Tunde 1</option>
+<explain><p>Two accounts are frozen, and one belongs to Ada. The generic keeps the full element type, so <code>a.owner</code> is known on the results.</p></explain>
+</question>
+
+<question id="gd-omit-id" type="choice">
+<q>Why does the repository's <code>create</code> take <code>Omit&lt;T, "id"&gt;</code> and <code>update</code> take <code>Partial&lt;Omit&lt;T, "id"&gt;&gt;</code>?</q>
+<option>To make the methods faster</option>
+<option correct>So ids are always generated by the repository and can never be chosen or changed by a caller</option>
+<option>Because <code>id</code> is not allowed in TypeScript objects</option>
+<option>So the caller must pass every field when updating</option>
+<explain><p>Removing <code>id</code> from the input types makes "choose your own id" and "change an id" compile errors. <code>Partial</code> lets an update change only some fields.</p></explain>
+</question>
+
+<question id="gd-update-order" type="output">
+<q>A patch arrived from JSON with an <code>id</code> the type did not allow. What does this print?</q>
+<code file="spread-order.ts">
+const current = { id: "ACC-1", owner: "Ada", kobo: 500 };
+const patch: unknown = JSON.parse('{"kobo": 900, "id": "ACC-666"}');
+
+const next = { ...current, ...(patch as object), id: current.id };
+console.log(next.id, next.kobo);
+</code>
+<option correct>ACC-1 900</option>
+<option>ACC-666 900</option>
+<option>ACC-1 500</option>
+<option>ACC-666 500</option>
+<explain><p>Later spreads win. Putting <code>id</code> last means a smuggled id in the patch is always overwritten, even when the types were bypassed at runtime.</p></explain>
+</question>
+
+<question id="gd-justified-as" type="choice">
+<q>In the generic repository, <code>create</code> builds <code>{ ...input, id: this.nextId() } as T</code>. Why is that assertion considered justified?</q>
+<option>Because every assertion inside a class is safe</option>
+<option correct>Because <code>Omit&lt;T, "id"&gt;</code> plus an <code>id</code> is a <code>T</code> for real entities, but TypeScript cannot prove it for an unknown generic <code>T</code>; the proof is local and tested</option>
+<option>Because <code>as T</code> validates the object at runtime</option>
+<option>Because <code>T</code> is always <code>any</code> inside a generic class</option>
+<explain><p>This is the "proof the compiler cannot follow" case. It sits in one place in shared code, where tests cover it, instead of being scattered across callers.</p></explain>
+</question>
+
+<question id="gd-find-missing" type="choice">
+<q>Why should a generic <code>findById</code> return <code>T | undefined</code> rather than throw when nothing is found?</q>
+<option>Because throwing is not allowed in async functions</option>
+<option correct>Because "not found" is a normal outcome, and only the caller knows whether it is an error in that situation</option>
+<option>Because <code>undefined</code> is faster than an exception</option>
+<option>Because TypeScript cannot type thrown errors</option>
+<explain><p>A lookup screen might show "no such account"; a transfer might treat it as a failure. Returning <code>T | undefined</code>, like <code>Map.get</code>, lets each caller decide, and the type forces them to.</p></explain>
+</question>
+
+<question id="gd-andthen-errors" type="choice">
+<q>What is the error type of <code>andThen(r1, fn)</code> when <code>r1: Result&lt;number, "invalid-amount"&gt;</code> and <code>fn</code> returns <code>Result&lt;Account, "account-not-found"&gt;</code>?</q>
+<option><code>"invalid-amount"</code></option>
+<option><code>"account-not-found"</code></option>
+<option correct><code>"invalid-amount" | "account-not-found"</code></option>
+<option><code>string</code></option>
+<explain><p><code>andThen</code> returns <code>Result&lt;U, E | F&gt;</code>: the chain can fail at either step, so the error type is the union of both. The types collect the possible failures for you.</p></explain>
+</question>
+
+<question id="gd-const-err" type="choice">
+<q>Why is <code>err</code> declared as <code>function err&lt;const E&gt;(error: E): Result&lt;never, E&gt;</code>?</q>
+<option>So errors cannot be changed after they are created</option>
+<option correct>So <code>err("insufficient-funds")</code> keeps the literal type <code>"insufficient-funds"</code> instead of widening to <code>string</code></option>
+<option>Because <code>const</code> is required for every generic function</option>
+<option>So <code>err</code> can only be called once</option>
+<explain><p>A const type parameter infers the narrowest type, like an <code>as const</code> at the call site. Literal error codes are what make <code>E</code> a useful, closed union.</p></explain>
+</question>
+
+<question id="gd-result-map-output" type="output">
+<q>What does this print?</q>
+<code file="result-map.ts">
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+function map<T, U, E>(result: Result<T, E>, fn: (value: T) => U): Result<U, E> {
+  return result.ok ? { ok: true, value: fn(result.value) } : result;
+}
+
+const good: Result<number, string> = { ok: true, value: 250000 };
+const bad: Result<number, string> = { ok: false, error: "account-not-found" };
+const toNaira = (kobo: number) => `₦${kobo / 100}`;
+
+console.log(map(good, toNaira), map(bad, toNaira));
+</code>
+<option correct>{ ok: true, value: '₦2500' } { ok: false, error: 'account-not-found' }</option>
+<option>{ ok: true, value: '₦2500' } { ok: false, error: '₦NaN' }</option>
+<option>{ ok: true, value: 2500 } { ok: false, error: 'account-not-found' }</option>
+<option>₦2500 account-not-found</option>
+<explain><p><code>map</code> transforms the value of a success and passes a failure through untouched. The function never runs for the failed result.</p></explain>
+</question>
+
+<question id="gd-failure-reuse" type="choice">
+<q>In a function returning <code>Result&lt;{ balance: number }, TransferError&gt;</code>, why may you write <code>if (!from.ok) return from;</code> when <code>from</code> is <code>Result&lt;Account, "account-frozen"&gt;</code>?</q>
+<option>Because TypeScript ignores return types inside <code>if</code> blocks</option>
+<option correct>Because a failed result has no value, and its error code is one of the <code>TransferError</code> codes, so it fits the wider type</option>
+<option>Because <code>Account</code> and <code>{ balance: number }</code> are the same</option>
+<option>Because <code>return</code> converts the value automatically</option>
+<explain><p>After narrowing, <code>from</code> is <code>{ ok: false; error: "account-frozen" }</code>. That object is a valid failed <code>Result</code> of any value type whose error union includes <code>"account-frozen"</code>.</p></explain>
+</question>
+
+<question id="gd-record-messages" type="choice">
+<q>What does the parameter <code>messages: Record&lt;E, string&gt;</code> in <code>toResponse&lt;T, E extends string&gt;(result, messages)</code> enforce?</q>
+<option>That messages are shorter than 100 characters</option>
+<option correct>That there is a message for every error code in <code>E</code>, so a new code cannot reach clients without one</option>
+<option>That <code>E</code> is <code>string</code></option>
+<option>Nothing; <code>Record</code> is only documentation</option>
+<explain><p><code>Record&lt;E, string&gt;</code> is an object type with exactly one required property per member of <code>E</code>. Leaving one out is a compile error at the endpoint.</p></explain>
+</question>
+
+<question id="gd-cursor-why" type="choice">
+<q>Why do transaction-history APIs often use a cursor (<code>nextCursor</code>) instead of page numbers?</q>
+<option>Cursors are shorter than numbers</option>
+<option correct>New transactions arriving between requests shift numbered pages, so items get repeated or skipped; a cursor continues after the last item seen</option>
+<option>Page numbers cannot be typed in TypeScript</option>
+<option>Cursors make responses smaller</option>
+<explain><p>With offsets, a new item at the top pushes everything down one position. A cursor names a specific item, so the next page starts right after it regardless of inserts.</p></explain>
+</question>
+
+<question id="gd-paginate-output" type="output">
+<q>What does this print?</q>
+<code file="paginate.ts">
+interface Page<T> {
+  readonly items: readonly T[];
+  readonly nextCursor: string | null;
+}
+
+function paginate<T extends { id: string }>(all: readonly T[], limit: number, after: string | null = null): Page<T> {
+  const index = after === null ? -1 : all.findIndex((item) => item.id === after);
+  const items = all.slice(index + 1, index + 1 + limit);
+  const last = items.at(-1);
+  return { items, nextCursor: index + 1 + limit < all.length && last ? last.id : null };
+}
+
+const txs = [{ id: "T1" }, { id: "T2" }, { id: "T3" }];
+const p1 = paginate(txs, 2);
+const p2 = paginate(txs, 2, p1.nextCursor);
+console.log(p1.items.length, p1.nextCursor, p2.items.map((t) => t.id), p2.nextCursor);
+</code>
+<option correct>2 T2 [ 'T3' ] null</option>
+<option>2 T3 [ 'T3' ] null</option>
+<option>2 T2 [ 'T2', 'T3' ] null</option>
+<option>2 T2 [ 'T3' ] T3</option>
+<explain><p>The first page holds T1 and T2, and its cursor is the last id, T2. The second page starts after T2, holds only T3, and there is nothing more, so its cursor is <code>null</code>.</p></explain>
+</question>
+
+<question id="gd-mappage" type="choice">
+<q>What does <code>mapPage&lt;T, U&gt;(page: Page&lt;T&gt;, fn: (item: T) =&gt; U): Page&lt;U&gt;</code> protect against?</q>
+<option>Pages with too many items</option>
+<option correct>Endpoints that transform items (for example to public summaries) and forget to copy the paging metadata such as <code>nextCursor</code></option>
+<option>Items of the wrong type being stored in the database</option>
+<option>Slow <code>map</code> calls</option>
+<explain><p>The helper changes only the items and keeps everything else, so every endpoint that reshapes a page keeps its cursor by construction.</p></explain>
+</question>
+
+<question id="gd-api-response" type="choice">
+<q>What makes <code>ApiResponse&lt;T, E&gt;</code> a good envelope for every endpoint?</q>
+<option>It lets each endpoint invent its own shape</option>
+<option correct>A <code>status</code> discriminant with either typed <code>data</code> or an <code>error</code> whose <code>code</code> is a closed union, so clients handle every endpoint the same way</option>
+<option>It avoids using HTTP status codes</option>
+<option>It hides errors from the client</option>
+<explain><p>One discriminated union shape means one client helper can unwrap every response, and the error codes per endpoint are known at compile time.</p></explain>
+</question>
+
+<question id="gd-cache-undefined" type="choice">
+<q>Why does <code>TtlCache&lt;K, V extends {} | null&gt;</code> forbid <code>undefined</code> as a value type?</q>
+<option>Because <code>Map</code> cannot store <code>undefined</code></option>
+<option correct>Because <code>get</code> returns <code>undefined</code> for a miss, so a cached <code>undefined</code> would look like a miss and the loader would run every time</option>
+<option>Because <code>{}</code> means "empty object"</option>
+<option>Because <code>undefined</code> cannot be serialised</option>
+<explain><p><code>{}</code> is every value except <code>null</code> and <code>undefined</code>; adding <code>| null</code> allows <code>null</code> back. The constraint turns an ambiguous API into a compile error.</p></explain>
+</question>
+
+<question id="gd-cache-output" type="output">
+<q>What does this print?</q>
+<code file="cache.ts">
+class TtlCache<K, V extends {} | null> {
+  private readonly entries = new Map<K, { value: V; expiresAt: number }>();
+  constructor(private readonly ttlMs: number, private readonly now: () => number) {}
+
+  async getOrLoad(key: K, load: (key: K) => Promise<V>): Promise<V> {
+    const entry = this.entries.get(key);
+    if (entry !== undefined && entry.expiresAt > this.now()) return entry.value;
+    const value = await load(key);
+    this.entries.set(key, { value, expiresAt: this.now() + this.ttlMs });
+    return value;
+  }
+}
+
+let clock = 0;
+let calls = 0;
+const rates = new TtlCache<string, number>(1000, () => clock);
+const load = async () => ++calls * 100;
+
+const a = await rates.getOrLoad("USD/NGN", load);
+clock = 500;
+const b = await rates.getOrLoad("USD/NGN", load);
+clock = 1500;
+const c = await rates.getOrLoad("USD/NGN", load);
+console.log(a, b, c, calls);
+</code>
+<option correct>100 100 200 2</option>
+<option>100 200 300 3</option>
+<option>100 100 100 1</option>
+<option>100 200 200 2</option>
+<explain><p>The first call loads and caches until time 1000. At 500 the entry is still fresh. At 1500 it has expired, so the loader runs a second time.</p></explain>
+</question>
+
+<question id="gd-cache-object-key" type="output">
+<q>What does this print?</q>
+<code file="object-key.ts">
+const cache = new Map<{ from: string; to: string }, number>();
+cache.set({ from: "USD", to: "NGN" }, 1550);
+
+const byString = new Map<string, number>();
+byString.set("USD/NGN", 1550);
+
+console.log(cache.get({ from: "USD", to: "NGN" }), byString.get("USD/NGN"));
+</code>
+<option correct>undefined 1550</option>
+<option>1550 1550</option>
+<option>1550 undefined</option>
+<option>undefined undefined</option>
+<explain><p>Map compares object keys by identity: the second object literal is a different object, so the lookup misses. Composite cache keys are safer as strings.</p></explain>
+</question>
+
+<question id="gd-clock" type="choice">
+<q>Why does the cache take a <code>now: () =&gt; number</code> parameter defaulting to <code>Date.now</code>?</q>
+<option>Because <code>Date.now</code> is not available in Node.js</option>
+<option correct>So tests can move time forward with a fake clock, instead of waiting for entries to expire</option>
+<option>So the cache can store dates</option>
+<option>Because generic classes cannot call global functions</option>
+<explain><p>Injecting the clock makes time-based behaviour deterministic and fast to test, while production code simply uses the default.</p></explain>
+</question>
+
+<question id="gd-event-map" type="choice">
+<q>In <code>emit&lt;K extends keyof Events&gt;(name: K, payload: Events[K])</code>, what does <code>Events[K]</code> give?</q>
+<option>The name of the event</option>
+<option correct>The payload type for exactly the event named by <code>K</code></option>
+<option>A union of all payload types</option>
+<option>The listener function type</option>
+<explain><p><code>K</code> is inferred from the name you pass, and indexing the event map with it picks that event's payload type. Wrong names and wrong payloads both become compile errors.</p></explain>
+</question>
+
+<question id="gd-emitter-output" type="output">
+<q>What does this print?</q>
+<code file="emitter.ts">
+class TypedEmitter<Events extends object> {
+  private readonly listeners: { [K in keyof Events]?: Array<(payload: Events[K]) => void> } = {};
+
+  on<K extends keyof Events>(name: K, listener: (payload: Events[K]) => void): () => void {
+    const list = (this.listeners[name] ??= []);
+    list.push(listener);
+    return () => list.splice(list.indexOf(listener), 1);
+  }
+
+  emit<K extends keyof Events>(name: K, payload: Events[K]): number {
+    const list = this.listeners[name] ?? [];
+    for (const listener of [...list]) listener(payload);
+    return list.length;
+  }
+}
+
+interface BankEvents {
+  "transfer.completed": { kobo: number };
+}
+
+const events = new TypedEmitter<BankEvents>();
+const stop = events.on("transfer.completed", (e) => console.log("sms", e.kobo));
+events.on("transfer.completed", (e) => console.log("audit", e.kobo));
+events.emit("transfer.completed", { kobo: 500 });
+stop();
+console.log(events.emit("transfer.completed", { kobo: 700 }));
+</code>
+<option correct>sms 500
+audit 500
+audit 700
+1</option>
+<option>sms 500
+audit 500
+sms 700
+audit 700
+2</option>
+<option>sms 500
+audit 500
+1</option>
+<option>audit 500
+audit 700
+1</option>
+<explain><p>Both listeners run for the first event. <code>stop()</code> removes the SMS listener, so the second event only reaches the audit listener, and <code>emit</code> reports one listener.</p></explain>
+</question>
+
+<question id="gd-depend-interface" type="choice">
+<q>Why does <code>TransferService</code> take a <code>Repository&lt;Account&gt;</code> rather than a <code>MemoryRepository&lt;Account&gt;</code>?</q>
+<option>Because classes cannot be constructor parameters</option>
+<option correct>So a database-backed repository or a test fake can be passed without changing the service</option>
+<option>Because interfaces are faster than classes</option>
+<option>Because <code>MemoryRepository</code> cannot be generic</option>
+<explain><p>Depending on the interface keeps the service independent of storage. Anything that implements <code>Repository&lt;Account&gt;</code> fits.</p></explain>
+</question>
+
+<question id="gd-ts-expect-error" type="choice">
+<q>A type-test file contains <code>// @ts-expect-error</code> above <code>accounts.findBy("frozen", "yes")</code>. What happens if someone loosens <code>findBy</code> so the line compiles?</q>
+<option>Nothing; the comment is ignored</option>
+<option correct><code>tsc</code> reports an unused <code>@ts-expect-error</code> directive, so the type test fails</option>
+<option>The line is deleted from the output</option>
+<option>The program throws at runtime</option>
+<explain><p><code>@ts-expect-error</code> requires an error on the next line. When the error disappears, the directive itself becomes an error, which is exactly how type-level tests catch APIs that stopped refusing bad calls.</p></explain>
+</question>
+
+<question id="gd-two-types" type="choice">
+<q>Why should a generic repository's runtime tests use at least two different entity types, such as one with string ids and one with number ids?</q>
+<option>Because Vitest requires two types per test</option>
+<option correct>Because a bug may appear only for one kind of type argument, for example a lookup that turns ids into strings</option>
+<option>Because TypeScript erases generics only for the first type</option>
+<option>It is not useful; one type proves the code works for all</option>
+<explain><p>Generic code runs the same JavaScript for every type, but the values differ. <code>Map.get("101")</code> misses a number key <code>101</code>, and only a test with numeric ids shows it.</p></explain>
+</question>
+
+<question id="gd-code-settings" type="code" file="settings.ts">
+<q><p>Replace the return-only generic with a <code>keyof</code> design: <code>getSetting&lt;K extends keyof Settings&gt;(key: K): Settings[K]</code>, with no assertion.</p></q>
+<starter>
+interface Settings {
+  dailyLimitKobo: number;
+  currency: "NGN" | "USD";
+  smsAlerts: boolean;
+}
+
+const store: Record<string, unknown> = { dailyLimitKobo: 50000000, currency: "NGN", smsAlerts: true };
+
+function getSetting<T>(key: string): T {
+  return store[key] as T;
+}
+
+console.log(getSetting<string>("dailyLimitKobo"));
+</starter>
+<solution>
+interface Settings {
+  dailyLimitKobo: number;
+  currency: "NGN" | "USD";
+  smsAlerts: boolean;
+}
+
+const store: Settings = { dailyLimitKobo: 50000000, currency: "NGN", smsAlerts: true };
+
+function getSetting<K extends keyof Settings>(key: K): Settings[K] {
+  return store[key];
+}
+
+console.log(getSetting("dailyLimitKobo") / 100, getSetting("currency").toLowerCase(), getSetting("smsAlerts"));
+</solution>
+<expected>500000 ngn true</expected>
+<explain><p>The key now decides the type: <code>Settings[K]</code> is <code>number</code> for the limit and <code>"NGN" | "USD"</code> for the currency. Typing <code>store</code> as <code>Settings</code> makes the lookup checked, so no <code>as</code> is needed.</p></explain>
+</question>
+
+<question id="gd-code-unwrap-or" type="code" file="unwrap-or.ts">
+<q><p>Write <code>unwrapOr&lt;T, E&gt;(result: Result&lt;T, E&gt;, fallback: NoInfer&lt;T&gt;): T</code> and use it to show a balance, or 0 when the lookup failed.</p></q>
+<starter>
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+// write unwrapOr here
+
+const found: Result<number, "not-found"> = { ok: true, value: 125000 };
+const missing: Result<number, "not-found"> = { ok: false, error: "not-found" };
+console.log(found, missing);
+</starter>
+<solution>
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+function unwrapOr<T, E>(result: Result<T, E>, fallback: NoInfer<T>): T {
+  return result.ok ? result.value : fallback;
+}
+
+const found: Result<number, "not-found"> = { ok: true, value: 125000 };
+const missing: Result<number, "not-found"> = { ok: false, error: "not-found" };
+console.log(unwrapOr(found, 0), unwrapOr(missing, 0));
+</solution>
+<expected>125000 0</expected>
+<explain><p><code>NoInfer</code> makes the result decide <code>T</code>, so a fallback of the wrong type (say <code>"none"</code>) is a compile error instead of widening <code>T</code> to <code>number | string</code>.</p></explain>
+</question>
+
+<question id="gd-code-and-then" type="code" file="and-then.ts">
+<q><p>Write <code>andThen</code>: if the result succeeded, call <code>fn</code> with its value and return what <code>fn</code> returns; otherwise return the failure unchanged. Then chain the two checks.</p></q>
+<starter>
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+function andThen<T, U, E, F>(result: Result<T, E>, fn: (value: T) => Result<U, F>): Result<U, E | F> {
+  return result as never;
+}
+
+function checkAmount(kobo: number): Result<number, "invalid-amount"> {
+  return kobo > 0 ? { ok: true, value: kobo } : { ok: false, error: "invalid-amount" };
+}
+
+function checkLimit(kobo: number): Result<number, "over-limit"> {
+  return kobo <= 5000000 ? { ok: true, value: kobo } : { ok: false, error: "over-limit" };
+}
+
+for (const kobo of [250000, -5, 9000000]) {
+  console.log(andThen(checkAmount(kobo), checkLimit));
+}
+</starter>
+<solution>
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+function andThen<T, U, E, F>(result: Result<T, E>, fn: (value: T) => Result<U, F>): Result<U, E | F> {
+  return result.ok ? fn(result.value) : result;
+}
+
+function checkAmount(kobo: number): Result<number, "invalid-amount"> {
+  return kobo > 0 ? { ok: true, value: kobo } : { ok: false, error: "invalid-amount" };
+}
+
+function checkLimit(kobo: number): Result<number, "over-limit"> {
+  return kobo <= 5000000 ? { ok: true, value: kobo } : { ok: false, error: "over-limit" };
+}
+
+for (const kobo of [250000, -5, 9000000]) {
+  console.log(andThen(checkAmount(kobo), checkLimit));
+}
+</solution>
+<expected>
+{ ok: true, value: 250000 }
+{ ok: false, error: 'invalid-amount' }
+{ ok: false, error: 'over-limit' }
+</expected>
+<explain><p>The failure branch returns <code>result</code> as it is: a failed result has no value, so it fits <code>Result&lt;U, E | F&gt;</code>. The error type of the chain is the union of both steps' codes.</p></explain>
+</question>
+
+<question id="gd-code-map-page" type="code" file="map-page.ts">
+<q><p>Write <code>mapPage&lt;T, U&gt;</code> that transforms the items and keeps <code>nextCursor</code>. Use it to turn accounts into public summaries <code>{ id, owner }</code>.</p></q>
+<starter>
+interface Page<T> {
+  readonly items: readonly T[];
+  readonly nextCursor: string | null;
+}
+
+const page: Page<{ id: string; owner: string; kobo: number }> = {
+  items: [{ id: "ACC-1", owner: "Ada", kobo: 500000 }],
+  nextCursor: "ACC-1",
+};
+
+console.log(page);
+</starter>
+<solution>
+interface Page<T> {
+  readonly items: readonly T[];
+  readonly nextCursor: string | null;
+}
+
+function mapPage<T, U>(page: Page<T>, fn: (item: T) => U): Page<U> {
+  return { ...page, items: page.items.map(fn) };
+}
+
+const page: Page<{ id: string; owner: string; kobo: number }> = {
+  items: [{ id: "ACC-1", owner: "Ada", kobo: 500000 }],
+  nextCursor: "ACC-1",
+};
+
+console.log(mapPage(page, (account) => ({ id: account.id, owner: account.owner })));
+</solution>
+<expected>{ items: [ { id: 'ACC-1', owner: 'Ada' } ], nextCursor: 'ACC-1' }</expected>
+<explain><p>Spreading the page keeps every metadata field, and only <code>items</code> is replaced. <code>U</code> is inferred from the callback's return value, so the result is a <code>Page&lt;{ id: string; owner: string }&gt;</code> with the balance removed.</p></explain>
+</question>
+
+<question id="gd-code-to-response" type="code" file="to-response.ts">
+<q><p>Write <code>toResponse</code>: a success becomes <code>{ status: "success", data }</code>, a failure becomes <code>{ status: "error", error: { code, message } }</code> with the message from the <code>messages</code> record.</p></q>
+<starter>
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+type ApiResponse<T, E extends string> =
+  | { status: "success"; data: T }
+  | { status: "error"; error: { code: E; message: string } };
+
+function toResponse<T, E extends string>(result: Result<T, E>, messages: Record<E, string>): ApiResponse<T, E> {
+  return { status: "success", data: undefined as never };
+}
+
+type LookupError = "not-found" | "frozen";
+const messages: Record<LookupError, string> = { "not-found": "No such account", frozen: "Account is frozen" };
+const found: Result<string, LookupError> = { ok: true, value: "ACC-1" };
+const frozen: Result<string, LookupError> = { ok: false, error: "frozen" };
+
+console.log(JSON.stringify(toResponse(found, messages)));
+console.log(JSON.stringify(toResponse(frozen, messages)));
+</starter>
+<solution>
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+type ApiResponse<T, E extends string> =
+  | { status: "success"; data: T }
+  | { status: "error"; error: { code: E; message: string } };
+
+function toResponse<T, E extends string>(result: Result<T, E>, messages: Record<E, string>): ApiResponse<T, E> {
+  if (result.ok) return { status: "success", data: result.value };
+  return { status: "error", error: { code: result.error, message: messages[result.error] } };
+}
+
+type LookupError = "not-found" | "frozen";
+const messages: Record<LookupError, string> = { "not-found": "No such account", frozen: "Account is frozen" };
+const found: Result<string, LookupError> = { ok: true, value: "ACC-1" };
+const frozen: Result<string, LookupError> = { ok: false, error: "frozen" };
+
+console.log(JSON.stringify(toResponse(found, messages)));
+console.log(JSON.stringify(toResponse(frozen, messages)));
+</solution>
+<expected>
+{"status":"success","data":"ACC-1"}
+{"status":"error","error":{"code":"frozen","message":"Account is frozen"}}
+</expected>
+<explain><p>After <code>result.ok</code> is checked, <code>result.error</code> has type <code>E</code>, so <code>messages[result.error]</code> is a <code>string</code> without any assertion: <code>Record&lt;E, string&gt;</code> has a key for every code.</p></explain>
+</question>
+
+<question id="gd-code-once" type="code" file="once.ts">
+<q><p>Add <code>once</code> to the emitter: it subscribes a listener that removes itself before running, so it only ever sees the first event.</p></q>
+<starter>
+class TypedEmitter<Events extends object> {
+  private readonly listeners: { [K in keyof Events]?: Array<(payload: Events[K]) => void> } = {};
+
+  on<K extends keyof Events>(name: K, listener: (payload: Events[K]) => void): () => void {
+    const list = (this.listeners[name] ??= []);
+    list.push(listener);
+    return () => {
+      const index = list.indexOf(listener);
+      if (index >= 0) list.splice(index, 1);
+    };
+  }
+
+  once<K extends keyof Events>(name: K, listener: (payload: Events[K]) => void): void {
+    this.on(name, listener);
+  }
+
+  emit<K extends keyof Events>(name: K, payload: Events[K]): void {
+    for (const listener of [...(this.listeners[name] ?? [])]) listener(payload);
+  }
+}
+
+const events = new TypedEmitter<{ "account.opened": { owner: string } }>();
+events.once("account.opened", (e) => console.log(`welcome ${e.owner}`));
+events.emit("account.opened", { owner: "Ada" });
+events.emit("account.opened", { owner: "Tunde" });
+</starter>
+<solution>
+class TypedEmitter<Events extends object> {
+  private readonly listeners: { [K in keyof Events]?: Array<(payload: Events[K]) => void> } = {};
+
+  on<K extends keyof Events>(name: K, listener: (payload: Events[K]) => void): () => void {
+    const list = (this.listeners[name] ??= []);
+    list.push(listener);
+    return () => {
+      const index = list.indexOf(listener);
+      if (index >= 0) list.splice(index, 1);
+    };
+  }
+
+  once<K extends keyof Events>(name: K, listener: (payload: Events[K]) => void): void {
+    const stop = this.on(name, (payload) => {
+      stop();
+      listener(payload);
+    });
+  }
+
+  emit<K extends keyof Events>(name: K, payload: Events[K]): void {
+    for (const listener of [...(this.listeners[name] ?? [])]) listener(payload);
+  }
+}
+
+const events = new TypedEmitter<{ "account.opened": { owner: string } }>();
+events.once("account.opened", (e) => console.log(`welcome ${e.owner}`));
+events.emit("account.opened", { owner: "Ada" });
+events.emit("account.opened", { owner: "Tunde" });
+</solution>
+<expected>welcome Ada</expected>
+<explain><p>The wrapper calls the unsubscribe function returned by <code>on</code> before running your listener. Because <code>emit</code> iterates over a copy, removing a listener mid-loop is safe.</p></explain>
+</question>
+
+<question id="gd-code-all" type="code" file="all.ts">
+<q><p>Write <code>all&lt;T, E&gt;(results)</code>: return <code>{ ok: true, value: [...] }</code> with every value when all succeeded, otherwise the first failure unchanged.</p></q>
+<starter>
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+function all<T, E>(results: readonly Result<T, E>[]): Result<T[], E> {
+  return { ok: true, value: [] };
+}
+
+const check = (kobo: number): Result<number, "invalid-amount"> =>
+  kobo > 0 ? { ok: true, value: kobo } : { ok: false, error: "invalid-amount" };
+
+console.log(all([5000, 1200].map(check)));
+console.log(all([5000, -1, 0].map(check)));
+</starter>
+<solution>
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+function all<T, E>(results: readonly Result<T, E>[]): Result<T[], E> {
+  const values: T[] = [];
+  for (const result of results) {
+    if (!result.ok) return result;
+    values.push(result.value);
+  }
+  return { ok: true, value: values };
+}
+
+const check = (kobo: number): Result<number, "invalid-amount"> =>
+  kobo > 0 ? { ok: true, value: kobo } : { ok: false, error: "invalid-amount" };
+
+console.log(all([5000, 1200].map(check)));
+console.log(all([5000, -1, 0].map(check)));
+</solution>
+<expected>
+{ ok: true, value: [ 5000, 1200 ] }
+{ ok: false, error: 'invalid-amount' }
+</expected>
+<explain><p>Stop at the first failure and return it as it is; a failed result has no value, so it fits <code>Result&lt;T[], E&gt;</code>. Only when every result succeeded is the array of values returned.</p></explain>
+</question>

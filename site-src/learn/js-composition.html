@@ -1,0 +1,1254 @@
+---
+title: Inheritance and composition
+description: See why subclasses break when their parent changes, then build behaviour from small parts with wrappers, delegation, mixins and functions, and use private fields well.
+minutes: 55
+youNeed: this in depth, Prototypes in depth, and this, prototypes and classes
+youBuild: A checkout assembled from a private cart, pricing rules, a swappable payment gateway and a logging wrapper, tested with a fake gateway
+keywords: composition over inheritance, fragile base class, liskov substitution, delegation, forwarding wrapper, decorator, mixin, class expression mixin, strategy object, private fields, brand check, static members, getters and setters, dependency injection
+objectives: Explain the fragile base class problem and spot a subclass that depends on its parent's internals | Test whether a subclass really can stand in for its parent | Replace a subclass with a wrapper that delegates to the object it holds | Write mixins, name their risks, and detect method clashes | Compose behaviour from functions and small objects without losing getters or privacy | Use private fields, brand checks, static members and accessors as design tools
+---
+<section>
+<h2 id="problem">The loyalty points that doubled</h2>
+<p>A shop rewards customers with one loyalty point per item they put in the cart. The team already has a working <code>Cart</code> class, so the quickest way to add points looks like inheritance: a <code>PointsCart</code> that <em>is a</em> cart, with a points counter on top. It overrides both ways of adding items, adds the points, and then lets the parent do the real work through <code>super</code> (as in <a href="/learn/js-classes#inheritance">this, prototypes and classes</a>):</p>
+<example file="points-cart.js">
+class Cart {
+  #items = [];
+
+  addItem(item) {
+    this.#items.push(item);
+  }
+
+  addItems(items) {
+    for (const item of items) this.addItem(item);
+  }
+
+  get count() {
+    return this.#items.reduce((sum, item) => sum + item.qty, 0);
+  }
+}
+
+class PointsCart extends Cart {
+  points = 0;
+
+  addItem(item) {
+    this.points += item.qty;
+    super.addItem(item);
+  }
+
+  addItems(items) {
+    for (const item of items) this.points += item.qty;
+    super.addItems(items);
+  }
+}
+
+const cart = new PointsCart();
+cart.addItem({ sku: "RICE-5KG", qty: 1 });
+cart.addItems([
+  { sku: "OIL-1L", qty: 2 },
+  { sku: "SUGAR", qty: 1 },
+]);
+
+console.log("items:", cart.count);
+console.log("points:", cart.points);
+</example>
+<output>
+items: 4
+points: 7
+</output>
+<p>Four items, seven points. Each line of <code>PointsCart</code> looks correct, and the parent class has no bug. The problem is in <em>how the two classes interact</em>:</p>
+<ol>
+<li><code>PointsCart.addItems</code> adds 3 points for the two bulk items, then calls <code>super.addItems</code>.</li>
+<li>The parent's <code>addItems</code> calls <code>this.addItem(item)</code> for each item. <code>this</code> is still the points cart (<a href="/learn/js-this#rule">this in depth</a>), so the lookup finds the <em>override</em>, <code>PointsCart.addItem</code>, first.</li>
+<li>The override adds the same 3 points again.</li>
+</ol>
+<p>The subclass only works if it knows that <code>Cart.addItems</code> calls <code>addItem</code> internally. Say the team learns this and deletes the <code>addItems</code> override, since the parent routes everything through <code>addItem</code> anyway. Points are correct. Six months later, someone makes bulk adds faster in <code>Cart</code>:</p>
+<example file="cart-v2.js">
+class Cart {
+  #items = [];
+
+  addItem(item) {
+    this.#items.push(item);
+  }
+
+  addItems(items) {
+    this.#items.push(...items); // faster: no per-item call
+  }
+
+  get count() {
+    return this.#items.reduce((sum, item) => sum + item.qty, 0);
+  }
+}
+
+class PointsCart extends Cart {
+  points = 0;
+
+  addItem(item) {
+    this.points += item.qty;
+    super.addItem(item);
+  }
+}
+
+const cart = new PointsCart();
+cart.addItem({ sku: "RICE-5KG", qty: 1 });
+cart.addItems([
+  { sku: "OIL-1L", qty: 2 },
+  { sku: "SUGAR", qty: 1 },
+]);
+
+console.log("items:", cart.count);
+console.log("points:", cart.points);
+</example>
+<output>
+items: 4
+points: 1
+</output>
+<p>The change to <code>Cart</code> was a correct, harmless-looking refactor. No test of <code>Cart</code> fails. Yet customers now lose points on every bulk add, and nobody touched <code>PointsCart</code>. This is the <strong>fragile base class problem</strong>: a subclass can break when its parent (its <strong>base class</strong>) changes in a way that keeps the parent's own behaviour the same.</p>
+<p>This lesson is about that trade-off. <a href="/learn/js-classes#composition">this, prototypes and classes</a> gave you the rule of thumb "prefer composition". Here you learn <em>why</em>, and the tools that make it practical: wrappers that forward calls, delegation to swappable helper objects, mixins and their risks, building objects from functions, and using private fields, static members and accessors to draw clean boundaries. At the end you assemble a tested checkout from these parts.</p>
+</section>
+
+<section>
+<h2 id="coupling">What a subclass really depends on</h2>
+<p>When you write <code>class B extends A</code>, <code>B</code> gets three things from <code>A</code>, not one:</p>
+<ul>
+<li>A's <strong>public interface</strong>: the methods and properties callers use. This is the part you meant to inherit.</li>
+<li>A's <strong>implementation</strong>: the code inside those methods runs with <code>this</code> set to a <code>B</code>.</li>
+<li>A's <strong>self-calls</strong>: every <code>this.something()</code> inside A is looked up on the <code>B</code> object, so B's overrides are called from inside A's code. The points bug came from exactly this.</li>
+</ul>
+<p>Two pieces of code are <strong>coupled</strong> when a change to one can force a change to the other. A subclass is coupled to its parent's implementation details, which the parent's author is normally free to change. Private fields reduce the coupling (a subclass cannot read <code>#items</code>), but they do nothing about self-calls.</p>
+
+<h3>Can the subclass stand in for its parent?</h3>
+<p>There is a second way inheritance goes wrong. Code that accepts a <code>Cart</code> expects cart behaviour. A subclass should work everywhere its parent works; this is the <strong>Liskov substitution principle</strong>, named after the computer scientist Barbara Liskov. A saved cart that must not change after checkout looks like a special kind of cart, so someone writes:</p>
+<example file="substitution.js">
+class Cart {
+  #items = [];
+  addItem(item) {
+    this.#items.push(item);
+  }
+  get count() {
+    return this.#items.length;
+  }
+}
+
+class LockedCart extends Cart {
+  addItem() {
+    throw new Error("this cart is locked");
+  }
+}
+
+function restoreFromWishlist(cart, wishlist) {
+  for (const item of wishlist) cart.addItem(item);
+  return cart.count;
+}
+
+const wishlist = [{ sku: "KETTLE" }, { sku: "IRON" }];
+console.log(restoreFromWishlist(new Cart(), wishlist));
+
+try {
+  restoreFromWishlist(new LockedCart(), wishlist);
+} catch (error) {
+  console.log(`${error.message}, yet instanceof Cart is`, new LockedCart() instanceof Cart);
+}
+</example>
+<output>
+2
+this cart is locked, yet instanceof Cart is true
+</output>
+<p>In everyday words a locked cart "is a" cart. In behaviour it is not: it breaks a promise that <code>Cart</code> makes to its callers ("you can add items"). The test for inheritance is not whether the sentence "B is an A" sounds right, but whether <em>every caller of A</em> keeps working when handed a B. A locked cart is better modelled as a separate read-only object, or as a cart with a <code>locked</code> state that callers can check.</p>
+</section>
+
+<section>
+<h2 id="wrapper">Composition: hold an object instead of becoming one</h2>
+<p><strong>Composition</strong> means building an object out of other objects that it <em>holds</em> in its fields, instead of inheriting from them. The points feature becomes an object that <em>has</em> a cart. It gives callers the same methods, does its own work, and then <strong>forwards</strong> the call: it calls the same method on the cart it holds. An object built this way is a <strong>forwarding wrapper</strong>:</p>
+<example file="points-wrapper.js">
+class Cart {
+  #items = [];
+  addItem(item) {
+    this.#items.push(item);
+  }
+  addItems(items) {
+    this.#items.push(...items);
+  }
+  get count() {
+    return this.#items.reduce((sum, item) => sum + item.qty, 0);
+  }
+}
+
+class PointsCart {
+  #cart;
+  #points = 0;
+
+  constructor(cart) {
+    this.#cart = cart;
+  }
+
+  addItem(item) {
+    this.#points += item.qty;
+    this.#cart.addItem(item);
+  }
+
+  addItems(items) {
+    for (const item of items) this.#points += item.qty;
+    this.#cart.addItems(items);
+  }
+
+  get count() {
+    return this.#cart.count;
+  }
+
+  get points() {
+    return this.#points;
+  }
+}
+
+const cart = new PointsCart(new Cart());
+cart.addItem({ sku: "RICE-5KG", qty: 1 });
+cart.addItems([
+  { sku: "OIL-1L", qty: 2 },
+  { sku: "SUGAR", qty: 1 },
+]);
+console.log("items:", cart.count, "points:", cart.points);
+</example>
+<output>
+items: 4 points: 4
+</output>
+<p>This version is correct with <em>either</em> version of <code>Cart</code>. Whether <code>Cart.addItems</code> calls <code>addItem</code> or pushes directly, the call goes to <code>this</code> inside the cart, which is the cart itself, never the wrapper. The wrapper depends only on the cart's public methods, and those are what <code>Cart</code>'s author promises to keep stable.</p>
+<p>The price is visible too: the wrapper has to forward every method it wants to offer, including <code>count</code>. Methods you do not forward simply do not exist on the wrapper, which is often what you want: the wrapper decides its own public interface instead of inheriting everything.</p>
+
+<h3>Decorators: wrappers with the same shape</h3>
+<p>When a wrapper offers exactly the same methods as the object it wraps, callers cannot tell the difference, and you can stack wrappers. This design has a name, the <strong>decorator</strong> pattern (not to be confused with TypeScript's <code>@decorator</code> syntax). A payment gateway is a good fit, because the shop needs extra behaviour around payments (logging, retries, limits) in different combinations. A <strong>payment gateway</strong> here is any object with a <code>charge(amountKobo, reference)</code> method that takes the money:</p>
+<example file="decorators.js">
+function createFakeGateway() {
+  let calls = 0;
+  return {
+    async charge(amountKobo, reference) {
+      calls += 1;
+      if (calls === 1) throw new Error("network timeout");
+      return { reference, amountKobo, status: "paid" };
+    },
+  };
+}
+
+function withLogging(gateway, log) {
+  return {
+    async charge(amountKobo, reference) {
+      log(`charge ${reference}: ₦${amountKobo / 100}`);
+      try {
+        const receipt = await gateway.charge(amountKobo, reference);
+        log(`paid ${reference}`);
+        return receipt;
+      } catch (error) {
+        log(`failed ${reference}: ${error.message}`);
+        throw error;
+      }
+    },
+  };
+}
+
+function withRetry(gateway, attempts) {
+  return {
+    async charge(amountKobo, reference) {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await gateway.charge(amountKobo, reference);
+        } catch (error) {
+          if (attempt >= attempts) throw error;
+        }
+      }
+    },
+  };
+}
+
+const gateway = withRetry(withLogging(createFakeGateway(), console.log), 3);
+const receipt = await gateway.charge(1250000, "ORD-1001");
+console.log(receipt);
+</example>
+<output>
+charge ORD-1001: ₦12500
+failed ORD-1001: network timeout
+charge ORD-1001: ₦12500
+paid ORD-1001
+{ reference: 'ORD-1001', amountKobo: 1250000, status: 'paid' }
+</output>
+<p>The order of wrapping is a decision you can see: retry sits <em>outside</em> logging, so every attempt is logged. Swap them, <code>withLogging(withRetry(…))</code>, and you log once per payment instead. With inheritance you would need a class for each combination and each order. With wrappers it is one line.</p>
+<tip>Retrying a payment is only safe when the payment provider recognises the second attempt as the same payment, usually by the reference. Otherwise a timeout that actually succeeded gets charged twice. The API lessons come back to this as idempotency.</tip>
+</section>
+
+<section>
+<h2 id="delegation">Delegation: hand the job to a helper</h2>
+<p><strong>Delegation</strong> means an object passes part of its work to another object it holds, and uses the answer. The wrapper above delegates <em>all</em> of its work. More often an object delegates one decision that varies. A shop's delivery fee depends on the delivery option the customer picks, and the business keeps inventing new ones. Instead of a <code>switch</code> inside the checkout, or a subclass per option, the checkout holds a <strong>strategy</strong>: an object with one method, <code>feeKobo(order)</code>, that it asks for the fee:</p>
+<example file="strategy.js">
+const flatRate = {
+  name: "flat rate",
+  feeKobo: () => 250000,
+};
+
+const freeOverThreshold = {
+  name: "free over ₦50,000",
+  feeKobo: (order) => (order.subtotalKobo >= 5000000 ? 0 : 250000),
+};
+
+const byWeight = {
+  name: "by weight",
+  feeKobo: (order) => 100000 + Math.ceil(order.weightKg) * 20000,
+};
+
+class Checkout {
+  #delivery;
+
+  constructor({ delivery }) {
+    this.#delivery = delivery;
+  }
+
+  set delivery(strategy) {
+    if (typeof strategy?.feeKobo !== "function") throw new TypeError("delivery needs feeKobo()");
+    this.#delivery = strategy;
+  }
+
+  totalKobo(order) {
+    return order.subtotalKobo + this.#delivery.feeKobo(order);
+  }
+}
+
+const order = { subtotalKobo: 5200000, weightKg: 7.5 };
+const checkout = new Checkout({ delivery: flatRate });
+
+for (const strategy of [flatRate, freeOverThreshold, byWeight]) {
+  checkout.delivery = strategy;
+  console.log(`${strategy.name}: ₦${checkout.totalKobo(order) / 100}`);
+}
+
+try {
+  checkout.delivery = { name: "broken" };
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+flat rate: ₦54500
+free over ₦50,000: ₦52000
+by weight: ₦54600
+TypeError: delivery needs feeKobo()
+</output>
+<p>The checkout does not know how any fee is computed. It knows only the <strong>interface</strong> it relies on: "an object with a <code>feeKobo(order)</code> method". JavaScript does not check interfaces for you, so the setter checks the one thing that matters at the boundary. (TypeScript can describe the interface as a type, which you will do in <a href="/learn/ts-aliases-interfaces">Type aliases and interfaces</a>.) Relying on what an object can do, rather than on which class made it, is called <strong>duck typing</strong>: if it has <code>feeKobo</code>, it is a delivery strategy.</p>
+<p>JavaScript also has delegation built into the language. When a property is missing, the prototype chain hands the lookup to another object (<a href="/learn/js-prototypes#chain">Prototypes in depth</a>). That is automatic and covers every property. Explicit delegation, as in the checkout, is chosen per method, can be swapped at runtime, and is visible in the code.</p>
+</section>
+
+<section>
+<h2 id="mixins">Mixins: sharing methods without a parent</h2>
+<p>Sometimes several unrelated classes need the same small set of methods. Products, orders and customers can all be tagged ("sale", "fragile", "vip"). They have no sensible common parent, and a class can only <code>extend</code> one parent anyway. A <strong>mixin</strong> is a bundle of methods copied into a class from outside. The simplest form is an object copied onto a prototype with <code>Object.assign</code>:</p>
+<example file="mixin-assign.js">
+const Taggable = {
+  tag(label) {
+    this.tags ??= new Set();
+    this.tags.add(label);
+    return this;
+  },
+  hasTag(label) {
+    return this.tags?.has(label) ?? false;
+  },
+};
+
+const Describable = {
+  describe() {
+    return `${this.constructor.name} ${this.id}`;
+  },
+};
+
+class Product {
+  constructor(id, name) {
+    this.id = id;
+    this.name = name;
+  }
+  describe() {
+    return `${this.name} (${this.id})`;
+  }
+}
+
+class Order {
+  constructor(id) {
+    this.id = id;
+  }
+}
+
+Object.assign(Product.prototype, Taggable, Describable);
+Object.assign(Order.prototype, Taggable);
+
+const kettle = new Product("SKU-17", "Electric kettle").tag("sale");
+const order = new Order("ORD-5").tag("gift");
+
+console.log(kettle.hasTag("sale"), order.hasTag("sale"), order.hasTag("gift"));
+console.log(kettle.describe());
+</example>
+<output>
+true false true
+Product SKU-17
+</output>
+<p>Tagging works on both classes. But look at the last line: <code>Product</code> had its own <code>describe</code>, and the mixin <strong>silently replaced it</strong>, because <code>Object.assign</code> overwrites existing keys. Nothing warned anyone. Mixins have three standard risks:</p>
+<ul>
+<li><strong>Name clashes.</strong> Two mixins, or a mixin and the class, define the same name; the last one copied wins.</li>
+<li><strong>Hidden dependencies.</strong> <code>Describable</code> quietly needs <code>this.id</code>. Nothing states that requirement, so using it on an object without an <code>id</code> prints <code>undefined</code>.</li>
+<li><strong>No identity.</strong> <code>kettle instanceof Taggable</code> throws a <code>TypeError</code>, because <code>Taggable</code> is a plain object, not a function. You cannot ask "is this taggable?" except by looking for the method.</li>
+</ul>
+<p>If you use object mixins, copy them with a helper that refuses clashes, so the mistake surfaces when the program starts rather than in a customer's receipt:</p>
+<example file="safe-mixin.js">
+function mixInto(target, ...sources) {
+  for (const source of sources) {
+    for (const key of Reflect.ownKeys(source)) {
+      if (key in target) throw new Error(`mixin clash: ${String(key)} already exists`);
+      Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
+    }
+  }
+  return target;
+}
+
+class Product {
+  describe() {
+    return "product";
+  }
+}
+
+const Describable = { describe() { return "mixin"; } };
+const Taggable = { hasTag() { return false; } };
+
+mixInto(Product.prototype, Taggable);
+console.log(typeof Product.prototype.hasTag);
+
+try {
+  mixInto(Product.prototype, Describable);
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output>
+function
+mixin clash: describe already exists
+</output>
+<p>It copies descriptors instead of values (<a href="/learn/js-objects-deep#descriptors">Objects in depth</a>), so getters in a mixin stay getters. <code>key in target</code> also looks along the prototype chain, which catches clashes with inherited methods such as <code>toString</code>.</p>
+
+<h3>Class-expression mixins</h3>
+<p>The second common form is a function that takes a class and returns a new class that extends it. It relies on the fact that <code>extends</code> accepts any expression, including a function call:</p>
+<example file="mixin-class.js">
+const Timestamped = (Base) =>
+  class extends Base {
+    touch(at) {
+      this.updatedAt = at;
+      return this;
+    }
+  };
+
+const SoftDeletable = (Base) =>
+  class extends Base {
+    delete(at) {
+      this.deletedAt = at;
+      return this;
+    }
+    get isDeleted() {
+      return this.deletedAt !== undefined;
+    }
+  };
+
+class Record {
+  constructor(id) {
+    this.id = id;
+  }
+}
+
+class Customer extends SoftDeletable(Timestamped(Record)) {}
+
+const ada = new Customer("CUS-1").touch("2026-09-01").delete("2026-09-20");
+console.log(ada, ada.isDeleted);
+
+const chain = [];
+for (let p = Object.getPrototypeOf(ada); p !== Object.prototype; p = Object.getPrototypeOf(p)) {
+  chain.push(p.constructor.name || "(anonymous class)");
+}
+console.log(chain.join(" -> "));
+</example>
+<output>
+Customer {
+  id: 'CUS-1',
+  updatedAt: '2026-09-01',
+  deletedAt: '2026-09-20'
+} true
+Customer -> (anonymous class) -> (anonymous class) -> Record
+</output>
+<p>This form behaves better than <code>Object.assign</code>: methods can call <code>super</code>, getters survive, and a clash is an ordinary override rather than a silent copy. But look at the chain it builds. Each mixin is a real class in the hierarchy, so a class-expression mixin <em>is</em> inheritance, with every coupling problem from the first section, plus anonymous classes in your stack traces. Order matters as well: in <code>SoftDeletable(Timestamped(Record))</code>, a method defined in both would come from <code>SoftDeletable</code>.</p>
+<p>Use mixins for small, stateless groups of methods with no hidden requirements. When a mixin needs its own state or configuration, it wants to be a separate object that you hold, which brings you back to composition.</p>
+</section>
+
+<section>
+<h2 id="functions">Composing behaviour from functions and objects</h2>
+<p>Classes are not the only way to build objects. A <strong>factory function</strong> returns a new object, and the variables it closes over act as private state (<a href="/learn/js-closures">Closures in depth</a>). Small factories can each add one capability, and a larger factory combines them. Here a product is assembled from a stock capability and a pricing capability that share one private <code>state</code> object:</p>
+<example file="capabilities.js">
+function withStock(state) {
+  return {
+    reserve(qty) {
+      if (qty > state.stock) throw new Error(`only ${state.stock} ${state.name} left`);
+      state.stock -= qty;
+    },
+    stockLeft() {
+      return state.stock;
+    },
+  };
+}
+
+function withPricing(state) {
+  return {
+    priceKobo(qty = 1) {
+      const unit = qty >= state.bulkFrom ? state.bulkPriceKobo : state.priceKobo;
+      return unit * qty;
+    },
+  };
+}
+
+function createProduct(data) {
+  const state = { ...data };
+  return Object.freeze({
+    sku: state.sku,
+    ...withStock(state),
+    ...withPricing(state),
+  });
+}
+
+const rice = createProduct({
+  sku: "RICE-5KG", name: "bags of rice", stock: 12,
+  priceKobo: 850000, bulkPriceKobo: 800000, bulkFrom: 10,
+});
+
+rice.reserve(10);
+console.log(rice.stockLeft(), rice.priceKobo(2), rice.priceKobo(10));
+
+try {
+  rice.reserve(5);
+} catch (error) {
+  console.log(error.message);
+}
+console.log(Object.keys(rice), rice.state);
+</example>
+<output>
+2 1700000 8000000
+only 2 bags of rice left
+[ 'sku', 'reserve', 'stockLeft', 'priceKobo' ] undefined
+</output>
+<p>Nothing outside can reach <code>state</code>: it is not a property, it is a variable the methods close over. <code>Object.freeze</code> stops callers from replacing methods. Each capability is testable on its own with a plain object as its state. The cost is memory: every product gets its own copies of the method functions, which <a href="/learn/js-prototypes#problem">Prototypes in depth</a> measured. For a few thousand objects that is fine; for millions, use a class.</p>
+<warn title="Spread copies values, not getters">If a capability used a getter, <code>get stockLeft() { … }</code>, the spread in <code>createProduct</code> would call it <em>once</em> and store the number. The product would report the same stock forever. Spread and <code>Object.assign</code> read values; to keep accessors, copy descriptors as <code>mixInto</code> does, or use methods as here.</warn>
+<example file="getter-trap.js">
+const state = { stock: 12 };
+const capability = {
+  get stockLeft() {
+    return state.stock;
+  },
+};
+
+const spread = { ...capability };
+const kept = Object.defineProperties({}, Object.getOwnPropertyDescriptors(capability));
+
+state.stock = 2;
+console.log(spread.stockLeft, kept.stockLeft);
+</example>
+<output>
+12 2
+</output>
+
+<h3>Rules as a list of functions</h3>
+<p>Behaviour itself can be composed. A price goes through several rules: a bulk discount, a coupon, VAT. Each rule is a function that takes the running amount (in kobo, as in <a href="/learn/logic-math#kobo">Mathematical reasoning</a>) and returns a new one. The checkout keeps them in an array and applies them in order with <code>reduce</code>:</p>
+<example file="rules.js">
+const bulkDiscount = (amount, order) => (order.items >= 10 ? Math.round(amount * 0.95) : amount);
+const coupon = (code, offKobo) => (amount, order) =>
+  order.coupon === code ? Math.max(0, amount - offKobo) : amount;
+const vat = (amount) => Math.round(amount * 1.075);
+
+const rules = [bulkDiscount, coupon("WELCOME", 200000), vat];
+const price = (amount, order) => rules.reduce((current, rule) => rule(current, order), amount);
+
+console.log(price(4000000, { items: 3 }));
+console.log(price(4000000, { items: 12, coupon: "WELCOME" }));
+</example>
+<output>
+4300000
+3870000
+</output>
+<p>Adding "free gift wrap in December" means writing one small function and adding it to the list. The order of the list is part of the business rule: here the coupon comes off before VAT is added. <code>coupon("WELCOME", 200000)</code> is a function that <em>returns</em> a rule, so one definition covers every coupon. <a href="/learn/js-functional">Functional techniques</a> builds on this with general <code>compose</code> and <code>pipe</code> helpers.</p>
+</section>
+
+<section>
+<h2 id="members">Private fields, statics and accessors as design tools</h2>
+<p><a href="/learn/js-classes#members">this, prototypes and classes</a> showed the syntax of <code>#private</code> fields, <code>static</code> members, getters and setters. Here is what they do for a design, and where each one bites.</p>
+
+<h3>Private fields are private from subclasses too</h3>
+<p>A <code>#field</code> belongs to the class body that declares it. Not even a subclass can read it; the program does not compile if it tries:</p>
+<example file="private-subclass.js">
+try {
+  eval(`
+    class Cart { #items = []; }
+    class PointsCart extends Cart {
+      count() { return this.#items.length; }
+    }
+  `);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+SyntaxError: Private field '#items' must be declared in an enclosing class
+</output>
+<p>(The <code>eval</code> is only there so the example can catch the error; normally the whole file refuses to load.) That is a feature. A subclass that cannot touch the parent's fields can only use the parent's public methods, which removes one of the three kinds of coupling. Older code marks "for subclasses only" fields with an underscore, <code>_items</code>, but that is only a naming convention: anyone can read and change them.</p>
+
+<h3>Brand checks: is this really one of mine?</h3>
+<p><code>instanceof</code> only checks the prototype chain, and anyone can build an object on <code>Cart.prototype</code> with <code>Object.create</code>. The expression <code>#field in value</code> checks whether an object was really constructed by the class, because only the constructor can add the private field. This is called a <strong>brand check</strong>:</p>
+<example file="brand-check.js">
+class Cart {
+  #items = [];
+
+  static isCart(value) {
+    return typeof value === "object" && value !== null && #items in value;
+  }
+
+  get count() {
+    return this.#items.length;
+  }
+}
+
+const real = new Cart();
+const forged = Object.create(Cart.prototype);
+
+console.log(real instanceof Cart, forged instanceof Cart);
+console.log(Cart.isCart(real), Cart.isCart(forged), Cart.isCart(null));
+
+try {
+  console.log(forged.count);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+true true
+true false false
+TypeError: Cannot read private member #items from an object whose class did not declare it
+</output>
+
+<h3>Private fields and Proxy wrappers do not mix</h3>
+<p>A <code>Proxy</code> is a built-in way to wrap an object and intercept every property access. It looks like a shortcut for writing forwarding wrappers. With private fields it fails: the getter runs with <code>this</code> set to the proxy, and the proxy does not have <code>#items</code>:</p>
+<example file="proxy-private.js">
+class Cart {
+  #items = ["RICE-5KG"];
+  get count() {
+    return this.#items.length;
+  }
+}
+
+const logged = new Proxy(new Cart(), {
+  get(target, key, receiver) {
+    console.log(`read ${String(key)}`);
+    return Reflect.get(target, key, receiver);
+  },
+});
+
+try {
+  console.log(logged.count);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+read count
+TypeError: Cannot read private member #items from an object whose class did not declare it
+</output>
+<p>This is one more reason to write explicit forwarding wrappers: they call methods <em>on the real object</em>, so its private fields are always there.</p>
+
+<h3>Static members: construction and shared configuration</h3>
+<p>Static members live on the class function itself. Two uses are worth making habits. The first is <strong>named constructors</strong>: static methods that create instances from different inputs and give each way a clear name. The second is class-wide configuration. A <code>static { }</code> block runs once, when the class is defined, and can set up static fields that need more than one expression:</p>
+<example file="statics.js">
+class Money {
+  static #formatter;
+  static {
+    Money.#formatter = new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN" });
+  }
+
+  #kobo;
+
+  constructor(kobo) {
+    if (!Number.isSafeInteger(kobo)) throw new RangeError(`kobo must be a whole number, got ${kobo}`);
+    this.#kobo = kobo;
+  }
+
+  static fromNaira(naira) {
+    return new this(Math.round(naira * 100));
+  }
+
+  static zero() {
+    return new this(0);
+  }
+
+  get kobo() {
+    return this.#kobo;
+  }
+
+  plus(other) {
+    return new Money(this.#kobo + other.kobo);
+  }
+
+  toString() {
+    return Money.#formatter.format(this.#kobo / 100);
+  }
+
+  toJSON() {
+    return { kobo: this.#kobo };
+  }
+}
+
+const total = Money.fromNaira(8500).plus(Money.fromNaira(1250.5));
+console.log(String(total), JSON.stringify({ total }));
+
+try {
+  new Money(10.5);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+₦9,750.50 {"total":{"kobo":975050}}
+RangeError: kobo must be a whole number, got 10.5
+</output>
+<p><code>new this(…)</code> inside a static method creates an instance of whichever class the method was called on, so a subclass inherits working named constructors (<a href="/learn/js-prototypes#class">Prototypes in depth</a> showed why <code>this</code> there is the class). The formatter is created once for the whole class rather than once per amount; <a href="/learn/js-numbers">Numbers in depth</a> explains <code>Intl.NumberFormat</code>.</p>
+
+<h3>Accessors: cheap, honest and serialisable</h3>
+<p>A getter makes a computation look like a field, and a setter makes an assignment run code. Three design rules follow from that:</p>
+<ul>
+<li><strong>Keep getters cheap and free of side effects.</strong> Nobody expects <code>cart.total</code> to query a database or change anything. Something that does I/O should be a method, preferably <code>async</code>.</li>
+<li><strong>A getter without a setter is read-only, and in strict code (classes and modules) assigning to it throws.</strong> That is good: the caller learns immediately.</li>
+<li><strong>Getters live on the prototype, so <code>JSON.stringify</code> and spread do not see them</strong>, and private fields are invisible too. Give classes that travel as JSON a <code>toJSON</code> method, as <code>Money</code> does.</li>
+</ul>
+<example file="accessors.js">
+class Cart {
+  #lines = [];
+
+  add(sku, priceKobo, qty) {
+    this.#lines.push({ sku, priceKobo, qty });
+  }
+
+  get totalKobo() {
+    return this.#lines.reduce((sum, line) => sum + line.priceKobo * line.qty, 0);
+  }
+}
+
+const cart = new Cart();
+cart.add("OIL-1L", 320000, 2);
+
+try {
+  cart.totalKobo = 0;
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+console.log(cart.totalKobo, JSON.stringify(cart), { ...cart });
+</example>
+<output>
+TypeError: Cannot set property totalKobo of #<Cart> which has only a getter
+640000 {} {}
+</output>
+</section>
+
+<section>
+<h2 id="choosing">Choosing: a short decision guide</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>You want to…</th><th>Use</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Model a real "is a" that callers rely on, such as your own error types</td><td><code>extends</code>, one level deep</td><td><code>instanceof</code> and <code>catch</code> handling work; the parent is designed for it</td></tr>
+<tr><td>Add behaviour around an object (logging, retries, points, limits)</td><td>A forwarding wrapper (decorator)</td><td>Depends only on public methods; wrappers stack in any order</td></tr>
+<tr><td>Vary one decision (delivery fee, payment provider, storage)</td><td>Delegation to a strategy object passed in</td><td>Swap at runtime and in tests without touching the caller</td></tr>
+<tr><td>Share a few stateless helper methods across unrelated classes</td><td>A mixin, copied with a clash check</td><td>No fake common parent</td></tr>
+<tr><td>Build a small number of objects with truly private state</td><td>A factory function with closures</td><td>No <code>this</code> to lose, nothing reachable from outside</td></tr>
+<tr><td>Apply a sequence of business rules</td><td>An array of functions</td><td>Adding a rule is adding a function</td></tr>
+</tbody>
+</table></div>
+<p>Inheritance is the right tool when the parent class was <em>designed</em> to be extended and documents what subclasses may override. Built-ins are designed that way: <code>class PaymentError extends Error</code> in <a href="/learn/js-errors">Errors</a>, or <code>HTMLElement</code> for custom elements in the browser. Framework base classes often are too. Your own <code>Cart</code>, written to be used, usually is not.</p>
+</section>
+
+<section>
+<h2 id="reason">Before you build: a checkout from parts</h2>
+<reason title="What should the checkout hold, and what can go wrong?">
+<p>You will build a <code>Checkout</code> that takes a cart, applies pricing rules, reserves stock and charges a payment gateway. Before reading the code, think through:</p>
+<ul>
+<li>Which parts change independently of each other, and which will you want to replace in a test?</li>
+<li>Who may change the cart's lines? What should <code>Checkout</code> be able to read from the cart, and what not?</li>
+<li>Stock is reserved before the payment. What must happen if the charge fails? What if the stock reservation fails for the second product after the first one was reserved?</li>
+<li>What happens if someone creates a checkout without a gateway, or with a gateway that has no <code>charge</code> method? Should that fail at construction or at payment time?</li>
+<li>Can the same cart be checked out twice?</li>
+</ul>
+<answer>
+<ul>
+<li>The pricing rules, the stock store and the gateway change independently (marketing changes rules, the shop changes providers), so the checkout <em>receives</em> each of them instead of creating them. That also lets a test pass a fake gateway that fails on demand. Passing collaborators in through the constructor is dependency injection, which ZudoJS automates in <a href="/learn/zudo-container">the container lesson</a>.</li>
+<li>Only the cart may change its lines, so they stay in a <code>#private</code> field. The checkout needs to read them, so the cart offers a read-only copy (<code>lines()</code> returns new objects) and a <code>lock()</code> method. Returning the internal array would let anyone push into it.</li>
+<li>If the charge fails, every reservation must be released, or the shop shows items as sold that nobody paid for. If the second reservation fails, the first must be released too. Keep a list of what you reserved and undo exactly that list: a small <strong>rollback</strong>.</li>
+<li>Fail at construction. A checkout without a working gateway is a bug in the wiring, and it should stop the program at start-up, not surprise the first customer.</li>
+<li>No. After a successful payment the cart is locked, and a second checkout fails before any money moves. Checking the cart's state first means the check costs nothing.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: a checkout from small parts</h2>
+<p>The cart has private lines, a brand check and a lock. Nothing else in the system can change its contents:</p>
+<example file="cart.js" project="checkout">
+export class Cart {
+  #lines = [];
+  #locked = false;
+
+  static isCart(value) {
+    return typeof value === "object" && value !== null && #lines in value;
+  }
+
+  add(sku, priceKobo, qty = 1) {
+    if (this.#locked) throw new Error("cart is locked");
+    if (!Number.isInteger(qty) || qty < 1) throw new RangeError(`bad quantity for ${sku}: ${qty}`);
+    this.#lines.push({ sku, priceKobo, qty });
+    return this;
+  }
+
+  lines() {
+    return this.#lines.map((line) => ({ ...line }));
+  }
+
+  get subtotalKobo() {
+    return this.#lines.reduce((sum, line) => sum + line.priceKobo * line.qty, 0);
+  }
+
+  get locked() {
+    return this.#locked;
+  }
+
+  lock() {
+    this.#locked = true;
+  }
+
+  toJSON() {
+    return { lines: this.lines(), subtotalKobo: this.subtotalKobo, locked: this.#locked };
+  }
+}
+</example>
+<p>The stock store and the checkout. The checkout holds four collaborators and checks their shapes once, in the constructor:</p>
+<example file="checkout.js" project="checkout">
+import { Cart } from "./cart.js";
+
+export function createStock(initial) {
+  const levels = new Map(Object.entries(initial));
+  return {
+    reserve(sku, qty) {
+      const left = levels.get(sku) ?? 0;
+      if (qty > left) throw new Error(`not enough ${sku}: ${left} left`);
+      levels.set(sku, left - qty);
+    },
+    release(sku, qty) {
+      levels.set(sku, (levels.get(sku) ?? 0) + qty);
+    },
+    level(sku) {
+      return levels.get(sku) ?? 0;
+    },
+  };
+}
+
+export class Checkout {
+  #rules;
+  #stock;
+  #gateway;
+  #nextOrder = 1001;
+
+  constructor({ rules = [], stock, gateway }) {
+    if (typeof stock?.reserve !== "function" || typeof stock?.release !== "function") {
+      throw new TypeError("stock needs reserve() and release()");
+    }
+    if (typeof gateway?.charge !== "function") throw new TypeError("gateway needs charge()");
+    this.#rules = [...rules];
+    this.#stock = stock;
+    this.#gateway = gateway;
+  }
+
+  totalKobo(cart) {
+    const order = { lines: cart.lines(), items: cart.lines().reduce((n, l) => n + l.qty, 0) };
+    return this.#rules.reduce((amount, rule) => rule(amount, order), cart.subtotalKobo);
+  }
+
+  async place(cart) {
+    if (!Cart.isCart(cart)) throw new TypeError("not a cart");
+    if (cart.locked) throw new Error("cart already checked out");
+    const reference = `ORD-${this.#nextOrder++}`;
+    const amountKobo = this.totalKobo(cart);
+    const reserved = [];
+    try {
+      for (const line of cart.lines()) {
+        this.#stock.reserve(line.sku, line.qty);
+        reserved.push(line);
+      }
+      const receipt = await this.#gateway.charge(amountKobo, reference);
+      cart.lock();
+      return receipt;
+    } catch (error) {
+      for (const line of reserved) this.#stock.release(line.sku, line.qty);
+      throw new Error(`order ${reference} failed: ${error.message}`, { cause: error });
+    }
+  }
+}
+</example>
+<p>A few details are worth noticing. <code>[...rules]</code> copies the array, so a caller who later pushes into their own array cannot change the rules of a running checkout. <code>reserved</code> records exactly what was reserved, so the rollback undoes that and nothing more. The error keeps the original as its <code>cause</code> (you will design error chains in <a href="/learn/js-error-design">Designing error handling</a>). Now wire it together with the rules, a logging wrapper and a fake gateway that declines large payments:</p>
+<example file="main.js" project="checkout">
+import { Cart } from "./cart.js";
+import { Checkout, createStock } from "./checkout.js";
+
+const vat = (amount) => Math.round(amount * 1.075);
+const bulk = (amount, order) => (order.items >= 10 ? Math.round(amount * 0.95) : amount);
+
+const fakeGateway = {
+  async charge(amountKobo, reference) {
+    if (amountKobo > 10000000) throw new Error("card limit exceeded");
+    return { reference, amountKobo, status: "paid" };
+  },
+};
+
+function withLogging(gateway) {
+  return {
+    async charge(amountKobo, reference) {
+      console.log(`  -> charging ${reference} ₦${(amountKobo / 100).toFixed(2)}`);
+      return gateway.charge(amountKobo, reference);
+    },
+  };
+}
+
+const stock = createStock({ "RICE-5KG": 20, "OIL-1L": 5 });
+const checkout = new Checkout({ rules: [bulk, vat], stock, gateway: withLogging(fakeGateway) });
+
+const small = new Cart().add("RICE-5KG", 850000, 2).add("OIL-1L", 320000);
+console.log(await checkout.place(small));
+console.log("stock:", stock.level("RICE-5KG"), stock.level("OIL-1L"), "locked:", small.locked);
+
+const big = new Cart().add("RICE-5KG", 850000, 12);
+try {
+  await checkout.place(big);
+} catch (error) {
+  console.log(error.message, "| cause:", error.cause.message);
+}
+console.log("stock after failure:", stock.level("RICE-5KG"));
+
+try {
+  await checkout.place(small);
+} catch (error) {
+  console.log(error.message);
+}
+console.log(JSON.stringify(small));
+</example>
+<output>
+  -> charging ORD-1001 ₦21715.00
+{ reference: 'ORD-1001', amountKobo: 2171500, status: 'paid' }
+stock: 18 4 locked: true
+  -> charging ORD-1002 ₦104167.50
+order ORD-1002 failed: card limit exceeded | cause: card limit exceeded
+stock after failure: 18
+cart already checked out
+{"lines":[{"sku":"RICE-5KG","priceKobo":850000,"qty":2},{"sku":"OIL-1L","priceKobo":320000,"qty":1}],"subtotalKobo":2020000,"locked":true}
+</output>
+<p>Follow the three orders through. The small cart costs ₦20,200; VAT makes it ₦21,715, the gateway accepts, the stock drops and the cart locks. The big cart gets the bulk discount, but ₦104,167.50 is over the fake card limit, so the charge throws and the twelve reserved bags go back: the stock is 18 again, not 6. The third call is refused before anything is reserved, because the small cart is locked. The last line shows <code>toJSON</code> at work: the cart's private data travels as JSON only in the shape the class chose.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing composed objects</h2>
+<p>Composition pays off most in tests. Every collaborator is passed in, so a test can hand the checkout a <strong>fake</strong>: a small object with the same methods that behaves in a controlled way and records how it was called. There is no need to subclass <code>Checkout</code> or patch a real payment provider:</p>
+<example file="checkout.test.js" project="checkout">
+import { Cart } from "./cart.js";
+import { Checkout, createStock } from "./checkout.js";
+
+function check(label, actual, expected) {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`${ok ? "PASS" : "FAIL"} ${label} -> ${JSON.stringify(actual)}`);
+}
+
+function recordingGateway({ failWith } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async charge(amountKobo, reference) {
+      calls.push({ amountKobo, reference });
+      if (failWith) throw new Error(failWith);
+      return { reference, amountKobo, status: "paid" };
+    },
+  };
+}
+
+async function errorOf(promise) {
+  try {
+    await promise;
+    return null;
+  } catch (error) {
+    return error.message;
+  }
+}
+
+{
+  const gateway = recordingGateway();
+  const checkout = new Checkout({ stock: createStock({ A: 5 }), gateway, rules: [(a) => a + 100] });
+  await checkout.place(new Cart().add("A", 1000, 2));
+  check("rules applied to the charged amount", gateway.calls[0].amountKobo, 2100);
+}
+
+{
+  const stock = createStock({ A: 5, B: 1 });
+  const gateway = recordingGateway();
+  const checkout = new Checkout({ stock, gateway });
+  const message = await errorOf(checkout.place(new Cart().add("A", 1000, 2).add("B", 500, 3)));
+  check("second reservation fails", message, "order ORD-1001 failed: not enough B: 1 left");
+  check("first reservation released", stock.level("A"), 5);
+  check("gateway never called", gateway.calls.length, 0);
+}
+
+{
+  const stock = createStock({ A: 5 });
+  const checkout = new Checkout({ stock, gateway: recordingGateway({ failWith: "declined" }) });
+  const cart = new Cart().add("A", 1000, 1);
+  check("declined payment", await errorOf(checkout.place(cart)), "order ORD-1001 failed: declined");
+  check("stock restored", stock.level("A"), 5);
+  check("cart still open", cart.locked, false);
+}
+
+{
+  const gateway = recordingGateway();
+  const checkout = new Checkout({ stock: createStock({ A: 5 }), gateway });
+  const cart = new Cart().add("A", 1000, 1);
+  await checkout.place(cart);
+  check("second checkout refused", await errorOf(checkout.place(cart)), "cart already checked out");
+  check("charged once", gateway.calls.length, 1);
+  check("forged cart refused", await errorOf(checkout.place(Object.create(Cart.prototype))), "not a cart");
+}
+
+{
+  let wiring = null;
+  try {
+    new Checkout({ stock: createStock({}), gateway: {} });
+  } catch (error) {
+    wiring = error.message;
+  }
+  check("bad wiring fails at construction", wiring, "gateway needs charge()");
+}
+</example>
+<output>
+PASS rules applied to the charged amount -> 2100
+PASS second reservation fails -> "order ORD-1001 failed: not enough B: 1 left"
+PASS first reservation released -> 5
+PASS gateway never called -> 0
+PASS declined payment -> "order ORD-1001 failed: declined"
+PASS stock restored -> 5
+PASS cart still open -> false
+PASS second checkout refused -> "cart already checked out"
+PASS charged once -> 1
+PASS forged cart refused -> "not a cart"
+PASS bad wiring fails at construction -> "gateway needs charge()"
+</output>
+<p>Each block builds a fresh checkout, so no test depends on another. The failure tests check three things each: the error message, the stock afterwards and what the gateway saw. A rollback bug usually shows up in the second or third of those, not in the message.</p>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Keep hierarchies shallow.</strong> One level of <code>extends</code> from a class designed for it (an <code>Error</code>, a framework base class) is normal. Two or more levels of your own classes is a warning sign.</li>
+<li><strong>If a class is meant to be extended, document its self-calls.</strong> Say which methods subclasses may override and which methods call which. If you cannot promise that, do not invite subclassing.</li>
+<li><strong>Inject collaborators; do not construct them inside.</strong> A class that writes <code>new PaystackGateway()</code> in its constructor can never be tested without the network. A class that receives <code>gateway</code> can. At scale, a dependency injection container does the wiring for you; ZudoJS's is covered in <a href="/learn/zudo-container">the container lesson</a>.</li>
+<li><strong>Validate collaborators at the boundary.</strong> Check the methods you rely on once, at construction, so wiring mistakes fail at start-up.</li>
+<li><strong>Prefer explicit forwarding to <code>Proxy</code> for wrappers</strong>, especially around classes with private fields.</li>
+<li><strong>Do not add methods to built-in prototypes as mixins.</strong> <a href="/learn/js-prototypes#build">Prototypes in depth</a> explains why this breaks other people's code.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A cart with a limit, as a wrapper">
+<p>The shop limits some promotions to 5 items per customer. Write <code>LimitedCart</code>, a forwarding wrapper around any object with <code>add(sku, priceKobo, qty)</code> and a <code>lines()</code> method, that throws when the total quantity would go above the limit. Do not use <code>extends</code>. It should offer <code>add</code>, <code>lines</code> and a <code>quantity</code> getter.</p>
+<solution>
+<example file="limited-cart.js">
+class Cart {
+  #lines = [];
+  add(sku, priceKobo, qty = 1) {
+    this.#lines.push({ sku, priceKobo, qty });
+    return this;
+  }
+  lines() {
+    return this.#lines.map((line) => ({ ...line }));
+  }
+}
+
+class LimitedCart {
+  #cart;
+  #limit;
+
+  constructor(cart, limit) {
+    this.#cart = cart;
+    this.#limit = limit;
+  }
+
+  get quantity() {
+    return this.#cart.lines().reduce((sum, line) => sum + line.qty, 0);
+  }
+
+  add(sku, priceKobo, qty = 1) {
+    if (this.quantity + qty > this.#limit) {
+      throw new Error(`limit is ${this.#limit} items, cart has ${this.quantity}`);
+    }
+    this.#cart.add(sku, priceKobo, qty);
+    return this;
+  }
+
+  lines() {
+    return this.#cart.lines();
+  }
+}
+
+const cart = new LimitedCart(new Cart(), 5);
+cart.add("SOAP", 50000, 3).add("TOOTHPASTE", 90000, 2);
+console.log(cart.quantity);
+
+try {
+  cart.add("SOAP", 50000, 1);
+} catch (error) {
+  console.log(error.message);
+}
+console.log(cart.lines().length);
+</example>
+<output>
+5
+limit is 5 items, cart has 5
+2
+</output>
+<p>The check happens <em>before</em> forwarding, so a refused item never reaches the real cart. <code>add</code> returns the wrapper, not the inner cart, so chained calls keep going through the limit.</p>
+</solution>
+</exercise>
+
+<exercise title="Spot the fragile subclass">
+<p>An <code>AuditedStock</code> subclass logs every change to the stock. Run it: the log has one line too many. Explain why using what you learned about self-calls, then rewrite it as a wrapper that logs each call exactly once.</p>
+<example file="audited-stock.js">
+class Stock {
+  #levels = new Map();
+  set(sku, qty) {
+    this.#levels.set(sku, qty);
+  }
+  restock(sku, qty) {
+    this.set(sku, this.level(sku) + qty);
+  }
+  level(sku) {
+    return this.#levels.get(sku) ?? 0;
+  }
+}
+
+class AuditedStock extends Stock {
+  log = [];
+  set(sku, qty) {
+    this.log.push(`set ${sku}=${qty}`);
+    super.set(sku, qty);
+  }
+  restock(sku, qty) {
+    this.log.push(`restock ${sku}+${qty}`);
+    super.restock(sku, qty);
+  }
+}
+
+const stock = new AuditedStock();
+stock.set("RICE", 10);
+stock.restock("RICE", 5);
+console.log(stock.log);
+</example>
+<output>
+[ 'set RICE=10', 'restock RICE+5', 'set RICE=15' ]
+</output>
+<solution>
+<p><code>Stock.restock</code> calls <code>this.set</code>. Because <code>this</code> is the audited stock, the call reaches <code>AuditedStock.set</code>, which logs a second entry for the same restock. The wrapper calls methods on the stock it holds, so the inner self-call stays inside that object:</p>
+<example file="audited-wrapper.js">
+class Stock {
+  #levels = new Map();
+  set(sku, qty) {
+    this.#levels.set(sku, qty);
+  }
+  restock(sku, qty) {
+    this.set(sku, this.level(sku) + qty);
+  }
+  level(sku) {
+    return this.#levels.get(sku) ?? 0;
+  }
+}
+
+class AuditedStock {
+  #stock;
+  #log = [];
+
+  constructor(stock) {
+    this.#stock = stock;
+  }
+  set(sku, qty) {
+    this.#log.push(`set ${sku}=${qty}`);
+    this.#stock.set(sku, qty);
+  }
+  restock(sku, qty) {
+    this.#log.push(`restock ${sku}+${qty}`);
+    this.#stock.restock(sku, qty);
+  }
+  level(sku) {
+    return this.#stock.level(sku);
+  }
+  get log() {
+    return [...this.#log];
+  }
+}
+
+const stock = new AuditedStock(new Stock());
+stock.set("RICE", 10);
+stock.restock("RICE", 5);
+console.log(stock.log, stock.level("RICE"));
+</example>
+<output>
+[ 'set RICE=10', 'restock RICE+5' ] 15
+</output>
+<p>The log is also private now and handed out as a copy, so callers cannot rewrite the audit trail.</p>
+</solution>
+</exercise>
+
+<exercise title="A new delivery strategy and a rule">
+<p>Using the <code>Checkout</code> idea from the delegation section, add a "pickup" strategy (always free) and a pricing rule <code>freeDeliveryWeekend</code> that removes a ₦2,500 fee when <code>order.day</code> is <code>"Sat"</code> or <code>"Sun"</code>. Write both without changing any existing function, and print the totals for a ₦30,000 order on a Tuesday and on a Saturday, with flat-rate delivery and with pickup.</p>
+<solution>
+<example file="weekend.js">
+const flatRate = { name: "flat rate", feeKobo: () => 250000 };
+const pickup = { name: "pickup", feeKobo: () => 0 };
+
+const freeDeliveryWeekend = (amount, order, feeKobo) =>
+  order.day === "Sat" || order.day === "Sun" ? amount - feeKobo : amount;
+
+function total(order, delivery, rules) {
+  const fee = delivery.feeKobo(order);
+  return rules.reduce((amount, rule) => rule(amount, order, fee), order.subtotalKobo + fee);
+}
+
+for (const day of ["Tue", "Sat"]) {
+  for (const delivery of [flatRate, pickup]) {
+    const order = { subtotalKobo: 3000000, day };
+    console.log(`${day} ${delivery.name}: ₦${total(order, delivery, [freeDeliveryWeekend]) / 100}`);
+  }
+}
+</example>
+<output>
+Tue flat rate: ₦32500
+Tue pickup: ₦30000
+Sat flat rate: ₦30000
+Sat pickup: ₦30000
+</output>
+<p>The rule receives the fee as a third argument, so it removes whatever the chosen strategy charged; with pickup that is 0, so nothing changes. Neither the strategies nor <code>total</code> had to know the weekend rule exists.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A subclass inherits its parent's interface, implementation and self-calls. Self-calls make it fragile: a harmless refactor of the parent can break it (the fragile base class problem).</li>
+<li>Inherit only when every caller of the parent keeps working with the child (Liskov substitution), and preferably from classes designed to be extended.</li>
+<li>Composition holds objects instead of becoming them. A forwarding wrapper depends only on public methods; wrappers with the same shape (decorators) stack in any order.</li>
+<li>Delegation hands one varying decision to a strategy object that is passed in and can be swapped, including in tests.</li>
+<li>Mixins share stateless methods across unrelated classes; guard against silent clashes and hidden requirements. Class-expression mixins are still inheritance.</li>
+<li>Factories with closures give true privacy; spread copies getter <em>values</em>, so copy descriptors when you need accessors. Business rules compose well as arrays of functions.</li>
+<li><code>#private</code> fields hide state from subclasses and support brand checks (<code>#field in obj</code>), but break under <code>Proxy</code>. Statics give named constructors and class-wide setup. Getters should be cheap; add <code>toJSON</code> for classes that travel as JSON.</li>
+</ul>
+<p>Next: <a href="/learn/js-strings">Strings in depth</a>, where product names with accents and emoji show that "length" means three different things.</p>
+</section>

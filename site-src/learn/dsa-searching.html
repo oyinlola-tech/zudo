@@ -37,6 +37,12 @@ for (const id of [100_000, 1_600_000, 734_512, 2_500_000, 734_513]) {
 }
 </example>
 <output>
+orders: 1000000 first id: 100000 last id: 3099997
+id 100000: index 0, looked at 1 orders
+id 1600000: index 500000, looked at 500001 orders
+id 734512: index 211504, looked at 211505 orders
+id 2500000: index 800000, looked at 800001 orders
+id 734513: index -1, looked at 1000000 orders
 </output>
 <p>Ids go up by 3 in this export (other ids belong to other shops), so 734,513 does not exist. Linear search is quick when the order is near the front, and it looks at all million orders when the order is at the end or <em>missing</em>, which is exactly when a customer is most upset. It is O(n): on average about n/2 looks for a present id, and always n for a missing one.</p>
 <p>But this search ignores the most useful fact about the data: it is sorted. <strong>Binary search</strong> uses that fact to find any order, or prove it is missing, in about 20 looks. This lesson builds both, shows the bugs that make binary search famous for being hard to get right, and then generalises it into lower and upper bounds, which answer range questions such as "all orders placed on the 3rd".</p>
@@ -70,6 +76,12 @@ const scores = [3, NaN, 7];
 console.log(scores.indexOf(NaN), scores.includes(NaN));
 </example>
 <output>
+PAY-3
+1
+PAY-4
+false
+undefined
+-1 true
 </output>
 <ul>
 <li><code>find</code> returns the item (or <code>undefined</code>); <code>findIndex</code> returns its index (or −1). <code>findLast</code> and <code>findLastIndex</code> search from the end, which is what you want for "most recent".</li>
@@ -133,6 +145,15 @@ console.log("log2 of 1,000,000 =", Math.log2(1_000_000).toFixed(2));
 console.log("empty array:", binarySearch([], 5));
 </example>
 <output>
+id 100000: index 0, looked at 19 orders
+id 1600000: index 500000, looked at 19 orders
+id 734512: index 211504, looked at 20 orders
+id 2500000: index 800000, looked at 20 orders
+id 734513: index -1, looked at 20 orders
+id 99: index -1, looked at 19 orders
+id 9999999: index -1, looked at 20 orders
+log2 of 1,000,000 = 19.93
+empty array: -1
 </output>
 <p>Never more than 20 looks, whether the order is first, last, in the middle, or missing, against up to a million for linear search. Double the orders and binary search needs one more look.</p>
 <p>To see the range shrink, here is a trace on a small array of order ids:</p>
@@ -158,6 +179,15 @@ console.log("search 1066:", traceSearch(ids, 1066));
 console.log("search 1016:", traceSearch(ids, 1016));
 </example>
 <output>
+  lo=0 hi=9 mid=4 items[mid]=1032 -> go right
+  lo=5 hi=9 mid=7 items[mid]=1066 -> found
+search 1066: 7
+  lo=0 hi=9 mid=4 items[mid]=1032 -> go left
+  lo=0 hi=3 mid=1 items[mid]=1011 -> go right
+  lo=2 hi=3 mid=2 items[mid]=1015 -> go right
+  lo=3 hi=3 mid=3 items[mid]=1020 -> go left
+  lo=3 hi=2: empty range
+search 1016: -1
 </output>
 <p>When 1016 is not found, the search stops with <code>lo = 3</code>, which is exactly where 1016 would have to be inserted to keep the array sorted. Remember that; it becomes lower bound.</p>
 
@@ -178,6 +208,8 @@ console.log(binarySearchRecursive(orders, 734_512));
 console.log(binarySearchRecursive(orders, 734_513));
 </example>
 <output>
+{ index: 211504, depth: 20 }
+{ index: -1, depth: 21 }
 </output>
 <p>It does the same comparisons and is O(log n) in time. It also uses O(log n) stack frames, one per halving, which is harmless (21 frames for a million items, a few dozen for any array that fits in memory), unlike the O(n) recursion that crashed on deep trees. JavaScript engines do not remove those frames even though each call is the last thing its caller does, so the iterative loop is the usual choice in production code; the recursive one is often easier to reason about.</p>
 </section>
@@ -205,6 +237,8 @@ console.log(ids.map((id) => buggy(ids, id)).join(" "));
 console.log(buggy([1004], 1004));
 </example>
 <output>
+-1 1 2 -1
+-1
 </output>
 <p>With <code>lo</code> and <code>hi</code> both inclusive, a range with one item has <code>lo === hi</code>, and <code>lo &lt; hi</code> refuses to look at it. Some items are "missing", and a one-item array never finds anything. The condition must match the meaning of <code>hi</code>: inclusive <code>hi</code> needs <code>lo &lt;= hi</code>.</p>
 
@@ -229,6 +263,8 @@ console.log(buggy(ids, 1011));
 console.log(buggy(ids, 1030));
 </example>
 <output>
+1
+gave up after 50 steps, stuck at lo=2 hi=3
 </output>
 <p>When <code>lo</code> and <code>hi</code> are neighbours, <code>mid</code> rounds down to <code>lo</code>, so <code>lo = mid</code> changes nothing and the loop never ends. Without the step guard, the support tool would hang, and a server would burn a CPU core per request. It only happens for some targets, so a quick test can miss it. The rule: every branch must shrink the range, which is why <code>mid</code> itself is always excluded (<code>mid + 1</code>, <code>mid − 1</code>).</p>
 
@@ -243,6 +279,9 @@ console.log(Math.floor((lo + hi) / 2), ids[Math.floor((lo + hi) / 2)]);
 console.log((3_000_000_000 + 3_000_000_002) >> 1, Math.floor((3_000_000_000 + 3_000_000_002) / 2));
 </example>
 <output>
+1.5 undefined
+1 1011
+852516353 3000000001
 </output>
 <p><code>ids[1.5]</code> is <code>undefined</code>, and every comparison with <code>undefined</code> is false, so the search wanders off. Use <code>Math.floor</code>. The shift trick <code>(lo + hi) &gt;&gt; 1</code> is popular because it is short, but bitwise operators convert to 32-bit integers, which breaks for indexes above about 2.1 billion: rare for arrays, common when you binary-search over <em>numbers</em> such as file offsets or timestamps. (Java's nine-year bug was the related overflow of <code>lo + hi</code>, which JavaScript's numbers avoid up to 2<sup>53</sup>.)</p>
 
@@ -264,13 +303,16 @@ const prices = [9500, 12000, 150000, 800, 45000];
 const wrong = [...prices].sort();
 const right = [...prices].sort((a, b) => a - b);
 
-console.log("default sort:", wrong.join(" "), "-> find 12000:", binarySearch(wrong, 12000));
-console.log("numeric sort:", right.join(" "), "-> find 12000:", binarySearch(right, 12000));
+console.log("default sort:", wrong.join(" "), "-> find 9500:", binarySearch(wrong, 9500));
+console.log("numeric sort:", right.join(" "), "-> find 9500:", binarySearch(right, 9500));
 console.log("text id:", binarySearch(right, "12000"));
 </example>
 <output>
+default sort: 12000 150000 45000 800 9500 -> find 9500: -1
+numeric sort: 800 9500 12000 45000 150000 -> find 9500: 1
+text id: -1
 </output>
-<p><code>sort()</code> without a comparator sorts numbers as <em>text</em>, where "12000" comes before "150000" and "800" comes last. The array is sorted, just not the way <code>&lt;</code> compares numbers, so the search misses. The same happens when names are sorted with <code>localeCompare</code> but searched with <code>&lt;</code>, or sorted case-sensitively and searched case-insensitively. Sort and search must use <strong>the same comparison</strong>. The last line is the string id from the reasoning box: found by nobody.</p>
+<p><code>sort()</code> without a comparator sorts numbers as <em>text</em>, where "12000" comes before "150000" and "9500" comes last. The array is sorted, just not the way <code>&lt;</code> compares numbers, so the search for 9500 goes left at 45000 and misses. (It would still find 12000, by luck, which is why a single passing test proves little.) The same happens when names are sorted with <code>localeCompare</code> but searched with <code>&lt;</code>, or sorted case-sensitively and searched case-insensitively. Sort and search must use <strong>the same comparison</strong>. The last line is the string id from the reasoning box: found by nobody.</p>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Bug</th><th>Symptom</th><th>Fix</th></tr></thead>
 <tbody>
@@ -339,6 +381,12 @@ prices.splice(insertAt, 0, 10000);
 console.log("after inserting 10000:", prices.join(" "));
 </example>
 <output>
+ 12000: lower 2, upper 5, count 3
+ 10000: lower 2, upper 2, count 0
+   800: lower 0, upper 1, count 1
+200000: lower 7, upper 7, count 0
+   100: lower 0, upper 0, count 0
+after inserting 10000: 800 9500 10000 12000 12000 12000 45000 150000
 </output>
 <p>Finding the insertion point is O(log n), but <code>splice</code> still shifts every later element: inserting into a sorted array is O(n). That is the trade-off that made binary search trees worth building in <a href="/learn/dsa-trees#bst">Trees</a>.</p>
 
@@ -366,6 +414,11 @@ console.log("check:", day.every((o) => o.placedAt.startsWith("2026-09-03")),
   orders[start - 1].placedAt < "2026-09-03", orders[end].placedAt >= "2026-09-04");
 </example>
 <output>
+orders on 3 September: 43200
+first: #359200 at 2026-09-03T00:00:00.000Z
+last:  #488797 at 2026-09-03T23:59:58.000Z
+comparisons: 40 (a scan would make 1000000)
+check: true true true
 </output>
 <p>Two lower-bound searches, 40 comparisons, however many orders the export holds. Using <code>lowerBound</code> of the next day for the end avoids having to invent a "last possible time on the 3rd". The final line checks the answer from the outside: everything inside is on the 3rd, and the neighbours just outside are not.</p>
 
@@ -391,6 +444,9 @@ console.log(withPrefix(names, "s").join(" | "));
 console.log(withPrefix(names, "x").length);
 </example>
 <output>
+oraimo freepods | oraimo powerbank | oraimo smartwatch
+sharp tv | sony radio
+0
 </output>
 <p>O(L log n) to find the start, then O(k) to read k results, with no memory beyond the sorted array. The names are sorted with the default <code>sort()</code>, which compares by UTF-16 code units, the same way <code>&lt;</code> does, so sort and search agree (bug 4).</p>
 </section>
@@ -431,7 +487,7 @@ for (const k of [1, 10, 100, 1000]) {
   linear = 0;
   binary = 0;
   for (let q = 0; q < k; q++) {
-    const target = totals[(q * 104_729) % n];
+    const target = totals[(q * 104_729 + 50_000) % n];
     linearFind(totals, target);
     binaryFind(sorted, target);
   }
@@ -439,8 +495,12 @@ for (const k of [1, 10, 100, 1000]) {
 }
 </example>
 <output>
+   1 searches: linear 50001, sort (about 1660964) + binary 17
+  10 searches: linear 712815, sort (about 1660964) + binary 155
+ 100 searches: linear 5108650, sort (about 1660964) + binary 1556
+1000 searches: linear 50136500, sort (about 1660964) + binary 15663
 </output>
-<p>The sort's cost is estimated as n log₂ n instead of counted, because <code>Array.prototype.sort</code> makes a different number of comparisons in different JavaScript engines. For a single search, sorting first is a loss. After a few dozen searches it wins, and after a thousand it is not close. The rule of thumb: if you will search the same data more than about log n times, sort it once (or keep it sorted). If you only ever need exact lookups, a <code>Map</code> from id to order beats both with O(1) average per lookup, at the price of extra memory and no range queries.</p>
+<p>The sort's cost is estimated as n log₂ n instead of counted, because <code>Array.prototype.sort</code> makes a different number of comparisons in different JavaScript engines. For a single search, sorting first is a loss. After a few dozen searches it wins, and after a thousand it is not close. The arithmetic: k linear searches cost about k × n/2, sorting costs about n log₂ n, so sorting pays off once k is more than about 2 log₂ n, which is 34 searches here. The rule of thumb: if you will search the same data more than a few dozen times, sort it once (or keep it sorted). If you only ever need exact lookups, a <code>Map</code> from id to order beats both with O(1) average per lookup, at the price of extra memory and no range queries.</p>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Need</th><th>Good choice</th><th>Cost per query</th></tr></thead>
 <tbody>
@@ -498,6 +558,9 @@ for (let round = 0; round < 500; round++) {
 check(`${cases} random cases agree with linear search`, failures === 0);
 </example>
 <output>
+PASS empty array
+PASS one element
+PASS 5000 random cases agree with linear search
 </output>
 <p>Notice the check for <code>binarySearch</code>: with duplicates it may return any matching index, so the test accepts any index that holds the target, and for −1 demands that the target really is absent. Testing "returns index 2" would reject a correct implementation. Each of the six bugs above makes this test fail; try pasting one in.</p>
 </section>
@@ -538,6 +601,8 @@ const count = upperBound(products, 5_000_000, price) - lowerBound(products, 1_00
 console.log("between ₦10,000 and ₦50,000:", count);
 </example>
 <output>
+at ₦12,000: Earbuds, Phone case, Power bank
+between ₦10,000 and ₦50,000: 5
 </output>
 <p>Prices are stored in kobo (integers), so equality is exact; comparing floating-point naira amounts with <code>===</code> would be fragile. An inclusive range [a, b] is <code>upperBound(b) − lowerBound(a)</code>: the Speaker at one kobo over ₦50,000 is correctly left out. Four binary searches, O(log n) each.</p>
 </solution>
@@ -567,6 +632,11 @@ for (const wanted of ["07:15", "11:15", "11:16", "13:30", "20:00"]) {
 }
 </example>
 <output>
+07:15 -> 09:00
+11:15 -> 10:30
+11:16 -> 12:00
+13:30 -> 12:00
+20:00 -> 17:30
 </output>
 <p>The lower bound gives the "after" neighbour; the "before" neighbour is one index earlier. The two edge cases (<code>i === 0</code> and <code>i === slots.length</code>) are exactly where a careless version reads <code>slots[-1]</code> or <code>slots[slots.length]</code> and gets <code>undefined</code>. 11:15 is a tie between 10:30 and 12:00 and goes to the earlier slot, as asked.</p>
 </solution>
@@ -595,6 +665,10 @@ for (const time of ["2026-07-15T12:00:00Z", "2026-08-20T09:00:00Z", "2026-08-31T
 }
 </example>
 <output>
+2026-07-15T12:00:00Z not on sale yet
+2026-08-20T09:00:00Z ₦13,500
+2026-08-31T23:59:59Z ₦13,500
+2026-09-10T08:00:00Z ₦16,000
 </output>
 <p>Upper bound finds the first change strictly <em>after</em> the time; the one before it is the last change at or before it, which is the price in effect. A change that took effect at exactly the order time applies (08-20 09:00), which is why this uses upper bound and not lower bound. This "floor" search is the array version of the BST floor from <a href="/learn/dsa-trees#practice">Trees</a>, and the same lookup that versioned configuration and exchange-rate tables use.</p>
 </solution>

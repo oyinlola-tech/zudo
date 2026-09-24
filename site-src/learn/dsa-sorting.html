@@ -1,0 +1,915 @@
+---
+title: Sorting algorithms
+description: Build bubble, selection, insertion, merge and quick sort, count their comparisons, then sort real orders by several keys with a stable, tested sort.
+minutes: 55
+youNeed: Big O and complexity, Recursion, Arrays and strings under the hood, and Heaps and priority queues
+youBuild: A tested library of five sorting algorithms with comparison counters, and a multi-key order report sorted by date then amount
+keywords: sorting algorithms, bubble sort, selection sort, insertion sort, merge sort, quicksort, stable sort, comparator function, array sort javascript, toSorted, sort by multiple keys, three way partition, sorting complexity
+objectives: Write a correct comparator and explain why the default sort orders numbers as text | Implement bubble, selection, insertion, merge and quick sort and count the comparisons each one makes | Explain stability and use it to sort orders by date and then by amount | Choose a sort for sorted, nearly sorted, random and duplicate-heavy data, and justify its complexity | Test a sort against a reference, including stability and duplicates
+---
+<section>
+<h2 id="problem">The problem: an order report in the wrong order</h2>
+<p>The finance team at an online shop wants a daily report: every order, grouped by date, and within each date the largest orders first, so they can check the big ones before the bank closes. You have the orders as an array. The first attempt sorts the amounts and gets nonsense:</p>
+<example file="first-try.js">
+const amounts = [25000, 3500, 100, 1200000, 99000, 750];
+
+const sorted = amounts.sort();
+console.log(sorted.join(", "));
+console.log("same array as before?", sorted === amounts);
+</example>
+<output>
+100, 1200000, 25000, 3500, 750, 99000
+same array as before? true
+</output>
+<p>Two surprises. First, <code>₦1,200,000</code> sits between <code>₦100</code> and <code>₦25,000</code>. With no arguments, <code>sort</code> turns every item into a string and orders the strings character by character, the way a dictionary does. <code>"1200000"</code> comes before <code>"25000"</code> because <code>"1"</code> comes before <code>"2"</code>. Second, <code>sort</code> did not make a new array: it rearranged the original and returned the same one. Any other code holding <code>amounts</code> now sees it in a different order.</p>
+<p>Fixing the first surprise takes one line (you will see it next). But the report raises bigger questions that one line does not answer. How does a computer put a million orders in order? Why are some ways of doing it a thousand times slower than others? Why does sorting by amount and then by date sometimes keep the amounts in order within each day, and sometimes scramble them? This lesson answers those by building the classic sorting algorithms yourself, counting the work each one does, and then using what you learned to drive JavaScript's built-in sort properly.</p>
+<p>A <strong>sorting algorithm</strong> takes a list of items and a rule for which item comes first, and returns the same items rearranged so that every item comes before or together with the one after it. The rule is the interesting part, so it comes first.</p>
+</section>
+
+<section>
+<h2 id="comparators">The comparator: the rule that defines the order</h2>
+<p>Every sort in this lesson, and JavaScript's own <code>sort</code>, learns the order from a <strong>comparator</strong>: a function <code>compare(a, b)</code> that returns</p>
+<ul>
+<li>a <strong>negative</strong> number when <code>a</code> should come before <code>b</code>,</li>
+<li>a <strong>positive</strong> number when <code>a</code> should come after <code>b</code>,</li>
+<li><strong>zero</strong> when the two are equal for this order (either may come first).</li>
+</ul>
+<p>For numbers, <code>a - b</code> does all three at once: it is negative exactly when <code>a &lt; b</code>. <code>b - a</code> reverses the order. Strings cannot be subtracted, so compare them with <code>&lt;</code> and <code>&gt;</code>, or with <code>localeCompare</code> for human text.</p>
+<example file="comparators.js">
+const amounts = [25000, 3500, 100, 1200000, 99000, 750];
+
+console.log("ascending: ", amounts.toSorted((a, b) => a - b).join(", "));
+console.log("descending:", amounts.toSorted((a, b) => b - a).join(", "));
+
+const products = ["rice 50kg", "Garri", "beans", "Yam flour"];
+console.log("< and >:     ", products.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join(" | "));
+console.log("localeCompare:", products.toSorted((a, b) => a.localeCompare(b)).join(" | "));
+
+console.log("boolean comparator:", amounts.toSorted((a, b) => a > b).join(", "));
+</example>
+<output>
+ascending:  100, 750, 3500, 25000, 99000, 1200000
+descending: 1200000, 99000, 25000, 3500, 750, 100
+< and >:      Garri | Yam flour | beans | rice 50kg
+localeCompare: beans | Garri | rice 50kg | Yam flour
+boolean comparator: 25000, 3500, 100, 1200000, 99000, 750
+</output>
+<p><code>toSorted</code> (added in ES2023) sorts a <em>copy</em> and leaves the original alone, which is what you want most of the time. Notice three things:</p>
+<ul>
+<li>With <code>&lt;</code> on strings, every capital letter comes before every lower-case letter, because the comparison uses character codes. <code>localeCompare</code> orders them the way a person expects.</li>
+<li>The last line is a very common bug. <code>(a, b) =&gt; a &gt; b</code> returns <code>true</code> or <code>false</code>, which become <code>1</code> and <code>0</code>. It never returns a negative number, so the sort is never told that anything comes <em>before</em> anything else. The result depends on the engine's internal algorithm; here the array came back unchanged, with no error. A comparator must be able to return all three signs.</li>
+<li>Sorting never changes the items themselves, only their positions. That is why you can sort order objects and still have the same order objects afterwards.</li>
+</ul>
+<p>A comparator also has to be <strong>consistent</strong>: if <code>a</code> comes before <code>b</code> and <code>b</code> before <code>c</code>, then <code>a</code> must come before <code>c</code>, and it must give the same answer every time for the same pair. A comparator that uses <code>Math.random()</code> or reads a value that changes during the sort breaks this, and the result is some arbitrary arrangement, not a shuffle and not an error.</p>
+</section>
+
+<section>
+<h2 id="counting">Counting the work</h2>
+<p>To compare algorithms fairly you need a measure that does not change from run to run. Timings do: they depend on the machine, on what else is running, and on the JIT compiler warming up (<a href="/learn/dsa-complexity#counting-steps">Big O and complexity</a> explains why). This lesson counts <strong>comparisons</strong> (calls to the comparator) and <strong>writes</strong> (times a value is stored into the array). Both are exact and repeatable, and for a comparison sort the number of comparisons is the dominant cost.</p>
+<p>All the sorts share a few helpers: a seeded random number generator, so "random" data is the same on every run, and a fresh counter object.</p>
+<file name="tools.js" project="sorts">
+export function makeRandom(seed) {
+  return () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+}
+
+export function randomInts(n, max, seed = 1) {
+  const random = makeRandom(seed);
+  return Array.from({ length: n }, () => Math.floor(random() * max));
+}
+
+export function newStats() {
+  return { comparisons: 0, writes: 0 };
+}
+
+export const ascending = (a, b) => a - b;
+</file>
+<p>Every sort takes <code>(input, compare, stats)</code>, copies the input first so the caller's array is never changed, and returns the sorted copy. That is the same contract as <code>toSorted</code>.</p>
+</section>
+
+<section>
+<h2 id="bubble">Bubble sort</h2>
+<p>The simplest idea: walk along the array comparing neighbours, and swap any pair that is in the wrong order. After one full pass the largest item has been carried all the way to the end, like a bubble rising. The next pass can stop one place earlier. If a pass makes no swaps at all, the array is sorted and you can stop.</p>
+<pre>
+pass 1:  [5 1 4 2]  ->  [1 5 4 2]  ->  [1 4 5 2]  ->  [1 4 2 5]   5 is in place
+pass 2:  [1 4 2 | 5]  ->  [1 4 2]  ->  [1 2 4]                  4 is in place
+pass 3:  [1 2 | 4 5]  ->  no swaps: stop
+</pre>
+<file name="bubble.js" project="sorts">
+import { newStats } from "./tools.js";
+
+export function bubbleSort(input, compare, stats = newStats()) {
+  const a = [...input];
+  for (let end = a.length - 1; end > 0; end--) {
+    let swapped = false;
+    for (let i = 0; i < end; i++) {
+      stats.comparisons++;
+      if (compare(a[i], a[i + 1]) > 0) {
+        [a[i], a[i + 1]] = [a[i + 1], a[i]];
+        stats.writes += 2;
+        swapped = true;
+      }
+    }
+    if (!swapped) break;
+  }
+  return a;
+}
+</file>
+<example file="bubble-demo.js" project="sorts">
+import { bubbleSort } from "./bubble.js";
+import { ascending, newStats, randomInts } from "./tools.js";
+
+console.log(bubbleSort([25000, 3500, 100, 1200000, 99000, 750], ascending).join(", "));
+
+for (const n of [100, 1000]) {
+  const random = newStats();
+  bubbleSort(randomInts(n, 100000), ascending, random);
+  const sorted = newStats();
+  bubbleSort(Array.from({ length: n }, (_, i) => i), ascending, sorted);
+  console.log(`n=${n}: random ${random.comparisons} comparisons, already sorted ${sorted.comparisons}`);
+}
+</example>
+<output>
+100, 750, 3500, 25000, 99000, 1200000
+n=100: random 4779 comparisons, already sorted 99
+n=1000: random 498225 comparisons, already sorted 999
+</output>
+<p>On random data, ten times more items cost about a hundred times more comparisons: O(n²). Pass one makes n − 1 comparisons, pass two n − 2, and so on, which adds up to n(n − 1)/2. On data that is already sorted, the first pass makes no swaps and the <code>swapped</code> flag stops it after n − 1 comparisons: O(n) in the best case. Without that flag, bubble sort would do the full n²/2 even on sorted data.</p>
+<p>Bubble sort is worth knowing because it is the easiest sort to get right and to reason about, not because you should use it. Its swaps only ever exchange neighbours, which makes it the slowest of the simple sorts in practice.</p>
+</section>
+
+<section>
+<h2 id="selection">Selection sort</h2>
+<p>Selection sort works the way you might sort cards on a table: find the smallest card, put it first; find the smallest of the rest, put it second; and so on. Each step <em>selects</em> the minimum of the unsorted part and swaps it into place.</p>
+<file name="selection.js" project="sorts">
+import { newStats } from "./tools.js";
+
+export function selectionSort(input, compare, stats = newStats()) {
+  const a = [...input];
+  for (let i = 0; i < a.length - 1; i++) {
+    let min = i;
+    for (let j = i + 1; j < a.length; j++) {
+      stats.comparisons++;
+      if (compare(a[j], a[min]) < 0) min = j;
+    }
+    if (min !== i) {
+      [a[i], a[min]] = [a[min], a[i]];
+      stats.writes += 2;
+    }
+  }
+  return a;
+}
+</file>
+<example file="selection-demo.js" project="sorts">
+import { bubbleSort } from "./bubble.js";
+import { selectionSort } from "./selection.js";
+import { ascending, newStats, randomInts } from "./tools.js";
+
+const n = 1000;
+const inputs = {
+  random: randomInts(n, 100000),
+  sorted: Array.from({ length: n }, (_, i) => i),
+};
+for (const [label, data] of Object.entries(inputs)) {
+  const s = newStats();
+  selectionSort(data, ascending, s);
+  const b = newStats();
+  bubbleSort(data, ascending, b);
+  console.log(`${label}: selection ${s.comparisons} comparisons / ${s.writes} writes, bubble ${b.comparisons} / ${b.writes}`);
+}
+</example>
+<output>
+random: selection 499500 comparisons / 1976 writes, bubble 498225 / 497286
+sorted: selection 499500 comparisons / 0 writes, bubble 999 / 0
+</output>
+<p>Selection sort always makes exactly n(n − 1)/2 comparisons, even when the input is already sorted: it cannot know that the rest is sorted without looking at all of it. It is Θ(n²) in every case. Its one strength is writes: at most one swap per position, so at most 2(n − 1) writes, against hundreds of thousands for bubble sort. When writing is far more expensive than comparing (moving heavy records, writing to flash memory that wears out), that can matter. Usually it does not.</p>
+<p>Selection sort has a hidden weakness that you will see in the <a href="#stability">section on stability</a>: the long-distance swap can jump an item over another item that is equal to it.</p>
+</section>
+
+<section>
+<h2 id="insertion">Insertion sort and the leaderboard</h2>
+<p>Insertion sort is how most people sort a hand of cards: take the next card and slide it left past every card that is bigger, until it sits in the right place. The left part of the array is always sorted; each step inserts one more item into it.</p>
+<file name="insertion.js" project="sorts">
+import { newStats } from "./tools.js";
+
+export function insertionSort(input, compare, stats = newStats()) {
+  const a = [...input];
+  for (let i = 1; i < a.length; i++) {
+    const item = a[i];
+    let j = i - 1;
+    while (j >= 0 && (stats.comparisons++, compare(a[j], item) > 0)) {
+      a[j + 1] = a[j];
+      stats.writes++;
+      j--;
+    }
+    a[j + 1] = item;
+    stats.writes++;
+  }
+  return a;
+}
+</file>
+<p>The inner loop stops at the first item that is not bigger, so an item that is already in place costs one comparison. How much work insertion sort does depends on how unsorted the input is. An <strong>inversion</strong> is a pair of items in the wrong order relative to each other; insertion sort shifts once per inversion. A sorted array has none (O(n) total), a reversed one has n(n − 1)/2 (O(n²)).</p>
+<p>That makes insertion sort the right tool for data that is <em>nearly</em> sorted, which is common. The shop runs a loyalty leaderboard: customers ranked by points, highest first. After each purchase, one customer's points go up and the board must be re-sorted. Everyone else is still in order.</p>
+<example file="leaderboard.js" project="sorts">
+import { bubbleSort } from "./bubble.js";
+import { insertionSort } from "./insertion.js";
+import { selectionSort } from "./selection.js";
+import { newStats } from "./tools.js";
+
+const byPointsDesc = (a, b) => b.points - a.points;
+
+const board = Array.from({ length: 1000 }, (_, i) => ({ name: `customer ${i + 1}`, points: 50000 - i * 40 }));
+board[700] = { ...board[700], points: board[700].points + 9000 };
+
+for (const [name, sort] of Object.entries({ insertionSort, bubbleSort, selectionSort })) {
+  const stats = newStats();
+  const ranked = sort(board, byPointsDesc, stats);
+  const rank = ranked.findIndex((c) => c.name === "customer 701") + 1;
+  console.log(`${name.padEnd(13)} customer 701 is now #${rank}, ${stats.comparisons} comparisons`);
+}
+</example>
+<output>
+insertionSort customer 701 is now #477, 1223 comparisons
+bubbleSort    customer 701 is now #477, 199575 comparisons
+selectionSort customer 701 is now #477, 499500 comparisons
+</output>
+<p>Customer 701 climbed from place 701 to place 477. Insertion sort paid one comparison per customer plus one per place climbed: 999 + 224 = 1,223. Selection sort paid its full half million. Bubble sort did badly too, for a reason worth remembering: a pass carries a <em>large</em> item many places towards the end, but moves an item towards the <em>front</em> only one place. Customer 701 needed 224 passes of about a thousand comparisons each. Real libraries use insertion sort for small or nearly sorted pieces for exactly this reason, as you will see with <code>Array.prototype.sort</code>.</p>
+<p>Bubble, selection and insertion sort are all O(n²) on random data, because each comparison can fix at most one inversion, and a random array has about n²/4 of them. To do better, an algorithm must fix many inversions with one move. The next two sorts do that by dividing the problem.</p>
+</section>
+
+<section>
+<h2 id="merge">Merge sort</h2>
+<p>The shop has two branches, Lagos and Abuja. Each branch's till produces its orders in time order. Head office wants one list in time order. You do not need to sort anything: both lists are already sorted, so the earliest remaining order is always at the front of one of them. Compare the two fronts, take the earlier one, repeat. That is <strong>merging</strong>, and it takes one comparison per item: O(n) for two lists with n items in total.</p>
+
+<reason title="Before you write merge">
+<p>Think about the inputs before the code. What should happen when one list runs out before the other? What if one list is empty from the start? Two orders from different branches share the timestamp <code>10:15</code>: which one should come first, and does it matter? What does <code>merge</code> assume about its inputs, and what happens if that assumption is false?</p>
+<answer>
+<ul>
+<li><strong>One list runs out</strong>: everything left in the other list is already in order and later than everything taken so far, so copy the rest across without comparing. The same rule covers an empty list: the loop never compares, and the whole other list is copied.</li>
+<li><strong>Equal timestamps</strong>: either order is sorted, but only one choice is <em>predictable</em>. Take from the left list when the two are equal. Then items that compare equal keep their original relative order (everything from the left input before everything from the right). That property is called stability, and merge sort gets it from this one decision.</li>
+<li><strong>The assumption</strong>: both inputs must already be sorted by the same comparator. <code>merge</code> does not check it. If one input is not sorted, the output is not sorted either, and nothing throws. That is worth a test.</li>
+</ul>
+</answer>
+</reason>
+
+<file name="merge.js" project="sorts">
+import { newStats } from "./tools.js";
+
+export function merge(left, right, compare, stats = newStats()) {
+  const out = [];
+  let i = 0;
+  let j = 0;
+  while (i < left.length && j < right.length) {
+    stats.comparisons++;
+    if (compare(right[j], left[i]) < 0) out.push(right[j++]);
+    else out.push(left[i++]);
+  }
+  while (i < left.length) out.push(left[i++]);
+  while (j < right.length) out.push(right[j++]);
+  stats.writes += out.length;
+  return out;
+}
+
+export function mergeSort(input, compare, stats = newStats()) {
+  if (input.length <= 1) return [...input];
+  const mid = Math.floor(input.length / 2);
+  const left = mergeSort(input.slice(0, mid), compare, stats);
+  const right = mergeSort(input.slice(mid), compare, stats);
+  return merge(left, right, compare, stats);
+}
+</file>
+<p><code>merge</code> takes from the right only when the right item is <em>strictly</em> earlier. On a tie it takes from the left. Here it is on the two branches' streams:</p>
+<example file="branches.js" project="sorts">
+import { merge } from "./merge.js";
+import { newStats } from "./tools.js";
+
+const lagos = [
+  { time: "09:02", id: "L-101", naira: 12500 },
+  { time: "10:15", id: "L-102", naira: 4800 },
+  { time: "13:40", id: "L-103", naira: 99000 },
+];
+const abuja = [
+  { time: "08:55", id: "A-201", naira: 3000 },
+  { time: "10:15", id: "A-202", naira: 76000 },
+  { time: "11:30", id: "A-203", naira: 15000 },
+  { time: "16:05", id: "A-204", naira: 2200 },
+];
+
+const byTime = (a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+const stats = newStats();
+for (const order of merge(lagos, abuja, byTime, stats)) console.log(order.time, order.id);
+console.log(`${lagos.length + abuja.length} orders, ${stats.comparisons} comparisons`);
+console.log("empty branch:", merge([], abuja, byTime).map((o) => o.id).join(" "));
+</example>
+<output>
+08:55 A-201
+09:02 L-101
+10:15 L-102
+10:15 A-202
+11:30 A-203
+13:40 L-103
+16:05 A-204
+7 orders, 6 comparisons
+empty branch: A-201 A-202 A-203 A-204
+</output>
+<p>At <code>10:15</code> the Lagos order comes first because Lagos was the left input. Once Lagos ran out, the last Abuja order was copied without a comparison.</p>
+<p><strong>Merge sort</strong> turns merging into a full sort with recursion (<a href="/learn/js-recursion">Recursion</a>): split the array in half, sort each half the same way, and merge the two sorted halves. The base case is a list of zero or one items, which is already sorted.</p>
+<pre>
+[38 27 43 3 9 82 10]
+[38 27 43]        [3 9 82 10]          split
+[38] [27 43]      [3 9] [82 10]        split
+[38] [27] [43]    [3] [9] [82] [10]    single items are sorted
+[38] [27 43]      [3 9] [10 82]        merge
+[27 38 43]        [3 9 10 82]          merge
+[3 9 10 27 38 43 82]                   merge
+</pre>
+<p>Halving can only happen about log₂ n times before the pieces have one item, so there are about log₂ n levels. On each level, all the merges together touch every item once: O(n) per level. That gives O(n log n) in total, and it holds for every input, sorted, reversed or random. The price is memory: merging needs a new array, so merge sort uses O(n) extra space. <a href="/learn/dsa-divide-conquer">Divide and conquer</a> takes this analysis further with recursion trees.</p>
+<example file="merge-demo.js" project="sorts">
+import { insertionSort } from "./insertion.js";
+import { mergeSort } from "./merge.js";
+import { ascending, newStats, randomInts } from "./tools.js";
+
+for (const n of [1000, 10000, 100000]) {
+  const data = randomInts(n, 1000000);
+  const stats = newStats();
+  const sorted = mergeSort(data, ascending, stats);
+  const ok = sorted.every((v, i) => i === 0 || sorted[i - 1] <= v);
+  console.log(`n=${n}: ${stats.comparisons} comparisons, n log2 n = ${Math.round(n * Math.log2(n))}, sorted ${ok}`);
+}
+
+const slow = newStats();
+insertionSort(randomInts(10000, 1000000), ascending, slow);
+console.log(`insertion sort, n=10000: ${slow.comparisons} comparisons`);
+</example>
+<output>
+n=1000: 8688 comparisons, n log2 n = 9966, sorted true
+n=10000: 120441 comparisons, n log2 n = 132877, sorted true
+n=100000: 1536475 comparisons, n log2 n = 1660964, sorted true
+insertion sort, n=10000: 24873964 comparisons
+</output>
+<p>For 10,000 random items merge sort needs about 120,000 comparisons where insertion sort needs about 25 million. At 100,000 items the gap is 1.5 million against roughly 2.5 billion, which is the difference between an instant and a very long wait.</p>
+</section>
+
+<section>
+<h2 id="quick">Quick sort</h2>
+<p>Merge sort does the easy split first (just cut in half) and the real work afterwards (merging). <strong>Quick sort</strong> does the opposite: it does the real work while splitting, so that nothing is left to do afterwards. It picks one item, the <strong>pivot</strong>, and <strong>partitions</strong> the array: everything smaller than the pivot to its left, everything else to its right. The pivot is now in its final place. Then it quick-sorts the left part and the right part.</p>
+<p>The partition below is called the Lomuto scheme. It keeps a boundary <code>store</code>: everything before <code>store</code> is smaller than the pivot. It walks through the range, and each time it finds a smaller item it swaps it to the boundary and moves the boundary on. Finally it puts the pivot at the boundary. It sorts in place, with no second array.</p>
+<file name="quick.js" project="sorts">
+import { newStats } from "./tools.js";
+
+export function quickSort(input, compare, stats = newStats(), { pivot = "last", random = Math.random } = {}) {
+  const a = [...input];
+  const swap = (i, j) => {
+    [a[i], a[j]] = [a[j], a[i]];
+    stats.writes += 2;
+  };
+  stats.maxDepth = 0;
+
+  function sort(lo, hi, depth) {
+    if (lo >= hi) return;
+    stats.maxDepth = Math.max(stats.maxDepth, depth);
+    if (pivot === "random") swap(lo + Math.floor(random() * (hi - lo + 1)), hi);
+    const p = a[hi];
+    let store = lo;
+    for (let i = lo; i < hi; i++) {
+      stats.comparisons++;
+      if (compare(a[i], p) < 0) swap(i, store++);
+    }
+    swap(store, hi);
+    sort(lo, store - 1, depth + 1);
+    sort(store + 1, hi, depth + 1);
+  }
+
+  sort(0, a.length - 1, 1);
+  return a;
+}
+</file>
+<p>The <code>pivot</code> option chooses between the textbook choice (the last item of the range) and a random item. The random function can be passed in, so a test can make "random" repeatable. <code>maxDepth</code> records how deep the recursion went.</p>
+<example file="quick-demo.js" project="sorts">
+import { quickSort } from "./quick.js";
+import { ascending, makeRandom, newStats, randomInts } from "./tools.js";
+
+const n = 2000;
+const inputs = {
+  random: randomInts(n, 1000000),
+  "already sorted": Array.from({ length: n }, (_, i) => i),
+};
+
+for (const [label, data] of Object.entries(inputs)) {
+  for (const pivot of ["last", "random"]) {
+    const stats = newStats();
+    quickSort(data, ascending, stats, { pivot, random: makeRandom(42) });
+    console.log(`${label.padEnd(14)} pivot=${pivot.padEnd(6)} ${String(stats.comparisons).padStart(7)} comparisons, depth ${stats.maxDepth}`);
+  }
+}
+</example>
+<output>
+random         pivot=last     24686 comparisons, depth 22
+random         pivot=random   26581 comparisons, depth 23
+already sorted pivot=last   1999000 comparisons, depth 1999
+already sorted pivot=random   25416 comparisons, depth 24
+</output>
+<p>On random data quick sort is excellent: a little more than n log₂ n comparisons (2,000 × log₂ 2,000 is about 21,900), a recursion depth of a couple of dozen levels, and no extra array. On already sorted data with the last item as pivot, it collapses. The last item is the largest, so the partition puts everything on one side and nothing on the other; each level removes only one item. That is n levels, n²/2 comparisons: O(n²), as slow as bubble sort. The recursion is also 2,000 calls deep; with tens of thousands of sorted items it would overflow the call stack (<a href="/learn/js-recursion#overflow">Recursion</a> shows that error).</p>
+<p>Sorted input is not an exotic case. "Re-sort the orders, which are mostly sorted already" is one of the most common things a program does. A <strong>random pivot</strong> fixes it: no particular input is bad any more, only unlucky coin flips, and the chance of a bad run on a large array is vanishingly small. The expected cost is O(n log n) and the worst case O(n²) remains possible in theory.</p>
+
+<h3>Failure case: many equal keys</h3>
+<p>The warehouse sorts 2,000 order lines by status, and there are only three statuses. A random pivot does not help here:</p>
+<example file="quick-duplicates.js" project="sorts">
+import { quickSort } from "./quick.js";
+import { makeRandom, newStats } from "./tools.js";
+
+const statuses = ["delivered", "paid", "shipped"];
+const random = makeRandom(9);
+const lines = Array.from({ length: 2000 }, () => statuses[Math.floor(random() * 3)]);
+
+const byStatus = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const stats = newStats();
+quickSort(lines, byStatus, stats, { pivot: "random", random: makeRandom(42) });
+console.log(`${stats.comparisons} comparisons, depth ${stats.maxDepth}`);
+</example>
+<output>
+672994 comparisons, depth 671
+</output>
+<p>After the first few partitions, every range contains only one status. The partition puts every item that is <em>equal</em> to the pivot on the right side, so a range of about 670 equal items shrinks by one per level, just like sorted input. The fix is a <strong>three-way partition</strong>: split the range into smaller, equal and larger, and recurse only into smaller and larger. Items equal to the pivot are finished in one pass.</p>
+<file name="quick3.js" project="sorts">
+import { newStats } from "./tools.js";
+
+export function quickSort3(input, compare, stats = newStats(), random = Math.random) {
+  const a = [...input];
+  const swap = (i, j) => {
+    [a[i], a[j]] = [a[j], a[i]];
+    stats.writes += 2;
+  };
+
+  function sort(lo, hi) {
+    if (lo >= hi) return;
+    const p = a[lo + Math.floor(random() * (hi - lo + 1))];
+    let lt = lo;
+    let i = lo;
+    let gt = hi;
+    while (i <= gt) {
+      stats.comparisons++;
+      const c = compare(a[i], p);
+      if (c < 0) swap(lt++, i++);
+      else if (c > 0) swap(i, gt--);
+      else i++;
+    }
+    sort(lo, lt - 1);
+    sort(gt + 1, hi);
+  }
+
+  sort(0, a.length - 1);
+  return a;
+}
+</file>
+<p>While it runs, <code>a[lo..lt-1]</code> holds smaller items, <code>a[lt..i-1]</code> equal ones, <code>a[gt+1..hi]</code> larger ones, and <code>a[i..gt]</code> is still unexamined. A larger item is swapped to the end without advancing <code>i</code>, because the item that comes back from the end has not been examined yet.</p>
+<example file="quick3-demo.js" project="sorts">
+import { quickSort3 } from "./quick3.js";
+import { makeRandom, newStats, randomInts } from "./tools.js";
+
+const statuses = ["delivered", "paid", "shipped"];
+const random = makeRandom(9);
+const lines = Array.from({ length: 2000 }, () => statuses[Math.floor(random() * 3)]);
+const byStatus = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+const few = newStats();
+const sorted = quickSort3(lines, byStatus, few, makeRandom(42));
+console.log(`3 statuses: ${few.comparisons} comparisons, first ${sorted[0]}, last ${sorted.at(-1)}`);
+
+const many = newStats();
+quickSort3(randomInts(2000, 1000000), (a, b) => a - b, many, makeRandom(42));
+console.log(`distinct numbers: ${many.comparisons} comparisons`);
+</example>
+<output>
+3 statuses: 3993 comparisons, first delivered, last shipped
+distinct numbers: 26563 comparisons
+</output>
+<p>From about 670,000 comparisons down to a few thousand: with three distinct keys, three-way quick sort does roughly one pass per distinct value. On data with no duplicates it costs about the same as the two-way version.</p>
+<p>Quick sort is <strong>not stable</strong>: the long-distance swaps in the partition can move an item past an equal one. Its extra space is the recursion stack, O(log n) on average. It is fast in practice because it scans memory in order and swaps in place, which suits the processor's cache.</p>
+</section>
+
+<section>
+<h2 id="compare">All five side by side</h2>
+<p>Same inputs, same comparator, every algorithm. Four kinds of input: random numbers, already sorted, reversed, and "nearly sorted" (sorted with ten neighbouring pairs swapped, like the leaderboard).</p>
+<example file="compare-all.js" project="sorts">
+import { bubbleSort } from "./bubble.js";
+import { insertionSort } from "./insertion.js";
+import { mergeSort } from "./merge.js";
+import { quickSort } from "./quick.js";
+import { selectionSort } from "./selection.js";
+import { ascending, makeRandom, newStats, randomInts } from "./tools.js";
+
+const n = 2000;
+const nearly = Array.from({ length: n }, (_, i) => i);
+const random = makeRandom(5);
+for (let k = 0; k < 10; k++) {
+  const i = Math.floor(random() * (n - 1));
+  [nearly[i], nearly[i + 1]] = [nearly[i + 1], nearly[i]];
+}
+const inputs = {
+  random: randomInts(n, 1000000),
+  sorted: Array.from({ length: n }, (_, i) => i),
+  reversed: Array.from({ length: n }, (_, i) => n - i),
+  nearly,
+};
+
+const sorts = {
+  bubble: bubbleSort,
+  selection: selectionSort,
+  insertion: insertionSort,
+  merge: mergeSort,
+  "quick (random pivot)": (data, cmp, stats) => quickSort(data, cmp, stats, { pivot: "random", random: makeRandom(42) }),
+};
+
+console.log("".padEnd(21) + Object.keys(inputs).map((k) => k.padStart(10)).join(""));
+for (const [name, sort] of Object.entries(sorts)) {
+  const cells = Object.values(inputs).map((data) => {
+    const stats = newStats();
+    sort(data, ascending, stats);
+    return String(stats.comparisons).padStart(10);
+  });
+  console.log(name.padEnd(21) + cells.join(""));
+}
+</example>
+<output>
+                         random    sorted  reversed    nearly
+bubble                  1997404      1999   1999000      3997
+selection               1999000   1999000   1999000   1999000
+insertion                988384      1999   1999000      2008
+merge                     19388     10864     11088     10870
+quick (random pivot)      26581     25416     25836     25595
+</output>
+<p>Read the table by columns. On random data the two O(n log n) sorts need 19,000 to 27,000 comparisons and the three simple sorts one to two million. On sorted and nearly sorted data, bubble and insertion sort need only about n, and beat everything else. Merge sort is the only one that never has a bad column. Summarised:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Algorithm</th><th>Best</th><th>Average</th><th>Worst</th><th>Extra space</th><th>Stable</th></tr></thead>
+<tbody>
+<tr><td>Bubble (with early exit)</td><td>O(n)</td><td>O(n²)</td><td>O(n²)</td><td>O(1)</td><td>yes</td></tr>
+<tr><td>Selection</td><td>O(n²)</td><td>O(n²)</td><td>O(n²)</td><td>O(1)</td><td>no</td></tr>
+<tr><td>Insertion</td><td>O(n)</td><td>O(n²)</td><td>O(n²)</td><td>O(1)</td><td>yes</td></tr>
+<tr><td>Merge</td><td>O(n log n)</td><td>O(n log n)</td><td>O(n log n)</td><td>O(n)</td><td>yes</td></tr>
+<tr><td>Quick (random pivot, three-way)</td><td>O(n)</td><td>O(n log n)</td><td>O(n²), very unlikely</td><td>O(log n) stack</td><td>no</td></tr>
+<tr><td>Heap sort (<a href="/learn/dsa-heaps#heap-sort">Heaps</a>)</td><td>O(n log n)</td><td>O(n log n)</td><td>O(n log n)</td><td>O(1)</td><td>no</td></tr>
+</tbody>
+</table></div>
+<h3>Why not faster than n log n?</h3>
+<p>Every algorithm here learns about the order only by asking the comparator "which of these two comes first?". An array of n distinct items can be arranged in n! (n factorial: n × (n − 1) × … × 1) ways, and the sort must end up distinguishing all of them. Each comparison has two answers, so it can at best halve the number of arrangements still possible. Getting from n! possibilities down to one therefore takes at least log₂(n!) comparisons in the worst case, and log₂(n!) grows like n log₂ n. No comparison sort, however clever, can beat O(n log n) in the worst case. Merge sort and heap sort are optimal in this sense.</p>
+<p>Sorts that do not compare, like <strong>counting sort</strong>, can be faster when the keys are small whole numbers: to order 100,000 product reviews by star rating (1 to 5), count how many reviews have each rating and write them out group by group, in O(n + k) for k possible keys. That trick only works when you know the keys in advance.</p>
+</section>
+
+<section>
+<h2 id="stability">Stability: date first, then amount</h2>
+<p>Back to the finance report: orders by date, and within each date the largest amount first. A sort is <strong>stable</strong> if items that compare equal stay in the same order they had in the input. Stability lets you sort by several keys in steps: sort by the <em>secondary</em> key (amount, descending) first, then by the <em>primary</em> key (date) with a stable sort. Orders with the same date compare equal in the second sort, so they keep the amount order from the first. This is what happens when you click one column header in a spreadsheet and then another.</p>
+<file name="orders.js" project="sorts">
+export const orders = [
+  { id: 1001, date: "2026-09-02", naira: 4800 },
+  { id: 1002, date: "2026-09-01", naira: 99000 },
+  { id: 1003, date: "2026-09-02", naira: 250000 },
+  { id: 1004, date: "2026-09-01", naira: 1200 },
+  { id: 1005, date: "2026-09-03", naira: 15000 },
+  { id: 1006, date: "2026-09-02", naira: 76000 },
+  { id: 1007, date: "2026-09-01", naira: 35000 },
+];
+
+export const byDate = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+export const byAmountDesc = (a, b) => b.naira - a.naira;
+
+export function show(list) {
+  return list.map((o) => `${o.date.slice(5)} #${o.id} ₦${o.naira}`).join("\n");
+}
+</file>
+<example file="two-step.js" project="sorts">
+import { insertionSort } from "./insertion.js";
+import { mergeSort } from "./merge.js";
+import { byAmountDesc, byDate, orders, show } from "./orders.js";
+import { selectionSort } from "./selection.js";
+
+const byAmount = mergeSort(orders, byAmountDesc);
+
+console.log("merge sort (stable):");
+console.log(show(mergeSort(byAmount, byDate)));
+console.log("insertion sort (stable) gives the same:", show(insertionSort(byAmount, byDate)) === show(mergeSort(byAmount, byDate)));
+console.log("selection sort (not stable):");
+console.log(show(selectionSort(byAmount, byDate)));
+</example>
+<output>
+merge sort (stable):
+09-01 #1002 ₦99000
+09-01 #1007 ₦35000
+09-01 #1004 ₦1200
+09-02 #1003 ₦250000
+09-02 #1006 ₦76000
+09-02 #1001 ₦4800
+09-03 #1005 ₦15000
+insertion sort (stable) gives the same: true
+selection sort (not stable):
+09-01 #1002 ₦99000
+09-01 #1007 ₦35000
+09-01 #1004 ₦1200
+09-02 #1003 ₦250000
+09-02 #1001 ₦4800
+09-02 #1006 ₦76000
+09-03 #1005 ₦15000
+</output>
+<p>With the stable sorts, each day's orders are still largest first. Selection sort gets the dates right, which is all its comparator asked for, but on 2 September it swapped ₦4,800 and ₦76,000: the long-distance swap moved order #1001 past #1006. Nothing failed; the report is simply wrong, and a finance clerk may not notice for weeks. The ISO date format <code>YYYY-MM-DD</code> is what makes <code>&lt;</code> on the strings a correct date comparison: the most significant part comes first and every part has a fixed width.</p>
+<h3>One comparator with two keys</h3>
+<p>Sorting twice works, but it relies on stability and on the reader knowing the trick. Usually it is clearer to say exactly what you mean in one comparator: compare by date, and only if the dates are equal, compare by amount. Because <code>0</code> is falsy, <code>||</code> expresses "if the first comparison is a tie, use the next one":</p>
+<example file="multi-key.js" project="sorts">
+import { byAmountDesc, byDate, orders, show } from "./orders.js";
+import { selectionSort } from "./selection.js";
+
+const byId = (a, b) => a.id - b.id;
+const report = (a, b) => byDate(a, b) || byAmountDesc(a, b) || byId(a, b);
+
+console.log(show(orders.toSorted(report)));
+console.log("selection sort agrees:", show(selectionSort(orders, report)) === show(orders.toSorted(report)));
+</example>
+<output>
+09-01 #1002 ₦99000
+09-01 #1007 ₦35000
+09-01 #1004 ₦1200
+09-02 #1003 ₦250000
+09-02 #1006 ₦76000
+09-02 #1001 ₦4800
+09-03 #1005 ₦15000
+selection sort agrees: true
+</output>
+<p>With a comparator that never returns 0 for two different orders (the order id is unique, so it is the final tie-breaker), stability stops mattering: every algorithm, stable or not, must produce exactly this output. That is a good habit whenever the order will be shown to people, saved, or used to split results into pages.</p>
+</section>
+
+<section>
+<h2 id="builtin">Array.prototype.sort in practice</h2>
+<p>You will rarely ship your own sort. JavaScript's <code>sort</code> and <code>toSorted</code> are fast and, since ES2019, <strong>guaranteed stable</strong>. V8 (the engine in Node.js and Chrome) uses TimSort, a hybrid of merge sort and insertion sort: it finds runs that are already in order, extends short runs with binary insertion sort, and merges the runs. That is why it is O(n) on sorted input and O(n log n) in the worst case, the best of both columns in your table. What remains your job is the comparator and knowing the method's behaviour.</p>
+<example file="builtin.js">
+let calls = 0;
+const counted = (a, b) => (calls++, a - b);
+
+const sortedAlready = Array.from({ length: 10000 }, (_, i) => i);
+sortedAlready.toSorted(counted);
+console.log("sorted input:", calls, "comparisons");
+
+calls = 0;
+const shuffled = Array.from({ length: 10000 }, (_, i) => (i * 7919) % 10000);
+shuffled.toSorted(counted);
+const nLogN = 10000 * Math.log2(10000);
+console.log("shuffled input:", (calls / nLogN).toFixed(1), "x n log2 n comparisons");
+
+const cart = [3500, undefined, 1200, undefined, 800];
+console.log(cart.toSorted((a, b) => a - b));
+
+const prices = [4500, 1200, 800];
+const view = prices.toSorted((a, b) => a - b);
+console.log(prices, view);
+</example>
+<output>
+sorted input: 9999 comparisons
+shuffled input: 0.9 x n log2 n comparisons
+[ 800, 1200, 3500, undefined, undefined ]
+[ 4500, 1200, 800 ] [ 800, 1200, 4500 ]
+</output>
+<ul>
+<li>On sorted input TimSort needed n − 1 comparisons: it found one run covering everything. On shuffled input it needed a little less than n log₂ n. (The exact count differs slightly between V8 versions, so the example prints it as a multiple of n log₂ n.)</li>
+<li><code>undefined</code> items are always moved to the end without calling your comparator. Holes in sparse arrays are too. Other odd values are not handled for you: a <code>NaN</code> amount makes <code>a - b</code> return <code>NaN</code>, which the sort treats like 0, and the result can be out of order around it. Validate the data before sorting it.</li>
+<li><code>toSorted</code> leaves <code>prices</code> alone. Prefer it whenever the array came from somewhere else (a function argument, application state, a cached value). Use <code>sort</code> only on an array you just created yourself.</li>
+</ul>
+
+<h3>A reusable multi-key comparator</h3>
+<p>Report screens often let the user choose the sort columns. Instead of writing a new comparator each time, build one from a list of keys:</p>
+<example file="by.js">
+function by(...keys) {
+  return (a, b) => {
+    for (const { key, desc = false } of keys) {
+      const x = a[key];
+      const y = b[key];
+      const c = typeof x === "string" ? x.localeCompare(y) : x - y;
+      if (c !== 0) return desc ? -c : c;
+    }
+    return 0;
+  };
+}
+
+const customers = [
+  { name: "Tunde", city: "Lagos", points: 5400 },
+  { name: "adaeze", city: "Abuja", points: 5400 },
+  { name: "Chioma", city: "Lagos", points: 9100 },
+  { name: "Bola", city: "Abuja", points: 2300 },
+];
+
+for (const c of customers.toSorted(by({ key: "points", desc: true }, { key: "name" }))) {
+  console.log(c.points, c.name);
+}
+console.log(customers.toSorted(by({ key: "city" }, { key: "points", desc: true })).map((c) => c.name).join(", "));
+</example>
+<output>
+9100 Chioma
+5400 adaeze
+5400 Tunde
+2300 Bola
+adaeze, Bola, Chioma, Tunde
+</output>
+<p>Tunde and adaeze tie on points, so the name decides, and <code>localeCompare</code> puts the lower-case "adaeze" first where plain <code>&lt;</code> would have put her last. For sorting many strings, <code>new Intl.Collator("en").compare</code> is a faster comparator that gives the same ordering as <code>localeCompare</code>, because the language rules are prepared once instead of on every call.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing a sort</h2>
+<p>A sort can be wrong in three ways: the output is not in order, the output is not the same items (something lost or duplicated), or equal items moved when they should not have. A handful of hand-picked cases catches the edge cases; a few hundred random arrays compared with a trusted reference (<code>toSorted</code>) catch the rest. Small value ranges create many duplicates, which is where sorting bugs hide.</p>
+<example file="sort-test.js" project="sorts">
+import { bubbleSort } from "./bubble.js";
+import { insertionSort } from "./insertion.js";
+import { mergeSort } from "./merge.js";
+import { quickSort } from "./quick.js";
+import { quickSort3 } from "./quick3.js";
+import { selectionSort } from "./selection.js";
+import { makeRandom } from "./tools.js";
+
+const sorts = {
+  bubbleSort, selectionSort, insertionSort, mergeSort, quickSort,
+  quickSort3: (data, cmp, stats) => quickSort3(data, cmp, stats, makeRandom(7)),
+};
+const stable = new Set(["bubbleSort", "insertionSort", "mergeSort"]);
+
+const edgeCases = [[], [1], [2, 1], [3, 3, 3], [5, -2, 0, -2, 9], [1, 2, 3, 4], [4, 3, 2, 1]];
+const random = makeRandom(2026);
+const randomCases = Array.from({ length: 300 }, () =>
+  Array.from({ length: Math.floor(random() * 40) }, () => Math.floor(random() * 6)),
+);
+
+for (const [name, sort] of Object.entries(sorts)) {
+  let failures = 0;
+  for (const input of [...edgeCases, ...randomCases]) {
+    const before = input.join();
+    const got = sort(input, (a, b) => a - b);
+    if (got.join() !== input.toSorted((a, b) => a - b).join()) failures++;
+    if (input.join() !== before) failures++;
+
+    const tagged = input.map((value, index) => ({ value, index }));
+    const out = sort(tagged, (a, b) => a.value - b.value);
+    const keptOrder = out.every((x, i) => i === 0 || out[i - 1].value < x.value || out[i - 1].index < x.index);
+    if (stable.has(name) && !keptOrder) failures++;
+  }
+  console.log(`${failures === 0 ? "PASS" : "FAIL"} ${name}: ${edgeCases.length + randomCases.length} inputs, ${failures} failures`);
+}
+</example>
+<output>
+PASS bubbleSort: 307 inputs, 0 failures
+PASS selectionSort: 307 inputs, 0 failures
+PASS insertionSort: 307 inputs, 0 failures
+PASS mergeSort: 307 inputs, 0 failures
+PASS quickSort: 307 inputs, 0 failures
+PASS quickSort3: 307 inputs, 0 failures
+</output>
+<p>Each input is checked three ways: against <code>toSorted</code> (order and contents together, since comparing the joined strings catches a lost or duplicated item), for mutation of the input, and, for the sorts that promise it, stability. The stability check tags every value with its original index; in a stable result, equal values must appear with increasing indexes. To see the test earn its keep, change <code>&lt; 0</code> to <code>&lt;= 0</code> in <code>merge</code> (take from the right on ties): the output is still sorted, and only the stability check fails.</p>
+</section>
+
+<section>
+<h2 id="production">Sorting in production</h2>
+<ul>
+<li><strong>Sort in the database when the data lives there.</strong> <code>ORDER BY created_at DESC, id DESC</code> with an index on those columns returns rows already in order, and the database can stop after the first page instead of sorting everything. Loading 100,000 rows into Node to sort them and show 20 wastes memory and time. <a href="/learn/sql-basics">SQL basics</a> covers <code>ORDER BY</code>.</li>
+<li><strong>Pages need a total order.</strong> If page 1 is "the first 20 orders by date" and many orders share a date, the database may break the ties differently on the next request, so an order appears on two pages or on none. Always end the sort with a unique key such as the id, exactly like the <code>report</code> comparator above.</li>
+<li><strong>Money and dates.</strong> Compare amounts as integers (kobo, not floating-point naira) and dates as timestamps or ISO strings with the same time zone. Sorting <code>"9/2/2026"</code>-style strings orders them by day or month digit, not by date.</li>
+<li><strong>Do not sort in a loop.</strong> Sorting a list on every request, or re-sorting after every insert, turns an O(n log n) job into O(n² log n). Keep the data sorted as it changes (insertion, a heap, or a database index), or sort once and cache the result.</li>
+<li><strong>You only need the top 10?</strong> Do not sort a million items to keep ten. A size-k heap gives the top k in O(n log k) (<a href="/learn/dsa-heaps#top-k">Heaps</a>), and <a href="/learn/dsa-divide-conquer">Divide and conquer</a> shows quickselect, which finds the k-th item in O(n) on average.</li>
+<li><strong>Comparators run a lot.</strong> Sorting 100,000 items calls the comparator about 1.7 million times. Keep it cheap: no parsing dates, no database calls, no <code>toLowerCase</code> on every call. Compute a sort key once per item, sort by the key, and map back.</li>
+<li><strong>Beware user-controlled sort fields.</strong> A <code>?sort=</code> parameter must be checked against a list of allowed columns before it reaches a comparator or an SQL <code>ORDER BY</code>; SQL cannot take a column name as a bound parameter, so an unchecked one is an injection risk.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A fair leaderboard">
+<p>Rank these players for a weekly quiz: most points first; on equal points, whoever finished faster (fewer seconds) first; if that is also equal, by name A to Z. Print the ranking with positions. Use one comparator and <code>toSorted</code>.</p>
+<solution>
+<example file="quiz-board.js">
+const players = [
+  { name: "Kemi", points: 80, seconds: 410 },
+  { name: "Ifeanyi", points: 95, seconds: 530 },
+  { name: "Amaka", points: 80, seconds: 390 },
+  { name: "Musa", points: 95, seconds: 530 },
+  { name: "Dayo", points: 60, seconds: 300 },
+];
+
+const ranking = (a, b) => b.points - a.points || a.seconds - b.seconds || a.name.localeCompare(b.name);
+
+players.toSorted(ranking).forEach((p, i) => console.log(`${i + 1}. ${p.name} ${p.points} pts ${p.seconds}s`));
+</example>
+<output>
+1. Ifeanyi 95 pts 530s
+2. Musa 95 pts 530s
+3. Amaka 80 pts 390s
+4. Kemi 80 pts 410s
+5. Dayo 60 pts 300s
+</output>
+<p>Each key is one comparison chained with <code>||</code>, in order of importance. Points are descending (<code>b - a</code>), time ascending (<code>a - b</code>). Ifeanyi and Musa tie on both numbers, so the name decides. Because the final key (the name) is unique here, the result does not depend on the sort being stable.</p>
+</solution>
+</exercise>
+
+<exercise title="Merge two branches without duplicates">
+<p>The Lagos and Abuja reports are both sorted by order id, but some orders were reported by both branches (a customer paid in one and collected in the other). Write <code>mergeUnique(a, b)</code> that merges two lists of ids sorted in ascending order into one sorted list with no duplicates, in O(n) time, and print how many comparisons it made.</p>
+<solution>
+<example file="merge-unique.js">
+function mergeUnique(a, b) {
+  const out = [];
+  let i = 0;
+  let j = 0;
+  let comparisons = 0;
+  const add = (id) => {
+    if (out.at(-1) !== id) out.push(id);
+  };
+  while (i < a.length && j < b.length) {
+    comparisons++;
+    if (a[i] < b[j]) add(a[i++]);
+    else if (b[j] < a[i]) add(b[j++]);
+    else {
+      add(a[i++]);
+      j++;
+    }
+  }
+  while (i < a.length) add(a[i++]);
+  while (j < b.length) add(b[j++]);
+  return { out, comparisons };
+}
+
+const lagos = [1001, 1003, 1004, 1008, 1010];
+const abuja = [1002, 1003, 1008, 1009, 1011, 1012];
+const { out, comparisons } = mergeUnique(lagos, abuja);
+console.log(out.join(" "));
+console.log(`${lagos.length + abuja.length} ids in, ${out.length} out, ${comparisons} comparisons`);
+console.log(mergeUnique([], [5, 5, 6]).out.join(" "));
+</example>
+<output>
+1001 1002 1003 1004 1008 1009 1010 1011 1012
+11 ids in, 9 out, 7 comparisons
+5 6
+</output>
+<p>It is the merge step with a third case for equal ids, where both pointers advance but only one copy is written. The <code>add</code> helper also drops duplicates <em>within</em> one list, which the last line tests. Every step moves at least one pointer forward, so the loop runs at most n + m times: O(n + m).</p>
+</solution>
+</exercise>
+
+<exercise title="Median-of-three pivot">
+<p>Instead of a random pivot, many libraries use the <strong>median of three</strong>: look at the first, middle and last items of the range and use the middle value of those three as the pivot. Add a <code>pivot: "median3"</code> option to a copy of the Lomuto quick sort and compare its comparisons with the last-item pivot on 2,000 already sorted and 2,000 reversed items.</p>
+<solution>
+<example file="median3.js">
+function quickSort(input, compare, pivot) {
+  const a = [...input];
+  let comparisons = 0;
+  const swap = (i, j) => ([a[i], a[j]] = [a[j], a[i]]);
+
+  function medianIndex(lo, hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const trio = [lo, mid, hi].sort((x, y) => compare(a[x], a[y]));
+    return trio[1];
+  }
+
+  function sort(lo, hi) {
+    if (lo >= hi) return;
+    if (pivot === "median3") swap(medianIndex(lo, hi), hi);
+    const p = a[hi];
+    let store = lo;
+    for (let i = lo; i < hi; i++) {
+      comparisons++;
+      if (compare(a[i], p) < 0) swap(i, store++);
+    }
+    swap(store, hi);
+    sort(lo, store - 1);
+    sort(store + 1, hi);
+  }
+
+  sort(0, a.length - 1);
+  return { a, comparisons };
+}
+
+const n = 2000;
+const inputs = {
+  sorted: Array.from({ length: n }, (_, i) => i),
+  reversed: Array.from({ length: n }, (_, i) => n - i),
+};
+for (const [label, data] of Object.entries(inputs)) {
+  for (const pivot of ["last", "median3"]) {
+    const { a, comparisons } = quickSort(data, (x, y) => x - y, pivot);
+    const ok = a.every((v, i) => i === 0 || a[i - 1] <= v);
+    console.log(`${label.padEnd(8)} ${pivot.padEnd(7)} ${comparisons} comparisons, sorted ${ok}`);
+  }
+}
+</example>
+<output>
+sorted   last    1999000 comparisons, sorted true
+sorted   median3 17964 comparisons, sorted true
+reversed last    1999000 comparisons, sorted true
+reversed median3 33670 comparisons, sorted true
+</output>
+<p>On sorted data the middle item is the true median, so every partition splits evenly and the cost falls from n²/2 to below n log₂ n. Reversed data costs a little more, because after the first partition the pieces are no longer perfectly ordered, but it stays far from quadratic. The comparisons made while picking the pivot are not counted here; they add three per partition. Median-of-three is deterministic, so a determined attacker who knows your code can still build an input that makes it quadratic ("median-of-three killer" sequences exist). That is why production sorts either randomise, fall back to heap sort when the recursion gets too deep (introsort), or avoid quick sort entirely, as V8's TimSort does.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="summary">Summary</h2>
+<ul>
+<li>A comparator returns negative, zero or positive, and must be consistent. <code>a - b</code> for numbers, <code>localeCompare</code> or <code>Intl.Collator</code> for text. Without one, <code>sort</code> compares as strings. A comparator that returns booleans silently breaks the sort.</li>
+<li>Bubble, selection and insertion sort are O(n²) on random data. Insertion sort is O(n) on nearly sorted data and does one shift per inversion; selection sort always does n²/2 comparisons but very few writes.</li>
+<li>Merge sort splits in half, sorts both halves and merges them: O(n log n) always, O(n) extra space, stable because merge takes from the left on ties.</li>
+<li>Quick sort partitions around a pivot: O(n log n) on average and in place, but O(n²) with a fixed pivot on sorted data, and on many equal keys unless it uses a three-way partition. It is not stable.</li>
+<li>No comparison sort beats O(n log n) in the worst case. Count comparisons, not milliseconds, to compare algorithms.</li>
+<li>A stable sort keeps equal items in their input order. Either sort by the secondary key and then stably by the primary, or better, write one comparator with all keys and a unique tie-breaker.</li>
+<li><code>Array.prototype.sort</code> is stable TimSort, sorts in place and returns the same array; <code>toSorted</code> returns a copy. <code>undefined</code> goes last; <code>NaN</code> breaks the order. Test sorts against <code>toSorted</code> on many small random arrays with duplicates, and check stability with tagged items.</li>
+</ul>
+<p>Next: <a href="/learn/dsa-divide-conquer">Divide and conquer</a> takes the idea behind merge sort and quick sort, split the problem, solve the parts, combine, and uses it for quickselect, fast exponentiation and the recursion trees that tell you what a recursive algorithm costs.</p>
+</section>

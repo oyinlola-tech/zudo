@@ -1,0 +1,650 @@
+---
+title: The frequency counter pattern
+description: Replace nested loops with one counting pass: check anagram usernames, reconcile lists, find the first unmatched entry and the majority, in O(n).
+minutes: 45
+youNeed: Big O and complexity, Arrays and strings under the hood, and Hash maps and sets
+youBuild: A username impersonation check backed by a signature index, plus O(n) solutions for list reconciliation, first unique entry and majority vote
+keywords: frequency counter pattern, anagram javascript, count characters, hash map counting, first unique character, majority element, boyer moore voting, multiset comparison, group anagrams, o(n) algorithm, problem solving patterns
+objectives: Recognise problems where only how often each value appears matters, not where it appears | Count the operations of a nested-loop solution and predict how it grows | Build a frequency table with a Map or a fixed-size array and answer questions from it in O(n) | Solve anagram, reconciliation, first-unique and majority problems and state their time and space | Normalise input before counting and test a counter against a slower reference
+---
+<section>
+<h2 id="problem">The problem: usernames with the same letters</h2>
+<p>A payments app lets people send money to a username. Scammers have learned a trick: they register a username that uses exactly the letters of a well-known account, shuffled, such as <code>supportbola</code> copied as <code>bolasupport</code> or <code>suppotrbola</code>. In a busy list of contacts the two look alike, and people send money to the wrong one.</p>
+<p>The trust team asks for a check at sign-up: <em>"Is the new username an anagram of a protected username?"</em> Two strings are <strong>anagrams</strong> when they contain the same characters the same number of times, in any order. You met the anagram check briefly in <a href="/learn/dsa-arrays-strings#anagram">Arrays and strings</a>; this lesson takes the idea behind it, turns it into a general tool, and uses it on problems that have nothing to do with letters.</p>
+<p>Every lesson in this module follows the same seven steps, because that is how you meet these problems at work and in interviews:</p>
+<ol>
+<li>the problem,</li>
+<li>a naive solution, the first thing that works,</li>
+<li>what is wrong with it, measured by counting operations,</li>
+<li>the pattern that fixes it,</li>
+<li>the improved solution,</li>
+<li>its complexity,</li>
+<li>new problems to practise the pattern on.</li>
+</ol>
+<p>A <strong>pattern</strong> here means a reusable shape of solution: a way of organising the work that fits a whole family of problems. Once you know the shape, you stop inventing each solution from scratch and start recognising which family a new problem belongs to.</p>
+<reason title="Before you code: what does 'same letters' mean?">
+<ul>
+<li>Are <code>SupportBola</code> and <code>bolasupport</code> anagrams? What about <code>support_bola</code>?</li>
+<li>Is <code>supportbolaa</code> (one extra <code>a</code>) an anagram of <code>supportbola</code>?</li>
+<li>Does the <em>position</em> of any letter matter to the answer? What is the only thing about each letter that matters?</li>
+<li>What should two empty strings give?</li>
+<li>What is the quickest possible "no"?</li>
+</ul>
+<answer>
+<p><strong>Case and separators:</strong> the check exists to catch look-alikes, so compare usernames after the same normalisation the app uses when it stores them: lower case, and (for this check) ignoring <code>_</code> and <code>.</code>. Decide this before coding; the algorithm cannot guess it.</p>
+<p><strong>Counts matter:</strong> <code>supportbolaa</code> has two <code>a</code>s, so it is not an anagram. "Uses the same set of letters" is not enough. This is the case that breaks the most first attempts.</p>
+<p><strong>Position does not matter at all.</strong> The only fact about each character that decides the answer is <em>how many times it appears</em>. That sentence is the key to the whole lesson.</p>
+<p><strong>Two empty strings</strong> are anagrams of each other: every character (there are none) appears the same number of times.</p>
+<p><strong>Quickest no:</strong> different lengths. Strings of different lengths cannot contain the same characters the same number of times.</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="naive">A naive solution: find and cross off</h2>
+<p>The first idea most people have is how you would do it on paper: for each letter of the first word, find it in the second word and cross it off. If a letter cannot be found, the answer is no. If everything is crossed off, yes.</p>
+<example file="naive-anagram.js">
+function normalizeUsername(name) {
+  return name.toLowerCase().replace(/[._]/g, "");
+}
+
+function isAnagramNaive(a, b) {
+  if (a.length !== b.length) return false;
+  const remaining = [...b];
+  for (const ch of a) {
+    const at = remaining.indexOf(ch);   // find it...
+    if (at === -1) return false;
+    remaining.splice(at, 1);            // ...and cross it off
+  }
+  return true;
+}
+
+const protectedName = normalizeUsername("support_bola");
+for (const candidate of ["BolaSupport", "suppotr.bola", "supportbolaa", "supportbole"]) {
+  console.log(candidate.padEnd(13), isAnagramNaive(protectedName, normalizeUsername(candidate)));
+}
+</example>
+<output>
+BolaSupport   true
+suppotr.bola  true
+supportbolaa  false
+supportbole   false
+</output>
+<p>It is correct, including the <code>supportbolaa</code> case, because crossing off uses each letter of <code>b</code> once. For two usernames of 11 letters it is also perfectly fast. So why not stop here?</p>
+</section>
+
+<section>
+<h2 id="whats-wrong">What is wrong with it: count the operations</h2>
+<p>The same "same items, any order" question appears on much longer inputs. A warehouse packs an order of 5,000 lines, and before the van leaves someone must check that the packing manifest holds exactly the ordered item codes, in whatever order they were picked. That is the anagram question on arrays. The naive function works on arrays too, so measure it there.</p>
+<p>As in <a href="/learn/dsa-complexity#counting-steps">Big O and complexity</a>, you count operations instead of timing the code, because a count depends only on the algorithm and the input. Here the operations are the element comparisons inside <code>indexOf</code> and the elements <code>splice</code> shifts left, which are exactly the hidden loops in those two methods:</p>
+<example file="naive-count.js">
+function sameItemsNaive(a, b, counter) {
+  if (a.length !== b.length) return false;
+  const remaining = [...b];
+  for (const item of a) {
+    let at = -1;
+    for (let i = 0; i < remaining.length; i++) {
+      counter.compares++;
+      if (remaining[i] === item) { at = i; break; }
+    }
+    if (at === -1) return false;
+    counter.shifts += remaining.length - at - 1; // what splice moves
+    remaining.splice(at, 1);
+  }
+  return true;
+}
+
+for (const n of [10, 100, 1000, 10000]) {
+  const ordered = Array.from({ length: n }, (_, i) => `SKU-${i}`);
+  const packed = [...ordered].reverse(); // picked in the opposite order
+  const counter = { compares: 0, shifts: 0 };
+  const same = sameItemsNaive(ordered, packed, counter);
+  console.log(`n=${String(n).padEnd(6)} same=${same} compares=${counter.compares} shifts=${counter.shifts}`);
+}
+</example>
+<output>
+n=10     same=true compares=55 shifts=0
+n=100    same=true compares=5050 shifts=0
+n=1000   same=true compares=500500 shifts=0
+n=10000  same=true compares=50005000 shifts=0
+</output>
+<p>Ten times more lines means about a hundred times more comparisons: <code>n(n + 1) / 2</code> of them, which is O(n²). With 10,000 lines the check does 50 million comparisons. The shifts happen to be zero here only because each match is at the end; put the matches at the front and <code>splice</code> adds another O(n²) of moving.</p>
+<p>The root of the waste is that the naive solution keeps asking a <em>position</em> question ("where in <code>b</code> is this letter?") when the problem only needs a <em>count</em> question ("how many of this letter are there?"). Every search throws away what it learned, and the next search starts again from the beginning.</p>
+<note>Sorting both lists and comparing them, as <a href="/learn/dsa-arrays-strings#anagram">Arrays and strings</a> did, brings this down to O(n log n). That is a real improvement, and a fine answer when you need the sorted order anyway. The pattern in this lesson goes further, to O(n).</note>
+</section>
+
+<section>
+<h2 id="pattern">The pattern: count once, then answer from the counts</h2>
+<p>The <strong>frequency counter</strong> pattern replaces repeated searching with one counting pass:</p>
+<ol>
+<li>Walk the input once and build a <strong>frequency table</strong>: for each distinct value, the number of times it appears. In JavaScript that is a <code>Map</code> from value to count.</li>
+<li>Answer the question by looking values up in the table, which is O(1) on average per lookup (see <a href="/learn/dsa-hash-maps">Hash maps and sets</a> for why).</li>
+</ol>
+<pre>
+input:  s u p p o r t b o l a
+
+table:  s:1  u:1  p:2  o:2  r:1  t:1  b:1  l:1  a:1
+        (built in one pass; the positions are gone, only counts remain)
+</pre>
+<p>The table is a summary that forgets exactly what the problem does not care about (positions) and keeps exactly what it does care about (counts). That is why the pattern works, and it also tells you when it does <em>not</em> work: if the answer depends on order or position, a frequency table has thrown the answer away.</p>
+<h3>How to recognise it</h3>
+<p>Reach for a frequency counter when the problem statement says, or means:</p>
+<ul>
+<li>"same items in any order", "a rearrangement of", "an anagram of",</li>
+<li>"how many times", "the most common", "appears more than half the time",</li>
+<li>"appears exactly once", "has a duplicate", "is unmatched",</li>
+<li>"can this be built from that" (an order from stock, a word from tiles).</li>
+</ul>
+<p>And be suspicious whenever your first draft has a loop inside a loop that searches for equal values. That inner loop is often a lookup that a table would answer in one step.</p>
+<h3>The shape in code</h3>
+<example file="count-shape.js">
+function countValues(items) {
+  const counts = new Map();
+  for (const item of items) counts.set(item, (counts.get(item) ?? 0) + 1);
+  return counts;
+}
+
+console.log(countValues("supportbola"));
+console.log(countValues(["card", "transfer", "card", "ussd", "card"]));
+console.log(countValues([]).size);
+</example>
+<output>
+Map(9) {
+  's' => 1,
+  'u' => 1,
+  'p' => 2,
+  'o' => 2,
+  'r' => 1,
+  't' => 1,
+  'b' => 1,
+  'l' => 1,
+  'a' => 1
+}
+Map(3) { 'card' => 3, 'transfer' => 1, 'ussd' => 1 }
+0
+</output>
+<p>Two details carry the whole pattern. <code>counts.get(item) ?? 0</code> treats a value you have not seen yet as a count of 0; without it you would compute <code>undefined + 1</code>, which is <code>NaN</code>. And <code>for...of</code> works on strings (character by character) and arrays alike, so one function counts both.</p>
+</section>
+
+<section>
+<h2 id="improved">The improved solution</h2>
+<p>For "same items in any order" you do not even need two tables. Count up for every item of the first list, count down for every item of the second. If the second list ever asks for an item whose count is already 0, it has one too many; if anything is left over at the end, the first list had more.</p>
+<example file="same-items.js">
+function sameItems(a, b) {
+  const counts = new Map();
+  let open = 0; // items of a not yet matched by b
+  for (const item of a) {
+    counts.set(item, (counts.get(item) ?? 0) + 1);
+    open++;
+  }
+  for (const item of b) {
+    const left = counts.get(item) ?? 0;
+    if (left === 0) return false; // b has an item a does not, or one too many
+    counts.set(item, left - 1);
+    open--;
+  }
+  return open === 0;              // b ran out before a did?
+}
+
+function normalizeUsername(name) {
+  return name.toLowerCase().replace(/[._]/g, "");
+}
+
+const protectedName = normalizeUsername("support_bola");
+for (const candidate of ["BolaSupport", "suppotr.bola", "supportbolaa", "supportbol", "supportbole"]) {
+  console.log(candidate.padEnd(13), sameItems(protectedName, normalizeUsername(candidate)));
+}
+console.log(sameItems(["SKU-2", "SKU-1", "SKU-2"], ["SKU-2", "SKU-2", "SKU-1"]));
+console.log(sameItems(["SKU-2", "SKU-1", "SKU-1"], ["SKU-2", "SKU-2", "SKU-1"]));
+console.log(sameItems("", ""));
+</example>
+<output>
+BolaSupport   true
+suppotr.bola  true
+supportbolaa  false
+supportbol    false
+supportbole   false
+true
+false
+true
+</output>
+<p>The <code>open</code> counter replaces a separate length check. That matters for strings: <code>"ade🙂".length</code> is 5 (the emoji takes two UTF-16 code units), while <code>for...of</code> sees 4 characters. Counting what the loop actually visits keeps the two sides consistent. The <a href="#failure-cases">failure cases</a> come back to this.</p>
+<p>Now repeat the measurement from before, counting one operation per table update:</p>
+<example file="same-items-count.js">
+function sameItemsCounted(a, b, counter) {
+  const counts = new Map();
+  let open = 0;
+  for (const item of a) {
+    counter.ops++;
+    counts.set(item, (counts.get(item) ?? 0) + 1);
+    open++;
+  }
+  for (const item of b) {
+    counter.ops++;
+    const left = counts.get(item) ?? 0;
+    if (left === 0) return false;
+    counts.set(item, left - 1);
+    open--;
+  }
+  return open === 0;
+}
+
+for (const n of [10, 100, 1000, 10000]) {
+  const ordered = Array.from({ length: n }, (_, i) => `SKU-${i}`);
+  const packed = [...ordered].reverse();
+  const counter = { ops: 0 };
+  const same = sameItemsCounted(ordered, packed, counter);
+  const naive = (n * (n + 1)) / 2;
+  console.log(`n=${String(n).padEnd(6)} same=${same} ops=${String(counter.ops).padEnd(6)} naive compares=${naive}`);
+}
+</example>
+<output>
+n=10     same=true ops=20     naive compares=55
+n=100    same=true ops=200    naive compares=5050
+n=1000   same=true ops=2000   naive compares=500500
+n=10000  same=true ops=20000  naive compares=50005000
+</output>
+<p>Exactly <code>2n</code> table operations. At 10,000 lines that is 20,000 instead of 50 million: 2,500 times less work, and the gap keeps widening as <code>n</code> grows.</p>
+
+<h3>Real application: an impersonation index</h3>
+<p>Back to sign-ups. The app has 200,000 protected usernames (verified businesses and staff). Running <code>sameItems</code> against each of them on every sign-up is 200,000 checks. The frequency counter helps a second time: two usernames are anagrams exactly when their frequency tables are equal, so turn each table into a string, a <strong>signature</strong>, and index the protected names by signature in a <code>Map</code>. Then a sign-up is one signature and one lookup.</p>
+<p>Usernames are restricted to <code>a</code>–<code>z</code> and <code>0</code>–<code>9</code> after normalisation, a small alphabet known in advance. For that case a plain array of 36 counters is a simpler frequency table than a <code>Map</code>: the character's position in the alphabet is its index.</p>
+<example file="impersonation-index.js">
+const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+function normalizeUsername(name) {
+  return name.toLowerCase().replace(/[._]/g, "");
+}
+
+function signature(name) {
+  const counts = new Array(ALPHABET.length).fill(0);
+  for (const ch of normalizeUsername(name)) {
+    const i = ALPHABET.indexOf(ch); // at most 36 steps: a constant
+    if (i === -1) throw new Error(`invalid character "${ch}" in ${name}`);
+    counts[i]++;
+  }
+  return counts.join(",");
+}
+
+function buildIndex(protectedNames) {
+  const index = new Map(); // signature -> protected names with that signature
+  for (const name of protectedNames) {
+    const key = signature(name);
+    if (!index.has(key)) index.set(key, []);
+    index.get(key).push(name);
+  }
+  return index;
+}
+
+function impersonates(index, candidate) {
+  const matches = index.get(signature(candidate)) ?? [];
+  return matches.filter((name) => normalizeUsername(name) !== normalizeUsername(candidate));
+}
+
+const index = buildIndex(["support_bola", "zenith.help", "ada_stores", "kemi2024"]);
+console.log(impersonates(index, "BolaSupport"));
+console.log(impersonates(index, "help.zenith"));
+console.log(impersonates(index, "support.bola")); // the real account, spelt differently
+console.log(impersonates(index, "ada_store"));
+try {
+  impersonates(index, "bola-support");
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output>
+[ 'support_bola' ]
+[ 'zenith.help' ]
+[]
+[]
+invalid character "-" in bola-support
+</output>
+<p><code>support.bola</code> is not reported: it normalises to the protected name itself, so it is the same account, not an impersonator. The invalid-character error is deliberate: a hyphen is not allowed in usernames, and silently skipping it would make <code>bola-support</code> match. Rejecting unknown input is safer than guessing.</p>
+</section>
+
+<section>
+<h2 id="complexity">Its complexity</h2>
+<p>Let <code>n</code> and <code>m</code> be the lengths of the two inputs and <code>k</code> the number of <em>distinct</em> values in them.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Approach</th><th>Time</th><th>Extra space</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>find and cross off</td><td>O(n · m)</td><td>O(m) for the copy</td><td>plus <code>splice</code> shifting</td></tr>
+<tr><td>sort both, compare</td><td>O(n log n + m log m)</td><td>O(n + m)</td><td>gives you sorted order as a bonus</td></tr>
+<tr><td>frequency counter (<code>Map</code>)</td><td>O(n + m) average</td><td>O(k)</td><td>hash lookups are O(1) on average</td></tr>
+<tr><td>frequency counter (array of size A)</td><td>O(n + m + A)</td><td>O(A)</td><td>only for a small, known alphabet of size A</td></tr>
+<tr><td>signature index, per sign-up</td><td>O(L · A), and A = 36 is a constant</td><td>O(N · A) for the index</td><td>L = username length (each character is looked up in the alphabet), N = protected names</td></tr>
+</tbody>
+</table></div>
+<p>The space column is the price. A frequency counter trades memory (one entry per distinct value) for time. When values repeat a lot, <code>k</code> is small: counting the letters of a million-character text needs a table of a few dozen entries. When every value is distinct, as with order ids, <code>k = n</code> and the table is as big as the input. That is usually fine; <a href="#production">in production</a> you will see when it is not.</p>
+<p>The <code>Map</code> version is O(n) "on average": the hash table's worst case, when every key collides, is O(n) per lookup, as <a href="/learn/dsa-hash-maps#worst-case">Hash maps and sets</a> showed. The array version has no such worst case, which is one reason to prefer it when the alphabet is small and fixed.</p>
+</section>
+
+<section>
+<h2 id="more-problems">Three more problems, same pattern</h2>
+<p>The pattern earns its name when you see it solve problems that look different on the surface. In each of these, notice the moment where "search again" turns into "look it up in the counts".</p>
+
+<h3>The first unmatched transfer</h3>
+<p>A bank's reconciliation log should list every transfer reference twice: once for the debit, once for the credit. A reference that appears only once is a transfer that left one account and never arrived. Operations want the <em>first</em> such reference in log order, to investigate the oldest problem first.</p>
+<reason title="Before you code: first unmatched">
+<ul>
+<li>The naive version checks, for each entry, how many times its reference appears in the whole log. What does that cost for 50,000 entries?</li>
+<li>A frequency table tells you which references appear once. Does it tell you which one was <em>first</em>?</li>
+<li>What should the function return when every transfer is matched?</li>
+</ul>
+<answer>
+<p><strong>Naive:</strong> one full scan per entry, 50,000 × 50,000 = 2.5 billion comparisons. O(n²).</p>
+<p><strong>Order:</strong> the table has forgotten positions, but the input has not. Make <em>two</em> passes: the first builds the counts, the second walks the log in order and stops at the first reference whose count is 1. Two O(n) passes are still O(n).</p>
+<p><strong>No unmatched transfer:</strong> return <code>null</code>, a normal answer rather than an error.</p>
+</answer>
+</reason>
+<example file="first-unmatched.js">
+function firstUnmatched(log) {
+  const counts = new Map();
+  for (const entry of log) counts.set(entry.ref, (counts.get(entry.ref) ?? 0) + 1);
+  for (const entry of log) {
+    if (counts.get(entry.ref) === 1) return entry;
+  }
+  return null;
+}
+
+const log = [
+  { ref: "TRF-101", side: "debit", kobo: 500000 },
+  { ref: "TRF-102", side: "debit", kobo: 120000 },
+  { ref: "TRF-101", side: "credit", kobo: 500000 },
+  { ref: "TRF-103", side: "debit", kobo: 75000 },
+  { ref: "TRF-103", side: "credit", kobo: 75000 },
+  { ref: "TRF-104", side: "credit", kobo: 990000 },
+];
+console.log(firstUnmatched(log));
+console.log(firstUnmatched(log.filter((e) => e.ref !== "TRF-102" && e.ref !== "TRF-104")));
+</example>
+<output>
+{ ref: 'TRF-102', side: 'debit', kobo: 120000 }
+null
+</output>
+<p>The same two-pass shape finds the first non-repeating character in a string, a classic interview question: count the characters, then walk the string and return the first with a count of 1.</p>
+
+<h3>The majority delivery zone</h3>
+<p>A logistics company wants to know whether a single zone received <em>more than half</em> of today's deliveries; if so, it moves a van there permanently. A value that appears more than <code>n / 2</code> times is called the <strong>majority element</strong>. There is at most one, because two of them would need more than <code>n</code> items between them.</p>
+<example file="majority.js">
+function majority(items) {
+  const counts = new Map();
+  for (const item of items) {
+    const c = (counts.get(item) ?? 0) + 1;
+    if (c > items.length / 2) return item; // can stop as soon as it is certain
+    counts.set(item, c);
+  }
+  return null;
+}
+
+console.log(majority(["Lekki", "Yaba", "Lekki", "Ikeja", "Lekki"]));
+console.log(majority(["Lekki", "Yaba", "Lekki", "Yaba"]));
+console.log(majority(["Ikeja"]));
+console.log(majority([]));
+</example>
+<output>
+Lekki
+null
+Ikeja
+null
+</output>
+<p>Two Lekki out of four is exactly half, not more than half, so the second call finds no majority. Returning early the moment a count passes half is safe, because no later item can take the majority away.</p>
+<p>The table here can grow to <code>k</code> entries. There is a famous trick that needs only two variables: the <strong>Boyer–Moore majority vote</strong>. Keep one candidate and a counter; an equal item adds a vote, a different item cancels one, and when the counter hits 0 the next item becomes the candidate. A true majority survives all the cancelling, because it has more votes than everyone else put together. The survivor is only a <em>candidate</em>, though: if there is no majority, it is just whatever came last, so a second pass must count it.</p>
+<example file="majority-vote.js">
+function majorityVote(items) {
+  let candidate = null;
+  let votes = 0;
+  for (const item of items) {
+    if (votes === 0) candidate = item;
+    votes += item === candidate ? 1 : -1;
+  }
+  let count = 0;
+  for (const item of items) if (item === candidate) count++; // verify
+  return count > items.length / 2 ? candidate : null;
+}
+
+console.log(majorityVote(["Lekki", "Yaba", "Lekki", "Ikeja", "Lekki"]));
+console.log(majorityVote(["Yaba", "Lekki", "Ikeja"]));
+console.log(majorityVote(["Ikeja", "Ikeja", "Yaba", "Yaba", "Yaba"]));
+</example>
+<output>
+Lekki
+null
+Yaba
+</output>
+<p>O(n) time and O(1) space. It solves only this one problem, whereas the frequency table answers any counting question, which is why the table is the pattern and the vote is a specialised optimisation you apply when memory really matters.</p>
+
+<h3>Can this order be fulfilled?</h3>
+<p>A shop's stock is a list of item codes, one per unit on the shelf. An order can be fulfilled if every unit it asks for is in stock. This is "is one list contained in the other, counts included", and it is <code>sameItems</code> without the final check that nothing is left over:</p>
+<example file="can-fulfil.js">
+function canFulfil(order, stock) {
+  const available = new Map();
+  for (const sku of stock) available.set(sku, (available.get(sku) ?? 0) + 1);
+  const missing = new Map();
+  for (const sku of order) {
+    const left = available.get(sku) ?? 0;
+    if (left > 0) available.set(sku, left - 1);
+    else missing.set(sku, (missing.get(sku) ?? 0) + 1);
+  }
+  return { ok: missing.size === 0, missing: Object.fromEntries(missing) };
+}
+
+const stock = ["RICE", "RICE", "OIL", "SALT", "OIL", "SUGAR"];
+console.log(canFulfil(["OIL", "RICE", "OIL"], stock));
+console.log(canFulfil(["OIL", "OIL", "OIL", "BEANS"], stock));
+</example>
+<output>
+{ ok: true, missing: {} }
+{ ok: false, missing: { OIL: 1, BEANS: 1 } }
+</output>
+<p>Instead of stopping at the first problem, this version counts what is missing, because a customer would rather hear "one oil and one beans are out of stock" than "no". The shape is the same; only the question asked of the table changed.</p>
+</section>
+
+<section>
+<h2 id="failure-cases">Failure cases</h2>
+<p>A frequency counter is only as good as its idea of "the same value". Most bugs come from values that look equal to a person but not to <code>Map</code>:</p>
+<example file="same-value.js">
+const composed = "josé";    // é as one code point
+const decomposed = "josé"; // e followed by a combining accent
+console.log(composed === decomposed, composed.normalize("NFC") === decomposed.normalize("NFC"));
+
+const name = "ade🙂";
+console.log(name.length, [...name].length, name.split("").length);
+
+const counts = {};
+counts["__proto__"] = (counts["__proto__"] ?? 0) + 1;
+console.log(Object.keys(counts).length);
+
+const byMap = new Map();
+byMap.set("Ada", 1);
+console.log(byMap.get("ada"), byMap.get(" Ada".trim()));
+</example>
+<output>
+false true
+5 4 5
+0
+undefined 1
+</output>
+<ul>
+<li><strong>Unicode forms.</strong> <code>José</code> can be stored in two ways that print identically. Normalise with <code>.normalize("NFC")</code> before counting any text that people type.</li>
+<li><strong>Code units versus characters.</strong> <code>split("")</code> and indexing see UTF-16 code units, so an emoji becomes two broken halves. Iterate with <code>for...of</code> or spread, which see code points.</li>
+<li><strong>Plain objects as tables.</strong> The key <code>"__proto__"</code> never becomes a count on a plain object, and keys such as <code>"constructor"</code> already exist. Use a <code>Map</code> when the values come from data.</li>
+<li><strong>Case and spaces.</strong> <code>"Ada"</code>, <code>"ada"</code> and <code>" Ada"</code> are three keys. Normalise once, at the boundary, with the same function everywhere.</li>
+<li><strong>Counting the wrong unit.</strong> Comparing only the <em>sets</em> of values (<code>new Set(a)</code> vs <code>new Set(b)</code>) loses the counts and calls <code>supportbolaa</code> an anagram of <code>supportbola</code>.</li>
+<li><strong>Order-dependent questions.</strong> "Is there a repeated reference within 10 minutes?" or "the longest run of the same value" depend on positions. A single table cannot answer them; the <a href="/learn/pattern-sliding-window">sliding window</a> lesson can.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="testing">Testing a frequency counter</h2>
+<p>The naive and sorting solutions are slow but easy to trust, which makes them perfect <strong>reference implementations</strong>: run the fast and the trusted version on many generated inputs and compare every answer. A fixed-seed random generator (the xorshift from <a href="/learn/dsa-hash-maps#testing">Hash maps and sets</a>) makes any failure reproducible. Using a tiny alphabet of three letters makes anagrams common, so both answers get exercised:</p>
+<example file="same-items-test.js">
+function sameItems(a, b) {
+  const counts = new Map();
+  let open = 0;
+  for (const item of a) { counts.set(item, (counts.get(item) ?? 0) + 1); open++; }
+  for (const item of b) {
+    const left = counts.get(item) ?? 0;
+    if (left === 0) return false;
+    counts.set(item, left - 1);
+    open--;
+  }
+  return open === 0;
+}
+
+const bySorting = (a, b) => [...a].sort().join() === [...b].sort().join();
+
+function xorshift(seed) {
+  return () => {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return (seed >>> 0) / 4294967296;
+  };
+}
+
+const random = xorshift(7);
+const word = () => Array.from({ length: Math.floor(random() * 6) }, () => "abc"[Math.floor(random() * 3)]).join("");
+let agree = 0, yes = 0;
+for (let i = 0; i < 5000; i++) {
+  const a = word(), b = word();
+  if (sameItems(a, b) === bySorting(a, b)) agree++;
+  if (bySorting(a, b)) yes++;
+}
+console.log(`${agree}/5000 agree, ${yes} of them anagrams`);
+
+const cases = [["", "", true], ["aab", "abb", false], ["ab", "abc", false], ["abc", "ab", false], ["🙂a", "a🙂", true]];
+for (const [a, b, expected] of cases) {
+  console.log(`${sameItems(a, b) === expected ? "PASS" : "FAIL"} "${a}" vs "${b}"`);
+}
+</example>
+<output>
+5000/5000 agree, 251 of them anagrams
+PASS "" vs ""
+PASS "aab" vs "abb"
+PASS "ab" vs "abc"
+PASS "abc" vs "ab"
+PASS "🙂a" vs "a🙂"
+</output>
+<p>Printing how many cases were anagrams proves the test exercised both outcomes; 5,000 agreements on inputs that were always "no" would prove very little. The hand-written cases then pin down the edges the random generator might miss: empty input, same letters with different counts, one input longer than the other in both directions, and characters outside the basic plane.</p>
+</section>
+
+<section>
+<h2 id="production">Frequency counting in production</h2>
+<ul>
+<li><strong>Let the database count.</strong> When the data lives in a database, <code>SELECT ref, COUNT(*) FROM transfers GROUP BY ref HAVING COUNT(*) = 1</code> is the same pattern, run next to the data, without shipping millions of rows to your server. The database builds the same kind of table (or sorts) internally.</li>
+<li><strong>Store the normalised form.</strong> Store usernames lower-cased and NFC-normalised, with a unique index on that column, so duplicates are rejected by the database even when two sign-ups race each other. Store the signature in its own indexed column and the impersonation check becomes a single indexed query.</li>
+<li><strong>Bound the table.</strong> A table with one entry per distinct value is as large as the input when values are unique. Counting distinct visitors over a year in memory can exhaust a server. For huge streams, systems use approximate counters (a count-min sketch for frequencies, HyperLogLog for distinct counts) that trade a small error for fixed memory.</li>
+<li><strong>Untrusted keys.</strong> Counting keys an attacker controls is exactly the hash-flooding scenario; cap input sizes before you count.</li>
+<li><strong>Explain the rule to users.</strong> A sign-up rejected as "too similar to a protected account" needs a clear message and an appeal path; a check that silently fails people is a support problem.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practise">New problems to practise</h2>
+<p>For each problem: name what is being counted, decide whether position matters, then write the solution and state its time and space.</p>
+<exercise title="Group usernames that are anagrams of each other">
+<p>A moderator wants to see clusters of look-alike accounts. Write <code>groupAnagrams(names)</code> that returns only the groups with two or more names, each group in input order. Use the signature idea, but with a <code>Map</code> of counts so any character works.</p>
+<solution>
+<example file="group-anagrams.js">
+function signature(name) {
+  const counts = new Map();
+  for (const ch of name.toLowerCase()) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  return [...counts].sort(([x], [y]) => (x < y ? -1 : 1)).map(([ch, n]) => ch + n).join("");
+}
+
+function groupAnagrams(names) {
+  const groups = new Map();
+  for (const name of names) {
+    const key = signature(name);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(name);
+  }
+  return [...groups.values()].filter((group) => group.length > 1);
+}
+
+console.log(groupAnagrams(["kemi", "mike", "tunde", "Emik", "dent", "tend", "ada"]));
+</example>
+<output>
+[ [ 'kemi', 'mike', 'Emik' ], [ 'dent', 'tend' ] ]
+</output>
+<p>Each name costs O(L) to count plus O(k log k) to sort its <code>k</code> distinct characters, which is bounded by the alphabet, so the whole grouping is O(N · L) time for N names of length up to L, with O(N · L) space for the groups. Sorting the <em>entries</em> is needed because two anagrams may meet their characters in different orders, so their Maps would list them differently.</p>
+</solution>
+</exercise>
+
+<exercise title="Duplicate order ids in an import">
+<p>A CSV import of 40,000 orders must be rejected if any order id appears more than once. Write <code>duplicateIds(rows)</code> that returns each duplicated id once, with how many times it appears, sorted by count (highest first). What should it return for a clean file?</p>
+<solution>
+<example file="duplicate-ids.js">
+function duplicateIds(rows) {
+  const counts = new Map();
+  for (const row of rows) {
+    const id = row.id.trim().toUpperCase();
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return [...counts]
+    .filter(([, n]) => n > 1)
+    .sort((a, b) => b[1] - a[1])
+    .map(([id, n]) => `${id} x${n}`);
+}
+
+const rows = [{ id: "ORD-7" }, { id: "ORD-3" }, { id: "ord-7 " }, { id: "ORD-9" }, { id: "ORD-3" }, { id: "ORD-7" }];
+console.log(duplicateIds(rows));
+console.log(duplicateIds([{ id: "ORD-1" }, { id: "ORD-2" }]));
+</example>
+<output>
+[ 'ORD-7 x3', 'ORD-3 x2' ]
+[]
+</output>
+<p>Counting is O(n); sorting the <code>d</code> duplicated ids is O(d log d), and <code>d</code> is usually tiny. A clean file returns an empty list, which the importer treats as "no problems". Normalising with <code>trim</code> and <code>toUpperCase</code> catches <code>"ord-7 "</code>, which a person would certainly call the same id.</p>
+</solution>
+</exercise>
+
+<exercise title="The most common payment method, with ties">
+<p>Given a day's payments, return the payment method or methods used most often, as an array. If card and transfer are both used 40 times and nothing more, return both. Do it with one counting pass and one pass over the table.</p>
+<solution>
+<example file="top-methods.js">
+function topMethods(payments) {
+  const counts = new Map();
+  for (const p of payments) counts.set(p.method, (counts.get(p.method) ?? 0) + 1);
+  let best = 0;
+  let methods = [];
+  for (const [method, n] of counts) {
+    if (n > best) {
+      best = n;
+      methods = [method];
+    } else if (n === best) {
+      methods.push(method);
+    }
+  }
+  return methods;
+}
+
+const day = ["card", "transfer", "ussd", "card", "transfer", "cash"].map((method) => ({ method }));
+console.log(topMethods(day));
+console.log(topMethods([{ method: "cash" }]));
+console.log(topMethods([]));
+</example>
+<output>
+[ 'card', 'transfer' ]
+[ 'cash' ]
+[]
+</output>
+<p>O(n) to count, O(k) to scan <code>k</code> methods: O(n) time, O(k) space. The tie case is the one people forget; returning only <code>"card"</code> would hide from the manager that transfers are just as popular.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="summary">Summary</h2>
+<ul>
+<li>When only <em>how often</em> each value appears matters, not <em>where</em>, build a frequency table in one pass and answer from it.</li>
+<li>The naive "find and cross off" is O(n²); counting its comparisons shows <code>n(n + 1) / 2</code>. Sorting gets O(n log n); a frequency counter gets O(n) time for O(k) extra space.</li>
+<li>Count up for one input and down for the other to compare two multisets without a second table.</li>
+<li>Need the first match in input order? Count in one pass, then walk the input again.</li>
+<li>For a small, fixed alphabet, an array of counters is a simpler table with no hash worst case, and joining it gives a signature you can index.</li>
+<li>Normalise values (case, spaces, Unicode NFC) before counting, iterate strings with <code>for...of</code>, and use <code>Map</code> rather than a plain object.</li>
+<li>Test the fast version against a slow, obvious reference on seeded random inputs.</li>
+</ul>
+<p>Next: <a href="/learn/pattern-two-pointers">Two pointers</a>, a pattern for sorted data and linked lists that often solves the same problems with O(1) extra space.</p>
+</section>
