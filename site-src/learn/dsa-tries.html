@@ -1,0 +1,570 @@
+---
+title: Tries and autocomplete
+description: Build a prefix tree for product search: autocomplete as the user types, count matches per prefix, delete safely, and weigh the memory it costs.
+minutes: 45
+youNeed: Trees and binary search trees, Hash maps, and Heaps and priority queues
+youBuild: A tested Trie class that powers autocomplete, prefix counts and ranked suggestions for a product catalogue
+keywords: trie, prefix tree, autocomplete, typeahead, prefix search, prefix count, radix tree, longest prefix match, unicode normalization, javascript trie
+objectives: Explain how a trie stores words as paths of characters and why lookups cost O(length of the word) | Implement insert, lookup, prefix check, prefix count and delete | Build autocomplete that stops early, and rank suggestions by popularity | Normalise keys so case and Unicode forms do not break search | Weigh a trie's memory against a sorted array or a Map
+---
+<section>
+<h2 id="problem">The problem: search as you type</h2>
+<p>A shop's search box suggests products while the customer types. After <kbd>s</kbd>, <kbd>a</kbd>, <kbd>m</kbd> it should show a few products whose names start with "sam". The suggestions must appear after every keystroke, so each one must be cheap.</p>
+<p>The obvious way is to check every product name on every keystroke. Here it is for a catalogue of 24,000 generated product names, counting how many characters it compares:</p>
+<file name="catalog.js" project="trie">
+const brands = ["Samsung", "Sony", "Sharp", "Scanfrost", "Tecno", "Infinix", "Itel", "Hisense",
+  "LG", "Lenovo", "HP", "Dell", "Apple", "Anker", "Oraimo", "Nokia", "Xiaomi", "Haier",
+  "Philips", "Binatone"];
+const kinds = ["Phone", "Tablet", "Laptop", "Television", "Speaker", "Earbuds",
+  "Charger", "Power Bank", "Fridge", "Blender", "Smartwatch", "Monitor"];
+
+export const products = [];
+for (const brand of brands) {
+  for (const kind of kinds) {
+    for (let model = 1; model <= 100; model++) products.push(`${brand} ${kind} ${model}`);
+  }
+}
+</file>
+<example file="naive-search.js" project="trie">
+import { products } from "./catalog.js";
+
+let comparisons = 0;
+
+function startsWith(name, prefix) {
+  const a = name.toLowerCase();
+  for (let i = 0; i < prefix.length; i++) {
+    comparisons++;
+    if (a[i] !== prefix[i]) return false;
+  }
+  return true;
+}
+
+console.log("products:", products.length);
+for (const typed of ["s", "sa", "sam", "sams", "samsung ch"]) {
+  comparisons = 0;
+  const matches = products.filter((name) => startsWith(name, typed));
+  console.log(`"${typed}": ${matches.length} matches, ${comparisons} character comparisons`);
+}
+</example>
+<output>
+</output>
+<p>Every keystroke scans all 24,000 names, and the work never drops below one comparison per product, even when only 100 products can possibly match. The cost is O(n × L) per keystroke, for n products and a typed prefix of length L. It also builds the full list of matches when the box only shows five.</p>
+<p>A <strong>trie</strong> (pronounced "try", from re<em>trie</em>val), also called a <strong>prefix tree</strong>, turns this around: finding the products that start with "sam" costs about 3 steps, one per typed character, however big the catalogue is.</p>
+</section>
+
+<section>
+<h2 id="idea">A tree of characters</h2>
+<p>A trie is a tree from <a href="/learn/dsa-trees">the trees lesson</a> where every edge is labelled with one character. The path from the root to a node spells a <strong>prefix</strong>. Words that share a prefix share the path. A flag on a node says "a complete word ends here". Here is a trie holding <em>cap</em>, <em>car</em>, <em>card</em>, <em>care</em> and <em>cat</em>:</p>
+<pre>
+(root)
+  └─ c
+      └─ a
+          ├─ p   ● cap
+          ├─ r   ● car
+          │   ├─ d   ● card
+          │   └─ e   ● care
+          └─ t   ● cat
+</pre>
+<p>A ● marks a node where a word ends. Notice that <em>car</em> ends at a node that also has children: a word can be a prefix of another word, which is why the flag is needed. Without it you could not tell "car is a product" from "car is just the start of card".</p>
+<ul>
+<li><strong>Looking up</strong> a word of length L means following L edges from the root. The number of other words in the trie does not matter: O(L).</li>
+<li><strong>Finding everything with a prefix</strong> means following the prefix (O(L)) and then collecting the words in the subtree below that node.</li>
+<li>Each node stores its children in a <code>Map</code> from character to child node (a hash map, see <a href="/learn/dsa-hash-maps">Hash maps</a>), so following one edge is O(1) on average.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="implementation">Implementing a trie</h2>
+<p>Each node holds a <code>Map</code> of children, an <code>end</code> flag, the original <code>value</code> to return (the product name with its capital letters), and a <code>count</code> of how many words pass through or end at it, which makes "how many products start with sam?" an O(L) question.</p>
+<p>The class also <strong>normalises</strong> every key before using it. Customers type "SAM", "sam" and "Sam"; product names are stored as "Samsung". The key is the lower-case form, and <code>normalize("NFC")</code> makes sure accented letters are stored one way (the <a href="#unicode">Unicode section</a> shows why that matters).</p>
+<file name="trie.js" project="trie">
+const newNode = () => ({ children: new Map(), end: false, value: undefined, count: 0 });
+
+export class Trie {
+  #root = newNode();
+  visits = 0;
+
+  static key(text) {
+    return text.normalize("NFC").toLowerCase();
+  }
+
+  get size() { return this.#root.count; }
+
+  insert(text, value = text) {
+    const key = Trie.key(text);
+    const existing = this.#find(key);
+    if (existing?.end) {
+      existing.value = value;
+      return false;
+    }
+    let node = this.#root;
+    node.count++;
+    for (const ch of key) {
+      if (!node.children.has(ch)) node.children.set(ch, newNode());
+      node = node.children.get(ch);
+      node.count++;
+    }
+    node.end = true;
+    node.value = value;
+    return true;
+  }
+
+  #find(key) {
+    let node = this.#root;
+    for (const ch of key) {
+      this.visits++;
+      node = node.children.get(ch);
+      if (node === undefined) return null;
+    }
+    return node;
+  }
+
+  has(text) { return this.#find(Trie.key(text))?.end ?? false; }
+  get(text) { const node = this.#find(Trie.key(text)); return node?.end ? node.value : undefined; }
+  countPrefix(prefix) { return this.#find(Trie.key(prefix))?.count ?? 0; }
+
+  *withPrefix(prefix) {
+    const start = this.#find(Trie.key(prefix));
+    if (start === null) return;
+    const stack = [start];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      this.visits++;
+      if (node.end) yield node.value;
+      const keys = [...node.children.keys()].sort().reverse();
+      for (const ch of keys) stack.push(node.children.get(ch));
+    }
+  }
+
+  suggest(prefix, limit = 5) {
+    const results = [];
+    for (const value of this.withPrefix(prefix)) {
+      results.push(value);
+      if (results.length === limit) break;
+    }
+    return results;
+  }
+
+  delete(text) {
+    const key = Trie.key(text);
+    if (!this.#find(key)?.end) return false;
+    let node = this.#root;
+    node.count--;
+    for (const ch of key) {
+      const child = node.children.get(ch);
+      if (--child.count === 0) {
+        node.children.delete(ch);
+        return true;
+      }
+      node = child;
+    }
+    node.end = false;
+    node.value = undefined;
+    return true;
+  }
+
+  nodeCount(node = this.#root) {
+    let total = 1;
+    for (const child of node.children.values()) total += this.nodeCount(child);
+    return total;
+  }
+}
+</file>
+<p>Some details worth reading slowly:</p>
+<ul>
+<li><code>for (const ch of key)</code> walks the string by <strong>code point</strong> (a whole Unicode character), not by UTF-16 unit, so an emoji or a rare character stays one edge. <code>key[i]</code> or <code>key.split("")</code> would cut some characters in half.</li>
+<li><code>insert</code> first checks whether the word is already there. Without that, inserting "Samsung Phone 1" twice would increase every count on its path twice, and <code>size</code> would be wrong forever after.</li>
+<li><code>withPrefix</code> is a <strong>generator</strong>: it produces results one at a time, and the caller can stop whenever it likes. It walks the subtree depth-first with a stack, pushing children in reverse alphabetical order so they come off the stack alphabetically. The root's <code>count</code> is the number of words, so <code>size</code> needs no separate counter.</li>
+<li><code>suggest</code> stops after <code>limit</code> results. The customer sees five suggestions; collecting all 2,400 Samsung products first would waste most of the work.</li>
+<li><code>visits</code> counts how many nodes were touched, so you can compare costs with the naive search.</li>
+</ul>
+<example file="basics.js" project="trie">
+import { Trie } from "./trie.js";
+
+const trie = new Trie();
+for (const word of ["cap", "car", "card", "care", "cat"]) trie.insert(word);
+console.log("added again:", trie.insert("CAR"));
+
+console.log("size:", trie.size, "nodes:", trie.nodeCount());
+console.log("has car:", trie.has("car"), "| has ca:", trie.has("ca"), "| has Card:", trie.has("Card"));
+console.log("words starting with ca:", trie.countPrefix("ca"));
+console.log("words starting with car:", [...trie.withPrefix("car")].join(", "));
+console.log("words starting with cup:", [...trie.withPrefix("cup")].length);
+</example>
+<output>
+</output>
+<p>"CAR" was not added again: its key is "car", which is already there. "ca" is a prefix but not a word, so <code>has</code> is <code>false</code>, while <code>countPrefix("ca")</code> knows that 5 words start with it. Five words share 7 nodes instead of 17 characters.</p>
+</section>
+
+<section>
+<h2 id="autocomplete">Autocomplete for the catalogue</h2>
+<p>Now the real catalogue, keystroke by keystroke. The product names are stored as values, so suggestions come back with their original capital letters, and <code>countPrefix</code> gives the "2,400 results" number shown under the search box:</p>
+<example file="autocomplete.js" project="trie">
+import { products } from "./catalog.js";
+import { Trie } from "./trie.js";
+
+const search = new Trie();
+for (const name of products) search.insert(name);
+
+for (const typed of ["s", "sa", "sam", "sams", "samsung ch"]) {
+  search.visits = 0;
+  const shown = search.suggest(typed, 3);
+  const total = search.countPrefix(typed);
+  console.log(`"${typed}": ${total} matches, ${search.visits} nodes visited -> ${shown.join(" | ")}`);
+}
+</example>
+<output>
+</output>
+<p>Compare the node visits with the 24,000 or more character comparisons of the naive search. The trie's cost is the length of the prefix plus the part of the subtree it walks before it has 3 results, and neither depends on the size of the catalogue. Double the catalogue and the naive search doubles; the trie does not notice.</p>
+<p>The suggestions are alphabetical, so "Samsung Blender 1" comes before "Samsung Phone 1", and "Samsung Blender 10" comes right after "Samsung Blender 1", because character by character "10" sorts before "2". Both are correct for a trie and both are poor for customers, who want popular products first and numbers in numeric order. Ranking is the next step.</p>
+
+<h3>Ranking suggestions by popularity</h3>
+<p>Real autocomplete shows the <em>most popular</em> matches, not the first alphabetically. Two approaches:</p>
+<ol>
+<li><strong>Collect, then pick the best k.</strong> Walk the whole subtree under the prefix and keep the top k by sales with a size-k heap, as in <a href="/learn/dsa-heaps#top-k">Heaps</a>. Correct and simple, but after one letter the subtree can hold most of the catalogue.</li>
+<li><strong>Precompute.</strong> Store, in every node, the top k products of its subtree. A suggestion is then O(L): walk the prefix and read the list. The price is memory (k entries per node) and work on every insert.</li>
+</ol>
+<p>Here is the precomputed version, with a small catalogue and weekly sales figures:</p>
+<example file="ranked.js">
+const node = () => ({ children: new Map(), top: [] });
+const root = node();
+const K = 3;
+
+function insert(name, sales) {
+  const entry = { name, sales };
+  let current = root;
+  const path = [root];
+  for (const ch of name.toLowerCase()) {
+    if (!current.children.has(ch)) current.children.set(ch, node());
+    current = current.children.get(ch);
+    path.push(current);
+  }
+  for (const n of path) {
+    n.top.push(entry);
+    n.top.sort((a, b) => b.sales - a.sales || a.name.localeCompare(b.name));
+    if (n.top.length > K) n.top.pop();
+  }
+}
+
+function suggest(prefix) {
+  let current = root;
+  for (const ch of prefix.toLowerCase()) {
+    current = current.children.get(ch);
+    if (!current) return [];
+  }
+  return current.top.map((e) => `${e.name} (${e.sales})`);
+}
+
+for (const [name, sales] of [
+  ["Samsung Galaxy A15", 950], ["Samsung Galaxy S24", 310], ["Samsung Galaxy A05", 1200],
+  ["Samsung Soundbar", 140], ["Sony Headphones", 620], ["Sharp Microwave", 480], ["Samsung Fridge", 75],
+]) {
+  insert(name, sales);
+}
+
+console.log("s:", suggest("s").join(", "));
+console.log("sam:", suggest("sam").join(", "));
+console.log("samsung s:", suggest("samsung s").join(", "));
+console.log("x:", suggest("x").length);
+</example>
+<output>
+</output>
+<p>Each insert updates the lists on its path: O(L × k log k) with this simple sort. A suggestion is O(L) plus copying k entries. Large search services do exactly this, recomputing the lists in a nightly batch job rather than on every sale, because popularity changes slowly and search traffic is heavy.</p>
+</section>
+
+<section>
+<h2 id="delete">Deleting a word</h2>
+<p>A product is discontinued and must disappear from suggestions.</p>
+
+<reason title="What must delete get right?">
+<p>Deleting a word from a trie is more delicate than it looks. Before reading the code, decide: what should happen when the word is not in the trie, or when only its <em>prefix</em> is (deleting "ca" when only "car" exists)? When the word is a prefix of another word, like "car" and "card", which nodes may be removed? When another word is a prefix of it, like deleting "card" while "car" stays? And what must happen to the counts?</p>
+<answer>
+<ul>
+<li><strong>Not present</strong>, or present only as a prefix: change nothing and return <code>false</code>. Decrementing counts first and then discovering the word is missing would corrupt every count on the path. That is why <code>delete</code> checks <code>#find(key)?.end</code> before touching anything.</li>
+<li><strong>"car" while "card" exists</strong>: no node may be removed, because "card" still needs them all. Only the <code>end</code> flag on the "r" node is cleared, and the counts on the path drop by one.</li>
+<li><strong>"card" while "car" exists</strong>: the "d" node is used by nothing else, so it can be removed; the "car" nodes must stay.</li>
+<li><strong>The general rule</strong>: decrement the count of every node on the path. A node whose count reaches 0 is used by no word any more, so it and everything below it can be cut off. The code cuts at the first such node, which also frees its whole subtree.</li>
+</ul>
+<p>Forgetting to prune is not a correctness bug for lookups, but it is a memory leak: a catalogue that churns through products would keep every node ever created.</p>
+</answer>
+</reason>
+
+<example file="delete.js" project="trie">
+import { Trie } from "./trie.js";
+
+const trie = new Trie();
+for (const word of ["car", "card", "care", "cat"]) trie.insert(word);
+
+function show(label) {
+  console.log(`${label.padEnd(18)} words: ${[...trie.withPrefix("")].join(",").padEnd(17)} nodes: ${trie.nodeCount()}  "car" prefix count: ${trie.countPrefix("car")}`);
+}
+
+show("start");
+console.log("delete ca:", trie.delete("ca"));
+trie.delete("card");
+show("after delete card");
+trie.delete("car");
+show("after delete car");
+trie.delete("care");
+show("after delete care");
+</example>
+<output>
+</output>
+<p>Deleting "card" removed one node. Deleting "car" removed none, because "care" still passes through it. Deleting "care" then removed the "r" and "e" nodes, which nothing uses any more. Every step is O(L).</p>
+</section>
+
+<section>
+<h2 id="unicode">Keys, case and Unicode</h2>
+<p>A trie compares characters exactly. Two strings that look identical to a person but differ in their characters end up on different paths, and search silently misses. The shop sells a "Café Latte Mug". Here is what can go wrong:</p>
+<example file="unicode.js">
+const composed = "Café";
+const decomposed = "Café";
+
+console.log(composed, decomposed, composed === decomposed);
+console.log("lengths:", composed.length, decomposed.length);
+console.log("after NFC:", composed.normalize("NFC") === decomposed.normalize("NFC"));
+console.log("case:", "Café".toLowerCase() === "CAFÉ".toLowerCase());
+
+const phone = "Phone 📱";
+console.log("split:", phone.split("").length, "for...of:", [...phone].length);
+</example>
+<output>
+</output>
+<ul>
+<li>"é" can be stored as one code point (U+00E9) or as "e" followed by a combining accent (U+0301). Text pasted from different apps uses either form. <code>normalize("NFC")</code> converts both to the same form, which is why <code>Trie.key</code> calls it.</li>
+<li>Customers do not type capitals consistently, so keys are lower-cased. (For a few languages, such as Turkish, lower-casing depends on the locale; <code>toLocaleLowerCase("tr")</code> handles that.)</li>
+<li><code>split("")</code> cuts the phone emoji into two meaningless halves, because it counts UTF-16 units. <code>for...of</code> and spreading iterate by code point, which is what the trie uses.</li>
+<li>Decide what else to fold: extra spaces, punctuation ("wi-fi" vs "wifi"), accents ("cafe" should probably find "café"). Whatever you decide, apply the <em>same</em> function when inserting and when searching. The third exercise builds an accent-insensitive search.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="memory">What a trie costs in memory</h2>
+<p>Speed is only half the story. Every node is an object with a <code>Map</code>, and an empty <code>Map</code> alone costs dozens of bytes. Count what the catalogue needs:</p>
+<example file="memory.js" project="trie">
+import { products } from "./catalog.js";
+import { Trie } from "./trie.js";
+
+const trie = new Trie();
+for (const name of products) trie.insert(name);
+
+const characters = products.reduce((sum, name) => sum + name.length, 0);
+console.log("products:", products.length);
+console.log("characters in all names:", characters);
+console.log("trie nodes:", trie.nodeCount());
+
+function chainNodes(trie) {
+  let singleChild = 0;
+  const walk = (node) => {
+    if (node.children.size === 1 && !node.end) singleChild++;
+    for (const child of node.children.values()) walk(child);
+  };
+  return walk;
+}
+</example>
+<output>
+</output>
+<p>Shared prefixes save a lot: all 2,400 Samsung products share the path for "samsung ", and 12 kinds share each brand. But each node is a whole object plus a <code>Map</code>, where the array of names stores each character in a byte or two. A trie of short, similar keys is compact; a trie of long, unrelated keys (URLs, email addresses) can use many times more memory than the strings themselves.</p>
+<p>Ways to shrink it:</p>
+<ul>
+<li><strong>Compressed trie (radix tree)</strong>: a chain of nodes with one child each is merged into one edge labelled with a whole string. "samsung " becomes one edge instead of eight nodes. Web frameworks' routers (for example the one Fastify uses) store URL paths this way.</li>
+<li><strong>Fixed arrays</strong>: when the alphabet is small and known (digits, 26 lowercase letters), an array of children indexed by character is faster than a <code>Map</code>, but wastes slots for missing children.</li>
+<li><strong>Do you need a trie at all?</strong> A sorted array of names with binary search finds the first name with a given prefix in O(L log n), and the matches are the names that follow it: very compact and fast enough for most catalogues. You will build exactly that "lower bound" search in <a href="/learn/dsa-searching#bounds">Searching</a>. Databases do the same with an index and <code>LIKE 'sam%'</code>. Tries win when there are many lookups per second, when you need per-prefix data (counts, top-k lists), or for longest-prefix matching.</li>
+</ul>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Question</th><th>Trie</th><th>Sorted array + binary search</th><th><code>Map</code> / <code>Set</code></th></tr></thead>
+<tbody>
+<tr><td>Is this exact word present?</td><td>O(L)</td><td>O(L log n)</td><td>O(L) average (hashing reads the key)</td></tr>
+<tr><td>First k words with a prefix</td><td>O(L + subtree walked)</td><td>O(L log n + k)</td><td>O(n × L): must scan</td></tr>
+<tr><td>How many words have a prefix?</td><td>O(L) with counts</td><td>O(L log n): two binary searches</td><td>O(n × L)</td></tr>
+<tr><td>Insert or delete</td><td>O(L)</td><td>O(n): shifting</td><td>O(L) average</td></tr>
+<tr><td>Memory</td><td>High (an object per node)</td><td>Lowest</td><td>Medium</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="testing">Testing the trie</h2>
+<p>The reference model for a trie is almost embarrassingly simple: an array of words, searched with <code>startsWith</code>. It is slow, but obviously right. Generate random words from a tiny alphabet (so there are lots of shared prefixes and prefix-of-another-word cases), apply random inserts and deletes to both, and after each step compare every possible prefix.</p>
+<example file="trie-test.js" project="trie">
+import { Trie } from "./trie.js";
+
+function check(label, ok) {
+  console.log(`${ok ? "PASS" : "FAIL"} ${label}`);
+}
+
+const empty = new Trie();
+check("empty trie", empty.size === 0 && !empty.has("") && empty.suggest("a").length === 0);
+check("delete from empty trie", empty.delete("car") === false);
+
+const t = new Trie();
+t.insert("Card", "Card");
+t.insert("card", "card (updated)");
+check("same key updates the value", t.size === 1 && t.get("CARD") === "card (updated)");
+t.insert("car");
+check("prefix word deleted, longer word kept", t.delete("car") && t.has("card") && !t.has("car"));
+
+let seed = 5;
+const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const randomWord = () => Array.from({ length: 1 + Math.floor(random() * 4) }, () => "abc"[Math.floor(random() * 3)]).join("");
+
+const prefixes = [""];
+for (const a of "abc") {
+  prefixes.push(a);
+  for (const b of "abc") prefixes.push(a + b);
+}
+
+const trie = new Trie();
+const model = [];
+let failures = 0;
+for (let step = 0; step < 1500; step++) {
+  const word = randomWord();
+  if (random() < 0.6) {
+    trie.insert(word);
+    if (!model.includes(word)) model.push(word);
+  } else {
+    trie.delete(word);
+    if (model.includes(word)) model.splice(model.indexOf(word), 1);
+  }
+  for (const p of prefixes) {
+    const expected = model.filter((w) => w.startsWith(p)).sort();
+    const got = [...trie.withPrefix(p)];
+    if (got.join() !== expected.join() || trie.countPrefix(p) !== expected.length) failures++;
+  }
+  if (trie.size !== model.length) failures++;
+}
+check("1500 random operations match an array of words", failures === 0);
+</example>
+<output>
+</output>
+<p>The generated words are 1 to 4 letters from "abc", so almost every word is a prefix of another, the case that breaks careless <code>delete</code> code. The check compares the full, sorted result for 13 prefixes after every step, including the empty prefix (every word).</p>
+</section>
+
+<section>
+<h2 id="production">Tries in production</h2>
+<ul>
+<li><strong>Where they are used.</strong> Search-box autocomplete, phone keypads and contact search, spell checkers (walk the trie while tolerating a mistake or two), routers in web frameworks (paths such as <code>/products/:id</code> stored in a radix tree), and network routers, which pick the rule with the longest matching IP address prefix.</li>
+<li><strong>Tries do not fix typos.</strong> "smasung" shares only the prefix "s" with "samsung". Full search engines combine prefix search with fuzzy matching (edit distance), synonyms and ranking. A trie is the fast first layer, not the whole search.</li>
+<li><strong>Autocomplete endpoints need limits.</strong> Cap the number of results, cap the prefix length, and rate-limit the endpoint: it is called on every keystroke by every user. Normalise the query exactly as you normalised the keys.</li>
+<li><strong>Build once, read many times.</strong> Rebuilding a large trie takes time and memory, so services usually build it at startup or in a background job from the product database, then swap the new trie in, rather than editing a live one from many requests at once.</li>
+<li><strong>Measure before choosing.</strong> For a few thousand products, the naive filter runs in well under a millisecond, and a sorted array is smaller than a trie. Reach for a trie when the numbers (catalogue size, requests per second, per-prefix features) say you need one.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Delivery zone by longest prefix">
+<p>A courier prices deliveries by postcode prefix: "1" is ₦3,000, "10" is ₦2,000, "100" is ₦1,500 and "2" is ₦4,500. The rate for a postcode is the one with the <em>longest</em> prefix that matches it. Store the prefixes in a trie and write <code>rateFor(postcode)</code> that walks the postcode once, remembering the last rate it passed.</p>
+<solution>
+<example file="zones.js">
+const root = { children: new Map(), rate: undefined };
+
+function addZone(prefix, rate) {
+  let node = root;
+  for (const ch of prefix) {
+    if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), rate: undefined });
+    node = node.children.get(ch);
+  }
+  node.rate = rate;
+}
+
+function rateFor(postcode) {
+  let node = root;
+  let best;
+  for (const ch of postcode) {
+    node = node.children.get(ch);
+    if (!node) break;
+    if (node.rate !== undefined) best = node.rate;
+  }
+  return best;
+}
+
+addZone("1", 3000);
+addZone("10", 2000);
+addZone("100", 1500);
+addZone("2", 4500);
+
+for (const postcode of ["100271", "101233", "112001", "200001", "900001"]) {
+  const rate = rateFor(postcode);
+  console.log(postcode, rate === undefined ? "no delivery" : `₦${rate.toLocaleString("en-NG")}`);
+}
+</example>
+<output>
+</output>
+<p>One pass over the postcode, O(L), however many zones exist. This <strong>longest prefix match</strong> is exactly what network routers do with IP addresses, and what a router in a web framework does to pick the most specific route.</p>
+</solution>
+</exercise>
+
+<exercise title="Top sellers under a prefix">
+<p>Use the <code>Trie</code> class for the catalogue, but show the three <em>best-selling</em> products for a prefix instead of the first three alphabetically. Sales are in a <code>Map</code> from name to units. Walk every product under the prefix and keep the best three. What does this cost after one typed letter, and after a whole brand name?</p>
+<solution>
+<example file="top-sellers.js" project="trie">
+import { products } from "./catalog.js";
+import { Trie } from "./trie.js";
+
+const trie = new Trie();
+for (const name of products) trie.insert(name);
+
+const sales = new Map(products.map((name, i) => [name, (i * 7919) % 5000]));
+
+function bestSellers(prefix, k) {
+  const best = [];
+  let seen = 0;
+  for (const name of trie.withPrefix(prefix)) {
+    seen++;
+    best.push(name);
+    best.sort((a, b) => sales.get(b) - sales.get(a));
+    if (best.length > k) best.pop();
+  }
+  return { best, seen };
+}
+
+for (const typed of ["s", "samsung earbuds"]) {
+  const { best, seen } = bestSellers(typed, 3);
+  console.log(`"${typed}" looked at ${seen}: ${best.map((n) => `${n} (${sales.get(n)})`).join(", ")}`);
+}
+</example>
+<output>
+</output>
+<p>The cost is the size of the subtree: after "s" it walks thousands of products, after "samsung earbuds" only 100. Keeping the best three in a small sorted array is fine for k = 3; for larger k use a size-k heap. When short prefixes are common (they are: every search starts with one letter), precompute the top list in each node, as the ranking section showed.</p>
+</solution>
+</exercise>
+
+<exercise title="Accent-insensitive search">
+<p>Customers type "cafe" and expect to find "Café Latte Mug" and "CAFÉ Espresso Cups". Write a key function that lower-cases and removes accents, insert names with the <code>Trie</code> class using that key, and make sure the suggestions still show the original names.</p>
+<solution>
+<example file="accents.js" project="trie">
+import { Trie } from "./trie.js";
+
+function foldKey(text) {
+  return text.normalize("NFD").replace(/\p{Mark}/gu, "").toLowerCase();
+}
+
+const trie = new Trie();
+for (const name of ["Café Latte Mug", "CAFÉ Espresso Cups", "Cafeteria Tray", "Crème Brûlée Set"]) {
+  trie.insert(foldKey(name), name);
+}
+
+for (const typed of ["cafe", "CAFÉ", "creme b"]) {
+  console.log(`${typed} -> ${trie.suggest(foldKey(typed)).join(" | ")}`);
+}
+</example>
+<output>
+</output>
+<p><code>normalize("NFD")</code> splits each accented letter into the base letter plus a combining mark, and <code>\p{Mark}</code> (with the <code>u</code> flag) removes the marks. The folded text is the key; the original name is the value, so customers see "Crème Brûlée Set", not "creme brulee set". Apply the same <code>foldKey</code> to what the customer types, or nothing matches.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A trie stores strings as paths of characters from a shared root; an <code>end</code> flag marks where a word ends, because a word can be a prefix of another.</li>
+<li>Lookup, prefix check, insert and delete cost O(L) for a key of length L, independent of how many words are stored. With a count in each node, "how many start with this prefix?" is O(L) too.</li>
+<li>Autocomplete walks to the prefix node and collects words below it, stopping as soon as it has enough. Popular-first suggestions either walk the subtree with a top-k selection, or read top-k lists precomputed in each node.</li>
+<li>Delete must check the word exists first, decrement counts along the path, and prune nodes no word uses.</li>
+<li>Normalise keys (Unicode form, case, whatever else you fold) identically on insert and on search, and iterate strings by code point.</li>
+<li>Tries trade memory for speed. Radix trees compress chains; a sorted array with binary search is the compact alternative for prefix queries.</li>
+</ul>
+<p>Next: <a href="/learn/dsa-searching">Searching</a> starts the algorithms module with linear and binary search, including the lower-bound search that answers prefix queries on a sorted array.</p>
+</section>

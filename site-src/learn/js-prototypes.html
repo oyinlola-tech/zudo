@@ -1,0 +1,851 @@
+---
+title: Prototypes in depth
+description: Follow the prototype chain step by step, build objects with Object.create and constructor functions, rewrite new, instanceof and extends yourself, and see exactly what a class becomes.
+minutes: 55
+youNeed: this in depth, this, prototypes and classes, and Objects in depth
+youBuild: Working versions of new, instanceof and extends written from scratch and tested against the real ones, plus a merge function that blocks prototype pollution
+keywords: javascript prototype, prototype chain, Object.prototype, Object.create, Object.getPrototypeOf, Object.setPrototypeOf, __proto__, constructor function, new operator, instanceof, isPrototypeOf, class syntax, extends, super, shadowing, prototype pollution
+objectives: Explain how a property read walks the prototype chain and how a write behaves differently | Build objects on chosen prototypes with Object.create and constructor functions | Describe what new does in four steps and write it yourself | Explain and reimplement instanceof, and know when it gives the wrong answer | Describe what a class and extends become in terms of functions and prototypes | Recognise prototype pollution and write a merge that prevents it
+---
+<section>
+<h2 id="problem">One hundred thousand copies of the same method</h2>
+<p>An online shop loads the day's orders into memory to build a report. A factory function (<a href="/learn/js-objects-deep#creating">Objects in depth</a>) creates each order with its data and two helper methods:</p>
+<example file="problem.js">
+function createOrder(id, lines) {
+  return {
+    id,
+    lines,
+    totalKobo() {
+      return this.lines.reduce((sum, line) => sum + line.priceKobo * line.qty, 0);
+    },
+    describe() {
+      return `${this.id}: ₦${this.totalKobo() / 100}`;
+    },
+  };
+}
+
+const orders = [];
+for (let i = 1; i <= 100000; i++) {
+  orders.push(createOrder(`ORD-${i}`, [{ priceKobo: 850000, qty: 1 }]));
+}
+
+const functions = new Set();
+for (const order of orders) {
+  functions.add(order.totalKobo);
+  functions.add(order.describe);
+}
+
+console.log(orders[0].describe());
+console.log("distinct function objects:", functions.size);
+console.log(orders[0].describe === orders[1].describe);
+</example>
+<output>
+₦8500 is wrong
+</output>
+<p>Every order carries its own copy of <code>totalKobo</code> and <code>describe</code>: 200,000 function objects that all do the same thing. That wastes memory, and it has a second cost: if the report later needs a new method, or a fix to <code>describe</code>, the 100,000 existing orders do not get it, because each one holds the old function.</p>
+<p>What you want is for all orders to <em>share</em> one <code>describe</code>, found when it is needed. JavaScript's answer is the <strong>prototype</strong>: every object can point at another object, and when a property is missing, JavaScript looks there. <a href="/learn/js-classes#prototypes">this, prototypes and classes</a> introduced prototypes and showed that classes use them. This lesson takes them apart: the exact lookup rules for reading and writing, building objects on prototypes by hand, what <code>new</code> and <code>instanceof</code> really do, what a <code>class</code> turns into, and a security bug that only exists because of prototypes.</p>
+</section>
+
+<section>
+<h2 id="chain">The prototype link and the lookup rule</h2>
+<p>Every object has a hidden internal slot that the specification calls <code>[[Prototype]]</code>. It holds either another object, the object's <strong>prototype</strong>, or <code>null</code>. You read it with <code>Object.getPrototypeOf(obj)</code>. The easiest way to choose it is <code>Object.create(proto)</code>, which makes a new, empty object whose prototype is <code>proto</code>.</p>
+<p>When you <strong>read</strong> <code>obj.name</code>, JavaScript follows these steps:</p>
+<ol>
+<li>If <code>obj</code> has an <strong>own</strong> property called <code>name</code>, use it.</li>
+<li>Otherwise, move to <code>obj</code>'s prototype and look there.</li>
+<li>Repeat until a property is found, or the prototype is <code>null</code>; then the result is <code>undefined</code>.</li>
+</ol>
+<p>The objects visited form the <strong>prototype chain</strong>. Here is a chain built by hand, with no classes and no <code>new</code>, for a bank's accounts:</p>
+<example file="chain.js">
+const accountMethods = {
+  describe() {
+    return `${this.owner}: ₦${this.balanceKobo / 100} (${this.kind})`;
+  },
+  kind: "account",
+};
+
+const savingsMethods = Object.create(accountMethods);
+savingsMethods.kind = "savings";
+savingsMethods.addInterest = function (percent) {
+  this.balanceKobo += Math.round((this.balanceKobo * percent) / 100);
+};
+
+const ada = Object.create(savingsMethods);
+ada.owner = "Ada";
+ada.balanceKobo = 1000000;
+
+ada.addInterest(2);
+console.log(ada.describe());
+console.log(Object.keys(ada));
+console.log(Object.getPrototypeOf(ada) === savingsMethods);
+console.log(Object.getPrototypeOf(savingsMethods) === accountMethods);
+console.log(Object.getPrototypeOf(accountMethods) === Object.prototype);
+console.log(Object.getPrototypeOf(Object.prototype));
+</example>
+<output>
+</output>
+<p>Trace <code>ada.describe()</code> with the lookup rule. <code>ada</code> has no own <code>describe</code>, neither does <code>savingsMethods</code>; <code>accountMethods</code> does. Inside it, <code>this</code> is still <code>ada</code>, because <code>this</code> comes from the call, not from where the method was found (<a href="/learn/js-this#implicit">this in depth</a>). Then <code>this.kind</code> is looked up the same way and found one step up, on <code>savingsMethods</code>, which <strong>shadows</strong> (hides) the <code>kind</code> further up the chain.</p>
+<pre>
+ ada                        { owner: "Ada", balanceKobo: 1020000 }
+  | [[Prototype]]
+ savingsMethods             { kind: "savings", addInterest }
+  | [[Prototype]]
+ accountMethods             { describe, kind: "account" }
+  | [[Prototype]]
+ Object.prototype           { toString, hasOwnProperty, valueOf, ... }
+  | [[Prototype]]
+ null                       (end of the chain)
+</pre>
+<p>That is the whole mechanism. Classes, <code>new</code> and <code>extends</code>, which come later in this lesson, are only convenient ways to build chains like this one.</p>
+<h3>Reading and changing the link</h3>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Tool</th><th>What it does</th><th>Use it?</th></tr></thead>
+<tbody>
+<tr><td><code>Object.create(proto, descriptors?)</code></td><td>Makes a new object with the given prototype (and optional property descriptors)</td><td>Yes</td></tr>
+<tr><td><code>Object.getPrototypeOf(obj)</code></td><td>Reads the link</td><td>Yes</td></tr>
+<tr><td><code>proto.isPrototypeOf(obj)</code></td><td>Is <code>proto</code> anywhere on <code>obj</code>'s chain?</td><td>Yes</td></tr>
+<tr><td><code>Object.setPrototypeOf(obj, proto)</code></td><td>Changes the link of an existing object</td><td>Rarely: engines optimise objects by their shape, and changing the prototype afterwards makes code using that object slower</td></tr>
+<tr><td><code>obj.__proto__</code></td><td>An old getter/setter on <code>Object.prototype</code> for the same link</td><td>No: legacy, and missing on objects that do not inherit from <code>Object.prototype</code></td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="writing">Writing is different from reading</h2>
+<p>Reading walks the chain. <strong>Writing does not</strong>: assigning <code>obj.name = value</code> creates or changes an own property on <code>obj</code>, even when <code>name</code> exists further up. The inherited property is not changed; it is shadowed. Two exceptions make this rule interesting:</p>
+<ul>
+<li>If the chain has a <strong>setter</strong> for that name, the assignment calls the setter (with <code>this</code> as the object you assigned on) instead of creating an own property.</li>
+<li>If the chain has a <strong>read-only</strong> data property with that name, the assignment fails: a <code>TypeError</code> in strict mode.</li>
+</ul>
+<example file="writing.js">
+const defaults = {
+  currency: "NGN",
+  set pin(value) {
+    if (!/^\d{4}$/.test(value)) throw new RangeError("PIN must be 4 digits");
+    this.pinHash = `hashed(${value})`;
+  },
+};
+Object.defineProperty(defaults, "bank", { value: "Zudo Bank", writable: false });
+
+const ada = Object.create(defaults);
+
+ada.currency = "USD";
+console.log(ada.currency, defaults.currency, Object.hasOwn(ada, "currency"));
+
+ada.pin = "1234";
+console.log(Object.keys(ada));
+
+try {
+  ada.bank = "Other Bank";
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+
+delete ada.currency;
+console.log(ada.currency);
+</example>
+<output>
+</output>
+<ul>
+<li><code>ada.currency = "USD"</code> added an own property. <code>defaults.currency</code> is still <code>"NGN"</code>, and every other object that inherits from <code>defaults</code> still sees <code>"NGN"</code>.</li>
+<li><code>ada.pin = "1234"</code> ran the inherited setter. No own <code>pin</code> was created; the setter stored <code>pinHash</code> on <code>ada</code>.</li>
+<li>The inherited read-only <code>bank</code> blocked the assignment, even though <code>ada</code> itself has no <code>bank</code>. (<code>Object.defineProperty(ada, "bank", …)</code> could still add an own one: the rule only stops plain assignment.)</li>
+<li><code>delete</code> only removes own properties. After deleting the shadow, the inherited value shows through again.</li>
+</ul>
+<h3>Shared mutable state on a prototype</h3>
+<p>Because reads walk the chain but writes do not, putting an <em>object or array</em> on a prototype causes a classic bug. Calling <code>push</code> on it is a read (of the array) followed by a change to that one shared array. Nothing is ever written to the instance:</p>
+<example file="shared-array.js">
+const cartMethods = {
+  items: [],
+  add(sku) {
+    this.items.push(sku);
+  },
+};
+
+const adaCart = Object.create(cartMethods);
+const chidiCart = Object.create(cartMethods);
+
+adaCart.add("RICE-5");
+chidiCart.add("OIL-1");
+console.log(adaCart.items, chidiCart.items, adaCart.items === chidiCart.items);
+
+const fixedMethods = {
+  add(sku) {
+    this.items.push(sku);
+  },
+};
+function createCart() {
+  const cart = Object.create(fixedMethods);
+  cart.items = [];
+  return cart;
+}
+const a = createCart();
+const b = createCart();
+a.add("RICE-5");
+console.log(a.items, b.items);
+</example>
+<output>
+</output>
+<p>Ada and Chidi share one basket. The rule: <strong>prototypes hold behaviour (methods) and constants; each instance holds its own data.</strong> Classes enforce this naturally, because fields and <code>this.x = …</code> in the constructor create own properties.</p>
+</section>
+
+<section>
+<h2 id="object-prototype">Object.prototype and the end of the chain</h2>
+<p>Almost every chain ends with <code>Object.prototype</code>, and then <code>null</code>. That object gives every ordinary object its shared methods: <code>toString</code>, <code>valueOf</code>, <code>hasOwnProperty</code>, <code>isPrototypeOf</code>, <code>propertyIsEnumerable</code>, and the <code>constructor</code> property. Arrays, functions, dates and maps have longer chains that pass through their own prototypes first:</p>
+<example file="builtins.js">
+function chainOf(value) {
+  const names = [];
+  let current = Object.getPrototypeOf(value);
+  while (current !== null) {
+    names.push(Object.hasOwn(current, "constructor") ? current.constructor.name : "(no constructor)");
+    current = Object.getPrototypeOf(current);
+  }
+  return names.join(" -> ");
+}
+
+console.log("object  :", chainOf({ id: 1 }));
+console.log("array   :", chainOf(["RICE-5"]));
+console.log("function:", chainOf(function charge() {}));
+console.log("date    :", chainOf(new Date(0)));
+console.log("map     :", chainOf(new Map()));
+console.log("string  :", chainOf("NGN"));
+
+const dictionary = Object.create(null);
+console.log("null proto:", chainOf(dictionary) || "(empty chain)", typeof dictionary.toString);
+</example>
+<output>
+</output>
+<p><code>chainOf("NGN")</code> works on a primitive because <code>Object.getPrototypeOf</code>, like any property access on a primitive, temporarily wraps the string in a <code>String</code> object; that is how <code>"NGN".toLowerCase()</code> finds its method on <code>String.prototype</code>. An object made with <code>Object.create(null)</code> has an empty chain: no <code>toString</code>, which is exactly why it is a safe dictionary.</p>
+<tip>Because <code>hasOwnProperty</code> is inherited, it is missing on null-prototype objects and can be shadowed by data (a product with a field named <code>hasOwnProperty</code>). <code>Object.hasOwn(obj, key)</code> is a static function, so it always works. Prefer it.</tip>
+</section>
+
+<section>
+<h2 id="new">Constructor functions and new, step by step</h2>
+<p>Before classes, JavaScript created many similar objects with <strong>constructor functions</strong>: ordinary functions, named with a capital letter by convention, called with <code>new</code>. Every normal function automatically gets a property called <code>prototype</code>: a plain object with one property, <code>constructor</code>, pointing back at the function. <code>new</code> uses it as the prototype for the objects it creates.</p>
+<p><code>new Fn(args)</code> does four things:</p>
+<ol>
+<li><strong>Create</strong> a new empty object whose prototype is <code>Fn.prototype</code>.</li>
+<li><strong>Call</strong> <code>Fn</code> with <code>this</code> set to that new object and the given arguments.</li>
+<li>If <code>Fn</code> <strong>returned an object</strong>, that object is the result.</li>
+<li>Otherwise the <strong>new object</strong> from step 1 is the result.</li>
+</ol>
+<p>Every step can be written with tools you already know, so you can write <code>new</code> yourself:</p>
+<example file="construct.js">
+function Order(id, totalKobo) {
+  this.id = id;
+  this.totalKobo = totalKobo;
+}
+Order.prototype.describe = function () {
+  return `${this.id}: ₦${this.totalKobo / 100}`;
+};
+
+function construct(Fn, ...args) {
+  const obj = Object.create(Fn.prototype);
+  const result = Fn.apply(obj, args);
+  return result !== null && (typeof result === "object" || typeof result === "function") ? result : obj;
+}
+
+const real = new Order("ORD-7", 1170000);
+const mine = construct(Order, "ORD-8", 500000);
+
+console.log(real.describe(), mine.describe());
+console.log(Object.getPrototypeOf(mine) === Order.prototype, mine instanceof Order);
+console.log(Order.prototype.constructor === Order, mine.constructor === Order);
+console.log(Object.keys(Order.prototype));
+</example>
+<output>
+</output>
+<p>The two objects behave the same. The last line shows one difference from classes: <code>describe</code> was added by assignment, so it is <em>enumerable</em>, and it shows up in <code>Object.keys(Order.prototype)</code> (and in <code>for...in</code> over every order, as you will see below).</p>
+<h3>The two "prototypes" of a function</h3>
+<p>The word "prototype" now means two different things, and mixing them up is the most common confusion in this topic:</p>
+<ul>
+<li><code>Order.prototype</code> is an ordinary <em>property</em> of the function. It is the object that will become the prototype <em>of instances</em> created with <code>new Order</code>.</li>
+<li><code>Object.getPrototypeOf(Order)</code> is the prototype <em>of the function itself</em>: <code>Function.prototype</code>, where <code>call</code>, <code>apply</code> and <code>bind</code> live.</li>
+</ul>
+<example file="two-prototypes.js">
+function Order(id) {
+  this.id = id;
+}
+const order = new Order("ORD-7");
+
+console.log(Object.getPrototypeOf(order) === Order.prototype);
+console.log(Object.getPrototypeOf(Order) === Function.prototype);
+console.log(Object.getPrototypeOf(Order) === Order.prototype);
+console.log(typeof Order.call, typeof order.call);
+
+const arrow = () => {};
+console.log("prototype" in arrow, typeof Order.prototype);
+</example>
+<output>
+</output>
+<p>Arrow functions and methods have no <code>prototype</code> property, because they cannot be used with <code>new</code>.</p>
+<h3>When a constructor returns an object, or is called without new</h3>
+<example file="constructor-traps.js">
+function Session(user) {
+  this.user = user;
+  if (user === "banned") return { error: "not allowed" };
+  return "ignored";
+}
+
+console.log(new Session("ada"));
+console.log(new Session("banned"));
+
+function Account(owner) {
+  this.owner = owner;
+}
+try {
+  Account("Ada");
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+
+function SafeAccount(owner) {
+  if (!new.target) return new SafeAccount(owner);
+  this.owner = owner;
+}
+console.log(SafeAccount("Ada") instanceof SafeAccount);
+</example>
+<output>
+</output>
+<ul>
+<li>Returning a primitive from a constructor is ignored (step 4). Returning an object replaces the new object (step 3). The <code>"banned"</code> session is not even a <code>Session</code>. This is legal but surprising; avoid it.</li>
+<li>Calling a constructor function <em>without</em> <code>new</code> is a plain call. In strict code <code>this</code> is <code>undefined</code> and the first <code>this.owner = …</code> throws. In old sloppy code it silently created a global variable called <code>owner</code>.</li>
+<li><code>new.target</code> is the function that <code>new</code> was used with, or <code>undefined</code> in a plain call. Old libraries used it (or <code>instanceof</code>) to make <code>new</code> optional. Classes simply throw instead.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="inheritance">Inheritance with plain functions</h2>
+<p>To make one constructor inherit from another, two chains need linking: the instances' chain (<code>Child.prototype</code> must inherit from <code>Parent.prototype</code>) and the constructor call (the child must run the parent's setup on the new object). This is how every library did it before 2015, and it is still what <code>extends</code> does underneath:</p>
+<example file="old-inheritance.js">
+function Account(owner, balanceKobo) {
+  this.owner = owner;
+  this.balanceKobo = balanceKobo;
+}
+Account.prototype.describe = function () {
+  return `${this.owner}: ₦${this.balanceKobo / 100}`;
+};
+
+function SavingsAccount(owner, balanceKobo, ratePercent) {
+  Account.call(this, owner, balanceKobo);
+  this.ratePercent = ratePercent;
+}
+SavingsAccount.prototype = Object.create(Account.prototype);
+SavingsAccount.prototype.constructor = SavingsAccount;
+SavingsAccount.prototype.describe = function () {
+  return `${Account.prototype.describe.call(this)} at ${this.ratePercent}%`;
+};
+
+const ada = new SavingsAccount("Ada", 1000000, 2);
+console.log(ada.describe());
+console.log(ada instanceof SavingsAccount, ada instanceof Account);
+console.log(ada.constructor.name);
+console.log(Object.keys(ada));
+</example>
+<output>
+</output>
+<ul>
+<li><code>Account.call(this, …)</code> is what <code>super(…)</code> does: run the parent's constructor on the new object, so it gets <code>owner</code> and <code>balanceKobo</code> as own properties.</li>
+<li><code>Object.create(Account.prototype)</code> makes a new prototype object whose own prototype is <code>Account.prototype</code>, so savings accounts find <code>Account</code>'s methods one step further up.</li>
+<li>Replacing <code>SavingsAccount.prototype</code> threw away its <code>constructor</code> property, so the code restores it. Forgetting that line is a common bug in old code: <code>ada.constructor</code> would then say <code>Account</code>.</li>
+<li><code>Account.prototype.describe.call(this)</code> is what <code>super.describe()</code> does: call the parent's version with the current <code>this</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="instanceof">How instanceof really works</h2>
+<p><code>obj instanceof Fn</code> does not check how <code>obj</code> was made. It asks one question: <strong>is <code>Fn.prototype</code> somewhere on <code>obj</code>'s prototype chain?</strong> That is short enough to write yourself, and knowing it explains every surprising answer:</p>
+<example file="instanceof.js">
+function isInstance(obj, Fn) {
+  if (obj === null || (typeof obj !== "object" && typeof obj !== "function")) return false;
+  let current = Object.getPrototypeOf(obj);
+  while (current !== null) {
+    if (current === Fn.prototype) return true;
+    current = Object.getPrototypeOf(current);
+  }
+  return false;
+}
+
+function Order(id) {
+  this.id = id;
+}
+const order = new Order("ORD-7");
+
+console.log(order instanceof Order, isInstance(order, Order));
+console.log(order instanceof Object, isInstance(order, Object));
+
+const fake = Object.create(Order.prototype);
+console.log(fake instanceof Order, fake.id);
+
+Order.prototype = { describe() {} };
+console.log(order instanceof Order, new Order("ORD-8") instanceof Order);
+
+console.log(Object.create(null) instanceof Object, "NGN" instanceof String);
+console.log(Array.isArray([]), [] instanceof Array);
+</example>
+<output>
+</output>
+<ul>
+<li><code>fake</code> was never passed through the constructor, so it has no <code>id</code>, but <code>instanceof</code> says yes: the prototype is on its chain. <code>instanceof</code> checks the chain, not the shape of the data.</li>
+<li>Replacing <code>Order.prototype</code> afterwards made the old order stop being an <code>Order</code>, because its chain still points at the <em>old</em> prototype object.</li>
+<li>A null-prototype object is not an <code>instanceof Object</code>, and a primitive string is not an <code>instanceof String</code>.</li>
+<li>Each browser frame, and each Node.js <code>vm</code> context, has its own <code>Array.prototype</code>. An array from another frame fails <code>instanceof Array</code> in this one. <code>Array.isArray</code> works everywhere, so use it for arrays; similar checks exist for other types, such as <code>Error.isError</code> in the newest engines.</li>
+</ul>
+<p>For data that comes from outside, <code>instanceof</code> is the wrong question anyway: <code>JSON.parse</code> only ever creates plain objects and arrays. Check the shape of the data (validation, covered in <a href="/learn/zudo-validation">the validation lesson</a>), and use <code>instanceof</code> for objects your own code created, such as error classes.</p>
+</section>
+
+<section>
+<h2 id="class">What a class becomes</h2>
+<p>A <code>class</code> declaration produces the same structure as the constructor function version: a function whose <code>prototype</code> object holds the methods. Inspecting a class with the tools from this lesson shows exactly where everything went:</p>
+<example file="class-anatomy.js">
+class Account {
+  static count = 0;
+  #pin = null;
+  currency = "NGN";
+
+  constructor(owner) {
+    this.owner = owner;
+    Account.count += 1;
+  }
+  describe() {
+    return `${this.owner} (${this.currency})`;
+  }
+  get masked() {
+    return `${this.owner[0]}***`;
+  }
+  static fromJSON(text) {
+    return new Account(JSON.parse(text).owner);
+  }
+}
+
+class SavingsAccount extends Account {
+  addInterest() {}
+}
+
+const ada = new SavingsAccount("Ada");
+
+console.log(typeof Account);
+console.log(Object.getOwnPropertyNames(Account.prototype));
+console.log(Object.getOwnPropertyNames(Account).filter((n) => !["length", "name"].includes(n)));
+console.log(Object.keys(ada));
+console.log(Object.getOwnPropertyDescriptor(Account.prototype, "describe").enumerable);
+console.log(Object.getPrototypeOf(SavingsAccount.prototype) === Account.prototype);
+console.log(Object.getPrototypeOf(SavingsAccount) === Account, SavingsAccount.fromJSON === Account.fromJSON);
+</example>
+<output>
+</output>
+<p>Mapped onto what you built by hand:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>In the class</th><th>Where it ends up</th></tr></thead>
+<tbody>
+<tr><td><code>constructor(owner) { … }</code></td><td>The body of the function <code>Account</code> itself</td></tr>
+<tr><td>Methods and getters (<code>describe</code>, <code>masked</code>)</td><td>On <code>Account.prototype</code>, as <strong>non-enumerable</strong> properties</td></tr>
+<tr><td>Instance fields (<code>currency = "NGN"</code>)</td><td>Own properties of each instance, created at construction</td></tr>
+<tr><td><code>#private</code> fields</td><td>Stored on each instance, invisible to every reflection tool (not a property at all)</td></tr>
+<tr><td><code>static</code> members</td><td>Own properties of the function <code>Account</code></td></tr>
+<tr><td><code>extends Account</code></td><td>Two links: <code>SavingsAccount.prototype</code> → <code>Account.prototype</code> (instances inherit methods) and <code>SavingsAccount</code> → <code>Account</code> (the class inherits static methods)</td></tr>
+<tr><td><code>super(…)</code>, <code>super.method()</code></td><td>Calling the parent constructor on the new object, and calling the parent prototype's method with the current <code>this</code></td></tr>
+</tbody>
+</table></div>
+<h3>What class adds on top</h3>
+<p>A class is not <em>only</em> shorter syntax. It adds rules that the old pattern did not have, and each one prevents a real bug:</p>
+<example file="class-rules.js">
+function OldAccount(owner) {
+  this.owner = owner;
+}
+OldAccount.prototype.describe = function () {
+  return this.owner;
+};
+
+class NewAccount {
+  constructor(owner) {
+    this.owner = owner;
+  }
+  describe() {
+    return this.owner;
+  }
+}
+
+const keysIn = (obj) => {
+  const keys = [];
+  for (const key in obj) keys.push(key);
+  return keys;
+};
+console.log(keysIn(new OldAccount("Ada")), keysIn(new NewAccount("Ada")));
+
+try {
+  NewAccount("Ada");
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+
+try {
+  new AuditedAccount("Ada");
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+class AuditedAccount extends NewAccount {}
+</example>
+<output>
+</output>
+<ul>
+<li>Methods are non-enumerable, so a <code>for...in</code> loop over an instance lists only data. With the old pattern, it also lists every inherited method, which broke many loops that copied objects.</li>
+<li>A class throws when called without <code>new</code>, instead of writing to <code>undefined</code> or a global.</li>
+<li>A class declaration is in the temporal dead zone until its line runs (<a href="/learn/js-scope#hoisting">Scope and how code runs</a>), unlike a hoisted <code>function</code>.</li>
+<li>Class bodies are strict mode, and derived classes must call <code>super()</code> before using <code>this</code>.</li>
+</ul>
+<p>So "a class is just a function with a prototype" is right about the <em>structure</em>, and the extra rules are why you should write classes rather than the old pattern in new code. You will still read the old pattern in libraries and older codebases, and now you know what each line does.</p>
+</section>
+
+<section>
+<h2 id="pollution">Prototype pollution</h2>
+<p>Because every ordinary object reads missing properties from <code>Object.prototype</code>, anything written <em>onto</em> <code>Object.prototype</code> appears on every object in the program. An attacker who can make your code do that can change behaviour everywhere, for example by giving every user object an <code>isAdmin</code> property. This attack is called <strong>prototype pollution</strong>, and it usually enters through a "deep merge" of JSON from a request:</p>
+<example file="pollution.js">
+function naiveMerge(target, source) {
+  for (const key in source) {
+    const value = source[key];
+    if (typeof value === "object" && value !== null) {
+      if (typeof target[key] !== "object" || target[key] === null) target[key] = {};
+      naiveMerge(target[key], value);
+    } else {
+      target[key] = value;
+    }
+  }
+  return target;
+}
+
+const body = JSON.parse('{"theme":"dark","__proto__":{"isAdmin":true}}');
+console.log(Object.keys(body));
+
+try {
+  const settings = naiveMerge({}, body);
+  const someUser = { name: "Chidi" };
+  console.log(settings.theme, someUser.isAdmin, {}.isAdmin);
+} finally {
+  delete Object.prototype.isAdmin;
+}
+console.log({}.isAdmin);
+</example>
+<output>
+</output>
+<p>Step by step: <code>JSON.parse</code> treats <code>"__proto__"</code> as an ordinary key, so <code>body</code> has an own property with that name. The merge reads <code>target["__proto__"]</code>, which is not an own property of <code>target</code>: it is the old <code>__proto__</code> getter on <code>Object.prototype</code>, and it returns <code>Object.prototype</code> itself. The recursive call then writes <code>isAdmin = true</code> straight onto <code>Object.prototype</code>. From that moment, <code>someUser.isAdmin</code>, and <code>isAdmin</code> on every object in the process, is <code>true</code>. The <code>finally</code> block removes the property so the rest of this page keeps working; a real server would stay polluted until it restarted.</p>
+<p>The defences all come from this lesson:</p>
+<ul>
+<li>Skip the dangerous keys <code>__proto__</code>, <code>constructor</code> and <code>prototype</code> when copying from outside data.</li>
+<li>Only walk into <strong>own</strong> properties of the target (<code>Object.hasOwn</code>), never into inherited ones.</li>
+<li>Build maps from user keys with <code>Object.create(null)</code> or <code>Map</code>, which have no <code>Object.prototype</code> to reach.</li>
+<li>Better still, do not merge unknown data at all: validate it against a schema and copy the fields you expect, as with the allow-list in <a href="/learn/js-data#build">Objects and JSON</a>.</li>
+</ul>
+<p><code>@zudojs/security</code> includes a check for the first point: <code>findUnsafeKey(value)</code> walks a parsed body (with a loop, not recursion, so depth cannot crash it) and returns the first dangerous key it finds:</p>
+<example file="unsafe-key.js" browser="no">
+import { findUnsafeKey } from "@zudojs/security";
+
+const attack = JSON.parse('{"theme":"dark","prefs":{"__proto__":{"isAdmin":true}}}');
+const normal = JSON.parse('{"theme":"dark","prefs":{"fontSize":14}}');
+
+console.log(findUnsafeKey(attack));
+console.log(findUnsafeKey(normal));
+console.log(findUnsafeKey(JSON.parse('{"constructor":{"prototype":{"isAdmin":true}}}')));
+</example>
+<output>
+</output>
+</section>
+
+<section>
+<h2 id="reason">Before you build: rewriting new, instanceof and extends</h2>
+<reason title="What must each helper get exactly right?">
+<p>You will write <code>construct(Fn, ...args)</code> (like <code>new</code>), <code>isInstance(obj, Fn)</code> (like <code>instanceof</code>), <code>inherit(Child, Parent)</code> (the prototype part of <code>extends</code>) and <code>safeMerge(target, source)</code>, then test them against the real behaviour. Before writing them, answer:</p>
+<ul>
+<li>For <code>construct</code>: what counts as "the constructor returned an object"? Is a function an object here? What about <code>null</code>?</li>
+<li>For <code>isInstance</code>: what should happen for primitives, for <code>null</code>, and for an object with a null prototype? Can the loop run forever?</li>
+<li>For <code>inherit</code>: which two links does <code>extends</code> create, and what does replacing <code>Child.prototype</code> destroy that you must put back?</li>
+<li>For <code>safeMerge</code>: which keys are dangerous, and why is skipping <code>__proto__</code> alone not enough?</li>
+</ul>
+<answer>
+<ul>
+<li><strong>construct</strong>: the result replaces the new object when it is a non-null object <em>or a function</em> (functions are objects). <code>null</code> is <code>typeof "object"</code> but does not count, so check for it explicitly. Primitives are ignored.</li>
+<li><strong>isInstance</strong>: primitives and <code>null</code> have no chain, so return <code>false</code> at once. A null-prototype object's chain is empty, so the loop ends immediately with <code>false</code>. The loop always ends, because JavaScript refuses to create a cycle of prototypes (<code>setPrototypeOf</code> throws on one).</li>
+<li><strong>inherit</strong>: instances link <code>Child.prototype</code> → <code>Parent.prototype</code>; static members link <code>Child</code> → <code>Parent</code>. Replacing <code>Child.prototype</code> with <code>Object.create(Parent.prototype)</code> loses <code>Child.prototype.constructor</code>, so define it again, non-enumerable, as classes have it. Keep any methods the child already had by creating the link with <code>Object.setPrototypeOf(Child.prototype, Parent.prototype)</code> instead of replacing the object.</li>
+<li><strong>safeMerge</strong>: <code>__proto__</code> reaches <code>Object.prototype</code> through the getter; <code>constructor</code> followed by <code>prototype</code> reaches it too (<code>target.constructor</code> is the inherited <code>Object</code> function, and <code>Object.prototype</code> is its property). Skip all three names, and only recurse into values that are the target's own plain objects.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: the object model from scratch</h2>
+<example file="object-model.js" project="model">
+export function construct(Fn, ...args) {
+  if (typeof Fn !== "function" || typeof Fn.prototype !== "object") {
+    throw new TypeError(`${String(Fn?.name ?? Fn)} is not a constructor`);
+  }
+  const obj = Object.create(Fn.prototype);
+  const result = Fn.apply(obj, args);
+  const isObject = result !== null && (typeof result === "object" || typeof result === "function");
+  return isObject ? result : obj;
+}
+
+export function isInstance(obj, Fn) {
+  if (obj === null || (typeof obj !== "object" && typeof obj !== "function")) return false;
+  for (let p = Object.getPrototypeOf(obj); p !== null; p = Object.getPrototypeOf(p)) {
+    if (p === Fn.prototype) return true;
+  }
+  return false;
+}
+
+export function inherit(Child, Parent) {
+  Object.setPrototypeOf(Child.prototype, Parent.prototype);
+  Object.setPrototypeOf(Child, Parent);
+  Object.defineProperty(Child.prototype, "constructor", {
+    value: Child, writable: true, enumerable: false, configurable: true,
+  });
+  return Child;
+}
+
+const UNSAFE = new Set(["__proto__", "constructor", "prototype"]);
+
+export function safeMerge(target, source) {
+  for (const key of Object.keys(source)) {
+    if (UNSAFE.has(key)) continue;
+    const value = source[key];
+    const isPlain = typeof value === "object" && value !== null && !Array.isArray(value);
+    if (isPlain) {
+      if (!Object.hasOwn(target, key) || typeof target[key] !== "object" || target[key] === null) {
+        target[key] = {};
+      }
+      safeMerge(target[key], value);
+    } else {
+      target[key] = value;
+    }
+  }
+  return target;
+}
+</example>
+<p>Each function is a direct translation of a rule from this lesson. <code>inherit</code> uses <code>setPrototypeOf</code> on purpose: it runs once, when the classes are set up, not on hot objects, so the performance warning does not apply. <code>safeMerge</code> uses <code>Object.keys</code> (own, enumerable keys) instead of <code>for...in</code>, which would also list inherited enumerable properties. It recurses, which is fine for settings objects; for untrusted input of unknown depth, add a depth limit as in <a href="/learn/js-recursion#overflow">Recursion</a>.</p>
+<example file="main.js" project="model">
+import { construct, inherit, isInstance, safeMerge } from "./object-model.js";
+
+function Account(owner, balanceKobo) {
+  this.owner = owner;
+  this.balanceKobo = balanceKobo;
+}
+Account.prototype.describe = function () {
+  return `${this.owner}: ₦${this.balanceKobo / 100}`;
+};
+Account.open = function (owner) {
+  return construct(this, owner, 0);
+};
+
+function SavingsAccount(owner, balanceKobo, ratePercent) {
+  Account.call(this, owner, balanceKobo);
+  this.ratePercent = ratePercent;
+}
+SavingsAccount.prototype.describe = function () {
+  return `${Account.prototype.describe.call(this)} at ${this.ratePercent}%`;
+};
+inherit(SavingsAccount, Account);
+
+const ada = construct(SavingsAccount, "Ada", 1000000, 2);
+console.log(ada.describe());
+console.log(isInstance(ada, SavingsAccount), isInstance(ada, Account), isInstance(ada, Array));
+console.log(ada.constructor.name, Object.keys(SavingsAccount.prototype));
+console.log(SavingsAccount.open("Chidi").describe());
+
+const settings = safeMerge({ theme: "light", alerts: { email: true } },
+  JSON.parse('{"alerts":{"sms":true},"__proto__":{"isAdmin":true},"constructor":{"prototype":{"isAdmin":true}}}'));
+console.log(settings, {}.isAdmin);
+</example>
+<output>
+</output>
+<p><code>SavingsAccount.open("Chidi")</code> is a detail worth a second look. <code>open</code> is defined on <code>Account</code>, but <code>inherit</code> linked <code>SavingsAccount</code> to <code>Account</code>, so the static method is found on the chain, and inside it <code>this</code> is <code>SavingsAccount</code>. The result is a savings account, although its rate is <code>undefined</code> because <code>open</code> only passes two arguments. Static inheritance works exactly like instance inheritance, one level up.</p>
+<h3>Testing against the real thing</h3>
+<p>The best test for a reimplementation is to run it side by side with the original on the same inputs, including the strange ones:</p>
+<example file="object-model.test.js" project="model">
+import { construct, inherit, isInstance, safeMerge } from "./object-model.js";
+
+function check(label, actual, expected) {
+  console.log(`${Object.is(actual, expected) ? "PASS" : "FAIL"} ${label} -> ${String(actual)}`);
+}
+
+function Plain(x) { this.x = x; }
+function ReturnsObject() { this.x = 1; return { replaced: true }; }
+function ReturnsNull() { this.x = 2; return null; }
+function ReturnsFunction() { return function inner() {}; }
+
+check("same data as new", construct(Plain, 5).x, new Plain(5).x);
+check("same prototype as new", Object.getPrototypeOf(construct(Plain, 5)), Object.getPrototypeOf(new Plain(5)));
+check("returned object wins", construct(ReturnsObject).replaced, new ReturnsObject().replaced);
+check("returned null ignored", construct(ReturnsNull).x, new ReturnsNull().x);
+check("returned function wins", typeof construct(ReturnsFunction), typeof new ReturnsFunction());
+
+let arrowError = null;
+try { construct(() => {}); } catch (e) { arrowError = e.name; }
+check("arrow is not a constructor", arrowError, "TypeError");
+
+const samples = [new Plain(1), Object.create(Plain.prototype), Object.create(null), [], "text", 42, null, undefined];
+for (const [i, value] of samples.entries()) {
+  check(`isInstance matches instanceof #${i}`, isInstance(value, Plain), value instanceof Plain);
+  check(`isInstance(Object) matches #${i}`, isInstance(value, Object), value instanceof Object);
+}
+
+class Base { static kind() { return "base"; } hello() { return "hi"; } }
+function Derived() {}
+Derived.prototype.own = function () { return "own"; };
+inherit(Derived, Base);
+const d = new Derived();
+check("inherits methods", d.hello(), "hi");
+check("keeps own methods", d.own(), "own");
+check("inherits statics", Derived.kind(), "base");
+check("constructor restored", d.constructor, Derived);
+check("constructor hidden", Object.keys(Derived.prototype).includes("constructor"), false);
+
+const merged = safeMerge({}, JSON.parse('{"a":{"b":1},"__proto__":{"polluted":true}}'));
+check("nested values merged", merged.a.b, 1);
+check("no pollution", {}.polluted, undefined);
+check("prototype of target untouched", Object.getPrototypeOf(merged), Object.prototype);
+</example>
+<output>
+</output>
+<h3>In production</h3>
+<ul>
+<li><strong>Write classes.</strong> Knowing the machinery is for reading, debugging and reviewing code. For new code, <code>class</code> gives you the same structure with safer rules.</li>
+<li><strong>Keep prototypes stable.</strong> Engines optimise objects by their shape and prototype. Build chains once, at start-up; do not call <code>setPrototypeOf</code> or add methods to prototypes while requests are running.</li>
+<li><strong>Never modify built-in prototypes</strong> such as <code>Array.prototype</code> or <code>Object.prototype</code>. Your addition shows up in every library in the process, and future JavaScript versions may add a method with the same name (this has happened, and it is why some new array methods have unusual names).</li>
+<li><strong>Treat merges of outside data as a security boundary.</strong> Reject or skip <code>__proto__</code>, <code>constructor</code> and <code>prototype</code> keys, and prefer validating against a schema to merging. Node.js can also be started with <code>--disable-proto=delete</code>, which removes the <code>__proto__</code> accessor entirely.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Draw the chain">
+<p>Write <code>describeChain(value)</code> that returns the chain of any value as text, using each prototype's own <code>constructor.name</code>, for example <code>"SavingsAccount.prototype -&gt; Account.prototype -&gt; Object.prototype -&gt; null"</code>. Use it on a class instance, an array and a null-prototype object.</p>
+<solution>
+<example file="describe-chain.js">
+function describeChain(value) {
+  const parts = [];
+  for (let p = Object.getPrototypeOf(value); p !== null; p = Object.getPrototypeOf(p)) {
+    parts.push(Object.hasOwn(p, "constructor") ? `${p.constructor.name}.prototype` : "(anonymous)");
+  }
+  return [...parts, "null"].join(" -> ");
+}
+
+class Account {}
+class SavingsAccount extends Account {}
+
+console.log(describeChain(new SavingsAccount()));
+console.log(describeChain(["RICE-5"]));
+console.log(describeChain(Object.create(null)));
+console.log(describeChain(Object.create({ plan: "gold" })));
+</example>
+<output>
+</output>
+<p>The last object's prototype is a plain object literal: it has no own <code>constructor</code>, so it is shown as anonymous, and then the chain continues to <code>Object.prototype</code>.</p>
+</solution>
+</exercise>
+<exercise title="Fix the shared basket">
+<p>This constructor-function cart shares one <code>items</code> array between all carts. Explain why, and fix it so each cart has its own array while <code>add</code> stays shared on the prototype.</p>
+<example file="basket-bug.js">
+function Cart(owner) {
+  this.owner = owner;
+}
+Cart.prototype.items = [];
+Cart.prototype.add = function (sku) {
+  this.items.push(sku);
+};
+
+const ada = new Cart("Ada");
+const chidi = new Cart("Chidi");
+ada.add("RICE-5");
+console.log(chidi.items);
+</example>
+<output>
+</output>
+<solution>
+<p><code>this.items.push</code> <em>reads</em> <code>items</code>, finds the one array on <code>Cart.prototype</code>, and changes it. No cart ever gets an own <code>items</code>. Data belongs on the instance, created in the constructor; only the method stays on the prototype:</p>
+<example file="basket-fix.js">
+function Cart(owner) {
+  this.owner = owner;
+  this.items = [];
+}
+Cart.prototype.add = function (sku) {
+  this.items.push(sku);
+};
+
+const ada = new Cart("Ada");
+const chidi = new Cart("Chidi");
+ada.add("RICE-5");
+console.log(ada.items, chidi.items, ada.add === chidi.add);
+</example>
+<output>
+</output>
+</solution>
+</exercise>
+<exercise title="A class without the class keyword">
+<p>Rewrite this class as a constructor function plus prototype, so that it behaves the same for a caller: same output, methods not listed by <code>for...in</code>, and a <code>TypeError</code> when called without <code>new</code>. (Hint: <code>new.target</code> and <code>Object.defineProperty</code>.)</p>
+<example file="class-original.js">
+class Invoice {
+  constructor(id, totalKobo) {
+    this.id = id;
+    this.totalKobo = totalKobo;
+  }
+  describe() {
+    return `${this.id}: ₦${this.totalKobo / 100}`;
+  }
+}
+
+const invoice = new Invoice("INV-9", 250000);
+const keys = [];
+for (const key in invoice) keys.push(key);
+console.log(invoice.describe(), keys);
+</example>
+<output>
+</output>
+<solution>
+<example file="class-by-hand.js">
+function Invoice(id, totalKobo) {
+  if (!new.target) throw new TypeError("Class constructor Invoice cannot be invoked without 'new'");
+  this.id = id;
+  this.totalKobo = totalKobo;
+}
+Object.defineProperty(Invoice.prototype, "describe", {
+  value: function () {
+    return `${this.id}: ₦${this.totalKobo / 100}`;
+  },
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+
+const invoice = new Invoice("INV-9", 250000);
+const keys = [];
+for (const key in invoice) keys.push(key);
+console.log(invoice.describe(), keys);
+
+try {
+  Invoice("INV-10", 100);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+</output>
+<p>Still missing compared with the real class: strict mode for the body (it is strict here only because the file is a module), the temporal dead zone, and <code>super</code> support. That is why <code>class</code> is more than a shortcut.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Every object has a <code>[[Prototype]]</code> link. Reading a missing property walks the chain until it finds the property or reaches <code>null</code>; <code>this</code> stays the object you started from.</li>
+<li>Writing creates or changes an own property (shadowing), unless the chain has a setter (it runs) or a read-only property (the write fails). <code>delete</code> only removes own properties.</li>
+<li>Put methods and constants on prototypes, and data on instances; a shared array on a prototype is shared by everyone.</li>
+<li><code>Object.create(proto)</code> sets the link directly; <code>Object.create(null)</code> makes an object with no chain at all.</li>
+<li><code>new Fn()</code>: create an object linked to <code>Fn.prototype</code>, call <code>Fn</code> with it as <code>this</code>, and return it unless <code>Fn</code> returned an object.</li>
+<li><code>Fn.prototype</code> is the prototype of instances; <code>Object.getPrototypeOf(Fn)</code> is <code>Function.prototype</code>.</li>
+<li><code>instanceof</code> only checks whether <code>Fn.prototype</code> is on the chain. Use <code>Array.isArray</code> for arrays and validation for outside data.</li>
+<li>A class becomes a function with non-enumerable methods on its prototype, statics on the function, and two links for <code>extends</code>; it adds <code>new</code>-only calls, strict mode and the TDZ.</li>
+<li>Writing to <code>Object.prototype</code> affects every object: never merge untrusted keys such as <code>__proto__</code>, <code>constructor</code> and <code>prototype</code>.</li>
+</ul>
+<p>Next: <a href="/learn/js-composition">Inheritance and composition</a>, where you decide when to build on a prototype chain and when to combine small objects instead.</p>
+</section>
