@@ -1239,14 +1239,87 @@ export function registerHealthRoutes(router: HttpRouter, check: HealthCheck): vo
 }</script>
 </figure>
 <p><code>server.ts</code> passes a <code>health</code> function that looks at the runtime and the integrations. Without one, <code>createDependencies</code> uses a function that always says "ready", which is what tests want.</p>
+<p>Here is that <code>health</code> function at work, with the real <code>registerHealthRoutes</code> and <code>checkIntegrations</code>. Two integrations: <code>redis</code> reports its health, <code>mailer</code> has no <code>health</code> method:</p>
+<figure class="lx-example" data-index="14" data-file="health-trace.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">health-trace.ts</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createHttpTestClient <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
+
+<span class="t-kw">import</span> <span class="t-pn">{</span> checkIntegrations <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./src/integrations/index.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Integration</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./src/integrations/index.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> registerHealthRoutes <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./src/routes/health.routes.js"</span><span class="t-pn">;</span>
+
+<span class="t-kw">let</span> redisUp <span class="t-op">=</span> <span class="t-cn">true</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> redis<span class="t-op">:</span> <span class="t-ty">Integration</span> <span class="t-op">=</span> <span class="t-pn">{</span>
+  name<span class="t-op">:</span> <span class="t-str">"redis"</span><span class="t-pn">,</span>
+  start<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span>
+  stop<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span>
+  health<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> redisUp<span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> mailer<span class="t-op">:</span> <span class="t-ty">Integration</span> <span class="t-op">=</span> <span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"mailer"</span><span class="t-pn">,</span> start<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span> stop<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span><span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+<span class="t-kw">let</span> runtimeState <span class="t-op">=</span> <span class="t-str">"running"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> router <span class="t-op">=</span> <span class="t-fn">createRouter</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-fn">registerHealthRoutes</span><span class="t-pn">(</span>router<span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> checks <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">checkIntegrations</span><span class="t-pn">(</span><span class="t-pn">[</span>redis<span class="t-pn">,</span> mailer<span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> ready <span class="t-op">=</span> runtimeState <span class="t-op">===</span> <span class="t-str">"running"</span> <span class="t-op">&amp;&amp;</span> <span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">values</span><span class="t-pn">(</span>checks<span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">every</span><span class="t-pn">(</span><span class="t-pn">(</span>check<span class="t-pn">)</span> <span class="t-op">=&gt;</span> check <span class="t-op">===</span> <span class="t-str">"up"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">return</span> <span class="t-pn">{</span> ready<span class="t-pn">,</span> checks <span class="t-pn">}</span><span class="t-pn">;</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> client <span class="t-op">=</span> <span class="t-fn">createHttpTestClient</span><span class="t-pn">(</span>router<span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> <span class="t-pn">[</span>label<span class="t-pn">,</span> change<span class="t-pn">]</span> <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-pn">[</span><span class="t-str">"all up"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-str">"redis down"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> redisUp <span class="t-op">=</span> <span class="t-cn">false</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-str">"stopping"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> redisUp <span class="t-op">=</span> <span class="t-cn">true</span><span class="t-pn">;</span> runtimeState <span class="t-op">=</span> <span class="t-str">"stopping"</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">]</span> <span class="t-kw">as</span> <span class="t-kw">const</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-fn">change</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> response <span class="t-op">=</span> <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/health"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> body <span class="t-op">=</span> response<span class="t-pn">.</span><span class="t-prop">json</span><span class="t-op">&lt;</span><span class="t-pn">{</span> status<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span> checks<span class="t-op">:</span> <span class="t-ty">Record</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-op">&gt;</span> <span class="t-pn">}</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>label<span class="t-pn">.</span><span class="t-fn">padEnd</span><span class="t-pn">(</span><span class="t-num">10</span><span class="t-pn">)</span><span class="t-pn">,</span> response<span class="t-pn">.</span><span class="t-prop">status</span><span class="t-pn">,</span> body<span class="t-pn">.</span><span class="t-prop">status</span><span class="t-pn">,</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">stringify</span><span class="t-pn">(</span>body<span class="t-pn">.</span><span class="t-prop">checks</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+<span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">close</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { createRouter } from "@zudojs/http";
+import { createHttpTestClient } from "@zudojs/testing";
+
+import { checkIntegrations } from "./src/integrations/index.js";
+import type { Integration } from "./src/integrations/index.js";
+import { registerHealthRoutes } from "./src/routes/health.routes.js";
+
+let redisUp = true;
+const redis: Integration = {
+  name: "redis",
+  start: async () => {},
+  stop: async () => {},
+  health: async () => redisUp,
+};
+const mailer: Integration = { name: "mailer", start: async () => {}, stop: async () => {} };
+let runtimeState = "running";
+
+const router = createRouter();
+registerHealthRoutes(router, async () => {
+  const checks = await checkIntegrations([redis, mailer]);
+  const ready = runtimeState === "running" && Object.values(checks).every((check) => check === "up");
+  return { ready, checks };
+});
+const client = createHttpTestClient(router);
+
+for (const [label, change] of [["all up", () => {}], ["redis down", () => { redisUp = false; }], ["stopping", () => { redisUp = true; runtimeState = "stopping"; }]] as const) {
+  change();
+  const response = await client.get("/health");
+  const body = response.json<{ status: string; checks: Record<string, string> }>();
+  console.log(label.padEnd(10), response.status, body.status, JSON.stringify(body.checks));
+}
+await client.close();</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx health-trace.ts</code></div><pre class="lx-no-copy">all up     200 ok {"redis":"up"}
+redis down 503 unavailable {"redis":"down"}
+stopping   503 unavailable {"redis":"up"}</pre></div>
+</figure>
+<p>An integration without a <code>health</code> method is simply not listed, so it can never make the app unready. And while the runtime is stopping, <code>/health</code> says 503 even though every check is up: the load balancer stops sending new requests before the app closes its connections.</p>
 </section>
 
 <section>
 <h2 id="request">The request path, layer by layer</h2>
 <p>Now the bottom half of the map. Here are the five files of the example resource, from the outside in.</p>
 <h3>Routes: paths to controller methods</h3>
-<figure class="lx-example" data-index="14" data-file="src/routes/examples.routes.ts" data-project="anatomy">
-<figcaption class="lx-bar"><span class="lx-file">src/routes/examples.routes.ts</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<figure class="lx-example" data-index="15" data-file="src/routes/examples.routes.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">src/routes/examples.routes.ts</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRouter</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
@@ -1373,8 +1446,8 @@ export function registerExamplesRoutes(
 </figure>
 <p>A routes file only maps a method and a path to a controller method. The <code>openapi</code> option describes the route for the API documentation; it does not validate anything.</p>
 <h3>Controller: HTTP in, HTTP out</h3>
-<figure class="lx-example" data-index="15" data-file="src/controllers/examples.controller.ts" data-project="anatomy">
-<figcaption class="lx-bar"><span class="lx-file">src/controllers/examples.controller.ts</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<figure class="lx-example" data-index="16" data-file="src/controllers/examples.controller.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">src/controllers/examples.controller.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpResponseContext</span><span class="t-pn">,</span> <span class="t-ty">HttpRouterContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">CreateExampleSchema</span><span class="t-pn">,</span> <span class="t-ty">ExampleParamsSchema</span><span class="t-pn">,</span> <span class="t-ty">UpdateExampleSchema</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"../dtos/examples.dto.js"</span><span class="t-pn">;</span>
@@ -1459,8 +1532,8 @@ export class ExamplesController {
 </figure>
 <p>The controller is the only layer that knows about HTTP. It reads the path parameters and the body, checks them with the DTO schemas, calls the service with clean, typed data, and turns the result into a status code and JSON. Its methods are arrow functions stored in properties, so <code>this</code> still works when the router calls <code>controller.list</code> on its own (the <code>this</code> trap from <a href="/learn/js-classes">Classes</a>).</p>
 <h3>DTOs: the shapes that cross the boundary</h3>
-<figure class="lx-example" data-index="16" data-file="src/dtos/examples.dto.ts" data-project="anatomy">
-<figcaption class="lx-bar"><span class="lx-file">src/dtos/examples.dto.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<figure class="lx-example" data-index="17" data-file="src/dtos/examples.dto.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">src/dtos/examples.dto.ts</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema<span class="t-pn">,</span> <span class="t-kw">type</span> <span class="t-ty">Infer</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
 <span class="t-cmt">/** An example as the API returns it. */</span>
@@ -1521,8 +1594,8 @@ export type UpdateExampleInput = Infer<typeof UpdateExampleSchema>;</script>
 </figure>
 <p>Each schema is written once and gives two things: a runtime check (<code>safeParse</code>) and a TypeScript type (<code>Infer</code>). That is the pattern from <a href="/learn/zudo-first-code">Your first Zudo code</a>.</p>
 <h3>Service: the rules</h3>
-<figure class="lx-example" data-index="17" data-file="src/services/examples.service.ts" data-project="anatomy">
-<figcaption class="lx-bar"><span class="lx-file">src/services/examples.service.ts</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<figure class="lx-example" data-index="18" data-file="src/services/examples.service.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">src/services/examples.service.ts</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">NotFoundError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">CreateExampleInput</span><span class="t-pn">,</span> <span class="t-ty">Example</span><span class="t-pn">,</span> <span class="t-ty">UpdateExampleInput</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"../dtos/examples.dto.js"</span><span class="t-pn">;</span>
@@ -1601,8 +1674,8 @@ function notFound(id: string): NotFoundError {
 </figure>
 <p>The service knows the rules ("an unknown id is not found") and nothing about HTTP. It never builds a response; it <em>throws</em> a <code>NotFoundError</code> from <code>@zudojs/errors</code>, an error that already carries status 404. That keeps it usable from a job or a command-line tool, where there is no request at all.</p>
 <h3>Repository: storage behind an interface</h3>
-<figure class="lx-example" data-index="18" data-file="src/repositories/examples.repository.ts" data-project="anatomy">
-<figcaption class="lx-bar"><span class="lx-file">src/repositories/examples.repository.ts</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<figure class="lx-example" data-index="19" data-file="src/repositories/examples.repository.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">src/repositories/examples.repository.ts</span><button type="button" class="lx-edit" data-index="19" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> randomUUID <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:crypto"</span><span class="t-pn">;</span>
 
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConflictError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
@@ -1741,8 +1814,8 @@ export class InMemoryExamplesRepository implements ExamplesRepository {
 </figure>
 <p>The <code>ExamplesRepository</code> interface is what the service depends on. <code>InMemoryExamplesRepository</code> is one implementation, a <code>Map</code> with a size limit so a flood of requests cannot eat all the memory. It also decides the id (<code>randomUUID()</code>) and the timestamps, because those belong to storage.</p>
 <h3>The HTTP helpers</h3>
-<figure class="lx-example" data-index="19" data-file="src/utils/http.ts" data-project="anatomy">
-<figcaption class="lx-bar"><span class="lx-file">src/utils/http.ts</span><button type="button" class="lx-edit" data-index="19" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<figure class="lx-example" data-index="20" data-file="src/utils/http.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">src/utils/http.ts</span><button type="button" class="lx-edit" data-index="20" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span>
   badRequest<span class="t-pn">,</span>
   createResponseContext<span class="t-pn">,</span>
@@ -1927,10 +2000,52 @@ export function securityHeaders(): HttpMiddleware {
   };
 }</script>
 </figure>
+<p><code>securityHeaders</code> adds the default headers from <code>@zudojs/security</code>, but only the ones a response does not set itself. That is how a page such as <code>/docs</code> can send its own, looser content security policy:</p>
+<figure class="lx-example" data-index="21" data-file="headers-trace.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">headers-trace.ts</span><button type="button" class="lx-edit" data-index="21" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">,</span> createResponseContext <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createHttpTestClient <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
+
+<span class="t-kw">import</span> <span class="t-pn">{</span> securityHeaders <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./src/utils/http.js"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> handler<span class="t-op">:</span> <span class="t-ty">HttpMiddleware</span> <span class="t-op">=</span> <span class="t-kw">async</span> <span class="t-pn">(</span>context<span class="t-pn">)</span> <span class="t-op">=&gt;</span>
+  context<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">.</span><span class="t-prop">path</span> <span class="t-op">===</span> <span class="t-str">"/docs"</span>
+    <span class="t-op">?</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">{</span> status<span class="t-op">:</span> <span class="t-num">200</span><span class="t-pn">,</span> headers<span class="t-op">:</span> <span class="t-pn">{</span> <span class="t-str">"content-security-policy"</span><span class="t-op">:</span> <span class="t-str">"default-src 'self' https://cdn.example"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> page<span class="t-op">:</span> <span class="t-str">"docs"</span> <span class="t-pn">}</span><span class="t-pn">)</span>
+    <span class="t-op">:</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">{</span> status<span class="t-op">:</span> <span class="t-num">200</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">true</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> client <span class="t-op">=</span> <span class="t-fn">createHttpTestClient</span><span class="t-pn">(</span><span class="t-kw">new</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">(</span><span class="t-pn">{</span> middlewares<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-fn">securityHeaders</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> handler<span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> path <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-str">"/api/v1/examples"</span><span class="t-pn">,</span> <span class="t-str">"/docs"</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> response <span class="t-op">=</span> <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>path<span class="t-pn">)</span><span class="t-pn">;</span>
+  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>path<span class="t-pn">,</span> <span class="t-str">"|"</span><span class="t-pn">,</span> response<span class="t-pn">.</span><span class="t-prop">headers</span><span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"x-frame-options"</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-str">"|"</span><span class="t-pn">,</span> response<span class="t-pn">.</span><span class="t-prop">headers</span><span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"content-security-policy"</span><span class="t-pn">)</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-fn">slice</span><span class="t-pn">(</span><span class="t-num">0</span><span class="t-pn">,</span> <span class="t-num">40</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+<span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">close</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { HttpMiddlewarePipeline, createResponseContext } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+import { createHttpTestClient } from "@zudojs/testing";
+
+import { securityHeaders } from "./src/utils/http.js";
+
+const handler: HttpMiddleware = async (context) =>
+  context.request.path === "/docs"
+    ? createResponseContext({ status: 200, headers: { "content-security-policy": "default-src 'self' https://cdn.example" } }).json({ page: "docs" })
+    : createResponseContext({ status: 200 }).json({ ok: true });
+
+const client = createHttpTestClient(new HttpMiddlewarePipeline({ middlewares: [securityHeaders(), handler] }));
+for (const path of ["/api/v1/examples", "/docs"]) {
+  const response = await client.get(path);
+  console.log(path, "|", response.headers.get("x-frame-options"), "|", response.headers.get("content-security-policy")?.slice(0, 40));
+}
+await client.close();</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx headers-trace.ts</code></div><pre class="lx-no-copy">/api/v1/examples | DENY | default-src 'self'; script-src 'self'; s
+/docs | DENY | default-src 'self' https://cdn.example</pre></div>
+</figure>
+<p>It calls <code>next()</code> first and then changes a <code>clone()</code> of the response, because the response a handler returns may be shared and must not be changed in place.</p>
 <h3>Run it: one request through every layer</h3>
 <p>To see the path, this trace builds the composition root by hand, the same shape as <code>createDependencies()</code>, but with a service and a repository that print when they are called. It uses the real <code>registerRoutes</code>, controller and <code>errorResponse</code>, and a middleware that prints each request and its status:</p>
-<figure class="lx-example" data-index="20" data-file="layers-trace.ts" data-project="anatomy">
-<figcaption class="lx-bar"><span class="lx-file">layers-trace.ts</span><button type="button" class="lx-edit" data-index="20" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="22" data-file="layers-trace.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">layers-trace.ts</span><button type="button" class="lx-edit" data-index="22" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createHttpTestClient <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
@@ -2104,8 +2219,8 @@ await client.close();</script>
 </tbody>
 </table></div>
 <p><code>errorResponse</code> only turns an error into a response when it has a 4xx <code>statusCode</code> <em>and</em> <code>expose: true</code>. Errors from <code>@zudojs/errors</code> such as <code>NotFoundError</code> set both; a plain <code>new Error(…)</code> sets neither. So an unexpected error can never leak its message to a client. Here the last row happens for real, with a repository whose disk is "full":</p>
-<figure class="lx-example" data-index="21" data-file="errors-trace.ts" data-project="anatomy">
-<figcaption class="lx-bar"><span class="lx-file">errors-trace.ts</span><button type="button" class="lx-edit" data-index="21" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="23" data-file="errors-trace.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">errors-trace.ts</span><button type="button" class="lx-edit" data-index="23" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createHttpTestClient <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
@@ -2189,8 +2304,8 @@ await client.close();</script>
 <section>
 <h2 id="tests">Tests and the wiring they miss</h2>
 <p>The generated test builds its own router with only the example routes:</p>
-<figure class="lx-example" data-index="22" data-file="tests/examples.test.ts" data-project="anatomy-tests">
-<figcaption class="lx-bar"><span class="lx-file">tests/examples.test.ts</span><button type="button" class="lx-edit" data-index="22" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<figure class="lx-example" data-index="24" data-file="tests/examples.test.ts" data-project="anatomy-tests">
+<figcaption class="lx-bar"><span class="lx-file">tests/examples.test.ts</span><button type="button" class="lx-edit" data-index="24" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> afterAll<span class="t-pn">,</span> describe<span class="t-pn">,</span> it <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"vitest"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createHttpTestClient <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
@@ -2292,8 +2407,8 @@ describe("/api/v1/examples", () => {
 });</script>
 </figure>
 <p>That is a good <strong>unit</strong> test of the resource, but it never calls <code>registerRoutes</code> or <code>createDependencies</code>. As the <a href="/learn/zudo-cli#wiring">CLI lesson</a> showed, a lost marker leaves those two files without the new resource while this test still passes. A <strong>smoke test</strong> is a quick check that the assembled application answers at all. This one builds the router exactly the way <code>server.ts</code> does and requests one path per resource:</p>
-<figure class="lx-example" data-index="23" data-file="smoke.ts" data-project="anatomy">
-<figcaption class="lx-bar"><span class="lx-file">smoke.ts</span><button type="button" class="lx-edit" data-index="23" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="25" data-file="smoke.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">smoke.ts</span><button type="button" class="lx-edit" data-index="25" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRouter</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createHttpTestClient <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
@@ -2371,8 +2486,8 @@ lost routes marker   /health 200 | /api/v1/examples 404</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Log the errors you answer with 500</h3><p>Change <code>dispatch</code> so an unexpected error is logged with its message before it is rethrown, but a 4xx error is not logged. Try it with the broken repository.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="24" data-file="log-500.ts" data-project="anatomy">
-<figcaption class="lx-bar"><span class="lx-file">log-500.ts</span><button type="button" class="lx-edit" data-index="24" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Log the errors you answer with 500</h3><p>Change <code>dispatch</code> so an unexpected error is logged with its message before it is rethrown, but a 4xx error is not logged. Try it with the broken repository.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="26" data-file="log-500.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">log-500.ts</span><button type="button" class="lx-edit" data-index="26" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createLogger <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/logger"</span><span class="t-pn">;</span>
@@ -2453,8 +2568,8 @@ await client.close();</script>
 500</pre></div>
 </figure>
 <p>The 400 is expected behaviour and stays quiet; the 500 now leaves a line in the log with the method, the path and the real message, which only the operator sees. In <code>server.ts</code>, create the logger once at the top, or pass in the runtime's logger.</p></details></div>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Swap a layer at the composition root</h3><p>Write a repository that refuses to store more than two examples (throwing <code>ConflictError</code> from <code>@zudojs/errors</code>) and plug it in with the generated controller and service. What does the third <code>POST</code> answer, and why did no other layer need to change?</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="25" data-file="small-store.ts" data-project="anatomy">
-<figcaption class="lx-bar"><span class="lx-file">small-store.ts</span><button type="button" class="lx-edit" data-index="25" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Swap a layer at the composition root</h3><p>Write a repository that refuses to store more than two examples (throwing <code>ConflictError</code> from <code>@zudojs/errors</code>) and plug it in with the generated controller and service. What does the third <code>POST</code> answer, and why did no other layer need to change?</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="27" data-file="small-store.ts" data-project="anatomy">
+<figcaption class="lx-bar"><span class="lx-file">small-store.ts</span><button type="button" class="lx-edit" data-index="27" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConflictError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>

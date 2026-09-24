@@ -647,6 +647,47 @@ export function registerHealthRoutes(router: HttpRouter, check: HealthCheck): vo
 }
 </file>
 <p><code>server.ts</code> passes a <code>health</code> function that looks at the runtime and the integrations. Without one, <code>createDependencies</code> uses a function that always says "ready", which is what tests want.</p>
+<p>Here is that <code>health</code> function at work, with the real <code>registerHealthRoutes</code> and <code>checkIntegrations</code>. Two integrations: <code>redis</code> reports its health, <code>mailer</code> has no <code>health</code> method:</p>
+<example file="health-trace.ts" project="anatomy" browser="no">
+import { createRouter } from "@zudojs/http";
+import { createHttpTestClient } from "@zudojs/testing";
+
+import { checkIntegrations } from "./src/integrations/index.js";
+import type { Integration } from "./src/integrations/index.js";
+import { registerHealthRoutes } from "./src/routes/health.routes.js";
+
+let redisUp = true;
+const redis: Integration = {
+  name: "redis",
+  start: async () => {},
+  stop: async () => {},
+  health: async () => redisUp,
+};
+const mailer: Integration = { name: "mailer", start: async () => {}, stop: async () => {} };
+let runtimeState = "running";
+
+const router = createRouter();
+registerHealthRoutes(router, async () => {
+  const checks = await checkIntegrations([redis, mailer]);
+  const ready = runtimeState === "running" && Object.values(checks).every((check) => check === "up");
+  return { ready, checks };
+});
+const client = createHttpTestClient(router);
+
+for (const [label, change] of [["all up", () => {}], ["redis down", () => { redisUp = false; }], ["stopping", () => { redisUp = true; runtimeState = "stopping"; }]] as const) {
+  change();
+  const response = await client.get("/health");
+  const body = response.json<{ status: string; checks: Record<string, string> }>();
+  console.log(label.padEnd(10), response.status, body.status, JSON.stringify(body.checks));
+}
+await client.close();
+</example>
+<output>
+all up     200 ok {"redis":"up"}
+redis down 503 unavailable {"redis":"down"}
+stopping   503 unavailable {"redis":"up"}
+</output>
+<p>An integration without a <code>health</code> method is simply not listed, so it can never make the app unready. And while the runtime is stopping, <code>/health</code> says 503 even though every check is up: the load balancer stops sending new requests before the app closes its connections.</p>
 </section>
 
 <section>
@@ -999,6 +1040,31 @@ export function securityHeaders(): HttpMiddleware {
   };
 }
 </file>
+<p><code>securityHeaders</code> adds the default headers from <code>@zudojs/security</code>, but only the ones a response does not set itself. That is how a page such as <code>/docs</code> can send its own, looser content security policy:</p>
+<example file="headers-trace.ts" project="anatomy" browser="no">
+import { HttpMiddlewarePipeline, createResponseContext } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+import { createHttpTestClient } from "@zudojs/testing";
+
+import { securityHeaders } from "./src/utils/http.js";
+
+const handler: HttpMiddleware = async (context) =>
+  context.request.path === "/docs"
+    ? createResponseContext({ status: 200, headers: { "content-security-policy": "default-src 'self' https://cdn.example" } }).json({ page: "docs" })
+    : createResponseContext({ status: 200 }).json({ ok: true });
+
+const client = createHttpTestClient(new HttpMiddlewarePipeline({ middlewares: [securityHeaders(), handler] }));
+for (const path of ["/api/v1/examples", "/docs"]) {
+  const response = await client.get(path);
+  console.log(path, "|", response.headers.get("x-frame-options"), "|", response.headers.get("content-security-policy")?.slice(0, 40));
+}
+await client.close();
+</example>
+<output>
+/api/v1/examples | DENY | default-src 'self'; script-src 'self'; s
+/docs | DENY | default-src 'self' https://cdn.example
+</output>
+<p>It calls <code>next()</code> first and then changes a <code>clone()</code> of the response, because the response a handler returns may be shared and must not be changed in place.</p>
 <h3>Run it: one request through every layer</h3>
 <p>To see the path, this trace builds the composition root by hand, the same shape as <code>createDependencies()</code>, but with a service and a repository that print when they are called. It uses the real <code>registerRoutes</code>, controller and <code>errorResponse</code>, and a middleware that prints each request and its status:</p>
 <example file="layers-trace.ts" project="anatomy" browser="no">

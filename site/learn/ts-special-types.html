@@ -146,7 +146,7 @@ function handleWebhook(body: string): void {
 }
 
 handleWebhook('{"type": "topup", "data": {"walletId": "WAL-17", "amount": "5000"}}');</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx webhook.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx webhook.ts</code> and of the browser terminal</div><pre class="lx-no-copy">credited WAL-17, balance now 100005000</pre></div>
 </figure>
 <p>The provider sent the amount as the string <code>"5000"</code>. <code>10000 + "5000"</code> is the string <code>"100005000"</code>, and the wallet now "holds" a hundred million naira. <code>credit</code> clearly says <code>amount: number</code>, so how did a string get in without a single error?</p>
 <p>The answer is one word: <code>any</code>. <code>JSON.parse</code> is declared to return <code>any</code>, and <code>any</code> tells the compiler to stop checking. Everything computed from it is <code>any</code> too, and <code>any</code> is accepted by a <code>number</code> parameter. This lesson is about the handful of special types that sit outside the everyday ones: <code>any</code>, <code>unknown</code>, <code>never</code>, <code>void</code>, <code>object</code>, <code>{}</code> and <code>Object</code>. You met the first four briefly in <a href="/learn/ts-types#any-unknown">Basic types</a>; now you learn exactly how each behaves.</p>
@@ -176,7 +176,7 @@ handleWebhook('{"type": "topup", "data": {"walletId": "WAL-17", "amount": "5000"
 <tbody>
 <tr><td><code>unknown</code></td><td>Yes</td><td>No, check it first</td><td>No, check it first</td></tr>
 <tr><td><code>any</code></td><td>Yes</td><td>Yes, unchecked</td><td>Yes, unchecked</td></tr>
-<tr><td><code>never</code></td><td>No</td><td>Yes (there is never a value to pass)</td><td>Yes (the code can never run)</td></tr>
+<tr><td><code>never</code></td><td>No</td><td>Yes (there is never a value to pass)</td><td>No: "Property … does not exist on type 'never'"</td></tr>
 </tbody>
 </table></div>
 </section>
@@ -211,7 +211,23 @@ const label = amount.toFixed(2);
 const probe1: never = amount;
 const probe2: never = doubled;
 const probe3: never = label;</script>
-<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">spread.ts:10:7 - error TS2322: Type 'any' is not assignable to type 'never'.
+
+10 const probe1: never = amount;
+         ~~~~~~
+
+spread.ts:11:7 - error TS2322: Type 'number' is not assignable to type 'never'.
+
+11 const probe2: never = doubled;
+         ~~~~~~
+
+spread.ts:12:7 - error TS2322: Type 'any' is not assignable to type 'never'.
+
+12 const probe3: never = label;
+         ~~~~~~
+
+
+Found 3 errors in the same file, starting at: spread.ts:10</pre></div>
 </figure>
 <p><code>JSON.parse</code> returned <code>any</code>. Reading <code>.data.amount</code> from an <code>any</code> gives <code>any</code>. The function's inferred return type became <code>any</code>, so a caller in another file now has an <code>any</code> without ever seeing <code>JSON.parse</code>. And <code>amount.toFixed(2)</code> compiled, although the value is a string and will throw at runtime. Only arithmetic produced a real type: <code>amount * 2</code> is always a <code>number</code> in JavaScript.</p>
 <p>That is how <code>any</code> spreads: every property you read, every method you call and every function that returns it passes it on, silently, to code that has no idea it is unchecked.</p>
@@ -246,7 +262,18 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
 
 const amount = event.data.amount;
 console.log(event.toString());</script>
-<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">boundary.ts:3:16 - error TS18046: 'event' is of type 'unknown'.
+
+3 const amount = event.data.amount;
+                 ~~~~~
+
+boundary.ts:4:13 - error TS18046: 'event' is of type 'unknown'.
+
+4 console.log(event.toString());
+              ~~~~~
+
+
+Found 2 errors in the same file, starting at: boundary.ts:3</pre></div>
 </figure>
 <p>You cannot read a property, call a method or pass it on as a <code>number</code>. The only way forward is to check. The checks are ordinary JavaScript: <code>typeof</code>, <code>=== null</code>, the <code>in</code> operator and <code>Array.isArray</code>, and TypeScript narrows the type after each one. <a href="/learn/ts-narrowing">Narrowing</a> covers every form in detail; here is the pattern you will use most:</p>
 <figure class="lx-example" data-index="3" data-file="boundary.ts" data-project="boundary">
@@ -298,7 +325,10 @@ for (const body of [
 ]) {
   console.log(readTopUp(JSON.parse(body)));
 }</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx boundary.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx boundary.ts</code> and of the browser terminal</div><pre class="lx-no-copy">{ walletId: 'WAL-17', amount: 5000 }
+amount must be a number
+body is not an event
+body is not an event</pre></div>
 </figure>
 <p>Each <code>if</code> removes a possibility, and by the last line TypeScript knows that <code>data.walletId</code> is a <code>string</code> and <code>data.amount</code> a <code>number</code>. The returned object is built only from checked values, so the <code>TopUp</code> type is now true, not merely hoped for. The string <code>"5000"</code> is rejected with a reason instead of being added to a balance.</p>
 <p>Writing these checks by hand gets long for big objects; <a href="/learn/ts-validation">Runtime validation</a> shows libraries that generate them from a schema. The principle stays: <strong>outside data enters as <code>unknown</code>, and leaves the boundary as a checked type.</strong></p>
@@ -333,7 +363,9 @@ for (const thrown of [new Error("gateway timeout"), "card declined", 402]) {
     console.log(describeError(error));
   }
 }</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx catch.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx catch.ts</code> and of the browser terminal</div><pre class="lx-no-copy">gateway timeout
+card declined
+unexpected value thrown: 402</pre></div>
 </figure>
 </section>
 
@@ -379,7 +411,8 @@ try {
 } catch (error) {
   console.log(String(error));
 }</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx fail.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx fail.ts</code> and of the browser terminal</div><pre class="lx-no-copy">10000
+Error: unknown wallet WAL-99</pre></div>
 </figure>
 <p>After the <code>if</code>, <code>balance</code> is a <code>number</code>: the only path where it was <code>undefined</code> ended in <code>fail</code>, which never comes back.</p>
 <h3>2. What is left after every check</h3>
@@ -395,7 +428,13 @@ cart<span class="t-pn">.</span><span class="t-prop">items</span><span class="t-p
 <script type="text/plain" class="lx-src">const cart = { customer: "Ada", items: [] };
 
 cart.items.push({ sku: "RICE-5KG", price: 9500 });</script>
-<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">cart.ts:3:17 - error TS2345: Argument of type '{ sku: string; price: number; }' is not assignable to parameter of type 'never'.
+
+3 cart.items.push({ sku: "RICE-5KG", price: 9500 });
+                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in cart.ts:3</pre></div>
 </figure>
 <p>An empty array inside an object literal has nothing to infer an element type from, and it cannot "evolve" the way a standalone <code>let</code> array does, so its type is <code>never[]</code>: an array that can hold nothing. The fix is the one from <a href="/learn/ts-inference#when-to-annotate">Type inference in depth</a>: give the empty container a type, for example with an interface for the cart (<code>items: CartItem[]</code>).</p>
 </section>
@@ -426,7 +465,18 @@ const sentLog: string[] = [];
 const remember: OnSent = (reference) => sentLog.push(reference);
 const result = remember("TRF-1");
 const count: number = result;</script>
-<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">void.ts:2:3 - error TS2322: Type 'number' is not assignable to type 'void'.
+
+2   return reference.length;
+    ~~~~~~
+
+void.ts:10:7 - error TS2322: Type 'void' is not assignable to type 'number'.
+
+10 const count: number = result;
+         ~~~~~
+
+
+Found 2 errors in the same file, starting at: void.ts:2</pre></div>
 </figure>
 <ul>
 <li><code>logTransfer</code> is declared <code>: void</code> and tries to return a number: an error.</li>
@@ -458,7 +508,9 @@ payouts.forEach(async ([name, amount]) => {
   await pay(name, amount);
 });
 console.log("all payouts done");</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx payouts.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx payouts.ts</code> and of the browser terminal</div><pre class="lx-no-copy">all payouts done
+paid Ada ₦5000
+paid Bola ₦7500</pre></div>
 </figure>
 <p>"All payouts done" is printed before any payout happens. If the next line closed the database connection, the payouts would fail. <code>forEach</code> ignores the promises its callback returns; that is exactly what <code>void</code> allowed. Use a <code>for…of</code> loop with <code>await</code> (one after another), or <code>await Promise.all(payouts.map(…))</code> (all at once):</p>
 <figure class="lx-example" data-index="9" data-file="payouts.ts" data-project="void">
@@ -486,7 +538,9 @@ for (const [name, amount] of payouts) {
   await pay(name, amount);
 }
 console.log("all payouts done");</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx payouts.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx payouts.ts</code> and of the browser terminal</div><pre class="lx-no-copy">paid Ada ₦5000
+paid Bola ₦7500
+all payouts done</pre></div>
 </figure>
 <p>Linters can catch the first version (typescript-eslint's <code>no-misused-promises</code> rule). The compiler alone cannot, because by the rules of <code>void</code>, the code is correct.</p>
 </section>
@@ -529,7 +583,30 @@ const b3: {} = values.missing;
 const c1: Record<string, unknown> = values.wallet;
 const c2: Record<string, unknown> = values.items;
 const c3: Record<string, unknown> = values.pay;</script>
-<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">objects.ts:3:7 - error TS2322: Type 'number' is not assignable to type 'object'.
+
+3 const a1: object = values.amount;
+        ~~
+
+objects.ts:9:7 - error TS2322: Type 'null' is not assignable to type '{}'.
+
+9 const b3: {} = values.missing;
+        ~~
+
+objects.ts:12:7 - error TS2322: Type 'number[]' is not assignable to type 'Record&lt;string, unknown&gt;'.
+  Index signature for type 'string' is missing in type 'number[]'.
+
+12 const c2: Record&lt;string, unknown&gt; = values.items;
+         ~~
+
+objects.ts:13:7 - error TS2322: Type '() =&gt; boolean' is not assignable to type 'Record&lt;string, unknown&gt;'.
+  Index signature for type 'string' is missing in type '() =&gt; boolean'.
+
+13 const c3: Record&lt;string, unknown&gt; = values.pay;
+         ~~
+
+
+Found 4 errors in the same file, starting at: objects.ts:3</pre></div>
 </figure>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Value</th><th><code>object</code></th><th><code>{}</code> / <code>Object</code></th><th><code>Record&lt;string, unknown&gt;</code></th><th><code>unknown</code></th></tr></thead>
@@ -559,7 +636,7 @@ const c3: Record<string, unknown> = values.pay;</script>
 <li>What should happen when an event type you do not know arrives, such as a new <code>"chargeback"</code>?</li>
 <li>What should the handler return, so the caller can reply to the provider correctly?</li>
 </ol><details class="lx-solution"><summary>Show the reasoning</summary><ol>
-<li>Only that it is a string of text, if even that. It may not be JSON, may be JSON of the wrong shape, may be a replayed old event, and may not even come from the provider. (Checking the provider's signature is a security job covered in the ZudoJS security lessons; this lesson handles the shape.)</li>
+<li>Only that it is a string of text, if even that. It may not be JSON, may be JSON of the wrong shape, may be a replayed old event, and may not even come from the provider. (Checking the provider's signature is a security job covered in <a href="/learn/zudo-security">the ZudoJS security lesson</a>; this lesson handles the shape.)</li>
 <li>The result of <code>JSON.parse</code>. Annotate it as <code>unknown</code> on the same line, and <code>any</code> never gets a chance to spread.</li>
 <li>Do not guess. Reject it with a clear reason, and make sure the compiler forces a decision when you add a new type yourself: an exhaustive <code>switch</code> with <code>never</code>.</li>
 <li>A result union, not a thrown error: <code>{ ok: true, … }</code> or <code>{ ok: false, reason }</code>. A rejected webhook is an expected outcome, and the reason helps whoever reads the logs.</li>
@@ -720,7 +797,11 @@ for (const body of bodies) {
     console.log(`rejected: ${result.reason}`);
   }
 }</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx main.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx main.ts</code> and of the browser terminal</div><pre class="lx-no-copy">topup: balance now 1500000 kobo
+rejected: amount must be a positive whole number of kobo
+rejected: refund needs originalReference
+rejected: unsupported event type "chargeback"
+rejected: body is not JSON</pre></div>
 </figure>
 <p>Search these three files for <code>any</code>: there is none, not even an inferred one. The string <code>"5000"</code> that caused the ₦100 million bug is refused, the refund without its reference is refused, the unknown <code>"chargeback"</code> is refused with its name in the message, and the amounts are whole kobo, so no floating-point money either.</p>
 </section>
@@ -763,7 +844,13 @@ for (const [label, body, expected] of cases) {
   const result = parseEvent(body);
   console.log(`${result.ok === expected ? "PASS" : "FAIL"} ${label}${result.ok ? "" : ` (${result.reason})`}`);
 }</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx events.test.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx events.test.ts</code> and of the browser terminal</div><pre class="lx-no-copy">PASS valid top-up
+PASS amount as text (amount must be a positive whole number of kobo)
+PASS negative amount (amount must be a positive whole number of kobo)
+PASS fractional kobo (amount must be a positive whole number of kobo)
+PASS data is an array (missing data object)
+PASS body is null (missing data object)
+PASS empty wallet id (walletId must be a non-empty string)</pre></div>
 </figure>
 <p>You can also test that a function does <em>not</em> return <code>any</code>, which is what quietly happens when someone removes the <code>unknown</code> annotation. Assign the result to an unrelated type under <code>// @ts-expect-error</code>. A real type makes that an error, as expected. An <code>any</code> is assignable to everything, so the directive becomes unused and the check fails:</p>
 <figure class="lx-example" data-index="15" data-file="no-any.types-test.ts" data-project="webhook">
@@ -781,7 +868,7 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
 const notAString: string = parseEvent("{}");
 
 console.log(typeof notAString);</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx no-any.types-test.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx no-any.types-test.ts</code> and of the browser terminal</div><pre class="lx-no-copy">object</pre></div>
 </figure>
 </section>
 
@@ -817,7 +904,7 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
 
 const tier = loadLimits('{"tier": {"name": "gold", "limitKobo": "50000000"}}');
 console.log(tier.name, tier.limitKobo * 2);</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx limits.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx limits.ts</code> and of the browser terminal</div><pre class="lx-no-copy">gold 100000000</pre></div>
 </figure><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="17" data-file="limits.ts" data-project="ex-spread">
 <figcaption class="lx-bar"><span class="lx-file">limits.ts</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="17"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">Tier</span> <span class="t-pn">{</span>
@@ -867,7 +954,8 @@ for (const json of ['{"tier": {"name": "gold", "limitKobo": 50000000}}', '{"tier
     console.log(String(error));
   }
 }</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx limits.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx limits.ts</code> and of the browser terminal</div><pre class="lx-no-copy">gold 100000000
+Error: tier.limitKobo must be a number</pre></div>
 </figure>
 <p>The original printed a doubled limit that happened to be right, because <code>"50000000" * 2</code> converts the string. A <code>+</code> anywhere would have concatenated instead. The checked version refuses the string outright.</p></details></div>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>The empty cart</h3><p>Fix this so it compiles without changing the order of the lines: the cart starts empty and items are added later.</p>
@@ -884,7 +972,28 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
 cart.items.push({ sku: "RICE-5KG", price: 9500, quantity: 1 });
 cart.items.push({ sku: "OIL-1L", price: 2800, quantity: 2 });
 console.log(cart.items.reduce((sum, item) => sum + item.price * item.quantity, 0));</script>
-<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">cart.ts:3:17 - error TS2345: Argument of type '{ sku: string; price: number; quantity: number; }' is not assignable to parameter of type 'never'.
+
+3 cart.items.push({ sku: "RICE-5KG", price: 9500, quantity: 1 });
+                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+cart.ts:4:17 - error TS2345: Argument of type '{ sku: string; price: number; quantity: number; }' is not assignable to parameter of type 'never'.
+
+4 cart.items.push({ sku: "OIL-1L", price: 2800, quantity: 2 });
+                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+cart.ts:5:57 - error TS2339: Property 'price' does not exist on type 'never'.
+
+5 console.log(cart.items.reduce((sum, item) =&gt; sum + item.price * item.quantity, 0));
+                                                          ~~~~~
+
+cart.ts:5:70 - error TS2339: Property 'quantity' does not exist on type 'never'.
+
+5 console.log(cart.items.reduce((sum, item) =&gt; sum + item.price * item.quantity, 0));
+                                                                       ~~~~~~~~
+
+
+Found 4 errors in the same file, starting at: cart.ts:3</pre></div>
 </figure><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="19" data-file="cart.ts" data-project="ex-cart">
 <figcaption class="lx-bar"><span class="lx-file">cart.ts</span><button type="button" class="lx-edit" data-index="19" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="19"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">CartItem</span> <span class="t-pn">{</span>
@@ -920,7 +1029,7 @@ const cart: Cart = { customer: "Ada", items: [] };
 cart.items.push({ sku: "RICE-5KG", price: 9500, quantity: 1 });
 cart.items.push({ sku: "OIL-1L", price: 2800, quantity: 2 });
 console.log(cart.items.reduce((sum, item) => sum + item.price * item.quantity, 0));</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx cart.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx cart.ts</code> and of the browser terminal</div><pre class="lx-no-copy">15100</pre></div>
 </figure>
 <p>Without a type, <code>items: []</code> is <code>never[]</code>, which is why every <code>push</code> was refused and why <code>item</code> in the <code>reduce</code> had no properties. The <code>Cart</code> interface gives the empty array its element type.</p></details></div>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Wait for every notification</h3><p>This sends three SMS messages and then prints a summary, but the summary comes first. Explain why the compiler allowed it, then fix it so all three are sent at the same time and the summary comes last.</p>
@@ -947,7 +1056,10 @@ phones.forEach(async (phone) => {
   await sendSms(phone);
 });
 console.log(`${phones.length} messages sent`);</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx sms.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx sms.ts</code> and of the browser terminal</div><pre class="lx-no-copy">3 messages sent
+sms sent to 0803 000 1111
+sms sent to 0805 222 3333
+sms sent to 0807 444 5555</pre></div>
 </figure><details class="lx-solution"><summary>Show a solution</summary><p><code>forEach</code> expects a callback returning <code>void</code>, and a function that returns a promise is allowed where the result is ignored. So <code>forEach</code> starts three sends and returns immediately. <code>Promise.all</code> waits for all of them, which run at the same time:</p>
 <figure class="lx-example" data-index="21" data-file="sms.ts" data-project="ex-sms">
 <figcaption class="lx-bar"><span class="lx-file">sms.ts</span><button type="button" class="lx-edit" data-index="21" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="21"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
@@ -968,7 +1080,10 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
 const phones = ["0803 000 1111", "0805 222 3333", "0807 444 5555"];
 await Promise.all(phones.map((phone) => sendSms(phone)));
 console.log(`${phones.length} messages sent`);</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx sms.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx sms.ts</code> and of the browser terminal</div><pre class="lx-no-copy">sms sent to 0803 000 1111
+sms sent to 0805 222 3333
+sms sent to 0807 444 5555
+3 messages sent</pre></div>
 </figure></details></div>
 </section>
 
