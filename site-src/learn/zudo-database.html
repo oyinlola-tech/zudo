@@ -30,9 +30,10 @@ found 0 vulnerabilities
 <section>
 <h2 id="adapter">The client and its adapter</h2>
 <p>ZudoJS never talks to the database directly. It talks to a Prisma client, and it only needs a few methods from it: <code>$connect</code>, <code>$disconnect</code>, <code>$queryRawUnsafe</code>, <code>$executeRawUnsafe</code> and <code>$transaction</code>. The package calls this shape <code>PrismaClientLike</code>. Anything with those methods works. This is the <strong>adapter pattern</strong>: a small object that makes one thing look like the thing another piece of code expects.</p>
-<p>In a production app, the Prisma client comes from Prisma itself. You describe your tables in a <code>schema.prisma</code> file, run <code>npx prisma generate</code>, and connect through a <strong>driver adapter</strong>, <code>@prisma/adapter-pg</code>:</p>
+<p>Inside a transaction, your callback gets a second object, the <strong>transaction client</strong> <code>tx</code>. It needs four raw SQL methods, <code>$queryRawUnsafe</code>, <code>$executeRawUnsafe</code>, <code>$queryRaw</code> and <code>$executeRaw</code>, and the package calls that shape <code>DatabaseTransactionContext</code>. A real Prisma transaction client also has one property per table, such as <code>tx.task</code>.</p>
+<p>In a production app, the Prisma client comes from Prisma itself. You describe your tables in a <code>schema.prisma</code> file and run <code>npx prisma generate</code>. Prisma 7 writes the client into your own project (the folder is the <code>output</code> of the <code>generator</code> block, here <code>src/generated/prisma</code>), and you connect through a <strong>driver adapter</strong>, <code>@prisma/adapter-pg</code>:</p>
 <example file="production-db.ts" browser="no" check="skip">
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "./generated/prisma/client.js";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { createDatabaseClient } from "@zudojs/database";
 
@@ -52,8 +53,8 @@ const prisma = new PrismaClient({
 
 export const client = createDatabaseClient({ prisma });
 </example>
-<p>The client Prisma generates fits <code>PrismaClientLike</code> as it is, so no type cast is needed.</p>
-<p>This setup needs a running PostgreSQL server and the Prisma tool chain, which the <a href="/learn/deployment">deployment lesson</a> sets up. For learning, this lesson uses PGlite instead, the real PostgreSQL running inside Node.js. There is no ready-made Prisma adapter for PGlite, so you write a small one. It has two files.</p>
+<p>The client Prisma generates fits <code>PrismaClientLike</code> as it is, so no type cast is needed. <code>createDatabaseClient</code> also reads the transaction client's type from it: in <code>client.transaction(async (tx) =&gt; tx.task.create({ data: { title: "Pack bags" } }))</code>, TypeScript checks <code>tx.task</code> against your schema just like <code>prisma.task</code>, and a misspelled field is a compile error. (This works since <code>@zudojs/database</code> 1.4.0. Before, with this generator, <code>tx</code> was silently <code>any</code>.)</p>
+<p>This setup needs a running PostgreSQL server (the <a href="/learn/deployment">deployment lesson</a> runs one in Docker) and the Prisma tool chain (<code>npm install -D prisma@7</code>, a schema, then <code>npx prisma generate</code>; see the <a href="/docs/packages-database">package page</a>). For learning, this lesson uses PGlite instead, the real PostgreSQL running inside Node.js. There is no ready-made Prisma adapter for PGlite, so you write a small one. It has two files.</p>
 <p>The first turns a Prisma-style <code>where</code> object, such as <code>{ done: false, title: { contains: "milk" } }</code>, into SQL. Look at two things. Every value becomes a <code>$1</code>, <code>$2</code>… parameter, never part of the SQL text. And every field name is checked against an <strong>allow-list</strong> before it is used, because a field name cannot be a parameter:</p>
 <example file="where.ts" project="db" browser="no">
 const COMPARE: Record<string, string> = {
@@ -99,7 +100,7 @@ export function whereToSql(where: unknown, fields: readonly string[], params: un
 <p>The second file is the adapter itself. <code>modelDelegate</code> gives one table the methods a Prisma <strong>model delegate</strong> has (<code>findMany</code>, <code>create</code>, <code>update</code>…), and <code>createPglitePrisma</code> builds the whole client. It also translates PostgreSQL's error codes into the Prisma codes ZudoJS understands: <code>23505</code> (unique value already used) becomes <code>P2002</code>, and a missing row becomes <code>P2025</code>. You don't need to follow every line; copy it into your project:</p>
 <example file="pglite-adapter.ts" project="db" browser="no">
 import type { PGlite, Transaction } from "@electric-sql/pglite";
-import type { DatabaseTransactionContext, PrismaClientLike, RepositoryDelegate } from "@zudojs/database";
+import type { DatabaseTransactionContext, PrismaClientLike, PrismaSqlLike, RepositoryDelegate } from "@zudojs/database";
 import { column, whereToSql } from "./where.js";
 
 type Db = PGlite | Transaction;
@@ -193,12 +194,21 @@ export function modelDelegate<T>(db: Db, model: Model): RepositoryDelegate<T, nu
   return delegate as unknown as RepositoryDelegate<T, number>;
 }
 
+/* sql`… ${value}` and Prisma.sql`…` both arrive as text parts plus values. */
+function tagged(query: TemplateStringsArray | PrismaSqlLike, values: readonly unknown[]) {
+  const [parts, params] = "strings" in query ? [query.strings, query.values] : [query, values];
+  return { sql: parts.reduce((text, part, i) => `${text}$${i}${part}`), params };
+}
+
 export function createPglitePrisma(pg: PGlite, models: Readonly<Record<string, Model>>): PrismaClientLike {
   const bind = (db: Db): DatabaseTransactionContext => {
-    const client: Record<string, unknown> = {
-      $queryRawUnsafe: async (sql: string, ...values: unknown[]) => (await run(db, sql, values)).rows,
-      $executeRawUnsafe: async (sql: string, ...values: unknown[]) =>
-        (await run(db, sql, values)).affectedRows ?? 0,
+    const query = async <R>(sql: string, values: readonly unknown[]) => (await run(db, sql, values)).rows as R;
+    const execute = async (sql: string, values: readonly unknown[]) => (await run(db, sql, values)).affectedRows ?? 0;
+    const client: DatabaseTransactionContext & Record<string, unknown> = {
+      $queryRawUnsafe: (sql, ...values) => query(sql, values),
+      $executeRawUnsafe: (sql, ...values) => execute(sql, values),
+      $queryRaw: (sql, ...values) => { const t = tagged(sql, values); return query(t.sql, t.params); },
+      $executeRaw: (sql, ...values) => { const t = tagged(sql, values); return execute(t.sql, t.params); },
     };
     for (const [key, model] of Object.entries(models)) client[key] = modelDelegate(db, model);
     return client;
@@ -218,6 +228,7 @@ export function createPglitePrisma(pg: PGlite, models: Readonly<Record<string, M
 }
 </example>
 <p>One line needs a word: <code>delegate as unknown as RepositoryDelegate&lt;T, number&gt;</code>. The adapter works with plain rows, but a repository wants rows of type <code>T</code>, such as <code>Task</code>. Prisma generates exact types for each table; this small adapter cannot, so it asserts the type once, in one place. The table definition below is what keeps it honest.</p>
+<p><code>bind</code> builds the object that plays both roles: the client itself, and the <code>tx</code> of every transaction. It has the four raw methods <code>DatabaseTransactionContext</code> asks for; <code>tagged</code> turns a tagged template such as <code>Prisma.sql</code> into <code>$1</code>, <code>$2</code>… text plus values. <code>$transaction</code> names its callback's type, <code>DatabaseTransactionContext</code>, because <code>PrismaClientLike</code> accepts any <code>$transaction</code> and so gives the callback no type of its own. A generated Prisma client needs none of this.</p>
 <note>This adapter covers what the lesson needs: equality, <code>contains</code>, comparisons, <code>AND</code>/<code>OR</code>/<code>NOT</code>, sorting and paging. It ignores transaction options such as the isolation level. In production, Prisma does all of this for you.</note>
 </section>
 

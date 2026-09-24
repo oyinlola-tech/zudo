@@ -8,6 +8,19 @@
   <link rel="alternate" type="text/markdown" href="/learn/zudo-middleware.md" title="Markdown version">
   <meta name="description" content="Wrap every Task API route in middleware. Learn how a middleware pipeline runs, then add security headers, a CORS allow-list, rate limits with @zudojs/security, and a graceful shutdown that lets requests in progress finish.">
   <!-- seo:start -->
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-middleware">
+  <meta property="og:site_name" content="ZudoJS">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Middleware, CORS, security headers and graceful shutdown — Learn ZudoJS">
+  <meta property="og:description" content="Wrap every Task API route in middleware. Learn how a middleware pipeline runs, then add security headers, a CORS allow-list, rate limits with @zudojs/security, and a graceful shutdown that lets requests in progress finish.">
+  <meta property="og:url" content="https://zudojs.oyinlola.site/learn/zudo-middleware">
+  <meta property="og:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Middleware, CORS, security headers and graceful shutdown — Learn ZudoJS">
+  <meta name="twitter:description" content="Wrap every Task API route in middleware. Learn how a middleware pipeline runs, then add security headers, a CORS allow-list, rate limits with @zudojs/security, and a graceful shutdown that lets requests in progress finish.">
+  <meta name="twitter:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"ZudoJS","item":"https://zudojs.oyinlola.site/"},{"@type":"ListItem","position":2,"name":"Learn","item":"https://zudojs.oyinlola.site/learn"},{"@type":"ListItem","position":3,"name":"Middleware, CORS, security headers and graceful shutdown","item":"https://zudojs.oyinlola.site/learn/zudo-middleware"}]}</script>
   <!-- seo:end -->
   <meta name="keywords" content="zudojs middleware, HttpMiddlewarePipeline, next, priority, short-circuit, createSecurityMiddleware, security headers, X-Frame-Options, nosniff, HSTS, createCorsMiddleware, CORS allow-list, preflight, credentials, createRateLimiter, createRateLimitMiddleware, 429 Too Many Requests, Retry-After, graceful shutdown, in-flight requests, SIGTERM">
   <meta name="author" content="Oluwayemi Oyinlola Michael">
@@ -798,7 +811,7 @@ server: stopped</pre></div>
   };
 }</script>
 </figure>
-<p>All work happens <em>after</em> <code>next()</code>, like <code>responseTime</code> earlier in this lesson. The <code>// zudojs:server-middleware</code> markers are where <code>zudojs add</code> puts the middleware of a feature it adds.</p>
+<p>All work happens <em>after</em> <code>next()</code>, like <code>responseTime</code> earlier in this lesson. The <code>// zudojs:server-middleware</code> markers are where <code>zudojs add</code> puts the middleware of a feature it adds, and where <code>zudojs generate middleware</code> registers a new one.</p>
 <p>One thing from this lesson is missing: a stricter limit for writes. Creating tasks costs more than reading them. Put it in the empty <code>src/middlewares/</code> folder. The file name follows the CLI's naming for middleware:</p>
 <figure class="lx-example" data-index="13" data-file="src/middlewares/write-limit.middleware.ts" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/middlewares/write-limit.middleware.ts</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -831,6 +844,7 @@ export function writeLimitMiddleware(options: { readonly windowMs: number; reado
 </code></pre>
 <script type="text/plain" class="lx-src">export { writeLimitMiddleware } from "./write-limit.middleware.js";</script>
 </figure>
+<div class="callout callout-tip"><p class="lx-callout-label">TIP</p><code>zudojs generate middleware write-limit</code> writes <code>src/middlewares/write-limit.middleware.ts</code> with an empty <code>writeLimitMiddleware()</code> that only passes the request on, exports it from <code>index.ts</code>, and adds it to the pipeline in <code>src/server.ts</code> between the markers. Here you write it by hand, so the limit is yours from the first line.</div>
 <p>In <code>src/server.ts</code>, import it with <code>import { writeLimitMiddleware } from "./middlewares/index.js";</code> and add it after the general rate limit, below the markers. The limit of 20 writes a minute is written in the code for one more lesson; <a href="/learn/zudo-config">Configuration</a> moves it into a setting:</p>
 <figure class="lx-example" data-index="15" data-file="src/server.ts (part)">
 <figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -1108,12 +1122,12 @@ POST 429 retry-after: 60 cors: http://localhost:5173 frame: DENY
 GET 200 retry-after: undefined cors: http://localhost:5173 frame: DENY</pre></div>
 </figure>
 <p>The third write got 429, reading still works, and even the 429 carries the security and CORS headers, because both come before the limit.</p>
-<p>The shutdown code at the end of <code>src/server.ts</code> already follows <a href="#shutdown">the order above</a>: let integrations close long-lived connections (<code>drainIntegrations</code>), stop the HTTP server, stop the runtime, exit with 0, or log and exit with 1 on failure. Three small changes finish it:</p>
+<p>The shutdown code at the end of <code>src/server.ts</code> already follows <a href="#shutdown">the order above</a>: let integrations close long-lived connections (<code>drainIntegrations</code>), stop the HTTP server, stop the runtime, exit with 0, or log and exit with 1 on failure. Two small changes finish it:</p>
 <ul>
 <li>Pass <code>gracefulShutdownTimeout: 20_000</code> to <code>createHttpServer</code>, so requests in progress get 20 seconds, well inside the 30 seconds many platforms wait after <code>SIGTERM</code>.</li>
 <li>In <code>src/app.ts</code>, add <code>disposeContainerOnStop: true</code> to the options of <code>createRuntime</code>, next to <code>handleSignals: false</code>. <code>runtime.stop()</code> then disposes the container after every module has stopped.</li>
-<li>In the signal loop, change <code>process.once(signal, …)</code> to <code>process.on(signal, …)</code>. Under <code>npm run dev</code>, one <kbd>Ctrl</kbd> + <kbd>C</kbd> reaches the server twice: once from the terminal and once passed on by <code>tsx watch</code>. With <code>once</code>, the second signal finds no listener, and Node.js ends the process in the middle of the shutdown. With <code>on</code>, the <code>if (stopping) return;</code> line the CLI wrote ignores it.</li>
 </ul>
+<p>The signal loop itself needs no change. It listens with <code>process.on</code>, so it hears every <code>SIGINT</code> and <code>SIGTERM</code>, not only the first. The first one prints <code>Received SIGINT: shutting down.</code>, sets <code>stopping</code> and starts the shutdown. A second one, for example an impatient second <kbd>Ctrl</kbd> + <kbd>C</kbd> or a platform that repeats <code>SIGTERM</code>, only prints <code>already shutting down</code> and returns. With <code>process.once</code>, a second signal would find no listener, and Node.js would end the process in the middle of the shutdown. The <code>Listening</code> line comes last, after the handlers are registered, so the app never claims to be ready before it can shut down cleanly.</p>
 <figure class="lx-example" data-index="18" data-file="src/server.ts (part)">
 <figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
@@ -1123,13 +1137,16 @@ GET 200 retry-after: undefined cors: http://localhost:5173 frame: DENY</pre></di
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">await</span> server<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`Listening on http://<span class="t-op">${</span><span class="t-prop">config.host</span><span class="t-op">}</span>:<span class="t-op">${</span><span class="t-prop">server.address?.port ?? config.port</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">let</span> stopping <span class="t-op">=</span> <span class="t-cn">false</span><span class="t-pn">;</span>
 <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> signal <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-str">"SIGINT"</span><span class="t-pn">,</span> <span class="t-str">"SIGTERM"</span><span class="t-pn">]</span> <span class="t-kw">as</span> <span class="t-kw">const</span><span class="t-pn">)</span> <span class="t-pn">{</span>
   process<span class="t-pn">.</span><span class="t-fn">on</span><span class="t-pn">(</span>signal<span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-    <span class="t-kw">if</span> <span class="t-pn">(</span>stopping<span class="t-pn">)</span> <span class="t-kw">return</span><span class="t-pn">;</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span>stopping<span class="t-pn">)</span> <span class="t-pn">{</span>
+      console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`Received <span class="t-op">${</span><span class="t-prop">signal</span><span class="t-op">}</span> again: already shutting down.`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+      <span class="t-kw">return</span><span class="t-pn">;</span>
+    <span class="t-pn">}</span>
     stopping <span class="t-op">=</span> <span class="t-cn">true</span><span class="t-pn">;</span>
+    console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`Received <span class="t-op">${</span><span class="t-prop">signal</span><span class="t-op">}</span>: shutting down.`</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">void</span> <span class="t-fn">drainIntegrations</span><span class="t-pn">(</span>integrations<span class="t-pn">)</span>
       <span class="t-pn">.</span><span class="t-fn">then</span><span class="t-pn">(</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> server<span class="t-pn">.</span><span class="t-fn">stop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span>
       <span class="t-pn">.</span><span class="t-fn">then</span><span class="t-pn">(</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> runtime<span class="t-pn">.</span><span class="t-fn">stop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span>
@@ -1142,6 +1159,8 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
       <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
+
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`Listening on http://<span class="t-op">${</span><span class="t-prop">config.host</span><span class="t-op">}</span>:<span class="t-op">${</span><span class="t-prop">server.address?.port ?? config.port</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">const server = createHttpServer({
   adapter: createNodeHttpAdapter({ server: httpServer, host: config.host, port: config.port }),
@@ -1150,13 +1169,16 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
 });
 
 await server.start();
-console.log(`Listening on http://${config.host}:${server.address?.port ?? config.port}`);
 
 let stopping = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    if (stopping) return;
+    if (stopping) {
+      console.log(`Received ${signal} again: already shutting down.`);
+      return;
+    }
     stopping = true;
+    console.log(`Received ${signal}: shutting down.`);
     void drainIntegrations(integrations)
       .then(() => server.stop())
       .then(() => runtime.stop())
@@ -1168,7 +1190,9 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
         process.exit(1);
       });
   });
-}</script>
+}
+
+console.log(`Listening on http://${config.host}:${server.address?.port ?? config.port}`);</script>
 </figure>
 <p>Now try the real thing. To let one web app in, start the server with <code>CORS_ORIGINS</code> set for that one command:</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
@@ -1194,7 +1218,7 @@ curl -i -X POST http://localhost:3000/tasks -H &quot;content-type: application/j
 <span class="lx-res">x-frame-options: DENY</span>
 <span class="lx-res">…</span>
 <span class="lx-res">content-length: 113</span>
-<span class="lx-res">Date: Wed, 23 Sep 2026 19:51:45 GMT</span>
+<span class="lx-res">Date: Wed, 23 Sep 2026 22:24:32 GMT</span>
 <span class="lx-res">Connection: keep-alive</span>
 <span class="lx-res">Keep-Alive: timeout=5</span>
 <span class="lx-res"></span>
@@ -1206,7 +1230,7 @@ curl -i -X POST http://localhost:3000/tasks -H &quot;content-type: application/j
 <span class="lx-res">retry-after: 60</span>
 <span class="lx-res">x-ratelimit-remaining: 0</span>
 <span class="lx-res">x-ratelimit-limit: 20</span>
-<span class="lx-res">x-ratelimit-reset: 1790193166</span>
+<span class="lx-res">x-ratelimit-reset: 1790202333</span>
 <span class="lx-res">content-type: application/json; charset=utf-8</span>
 <span class="lx-res">x-content-type-options: nosniff</span>
 <span class="lx-res">x-frame-options: DENY</span>
@@ -1215,13 +1239,14 @@ curl -i -X POST http://localhost:3000/tasks -H &quot;content-type: application/j
 <span class="lx-res">{"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}}</span></pre></figure>
 <p>Your own app's origin got the CORS headers, the 21st write got 429 with <code>Retry-After</code>, and <code>curl http://localhost:3000/tasks</code> still answers 200. <code>x-ratelimit-reset</code> is the time the window ends, in seconds since 1970. The loop is for macOS, Linux and Git Bash; on Windows PowerShell, run the <code>curl.exe</code> command 21 times with the arrow keys instead. Now press <kbd>Ctrl</kbd> + <kbd>C</kbd> in the server's terminal:</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
-<pre class="lx-shell-body" data-copy=""><span class="lx-res">^C2026-09-23T19:51:45.445Z [INFO] [task-api] Initiating graceful shutdown. timeoutMs=30000</span>
-<span class="lx-res">2026-09-23T19:51:45.445Z [INFO] [task-api] All modules stopped. modules=["tasks","store","integrations"] durationMs=0</span>
-<span class="lx-res">2026-09-23T19:51:45.446Z [INFO] [task-api] store closed</span>
-<span class="lx-res">2026-09-23T19:51:45.446Z [INFO] [task-api] All modules destroyed. durationMs=0</span>
-<span class="lx-res">2026-09-23T19:51:45.446Z [INFO] [task-api] Graceful shutdown complete.</span>
-<span class="lx-res">2026-09-23T19:51:45.447Z [INFO] [task-api] Runtime stopped. runtimeId=rt_e7dcf43c4f0445f1b53b77293d27fd2e</span></pre></figure>
-<p>The HTTP server stopped first (it prints nothing), then the runtime stopped the modules, and the container was disposed last. <code>timeoutMs=30000</code> is the runtime's own <code>shutdownTimeout</code> for the modules; the 20 seconds you set are for the requests.</p>
+<pre class="lx-shell-body" data-copy=""><span class="lx-res">^CReceived SIGINT: shutting down.</span>
+<span class="lx-res">2026-09-23T22:24:32.979Z [INFO] [task-api] Initiating graceful shutdown. timeoutMs=30000</span>
+<span class="lx-res">2026-09-23T22:24:32.981Z [INFO] [task-api] All modules stopped. modules=["tasks","store","integrations"] durationMs=1</span>
+<span class="lx-res">2026-09-23T22:24:32.982Z [INFO] [task-api] store closed</span>
+<span class="lx-res">2026-09-23T22:24:32.982Z [INFO] [task-api] All modules destroyed. durationMs=0</span>
+<span class="lx-res">2026-09-23T22:24:32.982Z [INFO] [task-api] Graceful shutdown complete.</span>
+<span class="lx-res">2026-09-23T22:24:32.983Z [INFO] [task-api] Runtime stopped. runtimeId=rt_6c293dc75a9e4161bc9c09c1e6597cb5</span></pre></figure>
+<p>The signal handler announced the shutdown, the HTTP server stopped first (it prints nothing), then the runtime stopped the modules, and the container was disposed last. <code>timeoutMs=30000</code> is the runtime's own <code>shutdownTimeout</code> for the modules; the 20 seconds you set are for the requests.</p>
 </section>
 
 <section>

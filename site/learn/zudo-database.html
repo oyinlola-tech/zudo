@@ -8,6 +8,19 @@
   <link rel="alternate" type="text/markdown" href="/learn/zudo-database.md" title="Markdown version">
   <meta name="description" content="Connect the Task API to PostgreSQL through @zudojs/database, with migrations, seeds, a repository, a query builder, pagination, transactions and health checks, all running against real PostgreSQL.">
   <!-- seo:start -->
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-database">
+  <meta property="og:site_name" content="ZudoJS">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Databases with @zudojs/database — Learn ZudoJS">
+  <meta property="og:description" content="Connect the Task API to PostgreSQL through @zudojs/database, with migrations, seeds, a repository, a query builder, pagination, transactions and health checks, all running against real PostgreSQL.">
+  <meta property="og:url" content="https://zudojs.oyinlola.site/learn/zudo-database">
+  <meta property="og:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Databases with @zudojs/database — Learn ZudoJS">
+  <meta name="twitter:description" content="Connect the Task API to PostgreSQL through @zudojs/database, with migrations, seeds, a repository, a query builder, pagination, transactions and health checks, all running against real PostgreSQL.">
+  <meta name="twitter:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"ZudoJS","item":"https://zudojs.oyinlola.site/"},{"@type":"ListItem","position":2,"name":"Learn","item":"https://zudojs.oyinlola.site/learn"},{"@type":"ListItem","position":3,"name":"Databases with @zudojs/database","item":"https://zudojs.oyinlola.site/learn/zudo-database"}]}</script>
   <!-- seo:end -->
   <meta name="keywords" content="zudojs database, prisma, repository pattern, BaseRepository, migrations, seeds, query builder, pagination, keyset pagination, cursor, soft delete, withTransaction, health check, connection pool, pglite, driver adapter">
   <meta name="author" content="Oluwayemi Oyinlola Michael">
@@ -188,10 +201,11 @@
 <section>
 <h2 id="adapter">The client and its adapter</h2>
 <p>ZudoJS never talks to the database directly. It talks to a Prisma client, and it only needs a few methods from it: <code>$connect</code>, <code>$disconnect</code>, <code>$queryRawUnsafe</code>, <code>$executeRawUnsafe</code> and <code>$transaction</code>. The package calls this shape <code>PrismaClientLike</code>. Anything with those methods works. This is the <strong>adapter pattern</strong>: a small object that makes one thing look like the thing another piece of code expects.</p>
-<p>In a production app, the Prisma client comes from Prisma itself. You describe your tables in a <code>schema.prisma</code> file, run <code>npx prisma generate</code>, and connect through a <strong>driver adapter</strong>, <code>@prisma/adapter-pg</code>:</p>
+<p>Inside a transaction, your callback gets a second object, the <strong>transaction client</strong> <code>tx</code>. It needs four raw SQL methods, <code>$queryRawUnsafe</code>, <code>$executeRawUnsafe</code>, <code>$queryRaw</code> and <code>$executeRaw</code>, and the package calls that shape <code>DatabaseTransactionContext</code>. A real Prisma transaction client also has one property per table, such as <code>tx.task</code>.</p>
+<p>In a production app, the Prisma client comes from Prisma itself. You describe your tables in a <code>schema.prisma</code> file and run <code>npx prisma generate</code>. Prisma 7 writes the client into your own project (the folder is the <code>output</code> of the <code>generator</code> block, here <code>src/generated/prisma</code>), and you connect through a <strong>driver adapter</strong>, <code>@prisma/adapter-pg</code>:</p>
 <figure class="lx-example" data-index="0" data-file="production-db.ts">
 <figcaption class="lx-bar"><span class="lx-file">production-db.ts</span><button type="button" class="lx-edit" data-index="0" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">PrismaClient</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@prisma/client"</span><span class="t-pn">;</span>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">PrismaClient</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./generated/prisma/client.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">PrismaPg</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@prisma/adapter-pg"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createDatabaseClient <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/database"</span><span class="t-pn">;</span>
 
@@ -211,7 +225,7 @@
 
 <span class="t-kw">export</span> <span class="t-kw">const</span> client <span class="t-op">=</span> <span class="t-fn">createDatabaseClient</span><span class="t-pn">(</span><span class="t-pn">{</span> prisma <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
-<script type="text/plain" class="lx-src">import { PrismaClient } from "@prisma/client";
+<script type="text/plain" class="lx-src">import { PrismaClient } from "./generated/prisma/client.js";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { createDatabaseClient } from "@zudojs/database";
 
@@ -231,8 +245,8 @@ const prisma = new PrismaClient({
 
 export const client = createDatabaseClient({ prisma });</script>
 </figure>
-<p>The client Prisma generates fits <code>PrismaClientLike</code> as it is, so no type cast is needed.</p>
-<p>This setup needs a running PostgreSQL server and the Prisma tool chain, which the <a href="/learn/deployment">deployment lesson</a> sets up. For learning, this lesson uses PGlite instead, the real PostgreSQL running inside Node.js. There is no ready-made Prisma adapter for PGlite, so you write a small one. It has two files.</p>
+<p>The client Prisma generates fits <code>PrismaClientLike</code> as it is, so no type cast is needed. <code>createDatabaseClient</code> also reads the transaction client's type from it: in <code>client.transaction(async (tx) =&gt; tx.task.create({ data: { title: "Pack bags" } }))</code>, TypeScript checks <code>tx.task</code> against your schema just like <code>prisma.task</code>, and a misspelled field is a compile error. (This works since <code>@zudojs/database</code> 1.4.0. Before, with this generator, <code>tx</code> was silently <code>any</code>.)</p>
+<p>This setup needs a running PostgreSQL server (the <a href="/learn/deployment">deployment lesson</a> runs one in Docker) and the Prisma tool chain (<code>npm install -D prisma@7</code>, a schema, then <code>npx prisma generate</code>; see the <a href="/docs/packages-database">package page</a>). For learning, this lesson uses PGlite instead, the real PostgreSQL running inside Node.js. There is no ready-made Prisma adapter for PGlite, so you write a small one. It has two files.</p>
 <p>The first turns a Prisma-style <code>where</code> object, such as <code>{ done: false, title: { contains: "milk" } }</code>, into SQL. Look at two things. Every value becomes a <code>$1</code>, <code>$2</code>… parameter, never part of the SQL text. And every field name is checked against an <strong>allow-list</strong> before it is used, because a field name cannot be a parameter:</p>
 <figure class="lx-example" data-index="1" data-file="where.ts" data-project="db">
 <figcaption class="lx-bar"><span class="lx-file">where.ts</span><button type="button" class="lx-edit" data-index="1" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -320,7 +334,7 @@ export function whereToSql(where: unknown, fields: readonly string[], params: un
 <figure class="lx-example" data-index="2" data-file="pglite-adapter.ts" data-project="db">
 <figcaption class="lx-bar"><span class="lx-file">pglite-adapter.ts</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">PGlite</span><span class="t-pn">,</span> <span class="t-ty">Transaction</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@electric-sql/pglite"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">DatabaseTransactionContext</span><span class="t-pn">,</span> <span class="t-ty">PrismaClientLike</span><span class="t-pn">,</span> <span class="t-ty">RepositoryDelegate</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/database"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">DatabaseTransactionContext</span><span class="t-pn">,</span> <span class="t-ty">PrismaClientLike</span><span class="t-pn">,</span> <span class="t-ty">PrismaSqlLike</span><span class="t-pn">,</span> <span class="t-ty">RepositoryDelegate</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/database"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> column<span class="t-pn">,</span> whereToSql <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./where.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">type</span> <span class="t-ty">Db</span> <span class="t-op">=</span> <span class="t-ty">PGlite</span> <span class="t-op">|</span> <span class="t-ty">Transaction</span><span class="t-pn">;</span>
@@ -414,12 +428,21 @@ export function whereToSql(where: unknown, fields: readonly string[], params: un
   <span class="t-kw">return</span> delegate <span class="t-kw">as</span> <span class="t-ty">unknown</span> <span class="t-kw">as</span> <span class="t-ty">RepositoryDelegate</span><span class="t-op">&lt;</span><span class="t-ty">T</span><span class="t-pn">,</span> <span class="t-ty">number</span><span class="t-op">&gt;</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
 
+<span class="t-cmt">/* sql`… ${value}` and Prisma.sql`…` both arrive as text parts plus values. */</span>
+<span class="t-kw">function</span> <span class="t-fn">tagged</span><span class="t-pn">(</span>query<span class="t-op">:</span> <span class="t-ty">TemplateStringsArray</span> <span class="t-op">|</span> <span class="t-ty">PrismaSqlLike</span><span class="t-pn">,</span> values<span class="t-op">:</span> <span class="t-kw">readonly</span> <span class="t-ty">unknown</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> <span class="t-pn">[</span>parts<span class="t-pn">,</span> params<span class="t-pn">]</span> <span class="t-op">=</span> <span class="t-str">"strings"</span> <span class="t-kw">in</span> query <span class="t-op">?</span> <span class="t-pn">[</span>query<span class="t-pn">.</span><span class="t-prop">strings</span><span class="t-pn">,</span> query<span class="t-pn">.</span><span class="t-prop">values</span><span class="t-pn">]</span> <span class="t-op">:</span> <span class="t-pn">[</span>query<span class="t-pn">,</span> values<span class="t-pn">]</span><span class="t-pn">;</span>
+  <span class="t-kw">return</span> <span class="t-pn">{</span> sql<span class="t-op">:</span> parts<span class="t-pn">.</span><span class="t-fn">reduce</span><span class="t-pn">(</span><span class="t-pn">(</span>text<span class="t-pn">,</span> part<span class="t-pn">,</span> i<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">text</span><span class="t-op">}</span>$<span class="t-op">${</span><span class="t-prop">i</span><span class="t-op">}</span><span class="t-op">${</span><span class="t-prop">part</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">,</span> params <span class="t-pn">}</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+
 <span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">createPglitePrisma</span><span class="t-pn">(</span>pg<span class="t-op">:</span> <span class="t-ty">PGlite</span><span class="t-pn">,</span> models<span class="t-op">:</span> <span class="t-ty">Readonly</span><span class="t-op">&lt;</span><span class="t-ty">Record</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">Model</span><span class="t-op">&gt;&gt;</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">PrismaClientLike</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> bind <span class="t-op">=</span> <span class="t-pn">(</span>db<span class="t-op">:</span> <span class="t-ty">Db</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">DatabaseTransactionContext</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-    <span class="t-kw">const</span> client<span class="t-op">:</span> <span class="t-ty">Record</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">unknown</span><span class="t-op">&gt;</span> <span class="t-op">=</span> <span class="t-pn">{</span>
-      $queryRawUnsafe<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>sql<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">values</span><span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-kw">await</span> <span class="t-fn">run</span><span class="t-pn">(</span>db<span class="t-pn">,</span> sql<span class="t-pn">,</span> values<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">rows</span><span class="t-pn">,</span>
-      $executeRawUnsafe<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>sql<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">values</span><span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span>
-        <span class="t-pn">(</span><span class="t-kw">await</span> <span class="t-fn">run</span><span class="t-pn">(</span>db<span class="t-pn">,</span> sql<span class="t-pn">,</span> values<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">affectedRows</span> <span class="t-op">??</span> <span class="t-num">0</span><span class="t-pn">,</span>
+    <span class="t-kw">const</span> query <span class="t-op">=</span> <span class="t-kw">async</span> <span class="t-op">&lt;</span><span class="t-ty">R</span><span class="t-op">&gt;</span><span class="t-pn">(</span>sql<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">,</span> values<span class="t-op">:</span> <span class="t-kw">readonly</span> <span class="t-ty">unknown</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-kw">await</span> <span class="t-fn">run</span><span class="t-pn">(</span>db<span class="t-pn">,</span> sql<span class="t-pn">,</span> values<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">rows</span> <span class="t-kw">as</span> <span class="t-ty">R</span><span class="t-pn">;</span>
+    <span class="t-kw">const</span> execute <span class="t-op">=</span> <span class="t-kw">async</span> <span class="t-pn">(</span>sql<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">,</span> values<span class="t-op">:</span> <span class="t-kw">readonly</span> <span class="t-ty">unknown</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-kw">await</span> <span class="t-fn">run</span><span class="t-pn">(</span>db<span class="t-pn">,</span> sql<span class="t-pn">,</span> values<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">affectedRows</span> <span class="t-op">??</span> <span class="t-num">0</span><span class="t-pn">;</span>
+    <span class="t-kw">const</span> client<span class="t-op">:</span> <span class="t-ty">DatabaseTransactionContext</span> <span class="t-op">&amp;</span> <span class="t-ty">Record</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">unknown</span><span class="t-op">&gt;</span> <span class="t-op">=</span> <span class="t-pn">{</span>
+      $queryRawUnsafe<span class="t-op">:</span> <span class="t-pn">(</span>sql<span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">values</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">query</span><span class="t-pn">(</span>sql<span class="t-pn">,</span> values<span class="t-pn">)</span><span class="t-pn">,</span>
+      $executeRawUnsafe<span class="t-op">:</span> <span class="t-pn">(</span>sql<span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">values</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">execute</span><span class="t-pn">(</span>sql<span class="t-pn">,</span> values<span class="t-pn">)</span><span class="t-pn">,</span>
+      $queryRaw<span class="t-op">:</span> <span class="t-pn">(</span>sql<span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">values</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> <span class="t-kw">const</span> t <span class="t-op">=</span> <span class="t-fn">tagged</span><span class="t-pn">(</span>sql<span class="t-pn">,</span> values<span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-kw">return</span> <span class="t-fn">query</span><span class="t-pn">(</span>t<span class="t-pn">.</span><span class="t-prop">sql</span><span class="t-pn">,</span> t<span class="t-pn">.</span><span class="t-prop">params</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">,</span>
+      $executeRaw<span class="t-op">:</span> <span class="t-pn">(</span>sql<span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">values</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> <span class="t-kw">const</span> t <span class="t-op">=</span> <span class="t-fn">tagged</span><span class="t-pn">(</span>sql<span class="t-pn">,</span> values<span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-kw">return</span> <span class="t-fn">execute</span><span class="t-pn">(</span>t<span class="t-pn">.</span><span class="t-prop">sql</span><span class="t-pn">,</span> t<span class="t-pn">.</span><span class="t-prop">params</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">,</span>
     <span class="t-pn">}</span><span class="t-pn">;</span>
     <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> <span class="t-pn">[</span>key<span class="t-pn">,</span> model<span class="t-pn">]</span> <span class="t-kw">of</span> <span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">entries</span><span class="t-pn">(</span>models<span class="t-pn">)</span><span class="t-pn">)</span> client<span class="t-pn">[</span>key<span class="t-pn">]</span> <span class="t-op">=</span> <span class="t-fn">modelDelegate</span><span class="t-pn">(</span>db<span class="t-pn">,</span> model<span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">return</span> client<span class="t-pn">;</span>
@@ -439,7 +462,7 @@ export function whereToSql(where: unknown, fields: readonly string[], params: un
 <span class="t-pn">}</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import type { PGlite, Transaction } from "@electric-sql/pglite";
-import type { DatabaseTransactionContext, PrismaClientLike, RepositoryDelegate } from "@zudojs/database";
+import type { DatabaseTransactionContext, PrismaClientLike, PrismaSqlLike, RepositoryDelegate } from "@zudojs/database";
 import { column, whereToSql } from "./where.js";
 
 type Db = PGlite | Transaction;
@@ -533,12 +556,21 @@ export function modelDelegate<T>(db: Db, model: Model): RepositoryDelegate<T, nu
   return delegate as unknown as RepositoryDelegate<T, number>;
 }
 
+/* sql`… ${value}` and Prisma.sql`…` both arrive as text parts plus values. */
+function tagged(query: TemplateStringsArray | PrismaSqlLike, values: readonly unknown[]) {
+  const [parts, params] = "strings" in query ? [query.strings, query.values] : [query, values];
+  return { sql: parts.reduce((text, part, i) => `${text}$${i}${part}`), params };
+}
+
 export function createPglitePrisma(pg: PGlite, models: Readonly<Record<string, Model>>): PrismaClientLike {
   const bind = (db: Db): DatabaseTransactionContext => {
-    const client: Record<string, unknown> = {
-      $queryRawUnsafe: async (sql: string, ...values: unknown[]) => (await run(db, sql, values)).rows,
-      $executeRawUnsafe: async (sql: string, ...values: unknown[]) =>
-        (await run(db, sql, values)).affectedRows ?? 0,
+    const query = async <R>(sql: string, values: readonly unknown[]) => (await run(db, sql, values)).rows as R;
+    const execute = async (sql: string, values: readonly unknown[]) => (await run(db, sql, values)).affectedRows ?? 0;
+    const client: DatabaseTransactionContext & Record<string, unknown> = {
+      $queryRawUnsafe: (sql, ...values) => query(sql, values),
+      $executeRawUnsafe: (sql, ...values) => execute(sql, values),
+      $queryRaw: (sql, ...values) => { const t = tagged(sql, values); return query(t.sql, t.params); },
+      $executeRaw: (sql, ...values) => { const t = tagged(sql, values); return execute(t.sql, t.params); },
     };
     for (const [key, model] of Object.entries(models)) client[key] = modelDelegate(db, model);
     return client;
@@ -558,6 +590,7 @@ export function createPglitePrisma(pg: PGlite, models: Readonly<Record<string, M
 }</script>
 </figure>
 <p>One line needs a word: <code>delegate as unknown as RepositoryDelegate&lt;T, number&gt;</code>. The adapter works with plain rows, but a repository wants rows of type <code>T</code>, such as <code>Task</code>. Prisma generates exact types for each table; this small adapter cannot, so it asserts the type once, in one place. The table definition below is what keeps it honest.</p>
+<p><code>bind</code> builds the object that plays both roles: the client itself, and the <code>tx</code> of every transaction. It has the four raw methods <code>DatabaseTransactionContext</code> asks for; <code>tagged</code> turns a tagged template such as <code>Prisma.sql</code> into <code>$1</code>, <code>$2</code>… text plus values. <code>$transaction</code> names its callback's type, <code>DatabaseTransactionContext</code>, because <code>PrismaClientLike</code> accepts any <code>$transaction</code> and so gives the callback no type of its own. A generated Prisma client needs none of this.</p>
 <div class="callout callout-note"><p class="lx-callout-label">NOTE</p>This adapter covers what the lesson needs: equality, <code>contains</code>, comparisons, <code>AND</code>/<code>OR</code>/<code>NOT</code>, sorting and paging. It ignores transaction options such as the isolation level. In production, Prisma does all of this for you.</div>
 </section>
 

@@ -401,7 +401,7 @@ export function securityHeaders(): HttpMiddleware {
   };
 }
 </example>
-<p>All work happens <em>after</em> <code>next()</code>, like <code>responseTime</code> earlier in this lesson. The <code>// zudojs:server-middleware</code> markers are where <code>zudojs add</code> puts the middleware of a feature it adds.</p>
+<p>All work happens <em>after</em> <code>next()</code>, like <code>responseTime</code> earlier in this lesson. The <code>// zudojs:server-middleware</code> markers are where <code>zudojs add</code> puts the middleware of a feature it adds, and where <code>zudojs generate middleware</code> registers a new one.</p>
 <p>One thing from this lesson is missing: a stricter limit for writes. Creating tasks costs more than reading them. Put it in the empty <code>src/middlewares/</code> folder. The file name follows the CLI's naming for middleware:</p>
 <example file="src/middlewares/write-limit.middleware.ts" project="task-api" browser="no">
 import { createRateLimitMiddleware } from "@zudojs/http";
@@ -419,6 +419,7 @@ export function writeLimitMiddleware(options: { readonly windowMs: number; reado
 <example file="src/middlewares/index.ts" project="task-api" browser="no">
 export { writeLimitMiddleware } from "./write-limit.middleware.js";
 </example>
+<tip><code>zudojs generate middleware write-limit</code> writes <code>src/middlewares/write-limit.middleware.ts</code> with an empty <code>writeLimitMiddleware()</code> that only passes the request on, exports it from <code>index.ts</code>, and adds it to the pipeline in <code>src/server.ts</code> between the markers. Here you write it by hand, so the limit is yours from the first line.</tip>
 <p>In <code>src/server.ts</code>, import it with <code>import { writeLimitMiddleware } from "./middlewares/index.js";</code> and add it after the general rate limit, below the markers. The limit of 20 writes a minute is written in the code for one more lesson; <a href="/learn/zudo-config">Configuration</a> moves it into a setting:</p>
 <example file="src/server.ts (part)" browser="no" check="skip">
     createRateLimitMiddleware({ windowMs: config.rateLimit.windowMs, max: config.rateLimit.max }),
@@ -564,12 +565,12 @@ POST 429 retry-after: 60 cors: http://localhost:5173 frame: DENY
 GET 200 retry-after: undefined cors: http://localhost:5173 frame: DENY
 </output>
 <p>The third write got 429, reading still works, and even the 429 carries the security and CORS headers, because both come before the limit.</p>
-<p>The shutdown code at the end of <code>src/server.ts</code> already follows <a href="#shutdown">the order above</a>: let integrations close long-lived connections (<code>drainIntegrations</code>), stop the HTTP server, stop the runtime, exit with 0, or log and exit with 1 on failure. Three small changes finish it:</p>
+<p>The shutdown code at the end of <code>src/server.ts</code> already follows <a href="#shutdown">the order above</a>: let integrations close long-lived connections (<code>drainIntegrations</code>), stop the HTTP server, stop the runtime, exit with 0, or log and exit with 1 on failure. Two small changes finish it:</p>
 <ul>
 <li>Pass <code>gracefulShutdownTimeout: 20_000</code> to <code>createHttpServer</code>, so requests in progress get 20 seconds, well inside the 30 seconds many platforms wait after <code>SIGTERM</code>.</li>
 <li>In <code>src/app.ts</code>, add <code>disposeContainerOnStop: true</code> to the options of <code>createRuntime</code>, next to <code>handleSignals: false</code>. <code>runtime.stop()</code> then disposes the container after every module has stopped.</li>
-<li>In the signal loop, change <code>process.once(signal, …)</code> to <code>process.on(signal, …)</code>. Under <code>npm run dev</code>, one <kbd>Ctrl</kbd> + <kbd>C</kbd> reaches the server twice: once from the terminal and once passed on by <code>tsx watch</code>. With <code>once</code>, the second signal finds no listener, and Node.js ends the process in the middle of the shutdown. With <code>on</code>, the <code>if (stopping) return;</code> line the CLI wrote ignores it.</li>
 </ul>
+<p>The signal loop itself needs no change. It listens with <code>process.on</code>, so it hears every <code>SIGINT</code> and <code>SIGTERM</code>, not only the first. The first one prints <code>Received SIGINT: shutting down.</code>, sets <code>stopping</code> and starts the shutdown. A second one, for example an impatient second <kbd>Ctrl</kbd> + <kbd>C</kbd> or a platform that repeats <code>SIGTERM</code>, only prints <code>already shutting down</code> and returns. With <code>process.once</code>, a second signal would find no listener, and Node.js would end the process in the middle of the shutdown. The <code>Listening</code> line comes last, after the handlers are registered, so the app never claims to be ready before it can shut down cleanly.</p>
 <example file="src/server.ts (part)" browser="no" check="skip">
 const server = createHttpServer({
   adapter: createNodeHttpAdapter({ server: httpServer, host: config.host, port: config.port }),
@@ -578,13 +579,16 @@ const server = createHttpServer({
 });
 
 await server.start();
-console.log(`Listening on http://${config.host}:${server.address?.port ?? config.port}`);
 
 let stopping = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    if (stopping) return;
+    if (stopping) {
+      console.log(`Received ${signal} again: already shutting down.`);
+      return;
+    }
     stopping = true;
+    console.log(`Received ${signal}: shutting down.`);
     void drainIntegrations(integrations)
       .then(() => server.stop())
       .then(() => runtime.stop())
@@ -597,6 +601,8 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
       });
   });
 }
+
+console.log(`Listening on http://${config.host}:${server.address?.port ?? config.port}`);
 </example>
 <p>Now try the real thing. To let one web app in, start the server with <code>CORS_ORIGINS</code> set for that one command:</p>
 <shell title="Terminal on your computer">
@@ -620,7 +626,7 @@ x-content-type-options: nosniff
 x-frame-options: DENY
 …
 content-length: 113
-Date: Wed, 23 Sep 2026 19:51:45 GMT
+Date: Wed, 23 Sep 2026 22:24:32 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
@@ -632,7 +638,7 @@ HTTP/1.1 429 Too Many Requests
 retry-after: 60
 x-ratelimit-remaining: 0
 x-ratelimit-limit: 20
-x-ratelimit-reset: 1790193166
+x-ratelimit-reset: 1790202333
 content-type: application/json; charset=utf-8
 x-content-type-options: nosniff
 x-frame-options: DENY
@@ -642,14 +648,15 @@ x-frame-options: DENY
 </shell>
 <p>Your own app's origin got the CORS headers, the 21st write got 429 with <code>Retry-After</code>, and <code>curl http://localhost:3000/tasks</code> still answers 200. <code>x-ratelimit-reset</code> is the time the window ends, in seconds since 1970. The loop is for macOS, Linux and Git Bash; on Windows PowerShell, run the <code>curl.exe</code> command 21 times with the arrow keys instead. Now press <kbd>Ctrl</kbd> + <kbd>C</kbd> in the server's terminal:</p>
 <shell title="Terminal on your computer">
-^C2026-09-23T19:51:45.445Z [INFO] [task-api] Initiating graceful shutdown. timeoutMs=30000
-2026-09-23T19:51:45.445Z [INFO] [task-api] All modules stopped. modules=["tasks","store","integrations"] durationMs=0
-2026-09-23T19:51:45.446Z [INFO] [task-api] store closed
-2026-09-23T19:51:45.446Z [INFO] [task-api] All modules destroyed. durationMs=0
-2026-09-23T19:51:45.446Z [INFO] [task-api] Graceful shutdown complete.
-2026-09-23T19:51:45.447Z [INFO] [task-api] Runtime stopped. runtimeId=rt_e7dcf43c4f0445f1b53b77293d27fd2e
+^CReceived SIGINT: shutting down.
+2026-09-23T22:24:32.979Z [INFO] [task-api] Initiating graceful shutdown. timeoutMs=30000
+2026-09-23T22:24:32.981Z [INFO] [task-api] All modules stopped. modules=["tasks","store","integrations"] durationMs=1
+2026-09-23T22:24:32.982Z [INFO] [task-api] store closed
+2026-09-23T22:24:32.982Z [INFO] [task-api] All modules destroyed. durationMs=0
+2026-09-23T22:24:32.982Z [INFO] [task-api] Graceful shutdown complete.
+2026-09-23T22:24:32.983Z [INFO] [task-api] Runtime stopped. runtimeId=rt_6c293dc75a9e4161bc9c09c1e6597cb5
 </shell>
-<p>The HTTP server stopped first (it prints nothing), then the runtime stopped the modules, and the container was disposed last. <code>timeoutMs=30000</code> is the runtime's own <code>shutdownTimeout</code> for the modules; the 20 seconds you set are for the requests.</p>
+<p>The signal handler announced the shutdown, the HTTP server stopped first (it prints nothing), then the runtime stopped the modules, and the container was disposed last. <code>timeoutMs=30000</code> is the runtime's own <code>shutdownTimeout</code> for the modules; the 20 seconds you set are for the requests.</p>
 </section>
 
 <section>

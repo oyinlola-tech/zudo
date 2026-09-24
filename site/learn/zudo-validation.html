@@ -8,6 +8,19 @@
   <link rel="alternate" type="text/markdown" href="/learn/zudo-validation.md" title="Markdown version">
   <meta name="description" content="Validate everything that crosses the Task API's boundary with @zudojs/schema. Read issues, coerce query strings, transform and refine values, block unknown fields, validate requests in routes and responses on the way out, and guard against hostile JSON with @zudojs/validation.">
   <!-- seo:start -->
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-validation">
+  <meta property="og:site_name" content="ZudoJS">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Schemas and validation in depth — Learn ZudoJS">
+  <meta property="og:description" content="Validate everything that crosses the Task API's boundary with @zudojs/schema. Read issues, coerce query strings, transform and refine values, block unknown fields, validate requests in routes and responses on the way out, and guard against hostile JSON with @zudojs/validation.">
+  <meta property="og:url" content="https://zudojs.oyinlola.site/learn/zudo-validation">
+  <meta property="og:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Schemas and validation in depth — Learn ZudoJS">
+  <meta name="twitter:description" content="Validate everything that crosses the Task API's boundary with @zudojs/schema. Read issues, coerce query strings, transform and refine values, block unknown fields, validate requests in routes and responses on the way out, and guard against hostile JSON with @zudojs/validation.">
+  <meta name="twitter:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"ZudoJS","item":"https://zudojs.oyinlola.site/"},{"@type":"ListItem","position":2,"name":"Learn","item":"https://zudojs.oyinlola.site/learn"},{"@type":"ListItem","position":3,"name":"Schemas and validation in depth","item":"https://zudojs.oyinlola.site/learn/zudo-validation"}]}</script>
   <!-- seo:end -->
   <meta name="keywords" content="zudojs schema, validation, parse vs safeParse, SchemaIssue, coercion, schema.coerce, query string validation, transform, refine, partial, strict, unknown keys, mass assignment, request validation, response validation, allow-list, SchemaError issues, zudojs validation, assertDepthWithinLimit, assertSizeWithinLimit">
   <meta name="author" content="Oluwayemi Oyinlola Michael">
@@ -392,11 +405,11 @@ for (const text of ["2026-10-01", "2026-10-03", "2026-02-30", "2026-13-45", "1 O
 }</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx dates.ts</code> and of the browser terminal</div><pre class="lx-no-copy">2026-10-01 true ok
 2026-10-03 true Due dates must be on a weekday
-2026-02-30 false Invalid date format
-2026-13-45 false Invalid date format
+2026-02-30 false Not a real calendar date
+2026-13-45 false Not a real calendar date
 1 October  false Invalid date format</pre></div>
 </figure>
-<p>The middle column shows what <code>.date()</code> alone decides. It checks the shape of the text <em>and</em> that the date exists: 30 February and month 13 are refused (since <code>@zudojs/schema</code> 1.2.0; older versions only checked the shape), although the message for them still says "Invalid date format". Only 3 October 2026 passed <code>.date()</code> and then failed the refinement, because it is a Saturday. <code>getUTCDay()</code> returns 0 for Sunday and 6 for Saturday.</p>
+<p>The middle column shows what <code>.date()</code> alone decides. It checks the shape of the text <em>and</em> that the date exists: 30 February and month 13 have the right shape, so they get their own message, "Not a real calendar date", while "1 October" has the wrong shape and gets "Invalid date format". (Before <code>@zudojs/schema</code> 1.2.0, <code>.date()</code> only checked the shape.) Only 3 October 2026 passed <code>.date()</code> and then failed the refinement, because it is a Saturday. <code>getUTCDay()</code> returns 0 for Sunday and 6 for Saturday.</p>
 <p>A rule that compares two fields belongs on the object. <code>schema.refine</code> wraps the object schema. The <code>path</code>-less issue it reports belongs to the whole object:</p>
 <figure class="lx-example" data-index="4" data-file="object-refine.ts">
 <figcaption class="lx-bar"><span class="lx-file">object-refine.ts</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="4"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
@@ -1387,9 +1400,9 @@ await server.stop();</script>
 PATCH /tasks/2 200 {"id":2,"title":"Walk the dog","done":true,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}
 GET /tasks?done=false&amp;limit=1&amp;page=2 200 [{"id":3,"title":"Water the plants","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]
 GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
-PATCH /tasks/2 413 {"error":"Content Too Large"}</pre></div>
+PATCH /tasks/2 413 {"error":"Serialized payload too large: 80013 bytes (max: 65536)","code":"ERR_PAYLOAD_TOO_LARGE"}</pre></div>
 </figure>
-<p>The unknown <code>id</code> was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and a huge body never reached a schema. The 400 bodies still only say "Validation failed". The next lesson fixes that for every route at once. Run the same script in your project:</p>
+<p>The unknown <code>id</code> was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and a huge body never reached a schema: it got a 413 that names the size and the limit, and nothing from the body itself. You do not map this error yourself: the guard marks it as safe to show, so the router's default answer here, and the generated <code>errorResponse</code> in the running server, both send it as it is. The 400 bodies still only say "Validation failed". The next lesson fixes that for every route at once. Run the same script in your project:</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
 <pre class="lx-shell-body" data-copy="npx tsc --noEmit
 npx tsx src/check-validation.ts"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npx tsc --noEmit</span>
@@ -1398,7 +1411,7 @@ npx tsx src/check-validation.ts"><span class="lx-cmd"><span class="lx-prompt" ar
 <span class="lx-res">PATCH /tasks/2 200 {"id":2,"title":"Walk the dog","done":true,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}</span>
 <span class="lx-res">GET /tasks?done=false&amp;limit=1&amp;page=2 200 [{"id":3,"title":"Water the plants","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]</span>
 <span class="lx-res">GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}</span>
-<span class="lx-res">PATCH /tasks/2 413 {"error":"Content Too Large"}</span></pre></figure>
+<span class="lx-res">PATCH /tasks/2 413 {"error":"Serialized payload too large: 80013 bytes (max: 65536)","code":"ERR_PAYLOAD_TOO_LARGE"}</span></pre></figure>
 <p><code>registerRoutes</code> already registers <code>registerTaskRoutes</code>, so the running server has the new <code>PATCH /tasks/:id</code> route as soon as <code>npm run dev</code> restarts.</p>
 </section>
 
