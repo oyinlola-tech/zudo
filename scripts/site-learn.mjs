@@ -7,6 +7,7 @@
  *                                    tsx, tsc) and in the browser terminal, and check the
  *                                    terminal's Node-style formatter against util.inspect
  *   node scripts/site-learn.mjs --node|--browser|--inspect|--quiz|--links [--only <slug>[,<slug>…]]
+ *   node scripts/site-learn.mjs --fill --only <slug>   write real Node output into empty <output>s
  *
  * Lesson tests live in site-src/learn/quiz/<slug>.html (see scripts/learn/quiz.mjs);
  * --quiz checks them in Node and in the browser terminal (--check includes it).
@@ -36,6 +37,9 @@ const args = process.argv.slice(2);
 /* --only slug[,slug…] limits the checks (the build always covers every lesson). */
 const only = args.includes("--only") ? args[args.indexOf("--only") + 1].split(",") : null;
 const wantAll = args.includes("--check");
+
+/* Same shape as extractExamples in source.mjs: an example or file, then its optional <output>. */
+const EXAMPLE_RE = /<(example|file)\b([^>]*)>[\s\S]*?<\/\1>(\s*<output\b([^>]*)>[\s\S]*?<\/output>)?/g;
 
 const SEO_BLOCK = /[ \t]*<!-- seo:start -->[\s\S]*?<!-- seo:end -->/;
 
@@ -162,6 +166,31 @@ function report(name, results) {
   for (const r of failed) console.log(`✗ ${r.label}\n${r.detail}\n`);
   console.log(`${name}: ${results.length - failed.length}/${results.length} passed`);
   return failed.length;
+}
+
+/*
+ * --fill: run the examples of the --only lessons in Node and write the real output
+ * into every <output> that is still empty. Outputs already written are never touched,
+ * and DOM examples (browser only) are not filled.
+ */
+if (args.includes("--fill")) {
+  if (!only) throw new Error("--fill needs --only <slug>[,<slug>…]");
+  const fills = [];
+  checkNode(readCourse(ROOT).lessons, { only, root: ROOT, fill: fills });
+  for (const slug of only) {
+    const mine = fills.filter((f) => f.slug === slug);
+    if (!mine.length) continue;
+    const file = join(ROOT, "site-src", "learn", slug + ".html");
+    let n = -1;
+    const src = readFileSync(file, "utf8").replace(EXAMPLE_RE, (m, tag, a, out) => {
+      n++;
+      const f = mine.find((x) => x.index === n);
+      if (!f || out === undefined) return m;
+      return m.replace(/(<output\b[^>]*>)\s*(<\/output>)$/, (all, open, close) => `${open}\n${f.text}\n${close}`);
+    });
+    writeFileSync(file, src);
+    console.log(`${slug}: filled ${mine.length} output${mine.length === 1 ? "" : "s"}`);
+  }
 }
 
 const lessons = build();

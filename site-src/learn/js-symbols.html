@@ -1,0 +1,815 @@
+---
+title: Symbols
+description: Use symbols as keys that never clash, plug your objects into the language with well-known symbols, and build a Money type that refuses to add naira to dollars.
+minutes: 45
+youNeed: Types in depth, Objects in depth, Prototypes in depth and Iterables and iterators
+youBuild: A Money type that formats itself in text, refuses silent arithmetic and mixed currencies, labels itself in logs, and a redaction protocol that keeps card numbers out of logs
+keywords: javascript symbol, Symbol(), symbol description, Symbol.for, Symbol.keyFor, global symbol registry, well-known symbols, Symbol.iterator, Symbol.asyncIterator, Symbol.toPrimitive, hint number string default, Symbol.toStringTag, Symbol.hasInstance, Symbol.dispose, using, custom protocol, symbol keys, getOwnPropertySymbols, money type
+objectives: Explain why symbols exist and how symbol keys behave with Object.keys, JSON, spread and Reflect.ownKeys | Choose between Symbol() and Symbol.for(), and explain what breaks when a package is loaded twice | Control conversion with Symbol.toPrimitive and predict the hint for any operation | Use Symbol.toStringTag, Symbol.iterator, Symbol.asyncIterator, Symbol.hasInstance and Symbol.dispose where they fit | Design and test a custom protocol keyed by a symbol
+---
+<section>
+<h2 id="problem">An invoice that added dollars to naira</h2>
+<p>A shop sells to customers in Nigeria and abroad. Amounts are stored as whole minor units (kobo, cents) with a currency code, a good habit from <a href="/learn/logic-math">Mathematical reasoning</a>. Someone gave the <code>Money</code> class a <code>valueOf</code> method, so that comparisons like <code>price &gt; 0</code> would "just work", as you saw in <a href="/learn/js-types-deep#coercion">Types in depth</a>:</p>
+<example file="problem.js">
+class Money {
+  constructor(minor, currency) {
+    this.minor = minor;
+    this.currency = currency;
+  }
+  valueOf() {
+    return this.minor;
+  }
+}
+
+const subtotal = new Money(1500000, "NGN");
+const shipping = new Money(2500, "USD");
+
+const total = subtotal + shipping;
+console.log("total:", total);
+console.log("Receipt: " + subtotal);
+console.log(`Receipt: ${subtotal}`);
+console.log(subtotal > shipping);
+</example>
+<output>
+total: 1502500
+Receipt: 1500000
+Receipt: [object Object]
+true
+</output>
+<p>Every line is wrong, and none of them threw an error:</p>
+<ol>
+<li>₦15,000 plus $25 became the plain number 1502500. The currencies were thrown away and the sum is meaningless, yet it would happily be charged.</li>
+<li><code>"Receipt: " + subtotal</code> printed raw kobo.</li>
+<li>The template literal printed <code>[object Object]</code>, because it asked for text and <code>valueOf</code> is not consulted first for text.</li>
+<li><code>subtotal &gt; shipping</code> compared kobo with cents.</li>
+</ol>
+<p>What you want is precise control: formatted text in receipts, an error on accidental arithmetic, and a readable label in logs. JavaScript lets objects control exactly these things through <strong>hooks</strong>: methods the language itself calls at particular moments. Those hooks are not stored under names like <code>"toPrimitive"</code>, but under <strong>symbols</strong>. This lesson explains why, shows the hooks you will actually use, and ends with a <code>Money</code> type that cannot be misused this way.</p>
+</section>
+
+<section>
+<h2 id="why">Why symbols: keys that cannot clash</h2>
+<p><a href="/learn/js-types-deep#two-families">Types in depth</a> introduced the <strong>symbol</strong>: a primitive value that is equal only to itself. <code>Symbol("id") === Symbol("id")</code> is <code>false</code>; the text is only a <strong>description</strong> for people reading logs. Symbols can be property keys, just like strings.</p>
+<p>Now imagine JavaScript had added the conversion hook as a normal method called <code>toPrimitive</code>. Millions of existing objects on the web might already have a property with that name, doing something else. The day browsers shipped the feature, those objects would suddenly behave differently. The language needed keys that no existing code could possibly be using. A new symbol is such a key: nobody can type it, so nobody can have used it by accident.</p>
+<p>The same need appears in your own code. A small auditing helper wants to attach "when did we last see this object" to orders, without any chance of overwriting a field the order already has:</p>
+<example file="no-clash.js">
+const seenAt = Symbol("seenAt");
+
+function markSeen(record, when) {
+  record[seenAt] = when;
+  return record;
+}
+
+const order = { id: "ORD-7", seenAt: "customer field, not ours", totalKobo: 450000 };
+markSeen(order, "2026-09-24");
+
+console.log(order.seenAt);
+console.log(order[seenAt]);
+console.log(seenAt.description, String(seenAt));
+</example>
+<output>
+customer field, not ours
+2026-09-24
+seenAt Symbol(seenAt)
+</output>
+<p>The order's own <code>seenAt</code> string property and the helper's <code>seenAt</code> symbol property live side by side. Only code that holds the symbol value can read or write the helper's property.</p>
+<h3>Who sees symbol keys</h3>
+<p>Symbol-keyed properties are skipped by the tools that list "ordinary" data, and kept by the tools that copy objects. Knowing which is which prevents surprises:</p>
+<example file="who-sees.js">
+const internalId = Symbol("internalId");
+const order = { id: "ORD-7", totalKobo: 450000, [internalId]: 99812 };
+
+console.log(Object.keys(order));
+console.log(JSON.stringify(order));
+for (const key in order) console.log("for...in:", key);
+
+console.log(Object.getOwnPropertySymbols(order));
+console.log(Reflect.ownKeys(order));
+
+const copy = { ...order };
+console.log(copy[internalId], Object.assign({}, order)[internalId]);
+console.log(structuredClone(order)[internalId]);
+</example>
+<output>
+[ 'id', 'totalKobo' ]
+{"id":"ORD-7","totalKobo":450000}
+for...in: id
+for...in: totalKobo
+[ Symbol(internalId) ]
+[ 'id', 'totalKobo', Symbol(internalId) ]
+99812 99812
+undefined
+</output>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Skips symbol keys</th><th>Includes symbol keys</th></tr></thead>
+<tbody>
+<tr><td><code>Object.keys</code>, <code>Object.values</code>, <code>Object.entries</code>, <code>for...in</code>, <code>JSON.stringify</code>, <code>structuredClone</code></td><td><code>Object.getOwnPropertySymbols</code>, <code>Reflect.ownKeys</code>, spread <code>{ ...obj }</code>, <code>Object.assign</code></td></tr>
+</tbody>
+</table></div>
+<p>Two consequences. Symbol keys do not travel: they disappear when an object is sent as JSON or cloned, which is right for internal metadata. And symbol keys are <strong>not private</strong>: anyone can list them with <code>Object.getOwnPropertySymbols</code>. They prevent <em>accidental</em> clashes, not deliberate access. For real privacy, use a class's <code>#private</code> fields or a closure (<a href="/learn/js-closures#private-state">Closures in depth</a>).</p>
+</section>
+
+<section>
+<h2 id="registry">Symbol() and Symbol.for(): local and shared symbols</h2>
+<p><code>Symbol("x")</code> creates a brand-new symbol every call. To share it, you must pass the value around, usually by exporting it from a module. <code>Symbol.for("x")</code> works differently: it looks the name up in a <strong>global symbol registry</strong> that the whole JavaScript runtime shares, creating the symbol the first time and returning the same one every time after. <code>Symbol.keyFor(sym)</code> tells you a registered symbol's name:</p>
+<example file="registry.js">
+const local1 = Symbol("shop.plugin");
+const local2 = Symbol("shop.plugin");
+const shared1 = Symbol.for("shop.plugin");
+const shared2 = Symbol.for("shop.plugin");
+
+console.log(local1 === local2, shared1 === shared2, local1 === shared1);
+console.log(Symbol.keyFor(shared1), Symbol.keyFor(local1));
+</example>
+<output>
+false true false
+shop.plugin undefined
+</output>
+<h3>When the difference bites: the same package, loaded twice</h3>
+<p>A package can end up in <code>node_modules</code> twice, in two versions: your app depends on <code>payments@2</code>, and a plugin you installed depends on <code>payments@1</code>. Each copy is a separate module with its own top-level variables. If the package marks its objects with a local <code>Symbol()</code>, an object made by one copy is not recognised by the other. Here the two copies are simulated by calling a factory twice:</p>
+<example file="two-copies.js">
+function loadPaymentsPackage() {
+  const localBrand = Symbol("payments.Charge");
+  const sharedBrand = Symbol.for("payments.Charge");
+  return {
+    createCharge: (kobo) => ({ kobo, [localBrand]: true, [sharedBrand]: true }),
+    isChargeLocal: (value) => value?.[localBrand] === true,
+    isChargeShared: (value) => value?.[sharedBrand] === true,
+  };
+}
+
+const paymentsV2 = loadPaymentsPackage();
+const paymentsV1 = loadPaymentsPackage();
+
+const charge = paymentsV1.createCharge(450000);
+console.log("local brand check:", paymentsV2.isChargeLocal(charge));
+console.log("shared brand check:", paymentsV2.isChargeShared(charge));
+</example>
+<output>
+local brand check: false
+shared brand check: true
+</output>
+<p>The check built on a local symbol failed across copies; the one built on <code>Symbol.for</code> passed. That is the rule of thumb:</p>
+<ul>
+<li>Use <code>Symbol()</code> for keys that belong to one module and should never be reachable from elsewhere.</li>
+<li>Use <code>Symbol.for("package.name")</code> for a <em>protocol</em> that separately loaded code must agree on. Namespace the name (<code>"payments.Charge"</code>, not <code>"charge"</code>), because the registry is shared by everything in the process. Node itself uses <code>Symbol.for("nodejs.util.inspect.custom")</code> this way.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="well-known">Well-known symbols: the language's hooks</h2>
+<p>A <strong>well-known symbol</strong> is a symbol the language defines and stores as a property of <code>Symbol</code>, such as <code>Symbol.iterator</code>. When JavaScript needs to do something to an object, it checks whether the object has a method under the matching well-known symbol, and calls it if so. Here are the ones worth knowing:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Symbol</th><th>Called when</th><th>Typical use</th></tr></thead>
+<tbody>
+<tr><td><code>Symbol.iterator</code></td><td><code>for...of</code>, spread, destructuring</td><td>Make a collection iterable (<a href="/learn/js-iterators">Iterables and iterators</a>)</td></tr>
+<tr><td><code>Symbol.asyncIterator</code></td><td><code>for await...of</code></td><td>Stream pages, events or file chunks (<a href="/learn/js-generators#async">Generators</a>)</td></tr>
+<tr><td><code>Symbol.toPrimitive</code></td><td>The object must become a primitive: <code>+</code>, <code>*</code>, <code>&gt;</code>, template literals, <code>String()</code>, <code>Number()</code></td><td>Money, durations, versions</td></tr>
+<tr><td><code>Symbol.toStringTag</code></td><td><code>Object.prototype.toString</code></td><td>A clear type label in logs and debugging</td></tr>
+<tr><td><code>Symbol.hasInstance</code></td><td><code>x instanceof C</code></td><td>Rare: customise <code>instanceof</code></td></tr>
+<tr><td><code>Symbol.dispose</code>, <code>Symbol.asyncDispose</code></td><td>Leaving a block that declared the object with <code>using</code> / <code>await using</code></td><td>Close files, connections, locks</td></tr>
+<tr><td><code>Symbol.species</code>, <code>Symbol.isConcatSpreadable</code>, <code>Symbol.match</code>/<code>replace</code>/<code>search</code>/<code>split</code>, <code>Symbol.unscopables</code></td><td>Subclassing built-ins, <code>concat</code>, string methods, <code>with</code></td><td>Library internals; you will rarely touch them</td></tr>
+</tbody>
+</table></div>
+<p>You have already implemented <code>Symbol.iterator</code> and <code>Symbol.asyncIterator</code> in the previous two lessons. The rest of this lesson covers the others you will meet in real code, starting with the one that fixes the invoice.</p>
+</section>
+
+<section>
+<h2 id="to-primitive">Symbol.toPrimitive: controlling conversion</h2>
+<p>When an operation needs a primitive and has an object, JavaScript first looks for a <code>[Symbol.toPrimitive]</code> method. If there is one, it is called with a <strong>hint</strong>, a string that says what kind of value the operation would like, and <code>valueOf</code> and <code>toString</code> are not consulted at all. The method must return a primitive (or throw). There are three hints:</p>
+<ul>
+<li><code>"number"</code>: the operation wants a number: unary <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>&lt;</code>, <code>&gt;</code>, <code>Number()</code>, <code>Math.max()</code>.</li>
+<li><code>"string"</code>: the operation wants text: template literals, <code>String()</code>, using the object as a property key, <code>join</code>.</li>
+<li><code>"default"</code>: the operation could go either way: binary <code>+</code> (add or join?) and <code>==</code>.</li>
+</ul>
+<p>A probe object that records every hint it receives shows which operation asks for what:</p>
+<example file="hints.js">
+const hints = [];
+const probe = {
+  [Symbol.toPrimitive](hint) {
+    hints.push(hint);
+    return 1;
+  },
+};
+
++probe;
+probe * 2;
+probe > 0;
+`${probe}`;
+String(probe);
+probe + 1;
+probe == 1;
+({ [probe]: true });
+
+console.log(hints.join(" "));
+</example>
+<output>
+number number number string string default default string
+</output>
+<p>Now the problem is solvable, because each case can be handled on purpose. A good money type:</p>
+<ul>
+<li>formats itself for the <code>"string"</code> hint, so receipts and logs read <code>₦15,000.00</code>;</li>
+<li><strong>throws</strong> for <code>"default"</code> and <code>"number"</code>, so <code>subtotal + shipping</code> and <code>price * 2</code> fail loudly instead of producing a plausible wrong number;</li>
+<li>offers explicit methods, <code>plus</code>, <code>times</code>, <code>compare</code>, that check currencies.</li>
+</ul>
+<example file="money-primitive.js">
+class Money {
+  constructor(minor, currency) {
+    this.minor = minor;
+    this.currency = currency;
+  }
+
+  [Symbol.toPrimitive](hint) {
+    if (hint === "string") {
+      return new Intl.NumberFormat("en-NG", { style: "currency", currency: this.currency }).format(this.minor / 100);
+    }
+    throw new TypeError(`Money cannot be used as a ${hint} value; use plus(), times() or compare()`);
+  }
+}
+
+const subtotal = new Money(1500000, "NGN");
+const shipping = new Money(2500, "USD");
+
+console.log(`Receipt: ${subtotal} + ${shipping}`);
+console.log(String(subtotal));
+
+for (const attempt of [() => subtotal + shipping, () => subtotal * 2, () => subtotal > shipping, () => "Total: " + subtotal]) {
+  try {
+    attempt();
+  } catch (error) {
+    console.log(`${error.name}: ${error.message}`);
+  }
+}
+</example>
+<output>
+Receipt: ₦15,000.00 + US$25.00
+₦15,000.00
+TypeError: Money cannot be used as a default value; use plus(), times() or compare()
+TypeError: Money cannot be used as a number value; use plus(), times() or compare()
+TypeError: Money cannot be used as a number value; use plus(), times() or compare()
+TypeError: Money cannot be used as a default value; use plus(), times() or compare()
+</output>
+<p>Every silent bug from the first section is now an error with a message that says what to do instead. Note the last one: <code>"Total: " + subtotal</code> uses binary <code>+</code>, so the hint is <code>"default"</code>, not <code>"string"</code>, even though one side is text; JavaScript converts both operands <em>before</em> it decides between adding and joining. Write <code>`Total: ${subtotal}`</code> for text.</p>
+<h3>Why not just valueOf and toString?</h3>
+<p><code>valueOf</code> cannot tell <em>why</em> it was called: <code>a + b</code>, <code>a * 2</code> and <code>a &gt; b</code> all look the same to it. So it can only allow all arithmetic or break comparisons too. <code>Symbol.toPrimitive</code> receives the hint, so it can allow text and refuse arithmetic. It also takes priority: when it exists, <code>valueOf</code> and <code>toString</code> are ignored for conversions.</p>
+<h3>A built-in example: Date</h3>
+<p><code>Date</code> is the one built-in with its own <code>Symbol.toPrimitive</code>. It treats <code>"default"</code> like <code>"string"</code>, which is why adding to a date joins text while subtracting dates gives milliseconds:</p>
+<example file="date-hint.js">
+const paidAt = new Date(Date.UTC(2026, 8, 24, 9, 30));
+const dueAt = new Date(Date.UTC(2026, 8, 24, 10, 0));
+
+console.log(typeof (paidAt + 1), typeof (paidAt - 1));
+console.log((dueAt - paidAt) / 60000, "minutes early");
+console.log(typeof paidAt[Symbol.toPrimitive]);
+</example>
+<output>
+string number
+30 minutes early
+function
+</output>
+</section>
+
+<section>
+<h2 id="to-string-tag">Symbol.toStringTag: a label for your type</h2>
+<p><code>Object.prototype.toString</code> produces the <code>[object Object]</code> text you keep meeting. It builds that label from the object's <code>[Symbol.toStringTag]</code> property if there is one. Built-ins already define it, which is why it is a reliable way to ask "what kind of built-in is this?". Your own classes can define it too, usually as a getter on the class:</p>
+<example file="tag.js">
+const tagOf = (value) => Object.prototype.toString.call(value);
+
+console.log(tagOf([]), tagOf(new Map()), tagOf(null), tagOf(Promise.resolve()));
+
+class Invoice {
+  constructor(id) {
+    this.id = id;
+  }
+  get [Symbol.toStringTag]() {
+    return "Invoice";
+  }
+}
+
+const invoice = new Invoice("INV-2026-00098");
+console.log(tagOf(invoice));
+console.log(tagOf({ id: "INV-1" }));
+</example>
+<output>
+[object Array] [object Map] [object Null] [object Promise]
+[object Invoice]
+[object Object]
+</output>
+<p>It is a label, not a guarantee: any object can claim any tag, including <code>"Array"</code>. Use it for readable logs and debugging, not for security or validation decisions. To check that a value really is an array, use <code>Array.isArray</code>; for your own classes, see the brand checks below.</p>
+</section>
+
+<section>
+<h2 id="has-instance">Symbol.hasInstance and brand checks</h2>
+<p><code>x instanceof C</code> normally walks <code>x</code>'s prototype chain looking for <code>C.prototype</code> (<a href="/learn/js-prototypes#instanceof">Prototypes in depth</a>). If <code>C</code> has a static <code>[Symbol.hasInstance]</code> method, <code>instanceof</code> calls that instead. That lets you describe an <em>interface</em>, "anything with a <code>charge</code> method", as something you can test with <code>instanceof</code>:</p>
+<example file="has-instance.js">
+class Payable {
+  static [Symbol.hasInstance](value) {
+    return typeof value?.charge === "function" && typeof value?.refund === "function";
+  }
+}
+
+const card = { charge() {}, refund() {} };
+const voucher = { charge() {} };
+
+console.log(card instanceof Payable, voucher instanceof Payable, null instanceof Payable);
+</example>
+<output>
+true false false
+</output>
+<p>It works, but it makes <code>instanceof</code> mean something different from what every reader expects, so most codebases avoid it. A plain function <code>isPayable(value)</code> says the same thing without surprising anyone.</p>
+<h3>Symbols are not a safe brand</h3>
+<p>A <strong>brand check</strong> answers "was this object really created by my class?". A symbol key looks like a good brand, but spread copies symbol keys, so a plain object can inherit the brand by accident, or on purpose. A <code>#private</code> field cannot be copied or forged, and <code>#field in value</code> checks for it without throwing:</p>
+<example file="brand.js">
+const moneyBrand = Symbol("Money");
+
+class Money {
+  #minor;
+  constructor(minor) {
+    this.#minor = minor;
+    this[moneyBrand] = true;
+  }
+  static isMoney(value) {
+    return typeof value === "object" && value !== null && #minor in value;
+  }
+}
+
+const real = new Money(500);
+const fake = { ...real, minor: 99999999 };
+
+console.log("symbol brand:", real[moneyBrand], fake[moneyBrand]);
+console.log("private brand:", Money.isMoney(real), Money.isMoney(fake));
+</example>
+<output>
+symbol brand: true true
+private brand: true false
+</output>
+<p>Use symbols to avoid <em>clashes</em>; use private fields to guarantee <em>identity</em>.</p>
+</section>
+
+<section>
+<h2 id="dispose">Symbol.dispose and using</h2>
+<p>In <a href="/learn/js-generators#cleanup">Generators</a>, closing a cursor needed a <code>try</code>/<code>finally</code>. A newer language feature, <strong>explicit resource management</strong>, turns that pattern into a declaration. An object with a <code>[Symbol.dispose]()</code> method can be declared with <code>using</code> instead of <code>const</code>; when the block ends, however it ends, JavaScript calls the method. Several <code>using</code> declarations are disposed in reverse order, the way you would close nested resources by hand:</p>
+<example file="using.js">
+function openLock(seat) {
+  console.log(`  lock ${seat}`);
+  return {
+    seat,
+    [Symbol.dispose]() {
+      console.log(`  unlock ${seat}`);
+    },
+  };
+}
+
+function bookSeats(first, second, fail) {
+  using a = openLock(first);
+  using b = openLock(second);
+  if (fail) throw new Error(`payment failed for ${a.seat}+${b.seat}`);
+  console.log("  booked");
+}
+
+console.log("success:");
+bookSeats("12A", "12B", false);
+
+console.log("failure:");
+try {
+  bookSeats("14A", "14B", true);
+} catch (error) {
+  console.log(" ", error.message);
+}
+</example>
+<output>
+success:
+  lock 12A
+  lock 12B
+  booked
+  unlock 12B
+  unlock 12A
+failure:
+  lock 14A
+  lock 14B
+  unlock 14B
+  unlock 14A
+  payment failed for 14A+14B
+</output>
+<p><code>using</code> and <code>Symbol.dispose</code> work in Node.js 24 and current Chrome, but not yet in every browser, and TypeScript needs a recent <code>lib</code> setting to know them. The idea to take away is the design: resource types advertise "this is how I am closed" through a well-known symbol, and the language calls it at the right moment. <code>Symbol.asyncDispose</code> with <code>await using</code> is the asynchronous twin, for closing database connections.</p>
+</section>
+
+<section>
+<h2 id="protocols">Custom protocols</h2>
+<p>The well-known symbols are protocols: agreements of the form "if your object has a method under this key, I will call it". You can define your own, for the same reason the language does: a symbol key cannot collide with the data your users put in their objects.</p>
+<p>A real need: logs must never contain card numbers or passwords. A logger cannot know every type in the application, so it defines a protocol. Any object that implements <code>[redact]()</code> is asked for a safe version of itself before it is logged:</p>
+<example file="redact.js" project="redact">
+export const redact = Symbol.for("shop.log.redact");
+
+export function safeForLog(value, depth = 0) {
+  if (depth > 5) return "[too deep]";
+  if (value === null || typeof value !== "object") return value;
+  if (typeof value[redact] === "function") return safeForLog(value[redact](), depth + 1);
+  if (Array.isArray(value)) return value.map((item) => safeForLog(item, depth + 1));
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, safeForLog(item, depth + 1)]));
+}
+</example>
+<example file="use-redact.js" project="redact">
+import { redact, safeForLog } from "./redact.js";
+
+class Card {
+  constructor(number, holder) {
+    this.number = number;
+    this.holder = holder;
+  }
+  [redact]() {
+    return { holder: this.holder, last4: this.number.slice(-4) };
+  }
+}
+
+const payment = {
+  orderId: "ORD-7",
+  card: new Card("4111111111111111", "Ada Obi"),
+  redact: "a field that happens to be called redact",
+  attempts: [{ at: 1, card: new Card("5500000000000004", "Ada Obi") }],
+};
+
+console.log(JSON.stringify(safeForLog(payment), null, 2));
+</example>
+<output>
+{
+  "orderId": "ORD-7",
+  "card": {
+    "holder": "Ada Obi",
+    "last4": "1111"
+  },
+  "redact": "a field that happens to be called redact",
+  "attempts": [
+    {
+      "at": 1,
+      "card": {
+        "holder": "Ada Obi",
+        "last4": "0004"
+      }
+    }
+  ]
+}
+</output>
+<p>The protocol has the properties a good protocol needs:</p>
+<ul>
+<li><strong>No clashes.</strong> The payment's own string field named <code>redact</code> was logged as ordinary data, because it is not the symbol.</li>
+<li><strong>Opt-in.</strong> The logger does not need a list of types; each type decides how it is shown.</li>
+<li><strong>Works across copies.</strong> It uses <code>Symbol.for</code> with a namespaced name, so a <code>Card</code> class from another package, or another copy of this one, can implement it without importing the logger.</li>
+<li><strong>Bounded.</strong> The <code>depth</code> limit stops a <code>[redact]()</code> that returns itself, or a circular structure, from recursing forever (<a href="/learn/js-recursion#overflow">Recursion</a>).</li>
+</ul>
+<p>Node's <code>console.log</code> has a protocol of exactly this shape: an object with a method under <code>Symbol.for("nodejs.util.inspect.custom")</code> decides how it is printed. It only affects Node's printing, so this example is Node-only:</p>
+<example file="inspect.js" browser="no">
+const inspect = Symbol.for("nodejs.util.inspect.custom");
+
+class Card {
+  constructor(number) {
+    this.number = number;
+  }
+  [inspect]() {
+    return `Card(**** ${this.number.slice(-4)})`;
+  }
+}
+
+console.log(new Card("4111111111111111"));
+console.log({ paidWith: new Card("5500000000000004") });
+</example>
+<output>
+Card(**** 1111)
+{ paidWith: Card(**** 0004) }
+</output>
+<warn>A display hook only changes what one tool prints. <code>JSON.stringify</code>, error trackers and database logs still see the raw fields. Never rely on a hook for secrecy; keep secrets out of objects that get logged at all, or pass everything through one function like <code>safeForLog</code>.</warn>
+</section>
+
+<section>
+<h2 id="failures">When symbols trip you up</h2>
+<example file="traps.js">
+const tag = Symbol("tag");
+
+try {
+  console.log("key: " + tag);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+console.log(`key: ${tag.description}`, `key: ${String(tag)}`);
+
+try {
+  new Symbol("tag");
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+
+const product = { sku: "RICE-5", [tag]: "promo" };
+const fromApi = JSON.parse(JSON.stringify(product));
+console.log(fromApi[tag], Object.keys(fromApi));
+
+const noDescription = Symbol();
+console.log(noDescription.description, noDescription.toString());
+</example>
+<output>
+TypeError: Cannot convert a Symbol value to a string
+key: tag key: Symbol(tag)
+TypeError: Symbol is not a constructor
+undefined [ 'sku' ]
+undefined Symbol()
+</output>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Trap</th><th>Why</th><th>Do instead</th></tr></thead>
+<tbody>
+<tr><td><code>"text" + sym</code> throws</td><td>Symbols refuse implicit conversion to text</td><td><code>sym.description</code> or <code>String(sym)</code></td></tr>
+<tr><td><code>new Symbol()</code> throws</td><td>Symbols are primitives, not objects</td><td>Call <code>Symbol()</code> without <code>new</code></td></tr>
+<tr><td>Symbol data vanished after an API round trip</td><td>JSON and <code>structuredClone</code> drop symbol keys</td><td>Keep only local metadata in symbol keys</td></tr>
+<tr><td>A brand check passes on a copy</td><td>Spread and <code>Object.assign</code> copy symbol keys</td><td><code>#private</code> field and <code>#field in value</code></td></tr>
+<tr><td>A check fails between two copies of a package</td><td>Each copy called <code>Symbol()</code> separately</td><td><code>Symbol.for("package.name")</code> for shared protocols</td></tr>
+<tr><td><code>"Total: " + money</code> gives the wrong hint</td><td>Binary <code>+</code> passes <code>"default"</code>, not <code>"string"</code></td><td>Template literals for text</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="reason">Before you build: the rules of Money</h2>
+<reason title="Decide what Money allows">
+<p>You will now build the <code>Money</code> type properly. Decide before reading the code:</p>
+<ul>
+<li>Which conversions should work, which should throw, and what should each throw say?</li>
+<li>What should <code>ngn.plus(usd)</code> do? What about <code>ngn.times(1.075)</code> for VAT, which produces a fraction of a kobo?</li>
+<li>What amounts should the constructor refuse?</li>
+<li>Should a <code>Money</code> be changeable after it is created? What goes wrong if it is?</li>
+<li>How should it look in <code>JSON.stringify</code>, which does not use <code>Symbol.toPrimitive</code>?</li>
+</ul>
+<answer>
+<ul>
+<li><strong>Conversions</strong>: <code>"string"</code> formats with <code>Intl.NumberFormat</code>. <code>"number"</code> and <code>"default"</code> throw a <code>TypeError</code> that names the methods to use. Money should never silently become a bare number.</li>
+<li><strong>Arithmetic</strong>: <code>plus</code> and <code>minus</code> require the same currency and throw otherwise (converting needs an exchange rate, which is a separate, explicit step). <code>times</code> rounds to a whole minor unit, and the rounding rule is written in one place.</li>
+<li><strong>Constructor</strong>: only safe integers of minor units, and a three-letter currency code. <code>1.5</code> kobo, <code>NaN</code> and <code>"500"</code> are refused where they enter.</li>
+<li><strong>Immutable</strong>: yes. Operations return new <code>Money</code> objects, and the instance is frozen. If a shared price object could be changed, a discount applied to one cart would change every cart holding that price (<a href="/learn/js-types-deep#copy-or-share">shared references</a>).</li>
+<li><strong>JSON</strong>: <code>JSON.stringify</code> calls a <code>toJSON()</code> method if there is one. Return <code>{ minor, currency }</code>, the exact stored data, never the formatted text, which cannot be parsed back reliably.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: a Money type that cannot be misused</h2>
+<p>The logging protocol symbol gets its own tiny module, so that both <code>Money</code> and the logger can import it:</p>
+<example file="redact-symbol.js" project="money">
+export const redact = Symbol.for("shop.log.redact");
+</example>
+<p>Then the type itself:</p>
+<example file="money.js" project="money">
+import { redact } from "./redact-symbol.js";
+
+export class Money {
+  #minor;
+  #currency;
+
+  constructor(minor, currency) {
+    if (!Number.isSafeInteger(minor)) throw new RangeError(`minor units must be a safe integer, got ${String(minor)}`);
+    if (!/^[A-Z]{3}$/.test(currency)) throw new RangeError(`currency must be a 3-letter code, got ${String(currency)}`);
+    this.#minor = minor;
+    this.#currency = currency;
+    Object.freeze(this);
+  }
+
+  get minor() { return this.#minor; }
+  get currency() { return this.#currency; }
+
+  static isMoney(value) {
+    return typeof value === "object" && value !== null && #minor in value;
+  }
+
+  #sameCurrency(other, action) {
+    if (!Money.isMoney(other)) throw new TypeError(`cannot ${action} Money and ${typeof other}`);
+    if (other.#currency !== this.#currency) {
+      throw new TypeError(`cannot ${action} ${this.#currency} and ${other.#currency}; convert first`);
+    }
+  }
+
+  plus(other) {
+    this.#sameCurrency(other, "add");
+    return new Money(this.#minor + other.#minor, this.#currency);
+  }
+  minus(other) {
+    this.#sameCurrency(other, "subtract");
+    return new Money(this.#minor - other.#minor, this.#currency);
+  }
+  times(factor) {
+    return new Money(Math.round(this.#minor * factor), this.#currency);
+  }
+  compare(other) {
+    this.#sameCurrency(other, "compare");
+    return Math.sign(this.#minor - other.#minor);
+  }
+
+  [Symbol.toPrimitive](hint) {
+    if (hint === "string") {
+      return new Intl.NumberFormat("en-NG", { style: "currency", currency: this.#currency }).format(this.#minor / 100);
+    }
+    throw new TypeError(`Money cannot be used as a ${hint} value; use plus(), minus(), times() or compare()`);
+  }
+  get [Symbol.toStringTag]() { return "Money"; }
+  toJSON() { return { minor: this.#minor, currency: this.#currency }; }
+  [redact]() { return `${this}`; }
+}
+</example>
+<p>Every rule from the reasoning step is in there: validation in the constructor, private fields so the numbers cannot be changed or forged, <code>Object.freeze</code> so no new fields can be added, currency checks in one private helper, and each hook doing one job. <code>Money</code> also joins the logging protocol from the previous section, so a logger that knows nothing about money prints it formatted. Now use it:</p>
+<example file="main.js" project="money">
+import { Money } from "./money.js";
+
+const rice = new Money(850000, "NGN");
+const oil = new Money(320000, "NGN");
+const subtotal = rice.times(2).plus(oil);
+const vat = subtotal.times(0.075);
+const total = subtotal.plus(vat);
+
+console.log(`Subtotal ${subtotal}, VAT ${vat}, total ${total}`);
+console.log(Object.prototype.toString.call(total), JSON.stringify({ total }));
+console.log(total.compare(new Money(2000000, "NGN")));
+
+const shipping = new Money(2500, "USD");
+for (const mistake of [() => total.plus(shipping), () => total + shipping, () => total.plus(500), () => new Money(10.5, "NGN")]) {
+  try {
+    mistake();
+  } catch (error) {
+    console.log(`${error.name}: ${error.message}`);
+  }
+}
+</example>
+<output>
+Subtotal ₦20,200.00, VAT ₦1,515.00, total ₦21,715.00
+[object Money] {"total":{"minor":2171500,"currency":"NGN"}}
+1
+TypeError: cannot add NGN and USD; convert first
+TypeError: Money cannot be used as a default value; use plus(), minus(), times() or compare()
+TypeError: cannot add Money and number
+RangeError: minor units must be a safe integer, got 10.5
+</output>
+<h3>Testing Money</h3>
+<p>The tests check the rules, including the ones that must throw, and the boundaries where rounding happens:</p>
+<example file="money.test.js" project="money">
+import { Money } from "./money.js";
+import { redact } from "./redact-symbol.js";
+
+function check(label, run, expected) {
+  let actual;
+  try {
+    actual = run();
+  } catch (error) {
+    actual = `${error.name}`;
+  }
+  console.log(`${actual === expected ? "PASS" : "FAIL"} ${label} -> ${actual}`);
+}
+
+const ngn = (minor) => new Money(minor, "NGN");
+
+check("formats in text", () => `${ngn(150050)}`, "₦1,500.50");
+check("adds same currency", () => `${ngn(100).plus(ngn(250))}`, "₦3.50");
+check("rounds half a kobo up", () => ngn(1).times(0.5).minor, 1);
+check("rounds a VAT fraction", () => ngn(333).times(0.075).minor, 25);
+check("refuses mixed currencies", () => ngn(1).plus(new Money(1, "USD")), "TypeError");
+check("refuses +", () => ngn(1) + ngn(1), "TypeError");
+check("refuses >", () => ngn(2) > ngn(1), "TypeError");
+check("refuses fractional kobo", () => ngn(0.5), "RangeError");
+check("refuses a lowercase code", () => new Money(1, "ngn"), "RangeError");
+check("refuses a string amount", () => new Money("500", "NGN"), "RangeError");
+check("cannot be changed", () => { "use strict"; const m = ngn(1); m.discount = 1; }, "TypeError");
+check("spread copy is not Money", () => Money.isMoney({ ...ngn(1) }), false);
+check("JSON keeps exact data", () => JSON.stringify(ngn(150050)), '{"minor":150050,"currency":"NGN"}');
+check("log protocol", () => ngn(150050)[redact](), "₦1,500.50");
+</example>
+<output>
+PASS formats in text -> ₦1,500.50
+PASS adds same currency -> ₦3.50
+PASS rounds half a kobo up -> 1
+PASS rounds a VAT fraction -> 25
+PASS refuses mixed currencies -> TypeError
+PASS refuses + -> TypeError
+PASS refuses > -> TypeError
+PASS refuses fractional kobo -> RangeError
+PASS refuses a lowercase code -> RangeError
+PASS refuses a string amount -> RangeError
+PASS cannot be changed -> TypeError
+PASS spread copy is not Money -> false
+PASS JSON keeps exact data -> {"minor":150050,"currency":"NGN"}
+PASS log protocol -> ₦1,500.50
+</output>
+<h3>In production</h3>
+<ul>
+<li><strong>Rounding is a business rule.</strong> <code>Math.round</code> rounds halves up. Tax authorities and payment providers sometimes require other rules (banker's rounding, always down for discounts). Keep the rule in one method, and test the halves; <a href="/learn/js-numbers">Numbers in depth</a> goes further.</li>
+<li><strong>Locale belongs to the viewer.</strong> The <code>"string"</code> hint above always uses <code>en-NG</code>. A shop with customers in several countries formats at the edge, with an explicit <code>money.format(locale)</code> method, and keeps <code>${money}</code> for logs.</li>
+<li><strong>Symbols do not cross the network.</strong> Hooks and symbol keys exist only in memory. Data sent to an API or stored in a database goes through <code>toJSON</code> and must be turned back into <code>Money</code> by explicit parsing and validation on the other side.</li>
+<li><strong>Namespace every registry symbol.</strong> <code>Symbol.for("redact")</code> could be claimed by any library in the process; <code>Symbol.for("shop.log.redact")</code> will not be.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A Duration that prints and subtracts">
+<p>Write a <code>Duration</code> class holding whole seconds. In text it should read like <code>1h 05m 09s</code>. Unlike money, durations may be used as numbers (seconds) for comparisons and arithmetic, but a binary <code>+</code> with a string must still produce readable text. Use <code>Symbol.toPrimitive</code> to make <code>"number"</code> return seconds and both <code>"string"</code> and <code>"default"</code> return the text.</p>
+<solution>
+<example file="duration.js">
+class Duration {
+  constructor(seconds) {
+    if (!Number.isInteger(seconds) || seconds < 0) throw new RangeError("seconds must be a whole number >= 0");
+    this.seconds = seconds;
+  }
+  [Symbol.toPrimitive](hint) {
+    if (hint === "number") return this.seconds;
+    const h = Math.floor(this.seconds / 3600);
+    const m = Math.floor((this.seconds % 3600) / 60);
+    const s = this.seconds % 60;
+    return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
+  }
+}
+
+const delivery = new Duration(3909);
+const pickup = new Duration(1200);
+
+console.log(`Delivery takes ${delivery}`);
+console.log("Pickup: " + pickup);
+console.log(delivery > pickup, delivery - pickup, Math.max(delivery, pickup));
+</example>
+<output>
+Delivery takes 1h 05m 09s
+Pickup: 0h 20m 00s
+true 2709 3909
+</output>
+<p>This is the same technique with a different policy. For durations, "a number of seconds" is a meaningful number, so the <code>"number"</code> hint is allowed. For money, a bare number loses the currency, so it is not. <code>Symbol.toPrimitive</code> lets each type choose.</p>
+</solution>
+</exercise>
+<exercise title="A plugin marker across packages">
+<p>A shop platform loads plugins from separate packages. A plugin is any object marked with the registry symbol <code>Symbol.for("shop.plugin")</code> whose value is <code>{ name, version }</code>. Write <code>loadPlugins(candidates)</code> that returns the names and versions of the marked objects and ignores the rest, including an object with a <em>string</em> key <code>"shop.plugin"</code>.</p>
+<solution>
+<example file="plugins.js">
+const PLUGIN = Symbol.for("shop.plugin");
+
+function loadPlugins(candidates) {
+  return candidates
+    .filter((value) => typeof value === "object" && value !== null && typeof value[PLUGIN] === "object")
+    .map((plugin) => `${plugin[PLUGIN].name}@${plugin[PLUGIN].version}`);
+}
+
+const paystackPlugin = { [Symbol.for("shop.plugin")]: { name: "paystack", version: "2.1.0" }, pay() {} };
+const smsPlugin = { [Symbol.for("shop.plugin")]: { name: "sms", version: "1.0.3" } };
+const lookalike = { "shop.plugin": { name: "fake", version: "0.0.0" } };
+
+console.log(loadPlugins([paystackPlugin, lookalike, null, smsPlugin, "text"]));
+</example>
+<output>
+[ 'paystack@2.1.0', 'sms@1.0.3' ]
+</output>
+<p>Each plugin wrote <code>Symbol.for("shop.plugin")</code> itself, without importing anything from the platform, and still produced the same key, because the registry is shared. The string key <code>"shop.plugin"</code> is a different key entirely, so the lookalike is ignored.</p>
+</solution>
+</exercise>
+<exercise title="An iterable, async-iterable order log">
+<p>Write an <code>OrderLog</code> class with <code>add(event)</code>. Make it iterable with <code>Symbol.iterator</code> (events in order) and async-iterable with <code>Symbol.asyncIterator</code> (the same events, one per tick, as if streamed from a server). Give it the tag <code>OrderLog</code>.</p>
+<solution>
+<example file="order-log.js">
+class OrderLog {
+  #events = [];
+  add(event) {
+    this.#events.push(event);
+    return this;
+  }
+  *[Symbol.iterator]() {
+    yield* this.#events;
+  }
+  async *[Symbol.asyncIterator]() {
+    for (const event of this.#events) {
+      await null;
+      yield event;
+    }
+  }
+  get [Symbol.toStringTag]() {
+    return "OrderLog";
+  }
+}
+
+const log = new OrderLog().add("created").add("paid").add("shipped");
+console.log([...log].join(" -> "));
+console.log(Object.prototype.toString.call(log));
+
+for await (const event of log) console.log("stream:", event);
+</example>
+<output>
+created -> paid -> shipped
+[object OrderLog]
+stream: created
+stream: paid
+stream: shipped
+</output>
+<p>Three well-known symbols, three protocols, one small class: <code>for...of</code>, spread, <code>for await...of</code> and <code>Object.prototype.toString</code> all work because the class put methods under the keys each of them looks for.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A symbol is a unique primitive. As a property key it cannot clash with any string key or any other symbol, which is why the language uses symbols for its hooks.</li>
+<li>Symbol keys are skipped by <code>Object.keys</code>, <code>for...in</code>, JSON and <code>structuredClone</code>, and copied by spread and <code>Object.assign</code>. They are hidden from accidents, not private.</li>
+<li><code>Symbol()</code> is local to the code that created it; <code>Symbol.for(name)</code> is shared through the global registry. Use the registry, with a namespaced name, for protocols that separately loaded code must agree on.</li>
+<li><code>Symbol.toPrimitive(hint)</code> controls conversion with the hints <code>"number"</code>, <code>"string"</code> and <code>"default"</code> (binary <code>+</code> and <code>==</code>). Use it to allow text and refuse silent arithmetic.</li>
+<li><code>Symbol.toStringTag</code> labels objects, <code>Symbol.hasInstance</code> customises <code>instanceof</code>, <code>Symbol.dispose</code> works with <code>using</code>, and <code>Symbol.iterator</code>/<code>Symbol.asyncIterator</code> drive iteration.</li>
+<li>For your own protocols, key the method by a symbol; for identity checks, use <code>#private</code> fields.</li>
+</ul>
+<p>Next: <a href="/learn/js-functional">Functional JavaScript</a>, where functions themselves become the building blocks of a checkout pipeline.</p>
+</section>

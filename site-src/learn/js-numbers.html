@@ -1,0 +1,669 @@
+---
+title: Numbers in depth
+description: Learn how IEEE-754 doubles store numbers, where precision ends, how to round, parse and format naira amounts exactly, and when to reach for BigInt.
+minutes: 55
+youNeed: Mathematical reasoning (money in kobo), Values and types, and Strings in depth
+youBuild: A money module that parses typed naira amounts into kobo without floating point, rounds with an explicit rule, formats with Intl.NumberFormat and keeps 19-digit order ids exact
+keywords: javascript number, ieee 754, double precision, floating point, Number.EPSILON, MAX_SAFE_INTEGER, isSafeInteger, negative zero, toFixed, Math.round, banker's rounding, half even, BigInt, JSON bigint, Intl.NumberFormat, en-NG, naira, kobo, parse money
+objectives: Describe how a double stores a number and predict where integers and decimals stop being exact | Compare floating-point results with a tolerance, and recognise NaN, Infinity and negative zero | Round with a chosen rule, and explain why toFixed and Math.round disagree | Parse typed amounts into integer kobo without floating-point multiplication | Use BigInt for large ids and totals, including JSON round trips | Format money, percentages and compact numbers with Intl.NumberFormat
+---
+<section>
+<h2 id="problem">The refund that went to the wrong order</h2>
+<p>A shop's backend stores orders in a database whose ids are 64-bit integers, generated from a timestamp and a machine number so that every server can create ids without asking the others. The payment provider sends a refund notification as JSON, and a small Node.js service looks the order up:</p>
+<example file="refund.js">
+const body = '{"orderId": 1844674407370955169, "amountKobo": 1250000}';
+const notice = JSON.parse(body);
+
+console.log(notice.orderId);
+console.log(notice.orderId === 1844674407370955169);
+console.log(String(notice.orderId) === "1844674407370955169");
+</example>
+<output>
+1844674407370955200
+true
+false
+</output>
+<p>The id came out as <code>…955200</code>. The service looks up an order that does not exist, or worse, one that belongs to someone else. The second line is even more confusing: the literal in the code is rounded in exactly the same way, so comparing two wrong numbers says <code>true</code>. Only the string comparison reveals that the digits changed.</p>
+<p><a href="/learn/js-values#numbers">Values and types</a> showed that <code>0.1 + 0.2</code> is not <code>0.3</code>, and <a href="/learn/logic-math#kobo">Mathematical reasoning</a> fixed money by counting whole kobo. This lesson explains the number format underneath both problems, so you can predict exactly where numbers stay exact and where they do not, and then covers rounding, parsing, <code>BigInt</code> and formatting well enough to build a correct money module.</p>
+</section>
+
+<section>
+<h2 id="ieee">How a number is stored</h2>
+<p>Every JavaScript <code>number</code> is a 64-bit <strong>double-precision floating-point</strong> value, defined by the standard <strong>IEEE 754</strong>. "Floating point" means the number is stored like scientific notation in base 2: a <strong>sign</strong>, an <strong>exponent</strong> that says where the binary point goes, and a <strong>significand</strong> (also called the mantissa) that holds the digits:</p>
+<figure class="lx-diagram">
+<pre>
+  sign  exponent (11 bits)   significand / fraction (52 bits)
+  [0]   [01111111011]         [1001100110011001100110011001100110011001100110011010]
+
+  value = (-1)^sign  x  1.fraction (binary)  x  2^(exponent - 1023)
+</pre>
+<figcaption>The 64 bits of the number 0.1: one sign bit, 11 exponent bits and 52 fraction bits. The leading 1 before the point is implied, so the significand holds 53 significant binary digits.</figcaption>
+</figure>
+<p>You can look at those bits yourself. A <code>DataView</code> writes a number into 8 raw bytes, and reading the bytes back as a 64-bit unsigned integer (a <code>bigint</code>) shows the pattern:</p>
+<example file="bits.js">
+function bits(x) {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, x);
+  const b = view.getBigUint64(0).toString(2).padStart(64, "0");
+  return `${b[0]} ${b.slice(1, 12)} ${b.slice(12)}`;
+}
+
+console.log(bits(1));
+console.log(bits(0.1));
+console.log((0.1).toPrecision(20));
+console.log((1.005).toPrecision(20));
+</example>
+<output>
+0 01111111111 0000000000000000000000000000000000000000000000000000
+0 01111111011 1001100110011001100110011001100110011001100110011010
+0.10000000000000000555
+1.0049999999999998934
+</output>
+<p>The fraction of 0.1 is the repeating pattern <code>1001 1001 …</code>, cut off after 52 bits and rounded up at the end, like 2/3 written as 0.6667. So the number stored for <code>0.1</code> is slightly more than 0.1, and the number stored for <code>1.005</code> is slightly <em>less</em> than 1.005. <code>toPrecision(20)</code> prints 20 significant digits and shows the difference. When you just print <code>0.1</code>, JavaScript shows the <em>shortest</em> decimal that maps back to the same double, which is why you normally see <code>0.1</code>.</p>
+
+<h3>Exact integers, and the gaps between numbers</h3>
+<p>53 significant bits means every whole number up to 2<sup>53</sup> = 9,007,199,254,740,992 fits exactly. Above that, the exponent has to grow, and the gap between neighbouring doubles becomes 2, then 4, then 8. Near 1, the gap is tiny: <code>Number.EPSILON</code>, about 2.2 × 10<sup>-16</sup>.</p>
+<example file="gaps.js">
+console.log(Number.MAX_SAFE_INTEGER, 2 ** 53 - 1 === Number.MAX_SAFE_INTEGER);
+console.log(2 ** 53 + 1 === 2 ** 53, 2 ** 53 + 2);
+console.log(Number.isSafeInteger(2 ** 53 - 1), Number.isSafeInteger(2 ** 53), Number.isInteger(2 ** 60));
+console.log(Number.EPSILON, 1 + Number.EPSILON === 1, 1 + Number.EPSILON / 2 === 1);
+console.log(1e16 + 1 === 1e16);
+</example>
+<output>
+9007199254740991 true
+true 9007199254740994
+true false true
+2.220446049250313e-16 false true
+true
+</output>
+<p>A <strong>safe integer</strong> is one that is exactly representable <em>and</em> not the rounded result of a different integer. 2<sup>53</sup> itself fails the second condition: 2<sup>53</sup> + 1 rounds to it. <code>Number.isInteger(2 ** 60)</code> is true because the value has no fraction, but it is not safe: many different integers round to it. That is exactly what happened to the order id, which is about 1.8 × 10<sup>18</sup>, two hundred times beyond the safe range.</p>
+<note>For money in kobo, the safe range reaches about ₦90 trillion. A single shop never gets near it; a national payment switch adding up a year of transfers can. The <a href="#bigint">BigInt</a> section handles that case.</note>
+
+<h3>The special values</h3>
+<p>A double can also hold three kinds of special value. They never throw; they spread quietly through calculations:</p>
+<example file="special.js">
+console.log(1 / 0, -1 / 0, Number.MAX_VALUE * 2);
+console.log(0 / 0, Math.sqrt(-1), Number("12 bags"), NaN === NaN, Number.isNaN(NaN));
+console.log(-0 === 0, Object.is(-0, 0), 1 / -0, String(-0), JSON.stringify(-0));
+console.log(Math.round(-0.4), Object.is(Math.round(-0.4), -0), (-0.001).toFixed(2));
+
+const prices = [];
+console.log(Math.max(...prices), Math.min(...prices));
+</example>
+<output>
+Infinity -Infinity Infinity
+NaN NaN NaN false true
+true false -Infinity 0 0
+-0 true -0.00
+-Infinity Infinity
+</output>
+<ul>
+<li><strong>Infinity</strong> comes from overflow and from dividing by zero. A total that becomes <code>Infinity</code> passes every "is it a number?" check that only uses <code>typeof</code>.</li>
+<li><strong>NaN</strong> ("not a number") comes from invalid operations. It is not equal to anything, including itself; test it with <code>Number.isNaN</code>.</li>
+<li><strong>Negative zero</strong> exists because the sign bit is separate. It equals <code>0</code> with <code>===</code> and prints as <code>0</code> with <code>String</code>, but it shows up in <code>console.log</code>, in <code>toFixed</code> (a refund of <code>-0.001</code> naira printed as <code>-0.00</code>) and in <code>Object.is</code>. <code>Math.round(-0.4)</code> produces it.</li>
+<li><code>Math.max()</code> of an empty list is <code>-Infinity</code>. A "highest price" on an empty category page prints nonsense unless you check the list first.</li>
+</ul>
+<p>Use <code>Number.isFinite(x)</code> to accept only real numbers: it is false for <code>NaN</code>, <code>Infinity</code>, <code>-Infinity</code> and for anything that is not a number at all.</p>
+</section>
+
+<section>
+<h2 id="comparing">Comparing decimals</h2>
+<p>Every arithmetic operation on doubles rounds its result to the nearest double. The rounding errors are tiny but they add up, and they depend on the order of operations. Even addition is not associative:</p>
+<example file="order.js">
+console.log(0.1 + 0.2 + 0.3, 0.3 + 0.2 + 0.1);
+console.log((0.1 + 0.2) + 0.3 === 0.1 + (0.2 + 0.3));
+console.log(1.15 * 100, Math.round(1.15 * 100));
+console.log(1.005 * 100, Math.round(1.005 * 100));
+</example>
+<output>
+0.6000000000000001 0.6
+false
+114.99999999999999 115
+100.49999999999999 100
+</output>
+<p>The last line is the dangerous one. ₦1.005 times 100 should be 100.5 kobo, which rounds to 101 with the usual half-up rule, but the stored 1.005 is a little less than 1.005, so the product is a little less than 100.5, and <code>Math.round</code> gives 100. No amount of "rounding afterwards" fixes a number that is already on the wrong side of the half.</p>
+<p>When you must compare results of decimal calculations, such as measurements, exchange rates or statistics, compare with a <strong>tolerance</strong> instead of <code>===</code>. A tolerance relative to the size of the numbers works across magnitudes:</p>
+<example file="close-to.js">
+function nearlyEqual(a, b, relative = 1e-12) {
+  if (a === b) return true;
+  return Math.abs(a - b) <= relative * Math.max(Math.abs(a), Math.abs(b));
+}
+
+console.log(nearlyEqual(0.1 + 0.2, 0.3));
+console.log(nearlyEqual(1e20 + 30000, 1e20));
+console.log(nearlyEqual(0.3, 0.31));
+console.log(Math.abs(1e20 + 30000 - 1e20) < Number.EPSILON);
+</example>
+<output>
+true
+true
+false
+false
+</output>
+<p>The last line shows why <code>Number.EPSILON</code> alone is the wrong tolerance: it is the gap between doubles near <em>1</em>. Near 10<sup>20</sup> the gap is 16,384, so an absolute tolerance of 2 × 10<sup>-16</sup> would never match. For money, none of this should be necessary: keep amounts as whole kobo, where the arithmetic is exact, and do each unavoidable division once, with an explicit rounding rule.</p>
+</section>
+
+<section>
+<h2 id="rounding">Rounding on purpose</h2>
+<p>A <strong>rounding mode</strong> is the rule for what happens to a value exactly halfway, or for which direction to go. JavaScript's built-in functions each follow a different one:</p>
+<example file="rounding.js">
+const values = [2.5, 3.5, -2.5, 2.4, -2.6];
+
+console.log("value  round  floor  ceil  trunc  toFixed(0)");
+for (const v of values) {
+  console.log(
+    String(v).padStart(5),
+    String(Math.round(v)).padStart(6),
+    String(Math.floor(v)).padStart(6),
+    String(Math.ceil(v)).padStart(5),
+    String(Math.trunc(v)).padStart(6),
+    v.toFixed(0).padStart(11),
+  );
+}
+</example>
+<output>
+value  round  floor  ceil  trunc  toFixed(0)
+  2.5      3      2     3      2           3
+  3.5      4      3     4      3           4
+ -2.5     -2     -3    -2     -2          -3
+  2.4      2      2     3      2           2
+ -2.6     -3     -3    -2     -2          -3
+</output>
+<ul>
+<li><code>Math.round</code> rounds halves <em>up</em>, towards +∞: -2.5 becomes -2. So a refund of -2.5 and a charge of 2.5 do not round symmetrically.</li>
+<li><code>toFixed</code> rounds halves <em>away from zero</em>: -2.5 becomes -3. It also returns a <strong>string</strong>, and it rounds the stored double, not the decimal you typed (<code>(1.005).toFixed(2)</code> is <code>"1.00"</code>).</li>
+<li><code>Math.trunc</code> drops the fraction; <code>Math.floor</code> goes down. They differ for negative numbers, which matters for integer division of refunds: <code>Math.trunc(-7 / 2)</code> is -3, <code>Math.floor(-7 / 2)</code> is -4.</li>
+</ul>
+<p>Accounting systems often use <strong>round half to even</strong> (also called banker's rounding): a value exactly halfway goes to the nearest <em>even</em> number, so 2.5 becomes 2 and 3.5 becomes 4. Over many transactions, half the halves go up and half go down, so the total has no upward drift. When your data is already in kobo, you can implement any mode exactly with integer arithmetic. Here is a division of whole numbers with a chosen mode:</p>
+<example file="divide-round.js">
+function divideRound(numerator, denominator, mode = "halfUp") {
+  if (!Number.isSafeInteger(numerator) || !Number.isSafeInteger(denominator) || denominator <= 0) {
+    throw new RangeError("need safe integers and a positive denominator");
+  }
+  const quotient = Math.trunc(numerator / denominator);
+  const remainder = numerator - quotient * denominator;
+  if (remainder === 0) return quotient;
+  const sign = numerator < 0 ? -1 : 1;
+  const twice = 2 * Math.abs(remainder);
+  if (twice < denominator) return quotient;
+  if (twice > denominator) return quotient + sign;
+  if (mode === "halfEven") return quotient % 2 === 0 ? quotient : quotient + sign;
+  return quotient + sign;
+}
+
+// VAT of 7.5% (750 basis points) on 2,450 kobo = 183.75 kobo
+console.log(divideRound(2450 * 750, 10000));
+for (const kobo of [250, 350, -250, 251]) {
+  console.log(kobo / 100, divideRound(kobo, 100, "halfUp"), divideRound(kobo, 100, "halfEven"));
+}
+</example>
+<output>
+184
+2.5 3 2
+3.5 4 4
+-2.5 -3 -2
+2.51 3 3
+</output>
+<p>The function never divides into a fraction it relies on: it compares twice the remainder with the denominator, both whole numbers, to decide "less than half", "exactly half" or "more than half". Its <code>halfUp</code> rounds halves away from zero (symmetric for charges and refunds), which is usually what people mean by "half up" for money. The <code>Math.trunc(numerator / denominator)</code> step is exact for safe integers, because the true quotient is never close enough to a whole number for the rounding of the double to cross it.</p>
+<tip><code>Intl.NumberFormat</code> accepts a <code>roundingMode</code> option (<code>"halfEven"</code>, <code>"halfExpand"</code>, <code>"trunc"</code>, …) for <em>display</em>. Rounding for display and rounding for accounting are separate decisions: round the stored amount with your rule, then format it without further rounding.</tip>
+</section>
+
+<section>
+<h2 id="parsing">Turning text into numbers</h2>
+<p>Amounts arrive as text: from forms, CSV files, query strings. JavaScript has several converters, and they disagree about what counts as a number:</p>
+<example file="parse.js">
+const inputs = ["", "  12 ", "1,250.50", "1_000", "0x1F", "1e3", "Infinity", "12abc", ".5", null];
+
+console.log("input        Number  parseFloat");
+for (const input of inputs) {
+  console.log(JSON.stringify(input).padEnd(12), String(Number(input)).padStart(7), String(parseFloat(input)).padStart(11));
+}
+</example>
+<output>
+input        Number  parseFloat
+""                0         NaN
+"  12 "          12          12
+"1,250.50"      NaN           1
+"1_000"         NaN           1
+"0x1F"           31           0
+"1e3"          1000        1000
+"Infinity"  Infinity    Infinity
+"12abc"         NaN          12
+".5"            0.5         0.5
+null              0         NaN
+</output>
+<p>Neither is safe for money. <code>Number("")</code> and <code>Number(null)</code> are 0, so an empty price field becomes free. <code>parseFloat("1,250.50")</code> stops at the comma and reads ₦1. Both accept <code>Infinity</code> and exponents, and <code>Number</code> accepts hexadecimal. And even for well-formed input, converting a decimal string to a double and multiplying by 100 can land on the wrong side of a half, as <code>1.005 * 100</code> showed.</p>
+<p>The reliable approach treats the amount as <em>text</em> all the way to kobo: check the shape with a regular expression (<a href="/learn/js-regexp">Regular expressions</a> covers the syntax), split at the decimal point, and build the integer from the digit strings. No fraction is ever stored in a double:</p>
+<example file="parse-kobo.js">
+function parseNairaToKobo(input) {
+  const text = String(input).trim().replace(/^₦\s*/, "").replaceAll(",", "");
+  const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(text);
+  if (!match) throw new Error(`not an amount: ${JSON.stringify(input)}`);
+  const [, sign, naira, kobo = ""] = match;
+  const value = Number(naira) * 100 + Number(kobo.padEnd(2, "0"));
+  if (!Number.isSafeInteger(value)) throw new RangeError(`amount too large: ${input}`);
+  return sign === "-" ? -value : value;
+}
+
+for (const input of ["₦1,250.50", "1.005", "1.05", "0.5", "-20", " ₦ 3,000 ", "", "1e3", "12abc"]) {
+  try {
+    console.log(JSON.stringify(input), "->", parseNairaToKobo(input));
+  } catch (error) {
+    console.log(JSON.stringify(input), "->", error.message);
+  }
+}
+</example>
+<output>
+</output>
+<p><code>1.005</code> is rejected instead of silently rounded: it has three decimal places, and kobo have two. Whether to reject or round sub-kobo input is a business decision, but it must be a <em>decision</em>, visible in the code. <code>Number(naira) * 100</code> is exact because both are integers and the result is checked to be safe. A thousands separator is removed before matching; this parser deliberately accepts only the Nigerian style (<code>1,250.50</code>), because <code>1.250,50</code> means the same amount in German and something very different here.</p>
+</section>
+
+<section>
+<h2 id="bigint">BigInt: exact integers of any size</h2>
+<p><a href="/learn/js-types-deep#two-families">Beyond primitives</a> introduced <code>bigint</code>, the primitive for integers of any size, written with an <code>n</code> suffix. Its rules come from one principle: <strong>JavaScript never converts between bigint and number silently</strong>, because either direction can lose information.</p>
+<example file="bigint-rules.js">
+const id = BigInt("1844674407370955169");
+console.log(id, id + 1n, typeof id);
+
+console.log(10n / 3n, -7n / 2n, -7n % 2n);
+console.log(1n < 2, 2n == 2, 2n === 2);
+
+for (const attempt of [() => id + 1, () => Math.max(1n, 2n), () => BigInt(1.5), () => JSON.stringify({ id })]) {
+  try {
+    attempt();
+  } catch (error) {
+    console.log(`${error.name}: ${error.message}`);
+  }
+}
+
+console.log(BigInt(2 ** 53 + 1), BigInt("9007199254740993"));
+</example>
+<output>
+1844674407370955169n 1844674407370955170n bigint
+3n -3n -1n
+true true false
+TypeError: Cannot mix BigInt and other types, use explicit conversions
+TypeError: Cannot convert a BigInt value to a number
+RangeError: The number 1.5 cannot be converted to a BigInt because it is not an integer
+TypeError: Do not know how to serialize a BigInt
+9007199254740992n 9007199254740993n
+</output>
+<ul>
+<li>Create large bigints <strong>from strings</strong>. <code>BigInt(2 ** 53 + 1)</code> converts a number that was already rounded, so the bigint is exact but wrong.</li>
+<li>Division truncates towards zero, like <code>Math.trunc</code>: <code>-7n / 2n</code> is <code>-3n</code>. Rounding must be written by hand, as in <code>divideRound</code>.</li>
+<li>Comparisons across types work (<code>1n &lt; 2</code>, <code>2n == 2</code>), but <code>===</code> is false because the types differ.</li>
+<li><code>Math</code> functions accept only numbers, and <code>JSON.stringify</code> refuses bigints, because JSON readers in other languages might silently round them.</li>
+</ul>
+
+<h3>Large ids through JSON</h3>
+<p>The refund bug needs the id as text or as a bigint <em>before</em> <code>JSON.parse</code> turns it into a double. The best fix is on the sending side: APIs should send 64-bit ids as JSON strings, <code>"orderId": "1844674407370955169"</code>. Twitter, Discord and Stripe all do this for exactly this reason. When you do not control the sender, the <code>JSON.parse</code> <strong>reviver</strong> helps. The reviver is a function called for every value; its third argument gives the original source text of numbers, before rounding. For the way out, <code>JSON.rawJSON</code> inserts raw text into the output:</p>
+<example file="json-ids.js">
+const body = '{"orderId": 1844674407370955169, "amountKobo": 1250000, "fee": 1.5}';
+
+const notice = JSON.parse(body, (key, value, context) =>
+  key === "orderId" ? BigInt(context.source) : value,
+);
+console.log(notice);
+
+const reply = JSON.stringify({ orderId: notice.orderId, status: "refunded" }, (key, value) =>
+  typeof value === "bigint" ? JSON.rawJSON(value.toString()) : value,
+);
+console.log(reply);
+console.log(JSON.stringify({ orderId: String(notice.orderId) }));
+</example>
+<output>
+{ orderId: 1844674407370955169n, amountKobo: 1250000, fee: 1.5 }
+{"orderId":1844674407370955169,"status":"refunded"}
+{"orderId":"1844674407370955169"}
+</output>
+<p>Reading the source text works in Node.js 24 and current browsers; older runtimes ignore the third argument. Inside your own program, keep ids as <strong>strings</strong> unless you do arithmetic on them. Ids are labels, and strings compare, store and serialise without any of these problems. Use <code>BigInt</code> when the numbers are real quantities.</p>
+
+<h3>Totals beyond the safe range</h3>
+<p>A payment switch sums a year of transfers. In kobo, the total can pass 2<sup>53</sup>. With numbers, the sum silently loses kobo; with bigints it stays exact, and formatting needs care so the result is not converted back to a number:</p>
+<example file="big-total.js">
+const transfersKobo = [9007199254740000, 991, 1, 1];
+
+const asNumber = transfersKobo.reduce((sum, k) => sum + k, 0);
+const asBigInt = transfersKobo.reduce((sum, k) => sum + BigInt(k), 0n);
+
+console.log(asNumber, Number.isSafeInteger(asNumber));
+console.log(asBigInt);
+
+function koboToDecimalString(kobo) {
+  const sign = kobo < 0n ? "-" : "";
+  const abs = kobo < 0n ? -kobo : kobo;
+  return `${sign}${abs / 100n}.${String(abs % 100n).padStart(2, "0")}`;
+}
+console.log(koboToDecimalString(asBigInt), koboToDecimalString(-5n));
+</example>
+<output>
+9007199254740992 false
+9007199254740993n
+90071992547409.93 -0.05
+</output>
+<p>The number total is off by one kobo, and <code>isSafeInteger</code> is the only thing that notices. The decimal string is exact because it is built from integer division and remainder. Bigint arithmetic is slower than number arithmetic, so the usual pattern is: numbers for individual amounts (checked with <code>Number.isSafeInteger</code>), bigints for large aggregates and 64-bit ids that need arithmetic.</p>
+</section>
+
+<section>
+<h2 id="format">Formatting with Intl.NumberFormat</h2>
+<p><code>Intl.NumberFormat</code> turns a number into text for a given <strong>locale</strong>, a code like <code>en-NG</code> (English as used in Nigeria) that selects separators, symbols and conventions. Create a formatter once and call <code>format</code> many times:</p>
+<example file="formatting.js">
+const naira = new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN" });
+console.log(naira.format(1250000 / 100), naira.format(-2500), naira.format(0.5));
+
+const options = [
+  { currencyDisplay: "code" },
+  { currencyDisplay: "name" },
+  { currencySign: "accounting" },
+  { signDisplay: "exceptZero" },
+  { notation: "compact" },
+  { maximumFractionDigits: 0 },
+];
+for (const extra of options) {
+  const f = new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", ...extra });
+  console.log(JSON.stringify(extra).padEnd(30), f.format(-1250000.5), "|", f.format(1250000.5));
+}
+</example>
+<output>
+</output>
+<p>The same amount has many correct presentations: <code>accounting</code> puts negatives in parentheses as financial statements do, <code>compact</code> suits dashboards, and <code>code</code> is unambiguous in emails that cross borders. The formatter rounds for display only; it never changes your stored kobo.</p>
+
+<h3>Locales, other currencies and exact input</h3>
+<example file="locales.js">
+const amount = 1234567.5;
+for (const [locale, currency] of [["en-NG", "NGN"], ["en-US", "NGN"], ["de-DE", "EUR"], ["en-IN", "INR"], ["ja-JP", "JPY"]]) {
+  const f = new Intl.NumberFormat(locale, { style: "currency", currency });
+  console.log(locale.padEnd(6), currency, f.format(amount), f.resolvedOptions().maximumFractionDigits);
+}
+
+const naira = new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN" });
+console.log(naira.format(9007199254740993 / 100));
+console.log(naira.format("90071992547409.93"));
+console.log(naira.format(123456789012345678n));
+
+const percent = new Intl.NumberFormat("en-NG", { style: "percent", maximumFractionDigits: 1 });
+const kg = new Intl.NumberFormat("en-NG", { style: "unit", unit: "kilogram" });
+console.log(percent.format(0.075), kg.format(2.5));
+console.log(new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 0 }).formatRange(5000, 10000));
+</example>
+<output>
+</output>
+<ul>
+<li>The <strong>locale</strong> decides the separators and symbol position; the <strong>currency</strong> decides the symbol and how many decimals. <code>en-US</code> writes the naira as <code>NGN</code>, because the <code>₦</code> symbol would be unfamiliar there. The yen has no minor unit, so it has 0 decimals.</li>
+<li><code>format</code> also accepts a <strong>decimal string</strong> and a <strong>bigint</strong>, and formats them exactly. Passing the number <code>9007199254740993 / 100</code> already lost a kobo before the formatter saw it. Pass exact values with <code>koboToDecimalString</code> from the previous section.</li>
+<li>Percent style multiplies by 100: pass <code>0.075</code> for 7.5%.</li>
+</ul>
+<warn title="toFixed and Intl disagree">(1.005).toFixed(2) is <code>"1.00"</code>, because <code>toFixed</code> rounds the stored double, which is just below 1.005. <code>Intl.NumberFormat</code> with two decimals gives <code>"1.01"</code>, because it starts from the shortest decimal that represents the double, <code>1.005</code>, and rounds that. Two parts of the same app using different formatters can show different amounts. Round the kobo yourself, once, and then format a value that needs no rounding.</warn>
+</section>
+
+<section>
+<h2 id="reason">Before you build: a money module</h2>
+<reason title="Where can a naira amount go wrong between the form and the receipt?">
+<p>You will write a small money module: parse what a cashier types, apply a percentage (VAT or a discount) with an explicit rounding rule, add up a cart, and format for display. Before reading the code, decide:</p>
+<ul>
+<li>Which inputs must the parser reject? Think of <code>""</code>, <code>"1e3"</code>, <code>"0x10"</code>, <code>"1.005"</code>, <code>"1.250,50"</code>, <code>"Infinity"</code>, a number instead of a string, and 30 digits.</li>
+<li>A 7.5% VAT is stored how? As <code>0.075</code>, as <code>7.5</code>, or as something else? Which rounding rule, and applied where?</li>
+<li>What should <code>sumKobo</code> do if the total leaves the safe range? Silently switch to bigint, or refuse?</li>
+<li>What should the formatter accept: numbers, bigints, strings? What should it refuse?</li>
+</ul>
+<answer>
+<ul>
+<li>Accept only an optional <code>₦</code>, optional minus, digits with optional commas and at most two decimals. Reject everything else with an error that quotes the input, so bad CSV rows are easy to find. Accept a string only: a number has already been through floating point, so <code>parseNairaToKobo(1.005)</code> could not know what the user typed. Reject more than two decimals rather than rounding, unless the business says otherwise.</li>
+<li>Store rates as integer <strong>basis points</strong> (7.5% = 750) so the only division is the final one, done by <code>divideRound</code> with a named mode. Round once per line or once per total, as the business decides, and never round the same amount twice.</li>
+<li>Refuse. A function that returns a number sometimes and a bigint other times forces every caller to handle both. Throwing a <code>RangeError</code> makes the rare case loud; code that handles national-scale totals uses a separate bigint path on purpose.</li>
+<li>The formatter takes safe-integer kobo, or bigint kobo, and builds an exact decimal string for <code>Intl.NumberFormat</code>. It refuses fractional kobo, <code>NaN</code> and unsafe numbers, which are always bugs upstream.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: the money module</h2>
+<example file="money.js" project="money">
+const nairaFormat = new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN" });
+
+export function parseNairaToKobo(input) {
+  if (typeof input !== "string") throw new TypeError(`amount must be text, got ${typeof input}`);
+  const text = input.trim().replace(/^₦\s*/, "");
+  const match = /^(-?)(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{1,2}))?$/.exec(text);
+  if (!match) throw new Error(`not an amount: ${JSON.stringify(input)}`);
+  const [, sign, naira, kobo = ""] = match;
+  const value = Number(naira.replaceAll(",", "")) * 100 + Number(kobo.padEnd(2, "0"));
+  if (!Number.isSafeInteger(value)) throw new RangeError(`amount too large: ${input}`);
+  return sign === "-" ? -value : value;
+}
+
+export function divideRound(numerator, denominator, mode = "halfUp") {
+  const quotient = Math.trunc(numerator / denominator);
+  const remainder = numerator - quotient * denominator;
+  const sign = numerator < 0 ? -1 : 1;
+  const twice = 2 * Math.abs(remainder);
+  if (remainder === 0 || twice < denominator) return quotient;
+  if (twice > denominator || mode === "halfUp") return quotient + sign;
+  if (mode === "halfEven") return quotient % 2 === 0 ? quotient : quotient + sign;
+  throw new RangeError(`unknown rounding mode: ${mode}`);
+}
+
+export function percentOfKobo(kobo, basisPoints, mode = "halfUp") {
+  const product = kobo * basisPoints;
+  if (!Number.isSafeInteger(product)) throw new RangeError("amount x rate is too large");
+  return divideRound(product, 10000, mode);
+}
+
+export function sumKobo(amounts) {
+  let total = 0;
+  for (const kobo of amounts) {
+    if (!Number.isSafeInteger(kobo)) throw new TypeError(`not whole kobo: ${kobo}`);
+    total += kobo;
+    if (!Number.isSafeInteger(total)) throw new RangeError("total is outside the safe range; use bigint");
+  }
+  return total;
+}
+
+export function formatKobo(kobo) {
+  if (typeof kobo === "number" && !Number.isSafeInteger(kobo)) throw new TypeError(`not whole kobo: ${kobo}`);
+  const big = BigInt(kobo);
+  const abs = big < 0n ? -big : big;
+  const text = `${big < 0n ? "-" : ""}${abs / 100n}.${String(abs % 100n).padStart(2, "0")}`;
+  return nairaFormat.format(text);
+}
+</example>
+<p>The thousands pattern <code>\d{1,3}(?:,\d{3})*</code> accepts <code>1,250</code> and <code>1250</code> but rejects <code>12,50</code>, which is probably a European decimal comma typed by mistake. <code>formatKobo</code> converts to bigint internally so that numbers and bigints share one exact path. Now a cart with VAT, the way a till would use it:</p>
+<example file="till.js" project="money">
+import { formatKobo, parseNairaToKobo, percentOfKobo, sumKobo } from "./money.js";
+
+const VAT_BP = 750;
+const typed = [
+  { name: "Sachet water x3", price: "73.50" },
+  { name: "Bread", price: "₦1,200" },
+  { name: "Palm oil 1L", price: "2,450.25" },
+];
+
+const lines = typed.map((line) => {
+  const kobo = parseNairaToKobo(line.price);
+  return { ...line, kobo, vat: percentOfKobo(kobo, VAT_BP) };
+});
+
+for (const line of lines) {
+  console.log(line.name.padEnd(16), formatKobo(line.kobo).padStart(10), "VAT", formatKobo(line.vat));
+}
+const net = sumKobo(lines.map((l) => l.kobo));
+const vat = sumKobo(lines.map((l) => l.vat));
+console.log("Net".padEnd(16), formatKobo(net).padStart(10));
+console.log("VAT".padEnd(16), formatKobo(vat).padStart(10));
+console.log("Total".padEnd(16), formatKobo(net + vat).padStart(10));
+console.log(formatKobo(123456789012345678n), formatKobo(-5));
+
+for (const bad of ["1.005", "12,50", "", "1e3"]) {
+  try {
+    parseNairaToKobo(bad);
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</example>
+<output>
+</output>
+<p>VAT is rounded per line and the total VAT is the sum of the rounded lines, so the printed receipt always adds up. Every value between the typed text and the printed text was an integer.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing number code</h2>
+<p>Number bugs live at boundaries: halves, negative numbers, zero, the safe-integer edge and malformed text. Test those explicitly, and add a <strong>round-trip property</strong>: for many kobo values, formatting and parsing back must return the same value. A small deterministic generator (the same sequence on every run) gives thousands of inputs without making the test random:</p>
+<example file="money.test.js" project="money">
+import { divideRound, formatKobo, parseNairaToKobo, percentOfKobo, sumKobo } from "./money.js";
+
+function check(label, actual, expected) {
+  const ok = Object.is(actual, expected);
+  console.log(`${ok ? "PASS" : "FAIL"} ${label} -> ${String(actual)}`);
+}
+
+function errorOf(fn) {
+  try {
+    fn();
+    return "no error";
+  } catch (error) {
+    return error.name;
+  }
+}
+
+check("parse 1.05 exactly", parseNairaToKobo("1.05"), 105);
+check("parse 0.5", parseNairaToKobo("0.5"), 50);
+check("parse negative", parseNairaToKobo("-₦20"), "no match expected" === "" ? 0 : errorOf(() => parseNairaToKobo("-₦20")) === "Error" ? -1 : 0);
+check("half up away from zero", divideRound(-250, 100), -3);
+check("half even down", divideRound(250, 100, "halfEven"), 2);
+check("half even up", divideRound(350, 100, "halfEven"), 4);
+check("VAT 183.75 -> 184", percentOfKobo(2450, 750), 184);
+check("VAT of zero is +0", Object.is(percentOfKobo(0, 750), 0), true);
+check("unsafe total refused", errorOf(() => sumKobo([Number.MAX_SAFE_INTEGER, 1])), "RangeError");
+check("fraction refused", errorOf(() => sumKobo([10.5])), "TypeError");
+check("number input refused", errorOf(() => parseNairaToKobo(1.05)), "TypeError");
+check("format -5 kobo", formatKobo(-5), "-₦0.05");
+
+let seed = 42;
+const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+let failures = 0;
+for (let i = 0; i < 5000; i++) {
+  const kobo = (next() - 1073741824) * 3;
+  const text = formatKobo(kobo).replace("₦", "");
+  if (parseNairaToKobo(text) !== kobo) failures++;
+}
+check("5000 round trips", failures, 0);
+</example>
+<output>
+</output>
+<p>The generator is a <strong>linear congruential generator</strong>, a very old formula for pseudo-random numbers. It is useless for security, but perfect for tests: seed 42 always produces the same 5,000 amounts, including negative ones, so a failure can be reproduced. Notice that the round trip goes through <code>formatKobo</code>, which prints <code>-₦…</code>, and the test removes the symbol because the parser expects the minus before it.</p>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Store money as integers in the smallest unit.</strong> In PostgreSQL use <code>bigint</code> kobo (or <code>numeric</code> for rates and exchange calculations). The <code>pg</code> driver returns both <code>bigint</code> and <code>numeric</code> columns as <em>strings</em> by default, precisely to avoid the rounding in this lesson; convert deliberately.</li>
+<li><strong>Keep the currency with the amount.</strong> <code>{ kobo: 125000, currency: "NGN" }</code>, never a bare number. Minor units differ: 2 decimals for NGN, 0 for JPY, 3 for KWD. <code>new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions().maximumFractionDigits</code> tells you.</li>
+<li><strong>Rates as basis points or as decimal strings</strong>, never as floating-point multipliers stored in configuration.</li>
+<li><strong>Validate numbers from outside with <code>Number.isSafeInteger</code> or <code>Number.isFinite</code></strong>, not with <code>typeof x === "number"</code>, which lets <code>NaN</code> and <code>Infinity</code> in. A JSON body with <code>"quantity": 1e308</code> is valid JSON.</li>
+<li><strong>Send 64-bit ids as strings in JSON</strong> and keep them as strings in your code.</li>
+<li><strong>Never use <code>Math.random()</code> for anything secret</strong> (tokens, OTPs, coupon codes). It is predictable. Use <code>crypto.getRandomValues</code> or Node's <code>crypto.randomInt</code>, covered in <a href="/learn/node-crypto">node:crypto</a>.</li>
+<li><strong>Create <code>Intl.NumberFormat</code> objects once</strong> and reuse them; building one loads locale data.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A discount that never goes negative">
+<p>Write <code>applyDiscount(kobo, basisPoints)</code> that takes a percentage off an amount, rounding the discount half-even, and never returns less than 0 or more than the original. Test it on ₦25.50 at 10%, on ₦0.05 at 50%, and with an invalid rate of 12,000 basis points (120%), which should throw.</p>
+<solution>
+<example file="discount.js">
+function divideRoundHalfEven(numerator, denominator) {
+  const quotient = Math.trunc(numerator / denominator);
+  const twice = 2 * Math.abs(numerator - quotient * denominator);
+  const sign = numerator < 0 ? -1 : 1;
+  if (twice < denominator) return quotient;
+  if (twice > denominator) return quotient + sign;
+  return quotient % 2 === 0 ? quotient : quotient + sign;
+}
+
+function applyDiscount(kobo, basisPoints) {
+  if (!Number.isSafeInteger(kobo) || kobo < 0) throw new RangeError(`bad amount: ${kobo}`);
+  if (!Number.isInteger(basisPoints) || basisPoints < 0 || basisPoints > 10000) {
+    throw new RangeError(`bad rate: ${basisPoints}`);
+  }
+  const discount = divideRoundHalfEven(kobo * basisPoints, 10000);
+  return kobo - discount;
+}
+
+console.log(applyDiscount(2550, 1000));
+console.log(applyDiscount(5, 5000));
+try {
+  applyDiscount(2550, 12000);
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output>
+</output>
+<p>The discount on ₦25.50 is 255 kobo exactly. Half of 5 kobo is 2.5 kobo; half-even rounds it to 2, so the customer pays 3 kobo. Validating the rate is what stops a typo in configuration from producing negative prices.</p>
+</solution>
+</exercise>
+
+<exercise title="Parse ids safely">
+<p>An API returns <code>{"items":[{"id":9007199254740993,"qty":2},{"id":9007199254740995,"qty":1}]}</code>. Parse it so that every <code>id</code> becomes a <strong>string</strong> with the exact digits, and print the ids and the total quantity.</p>
+<solution>
+<example file="parse-ids.js">
+const body = '{"items":[{"id":9007199254740993,"qty":2},{"id":9007199254740995,"qty":1}]}';
+
+const data = JSON.parse(body, (key, value, context) =>
+  key === "id" && typeof value === "number" ? context.source : value,
+);
+
+console.log(data.items.map((item) => item.id));
+console.log(data.items.reduce((sum, item) => sum + item.qty, 0));
+console.log(JSON.parse(body).items.map((item) => item.id));
+</example>
+<output>
+</output>
+<p>The last line shows what plain <code>JSON.parse</code> does: both ids are rounded, and the second one even changes to a different odd-looking number. The reviver takes <code>context.source</code>, the original digits, only for numeric <code>id</code> values.</p>
+</solution>
+</exercise>
+
+<exercise title="Format a bank statement column">
+<p>Write <code>statementLine(label, kobo)</code> that prints the label padded to 14 characters and the amount formatted with <code>currencySign: "accounting"</code> (negatives in parentheses), right-aligned to 14 characters. Use it for an opening balance of ₦150,000, a transfer out of ₦45,250.50 and a fee of ₦53.75.</p>
+<solution>
+<example file="statement.js">
+const accounting = new Intl.NumberFormat("en-NG", {
+  style: "currency",
+  currency: "NGN",
+  currencySign: "accounting",
+});
+
+function statementLine(label, kobo) {
+  const abs = Math.abs(kobo);
+  const text = `${kobo < 0 ? "-" : ""}${Math.trunc(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
+  return `${label.padEnd(14)}${accounting.format(text).padStart(14)}`;
+}
+
+const rows = [["Opening", 15000000], ["Transfer out", -4525050], ["SMS fee", -5375]];
+for (const [label, kobo] of rows) console.log(statementLine(label, kobo));
+console.log(statementLine("Closing", rows.reduce((sum, [, kobo]) => sum + kobo, 0)));
+</example>
+<output>
+</output>
+<p>Building the decimal string from integer division and remainder keeps the amounts exact, and the accounting style adds the parentheses. The closing balance is computed in kobo, never from the formatted text.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A number is an IEEE 754 double: sign, exponent and 53 significant bits. Integers are exact up to 2<sup>53</sup> − 1 (<code>Number.MAX_SAFE_INTEGER</code>); beyond that, neighbouring doubles are 2, 4, 8… apart.</li>
+<li>Most decimal fractions are stored approximately; each operation rounds again, and the order of operations changes results. Compare decimals with a relative tolerance, and keep money in integer kobo.</li>
+<li><code>Infinity</code>, <code>NaN</code> and <code>-0</code> never throw. Accept outside numbers with <code>Number.isSafeInteger</code> or <code>Number.isFinite</code>.</li>
+<li><code>Math.round</code> rounds halves towards +∞, <code>toFixed</code> away from zero and on the stored double. Choose a rounding mode on purpose and implement it on integers.</li>
+<li>Parse amounts as text into kobo; never multiply a parsed decimal by 100.</li>
+<li><code>bigint</code> is exact at any size and never mixes silently with numbers. Create it from strings, round divisions yourself, and handle JSON with a reviver's source text or by sending ids as strings.</li>
+<li><code>Intl.NumberFormat</code> formats currencies, percentages, units and compact numbers per locale, and formats strings and bigints exactly. Reuse formatters.</li>
+</ul>
+<p>Next: <a href="/learn/js-collections">Collections in depth</a>, where <code>Map</code>, <code>Set</code> and the weak collections become caches, de-duplicators and private storage.</p>
+</section>

@@ -1,0 +1,721 @@
+---
+title: Strings in depth
+description: Measure, cut, normalise, search, sort and format real product names with accents and emoji, using code points, grapheme clusters, Intl.Segmenter and Intl.Collator.
+minutes: 55
+youNeed: Values and types, Arrays and strings (Algorithms course), and Inheritance and composition
+youBuild: A product-name toolkit for a shop: cleaning, display length, safe truncation, slugs, accent-insensitive search and correct sorting, with tests on tricky names
+keywords: javascript string, unicode, utf-16, code unit, code point, surrogate pair, grapheme cluster, Intl.Segmenter, normalize, NFC NFD NFKC, localeCompare, Intl.Collator, slugify, tagged template, String.raw, isWellFormed, Intl.ListFormat, Intl.PluralRules
+objectives: Explain the difference between UTF-16 code units, code points and grapheme clusters, and count each | Cut and truncate text without breaking characters, using Intl.Segmenter | Normalise text so that visually identical strings compare equal, and strip accents for search | Sort and compare names correctly for a locale with localeCompare and Intl.Collator | Build slugs, safe replacements and tagged templates | Format lists and plurals with Intl
+---
+<section>
+<h2 id="problem">The receipt that printed half a flag</h2>
+<p>A food shop in Lagos prints receipts on a small thermal printer that fits 16 characters per line. Product names come from the shop's admin page, where staff type whatever they like, including accents and emoji. The receipt code shortens long names with <code>slice</code>:</p>
+<example file="receipt.js">
+const products = ["Rice 5kg", "Ìyá Àkàrà 🇳🇬", "Mama Put Jollof 🍲🇳🇬", "Egusi soup XL 🍲 bowl"];
+
+for (const name of products) {
+  const label = name.length > 16 ? name.slice(0, 15) + "…" : name;
+  console.log(JSON.stringify(label), "length", name.length);
+}
+</example>
+<output>
+"Rice 5kg" length 8
+"Ìyá Àkàrà 🇳🇬" length 14
+"Mama Put Jollof…" length 22
+"Egusi soup XL \ud83c…" length 21
+</output>
+<p>Three problems hide in four lines:</p>
+<ul>
+<li><code>"Ìyá Àkàrà 🇳🇬"</code> looks like 11 characters to a person, but <code>length</code> says 14.</li>
+<li>The jollof line happens to be cut in a safe place, but its emoji alone count as 6 towards <code>length</code>.</li>
+<li>The last label ends in <code>\ud83c</code>: half of an emoji. <code>JSON.stringify</code> shows it as an escape because it is not a valid character on its own. The printer prints a box or a question mark, and, as you will see, some functions refuse such a string completely.</li>
+</ul>
+<p>The earlier lessons treated a string as a list of characters. <a href="/learn/js-values#strings">Values and types</a> introduced the methods, and <a href="/learn/dsa-arrays-strings#strings">Arrays and strings</a> showed that strings are immutable and that some emoji take two positions. This lesson explains what a JavaScript string really stores, and then uses that to measure, cut, compare, search, sort and format text the way people read it.</p>
+</section>
+
+<section>
+<h2 id="three-lengths">Three kinds of "character"</h2>
+<p>Text on a computer is built on <strong>Unicode</strong>, a standard that gives every character in every writing system a number, called its <strong>code point</strong>. Code points are written <code>U+</code> followed by hexadecimal digits: <code>A</code> is U+0041, <code>₦</code> is U+20A6, the pot of food <code>🍲</code> is U+1F372. There are over a million possible code points.</p>
+<p>A JavaScript string does not store code points directly. It stores a sequence of <strong>UTF-16 code units</strong>: 16-bit numbers from 0 to 65,535. A code point up to U+FFFF fits in one code unit. A larger one, such as most emoji, is split into two code units called a <strong>surrogate pair</strong>: a high surrogate (D800 to DBFF) followed by a low surrogate (DC00 to DFFF). <code>length</code>, indexing with <code>[i]</code>, <code>slice</code> and <code>charCodeAt</code> all count code units.</p>
+<example file="code-units.js">
+const pot = "🍲";
+
+console.log(pot.length);
+console.log(pot.charCodeAt(0).toString(16), pot.charCodeAt(1).toString(16));
+console.log(pot.codePointAt(0).toString(16));
+console.log(String.fromCodePoint(0x1f372), "\u{1F372}" === pot, "\uD83C\uDF72" === pot);
+console.log([...pot].length, Array.from("₦🍲").length);
+</example>
+<output>
+2
+d83c df72
+1f372
+🍲 true true
+1 2
+</output>
+<p><code>codePointAt</code> reads a whole code point when it starts at a high surrogate. Iterating a string, with <code>for...of</code>, spread <code>[...text]</code> or <code>Array.from</code>, also walks by code point, so each emoji arrives in one piece.</p>
+
+<h3>Grapheme clusters: what a person calls a character</h3>
+<p>Code points are still not what a reader sees. Some visible characters are several code points joined together:</p>
+<ul>
+<li><code>é</code> can be one code point (U+00E9) <em>or</em> a plain <code>e</code> followed by a <strong>combining mark</strong>, U+0301, which draws an accent on the letter before it.</li>
+<li><code>👍🏽</code> is a thumbs-up plus a skin-tone <strong>modifier</strong>.</li>
+<li><code>🇳🇬</code>, the Nigerian flag, is two "regional indicator" letters, N and G.</li>
+<li><code>👩🏾‍🍳</code>, a cook, is woman + skin tone + an invisible <strong>zero width joiner</strong> (U+200D) + cooking pan.</li>
+</ul>
+<p>What a reader perceives as one character is called a <strong>grapheme cluster</strong> (or just grapheme). The rules for grouping code points into graphemes are part of Unicode, and JavaScript exposes them through <code>Intl.Segmenter</code>. <code>Intl</code> is the built-in internationalisation API: objects that know the rules of languages and regions. A segmenter splits text into graphemes, words or sentences:</p>
+<example file="three-lengths.js">
+const graphemes = new Intl.Segmenter("en", { granularity: "grapheme" });
+const countGraphemes = (text) => [...graphemes.segment(text)].length;
+const utf8Bytes = (text) => new TextEncoder().encode(text).length;
+
+const samples = ["Rice", "₦", "é", "e\u0301", "🍲", "👍🏽", "🇳🇬", "👩🏾‍🍳", "Ìyá Àkàrà 🇳🇬"];
+
+console.log("text            units  points  graphemes  utf8");
+for (const text of samples) {
+  console.log(
+    JSON.stringify(text).padEnd(16),
+    String(text.length).padStart(5),
+    String([...text].length).padStart(7),
+    String(countGraphemes(text)).padStart(10),
+    String(utf8Bytes(text)).padStart(5),
+  );
+}
+</example>
+<output>
+text            units  points  graphemes  utf8
+"Rice"               4       4          4     4
+"₦"                  1       1          1     3
+"é"                  1       1          1     2
+"é"                 2       2          1     3
+"🍲"                 2       1          1     4
+"👍🏽"               4       2          1     8
+"🇳🇬"               4       2          1     8
+"👩🏾‍🍳"            7       4          1    15
+"Ìyá Àkàrà 🇳🇬"    14      12         11    23
+</output>
+<p>The first column wobbles because <code>padEnd</code> also counts code units; you will meet that again below. Four different numbers for the same text, and each one is the right answer to a different question:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Unit</th><th>How to count</th><th>Use it for</th></tr></thead>
+<tbody>
+<tr><td>UTF-16 code units</td><td><code>text.length</code></td><td>Indexes for <code>slice</code>, <code>indexOf</code> and friends; limits of APIs defined in code units</td></tr>
+<tr><td>Code points</td><td><code>[...text].length</code></td><td>Database column limits (PostgreSQL's <code>varchar(n)</code> counts code points), iterating safely</td></tr>
+<tr><td>Grapheme clusters</td><td><code>Intl.Segmenter</code></td><td>Anything a person sees: display limits, cursor movement, "max 20 characters" in a form</td></tr>
+<tr><td>UTF-8 bytes</td><td><code>new TextEncoder().encode(text).length</code></td><td>Storage and network sizes, byte limits in headers and files</td></tr>
+</tbody>
+</table></div>
+<p>The two <code>é</code> rows look identical on screen and even in the printed JSON. That is the next problem.</p>
+<note>Only the first column is cheap: <code>length</code> is stored with the string. The others walk the whole string, so compute them once, not inside a tight loop.</note>
+
+<h3>Broken halves: lone surrogates</h3>
+<p>Cutting a string at a code-unit index can split a surrogate pair and leave a <strong>lone surrogate</strong>: half a character. Such a string is not <strong>well-formed</strong> Unicode. JavaScript lets it exist, but anything that must turn it into bytes has a problem:</p>
+<example file="lone-surrogate.js">
+const name = "Mama Put Jollof 🍲🇳🇬";
+const cut = name.slice(0, 17);
+
+console.log(JSON.stringify(cut), cut.isWellFormed());
+console.log(JSON.stringify(cut.toWellFormed()));
+
+try {
+  encodeURIComponent(cut);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+
+console.log(new TextEncoder().encode(cut).slice(-3));
+</example>
+<output>
+"Mama Put Jollof \ud83c" false
+"Mama Put Jollof �"
+URIError: URI malformed
+Uint8Array(3) [ 239, 191, 189 ]
+</output>
+<p><code>encodeURIComponent</code>, which you need to put a name into a URL, throws. <code>TextEncoder</code> silently replaces the half with U+FFFD, the replacement character <code>�</code> (bytes 239, 191, 189), so the database stores a question-mark box. <code>isWellFormed()</code> checks for lone surrogates and <code>toWellFormed()</code> replaces them explicitly. The real fix is to never create them: cut at grapheme boundaries, which the build section does.</p>
+</section>
+
+<section>
+<h2 id="normalization">Normalization: when equal-looking strings are not equal</h2>
+<p>A customer searches for <code>Café Bread</code>. The product was typed on a Mac, the search on an Android phone, and the search finds nothing:</p>
+<example file="normalize.js">
+const stored = "Cafe\u0301 Bread";
+const typed = "Caf\u00e9 Bread";
+
+console.log(stored, typed, stored === typed);
+console.log(stored.length, typed.length);
+console.log(stored.normalize("NFC") === typed.normalize("NFC"));
+console.log(stored.normalize("NFD") === typed.normalize("NFD"));
+console.log(typed.normalize("NFD").length, stored.normalize("NFC").length);
+</example>
+<output>
+Café Bread Café Bread false
+11 10
+true
+true
+11 10
+</output>
+<p>Unicode allows several code point sequences for the same text. <strong>Normalization</strong> rewrites a string into one standard form, so that equal-looking text becomes equal code points. <code>text.normalize(form)</code> supports four forms:</p>
+<ul>
+<li><strong>NFC</strong> (the default): <em>composed</em>. Letters and accents are combined into single code points where one exists. It is the most compact form and the one to store.</li>
+<li><strong>NFD</strong>: <em>decomposed</em>. Every accented letter is split into the base letter plus combining marks. Useful when you want to work on the marks separately.</li>
+<li><strong>NFKC</strong> and <strong>NFKD</strong>: the same, plus <em>compatibility</em> mappings that turn look-alike variants into plain characters. They lose information, so use them for search keys and identifiers, not for storing what the user wrote.</li>
+</ul>
+<example file="nfkc.js">
+const variants = ["ﬁsh pie", "ＲＩＣＥ", "Size ②", "₦5\u00a0000"];
+
+for (const text of variants) {
+  console.log(JSON.stringify(text), "->", JSON.stringify(text.normalize("NFKC")));
+}
+</example>
+<output>
+"ﬁsh pie" -> "fish pie"
+"ＲＩＣＥ" -> "RICE"
+"Size ②" -> "Size 2"
+"₦5 000" -> "₦5 000"
+</output>
+<p>The ligature <code>ﬁ</code> becomes <code>f</code> + <code>i</code>, full-width letters (common from East Asian keyboards) become ordinary ones, and the circled digit becomes <code>2</code>. The last row looks unchanged, but the no-break space (U+00A0) became a normal space: <code>JSON.stringify</code> does not escape either, which is why these bugs are so hard to see in logs.</p>
+
+<h3>Removing accents for search</h3>
+<p>Customers often type <code>akara</code> for <code>Àkàrà</code>. A common search key is: decompose with NFD, remove every combining mark, then lower-case. The regular expression <code>/\p{M}/gu</code> matches any mark in any script (<a href="/learn/js-regexp">Regular expressions</a> explains the syntax):</p>
+<example file="search-key.js">
+const searchKey = (text) => text.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+
+const catalogue = ["Ìyá Àkàrà", "Crème brûlée", "Ẹ̀fọ́ riro", "Rice 5kg"];
+const query = "efo";
+
+console.log(catalogue.map(searchKey));
+console.log(catalogue.filter((name) => searchKey(name).includes(searchKey(query))));
+</example>
+<output>
+[ 'iya akara', 'creme brulee', 'efo riro', 'rice 5kg' ]
+[ 'Ẹ̀fọ́ riro' ]
+</output>
+<p>Yorùbá letters such as <code>ẹ</code> and <code>ọ</code> carry a dot below <em>and</em> a tone mark, all of which are combining marks after decomposition. The key is for matching only; you still show the name as it was written.</p>
+<warn title="Removing marks changes meaning">In many languages accents are not decoration: in Yorùbá, tone marks distinguish different words. Stripping them is fine for a forgiving search box, where more matches are better than none. It is wrong for anything that must be exact, such as usernames, passwords or legal names.</warn>
+</section>
+
+<section>
+<h2 id="case">Upper and lower case are not simple</h2>
+<p>Changing case looks like a one-to-one mapping, but it is not, and some rules depend on the language:</p>
+<example file="case.js">
+console.log("straße".toUpperCase(), "straße".length, "straße".toUpperCase().length);
+console.log("İstanbul".toLowerCase().length, "İstanbul".toLocaleLowerCase("tr").length);
+console.log("DIŞ KAPI".toLowerCase(), "|", "DIŞ KAPI".toLocaleLowerCase("tr"));
+console.log("ǅ".toLowerCase(), "ǅ".toUpperCase());
+</example>
+<output>
+STRASSE 6 7
+9 8
+diş kapi | dış kapı
+ǆ Ǆ
+</output>
+<ul>
+<li>German <code>ß</code> has no single upper-case letter, so upper-casing makes the string longer.</li>
+<li>Turkish has a dotted and a dotless i. <code>toLowerCase()</code> uses language-neutral rules; <code>toLocaleLowerCase("tr")</code> uses Turkish ones and gives a different result. Without a locale argument, <code>toLocaleLowerCase()</code> uses the locale of whatever machine runs the code, so the same program behaves differently on different servers.</li>
+</ul>
+<p>Two consequences for a backend. First, for identifiers (email addresses, SKUs, coupon codes) use the language-neutral <code>toLowerCase()</code>, never the machine's locale. Second, to compare two strings "ignoring case", do not lower-case both and compare: use a collator with a sensitivity setting, shown next.</p>
+</section>
+
+<section>
+<h2 id="sorting">Comparing and sorting for people</h2>
+<p><code>sort()</code> without a comparator, and the operators <code>&lt;</code> and <code>&gt;</code>, compare strings by UTF-16 code unit values. That order puts all capital letters before all small ones, and accented letters after <code>z</code>:</p>
+<example file="default-sort.js">
+const customers = ["Émeka", "zainab", "Ade", "Obi", "Zainab", "adaeze", "Ọlá"];
+
+console.log([...customers].sort());
+console.log("Zainab" < "adaeze", "Émeka" > "zainab");
+</example>
+<output>
+[
+  'Ade',    'Obi',
+  'Zainab', 'adaeze',
+  'zainab', 'Émeka',
+  'Ọlá'
+]
+true true
+</output>
+<p><code>a.localeCompare(b, locale, options)</code> compares like a person who reads that language. It returns a negative number, zero or a positive number, which is exactly what a sort comparator needs (<a href="/learn/dsa-sorting">Sorting</a>). When you compare many strings, create an <code>Intl.Collator</code> once and use its <code>compare</code> method: it is the same comparison without rebuilding the rules on every call.</p>
+<example file="collator.js">
+const customers = ["Émeka", "zainab", "Ade", "Obi", "Zainab", "adaeze", "Ọlá"];
+const byName = new Intl.Collator("en");
+
+console.log(customers.toSorted(byName.compare).join(", "));
+console.log(customers.toSorted((a, b) => a.localeCompare(b, "en")).join(", "));
+
+const sizes = ["Size 10", "Size 9", "Size 2", "size 1"];
+console.log(sizes.toSorted(new Intl.Collator("en").compare).join(", "));
+console.log(sizes.toSorted(new Intl.Collator("en", { numeric: true }).compare).join(", "));
+</example>
+<output>
+adaeze, Ade, Émeka, Obi, Ọlá, zainab, Zainab
+adaeze, Ade, Émeka, Obi, Ọlá, zainab, Zainab
+size 1, Size 10, Size 2, Size 9
+size 1, Size 2, Size 9, Size 10
+</output>
+<p><code>numeric: true</code> compares runs of digits by their numeric value, so "Size 9" comes before "Size 10". Passing <code>byName.compare</code> directly works because a collator's <code>compare</code> is already bound to the collator (<a href="/learn/js-this#explicit">this in depth</a> explains why that matters).</p>
+
+<h3>Sensitivity: what counts as a difference</h3>
+<p>The <code>sensitivity</code> option decides which differences matter when comparing for equality:</p>
+<example file="sensitivity.js">
+const pairs = [["akara", "Àkàrà"], ["akara", "Akara"], ["akara", "àkara"], ["akara", "akara"]];
+
+for (const sensitivity of ["base", "accent", "case", "variant"]) {
+  const collator = new Intl.Collator("en", { sensitivity });
+  const equal = pairs.map(([a, b]) => (collator.compare(a, b) === 0 ? "=" : "≠"));
+  console.log(sensitivity.padEnd(8), equal.join("  "));
+}
+</example>
+<output>
+base     =  =  =  =
+accent   ≠  =  ≠  =
+case     ≠  ≠  =  =
+variant  ≠  ≠  ≠  =
+</output>
+<p>Read the table column by column. The first pair differs in accents <em>and</em> case, the second only in case, the third only in an accent, and the last not at all:</p>
+<ul>
+<li><code>base</code>: only base letters matter. <code>a = á = A</code>. Good for forgiving search and "does this name already exist?".</li>
+<li><code>accent</code>: accents matter, case does not. <code>a ≠ á</code>, <code>a = A</code>.</li>
+<li><code>case</code>: case matters, accents do not.</li>
+<li><code>variant</code> (the default for sorting): everything matters.</li>
+</ul>
+
+<h3>The order depends on the language</h3>
+<p>Sorting is a cultural rule. In German, <code>ö</code> sorts with <code>o</code>; in Swedish it is a separate letter after <code>z</code>. Pass the locale of the <em>reader</em>, and pass it explicitly so the server's settings do not decide:</p>
+<example file="locales.js">
+const words = ["zebra", "öl", "ost", "apple"];
+
+console.log(words.toSorted(new Intl.Collator("de").compare).join(" "));
+console.log(words.toSorted(new Intl.Collator("sv").compare).join(" "));
+</example>
+<output>
+apple öl ost zebra
+apple ost zebra öl
+</output>
+</section>
+
+<section>
+<h2 id="methods">Methods that bite</h2>
+<p>You know the everyday methods from <a href="/learn/js-values#strings">Values and types</a>. A few of them have edges worth knowing before they reach production.</p>
+
+<h3>slice versus substring</h3>
+<example file="slice-substring.js">
+const sku = "RICE-5KG-042";
+
+console.log(sku.slice(-3), "|", sku.substring(-3));
+console.log(sku.slice(5, 3), "|", sku.substring(5, 3));
+console.log(sku.at(-1), sku[sku.length - 1], sku[-1]);
+</example>
+<output>
+042 | RICE-5KG-042
+ | E-
+2 2 undefined
+</output>
+<p><code>slice</code> counts negative indexes from the end and returns an empty string when the start is after the end. <code>substring</code> turns negatives into 0 and silently swaps its arguments. Prefer <code>slice</code>, and <code>at(-1)</code> for "the last one"; <code>sku[-1]</code> is just a missing property.</p>
+
+<h3>replace and the special $ patterns</h3>
+<p>When the replacement is a string, <code>replace</code> and <code>replaceAll</code> treat some <code>$</code> sequences specially: <code>$&amp;</code> means "the matched text", <code>$$</code> means a single <code>$</code>, and there are others. This matters when the replacement comes from data, such as a customer's name or a price in dollars:</p>
+<example file="replace-dollar.js">
+const template = "Dear NAME, your refund is ready.";
+
+console.log(template.replace("NAME", "Ada"));
+console.log(template.replace("NAME", "Big$$ Stores"));
+console.log(template.replace("NAME", "Shop $& Co"));
+console.log(template.replace("NAME", () => "Shop $& Co"));
+</example>
+<output>
+Dear Ada, your refund is ready.
+Dear Big$ Stores, your refund is ready.
+Dear Shop NAME Co, your refund is ready.
+Dear Shop $& Co, your refund is ready.
+</output>
+<p>When the replacement comes from outside your code, pass a <strong>function</strong>. Its return value is used exactly as written.</p>
+
+<h3>split and padding use code units</h3>
+<example file="split-pad.js">
+console.log("🍲🇳🇬".split("").length, [..."🍲🇳🇬"].length);
+console.log("a,b,,c".split(","), "a,b,,c".split(",", 2));
+console.log(`[${"🍲".padEnd(4, ".")}] [${"Rice".padEnd(4, ".")}]`);
+</example>
+<output>
+6 3
+[ 'a', 'b', '', 'c' ] [ 'a', 'b' ]
+[🍲..] [Rice]
+</output>
+<p><code>split("")</code> splits into code units, breaking every emoji. <code>padEnd(4)</code> pads to four <em>code units</em>, so the pot of food gets only two dots and the receipt columns stop lining up. Column layouts for text with emoji need grapheme counts (and even then, terminals draw some emoji two columns wide).</p>
+</section>
+
+<section>
+<h2 id="templates">Template literals, tagged</h2>
+<p>A template literal can be preceded by a function name. Then JavaScript does not build the string itself: it calls the function, called a <strong>tag</strong>, with the literal text pieces and the values separately. The tag decides what to return. That makes tags the right place for rules that must apply to <em>every</em> inserted value, such as escaping:</p>
+<example file="tagged.js">
+function show(strings, ...values) {
+  console.log(strings, values);
+  return "ignored";
+}
+
+const name = "Rice";
+const kobo = 850000;
+console.log(show`Item ${name} costs ${kobo / 100}!`);
+</example>
+<output>
+[ 'Item ', ' costs ', '!' ] [ 'Rice', 8500 ]
+ignored
+</output>
+<p>There is always one more text piece than there are values; pieces can be empty. A product page that builds HTML from product names must escape every name, or a name like <code>&lt;img src=x onerror=…&gt;</code> runs code in customers' browsers (cross-site scripting, covered in the browser lessons). A tag makes the safe way the easy way:</p>
+<example file="html-tag.js">
+const escapeHtml = (value) =>
+  String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
+function html(strings, ...values) {
+  return strings.reduce((out, text, i) => out + escapeHtml(values[i - 1]) + text);
+}
+
+const product = { name: 'Suya <img src=x onerror="alert(1)">', priceNaira: 2500 };
+console.log(html`<li>${product.name}: ₦${product.priceNaira}</li>`);
+</example>
+<output>
+<li>Suya &lt;img src=x onerror=&quot;alert(1)&quot;&gt;: ₦2500</li>
+</output>
+<p>The literal pieces are trusted (you wrote them); the values are escaped. The <code>&amp;</code> replacement comes first, otherwise it would escape the <code>&amp;</code> of every entity written before it.</p>
+<p><code>String.raw</code> is a built-in tag that keeps backslashes as written, which helps with Windows paths and regular expression sources. Inside a tag, <code>strings.raw</code> gives the same raw pieces:</p>
+<example file="string-raw.js">
+console.log(`C:\exports\new-orders.csv`);
+console.log(String.raw`C:\exports\new-orders.csv`);
+</example>
+<output>
+C:exports
+ew-orders.csv
+C:\exports\new-orders.csv
+</output>
+<p>In the normal literal, <code>\e</code> is just <code>e</code> and <code>\n</code> is a line break. <code>String.raw</code> keeps both backslashes.</p>
+</section>
+
+<section>
+<h2 id="intl-text">Formatting text with Intl</h2>
+<p>Numbers and dates have their own formatters, covered in <a href="/learn/js-numbers">Numbers in depth</a> and <a href="/learn/js-dates">Dates and time zones</a>. Three <code>Intl</code> objects handle plain text that people read: lists, plurals and word boundaries.</p>
+<example file="intl-text.js">
+const and = new Intl.ListFormat("en-GB", { type: "conjunction" });
+const or = new Intl.ListFormat("en-GB", { type: "disjunction" });
+console.log(`Your order: ${and.format(["rice", "beans", "plantain"])}.`);
+console.log(`Pay by ${or.format(["card", "transfer", "USSD"])}.`);
+
+const plural = new Intl.PluralRules("en-NG");
+const itemWord = { one: "item", other: "items" };
+for (const n of [0, 1, 2]) console.log(`${n} ${itemWord[plural.select(n)]} in your cart`);
+
+const ordinal = new Intl.PluralRules("en", { type: "ordinal" });
+const suffix = { one: "st", two: "nd", few: "rd", other: "th" };
+console.log([1, 2, 3, 4, 11, 12, 21, 22, 23].map((n) => n + suffix[ordinal.select(n)]).join(" "));
+
+const words = new Intl.Segmenter("en", { granularity: "word" });
+const review = "Great jollof! Delivery took 2 hours, though.";
+console.log([...words.segment(review)].filter((s) => s.isWordLike).length, "words");
+</example>
+<output>
+Your order: rice, beans and plantain.
+Pay by card, transfer or USSD.
+0 items in your cart
+1 item in your cart
+2 items in your cart
+1st 2nd 3rd 4th 11th 12th 21st 22nd 23rd
+7 words
+</output>
+<p><code>PluralRules.select</code> returns a category name (<code>"zero"</code>, <code>"one"</code>, <code>"two"</code>, <code>"few"</code>, <code>"many"</code> or <code>"other"</code>), not a word. Languages use different categories, so you keep one word per category per language, and the rules pick the right one. Writing <code>n === 1 ? "item" : "items"</code> works for English and fails for many other languages. Note the ordinals: 11th, 12th and 13th are the exceptions that hand-written code usually gets wrong.</p>
+</section>
+
+<section>
+<h2 id="reason">Before you build: a product-name toolkit</h2>
+<reason title="What can a product name contain, and what must each function guarantee?">
+<p>You will write <code>cleanName</code> (what gets stored), <code>displayLength</code>, <code>truncate(name, max)</code> for the receipt printer, <code>slugify</code> for URLs like <code>/p/iya-akara</code>, and a sorted, searchable catalogue. Before reading the code, think through:</p>
+<ul>
+<li>What arrives from the admin form? Think of spaces at both ends, several spaces in a row, tabs, a pasted no-break space, decomposed accents, emoji, and half an emoji from a broken client.</li>
+<li>What should <code>truncate</code> count: code units, code points or graphemes? If it adds <code>…</code>, does the ellipsis count towards the limit? What if <code>max</code> is 0 or 1?</li>
+<li>A slug may only contain <code>a-z</code>, <code>0-9</code> and hyphens. What happens to accents, to emoji, to <code>&amp;</code>? What if nothing is left, as for a product called <code>🍲🍲</code>?</li>
+<li>Two different products can produce the same slug (<code>Àkàrà</code> and <code>Akara</code>). Whose problem is that?</li>
+<li>Which of these functions should run once when data arrives, and which on every display?</li>
+</ul>
+<answer>
+<ul>
+<li><code>cleanName</code> runs once at the boundary: <code>toWellFormed()</code> (replace broken halves rather than store them), NFC normalization (one form for everything stored), collapse any run of whitespace, including tabs and U+00A0, into one space with <code>/\s+/g</code>, and trim. Store the result; everything else can assume clean input.</li>
+<li><code>truncate</code> counts graphemes, because the limit is about what the printer shows. The ellipsis is one grapheme and counts, so a name longer than <code>max</code> keeps <code>max - 1</code> graphemes plus <code>…</code>. For <code>max</code> 0 return an empty string; for 1, only the ellipsis fits. Cutting between graphemes can never split a surrogate pair, so the result is always well-formed.</li>
+<li><code>slugify</code> uses NFKD and drops marks, so accents become plain letters; it lower-cases with the language-neutral <code>toLowerCase</code>; everything that is not <code>a-z0-9</code> becomes a hyphen, runs of hyphens collapse, and hyphens at the ends go. Emoji and <code>&amp;</code> disappear. An empty result must not become an empty URL segment: return a fallback such as <code>"product"</code> and let the caller add the id.</li>
+<li>Uniqueness is the caller's problem, because only the caller knows which slugs exist (usually the database, with a unique index). The toolkit's job is only to be deterministic: the same name always gives the same slug.</li>
+<li>Cleaning and slugs run once when a product is saved. Truncation, display length and sorting run when displaying, so their expensive parts (the segmenter and collator objects) are created once at module level and reused.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: the product-name toolkit</h2>
+<example file="names.js" project="names">
+const graphemeSegmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
+const collator = new Intl.Collator("en", { numeric: true });
+const searchCollator = new Intl.Collator("en", { sensitivity: "base" });
+
+export function cleanName(raw) {
+  return String(raw).toWellFormed().normalize("NFC").replace(/\s+/g, " ").trim();
+}
+
+export function graphemes(text) {
+  return Array.from(graphemeSegmenter.segment(text), (s) => s.segment);
+}
+
+export function displayLength(text) {
+  return graphemes(text).length;
+}
+
+export function truncate(text, max, ellipsis = "…") {
+  if (!Number.isInteger(max) || max < 0) throw new RangeError(`max must be a whole number >= 0, got ${max}`);
+  const parts = graphemes(text);
+  if (parts.length <= max) return text;
+  if (max === 0) return "";
+  return parts.slice(0, max - 1).join("").trimEnd() + ellipsis;
+}
+
+export function slugify(text) {
+  const slug = text
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "product";
+}
+
+export function searchKey(text) {
+  return text.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+export function sortByName(products) {
+  return products.toSorted((a, b) => collator.compare(a.name, b.name));
+}
+
+export function sameName(a, b) {
+  return searchCollator.compare(a, b) === 0;
+}
+</example>
+<p><code>truncate</code> trims the end before adding the ellipsis, so "Mama Put …" becomes "Mama Put…". <code>Array.from(iterable, mapFn)</code> collects the segments and maps each one to its text in a single step. Now use the toolkit on the shop's catalogue:</p>
+<example file="main.js" project="names">
+import { cleanName, displayLength, sameName, searchKey, slugify, sortByName, truncate } from "./names.js";
+
+const fromAdminForm = [
+  "  Mama Put   Jollof 🍲🇳🇬 ",
+  "I\u0300ya\u0301 A\u0300ka\u0300ra\u0300",
+  "Chef's special 👩🏾‍🍳",
+  "Rice\u00a05kg",
+  "Rice 10kg",
+  "🍲🍲",
+];
+
+const products = fromAdminForm.map((raw, i) => {
+  const name = cleanName(raw);
+  return { id: i + 1, name, slug: `${slugify(name)}-${i + 1}` };
+});
+
+for (const p of sortByName(products)) {
+  console.log(`${truncate(p.name, 16).padEnd(20)} ${String(displayLength(p.name)).padStart(2)}  /p/${p.slug}`);
+}
+
+console.log(products.filter((p) => searchKey(p.name).includes(searchKey("AKARA"))).map((p) => p.id));
+console.log(sameName("Ìyá Àkàrà", "iya akara"), sameName("Rice 5kg", "Rice 10kg"));
+</example>
+<output>
+🍲🍲                  2  /p/product-6
+Chef's special 👩🏾‍🍳 16  /p/chef-s-special-3
+Ìyá Àkàrà             9  /p/iya-akara-2
+Mama Put Jollof…     18  /p/mama-put-jollof-1
+Rice 5kg              8  /p/rice-5kg-4
+Rice 10kg             9  /p/rice-10kg-5
+[ 2 ]
+true false
+</output>
+<p>Every stored name is clean: runs of spaces and the no-break space are gone, and the decomposed Yorùbá name is now NFC. The catalogue sorts "Rice 5kg" before "Rice 10kg" thanks to <code>numeric: true</code>. The emoji-only product gets the fallback slug with its id attached, and every truncated label is at most 16 graphemes with no broken characters. (The <code>padEnd</code> columns still wobble for lines with emoji, for the code-unit reason you saw earlier.)</p>
+</section>
+
+<section>
+<h2 id="testing">Testing text code</h2>
+<p>Text bugs hide in the inputs you did not think of, so string tests are mostly a good list of nasty inputs. Two kinds of test work well together: examples with exact expected answers, and <strong>properties</strong> that must hold for every input, such as "truncate never returns more than <code>max</code> graphemes and never returns a broken string":</p>
+<example file="names.test.js" project="names">
+import { cleanName, displayLength, graphemes, slugify, truncate } from "./names.js";
+
+function check(label, actual, expected) {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`${ok ? "PASS" : "FAIL"} ${label} -> ${JSON.stringify(actual)}`);
+}
+
+check("clean: spaces and no-break space", cleanName(" Rice\u00a0 5kg\t"), "Rice 5kg");
+check("clean: NFC", cleanName("Cafe\u0301").length, 4);
+check("clean: lone surrogate replaced", cleanName("Pot \ud83c"), "Pot \ufffd");
+check("slug: accents", slugify("Ìyá Àkàrà"), "iya-akara");
+check("slug: symbols", slugify("Fish & Chips (Large)"), "fish-chips-large");
+check("slug: emoji only", slugify("🍲🍲"), "product");
+check("slug: ligature", slugify("ﬁsh pie"), "fish-pie");
+check("truncate: short stays", truncate("Rice", 16), "Rice");
+check("truncate: flag not split", truncate("Jollof 🇳🇬🇳🇬", 8), "Jollof…");
+check("truncate: max 1", truncate("Rice", 1), "…");
+check("truncate: max 0", truncate("Rice", 0), "");
+
+let error = null;
+try {
+  truncate("Rice", -1);
+} catch (e) {
+  error = e.name;
+}
+check("truncate: negative max", error, "RangeError");
+
+const nasty = ["👩🏾‍🍳👩🏾‍🍳👩🏾‍🍳", "e\u0301e\u0301e\u0301e\u0301", "🇳🇬🇬🇭🇰🇪🇿🇦", "Ìyá Àkàrà 🇳🇬 special", "a", ""];
+let violations = 0;
+for (const text of nasty) {
+  for (let max = 0; max <= 6; max++) {
+    const out = truncate(text, max);
+    if (displayLength(out) > max || !out.isWellFormed()) violations++;
+    if (displayLength(text) <= max && out !== text) violations++;
+  }
+}
+check("property: 42 cases, no violations", violations, 0);
+check("graphemes of a family of flags", graphemes("🇳🇬🇬🇭").length, 2);
+</example>
+<output>
+PASS clean: spaces and no-break space -> "Rice 5kg"
+PASS clean: NFC -> 4
+PASS clean: lone surrogate replaced -> "Pot �"
+PASS slug: accents -> "iya-akara"
+PASS slug: symbols -> "fish-chips-large"
+PASS slug: emoji only -> "product"
+PASS slug: ligature -> "fish-pie"
+PASS truncate: short stays -> "Rice"
+PASS truncate: flag not split -> "Jollof…"
+PASS truncate: max 1 -> "…"
+PASS truncate: max 0 -> ""
+PASS truncate: negative max -> "RangeError"
+PASS property: 42 cases, no violations -> 0
+PASS graphemes of a family of flags -> 2
+</output>
+<p>The property test runs every nasty input with every limit from 0 to 6: 42 cases from six lines of data. When a property fails, add the failing input to the example list, so the bug has a readable test forever. The <a href="/learn/testing-basics">testing lesson</a> introduces libraries that generate such inputs automatically.</p>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Normalise once, at the boundary.</strong> Clean and NFC-normalise text when it enters the system (form, API, file import), store that, and compare stored values with plain <code>===</code>.</li>
+<li><strong>Know which "length" each limit means.</strong> A form's "max 20 characters" is graphemes. PostgreSQL's <code>varchar(20)</code> is code points. An HTTP header or file limit is bytes. SMS is its own world: a message fits 160 characters of the basic GSM alphabet, but a single emoji or <code>₦</code> switches the whole message to UCS-2 with a 70-unit limit, and the customer pays for more messages.</li>
+<li><strong>Reuse <code>Intl</code> objects.</strong> Creating a collator or segmenter loads locale rules. Make them once at module level, as the toolkit does, not inside a sort comparator.</li>
+<li><strong>Always pass a locale.</strong> <code>localeCompare(b)</code> and <code>toLocaleLowerCase()</code> without a locale use the server's default, which may differ between your laptop, CI and production.</li>
+<li><strong>Look-alike characters are a security issue.</strong> The Cyrillic <code>а</code> (U+0430) looks exactly like the Latin <code>a</code>, and normalization does not change it. A username or shop name can impersonate another one. Restrict identifiers to an allowed set of characters, or check them against Unicode's list of confusable characters, before accepting them.</li>
+<li><strong>Never build HTML, SQL or shell commands by concatenating strings.</strong> Use escaping tags like <code>html</code>, parameterised queries (<a href="/learn/sql-basics">SQL basics</a>) and argument arrays.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Initials that respect names">
+<p>Write <code>initials(fullName)</code> that returns the first grapheme of each word, upper-cased, for an avatar badge. <code>"ìyábọ̀ ọlá"</code> should give <code>"ÌỌ"</code> (the dot below and the tone mark stay on the letter) and <code>"👩🏾‍🍳 Ada"</code> should keep the whole cook emoji. Split words on whitespace.</p>
+<solution>
+<example file="initials.js">
+const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
+
+function initials(fullName) {
+  return fullName
+    .normalize("NFC")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => segmenter.segment(word)[Symbol.iterator]().next().value.segment.toUpperCase())
+    .join("");
+}
+
+console.log(initials("ìyábọ̀ ọlá"));
+console.log(initials("👩🏾‍🍳 Ada"));
+console.log(initials("  chidi   okafor "));
+console.log(JSON.stringify(initials("   ")));
+</example>
+<output>
+ÌỌ
+👩🏾‍🍳A
+CO
+""
+</output>
+<p>Taking <code>word[0]</code> would keep only the first code unit: half the emoji, or a letter without its marks when they are separate code points. The segmenter's first segment is the whole first grapheme. <code>filter(Boolean)</code> drops the empty word that <code>split</code> produces for a blank name.</p>
+</solution>
+</exercise>
+
+<exercise title="Find duplicate products">
+<p>Staff keep creating the same product twice with different spelling: <code>"Àkàrà"</code> and <code>"akara"</code>, <code>"Rice 5kg"</code> and <code>"rice  5KG"</code>. Write <code>findDuplicates(names)</code> that groups names whose cleaned search keys are equal, and returns only the groups with more than one name.</p>
+<solution>
+<example file="duplicates.js">
+const key = (name) =>
+  name.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
+
+function findDuplicates(names) {
+  const groups = new Map();
+  for (const name of names) {
+    const k = key(name);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(name);
+  }
+  return [...groups.values()].filter((group) => group.length > 1);
+}
+
+console.log(findDuplicates(["Àkàrà", "Rice 5kg", "akara", "Beans", "rice  5KG", "ＲＩＣＥ 5kg"]));
+</example>
+<output>
+[ [ 'Àkàrà', 'akara' ], [ 'Rice 5kg', 'rice  5KG', 'ＲＩＣＥ 5kg' ] ]
+</output>
+<p>The key does all the forgiving work: NFKD turns the full-width letters into plain ones, removing marks makes accents disappear, and whitespace is collapsed. A <code>Map</code> from key to names groups them in one pass, which <a href="/learn/js-collections">Collections in depth</a> explores further.</p>
+</solution>
+</exercise>
+
+<exercise title="A receipt column that lines up">
+<p>Write <code>padGraphemes(text, width)</code> that pads with spaces to <code>width</code> <em>graphemes</em> (not code units), and use it to print a two-column receipt where the prices line up for <code>"Rice 5kg"</code>, <code>"Àkàrà"</code> (decomposed, with separate combining marks) and <code>"Jollof 🍲"</code>. Assume each grapheme is one column wide.</p>
+<solution>
+<example file="receipt-columns.js">
+const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
+const width = (text) => [...segmenter.segment(text)].length;
+
+function padGraphemes(text, size) {
+  return text + " ".repeat(Math.max(0, size - width(text)));
+}
+
+const lines = [
+  ["Rice 5kg", 850000],
+  ["A\u0300ka\u0300ra\u0300", 150000],
+  ["Jollof 🍲", 350000],
+];
+
+for (const [name, kobo] of lines) {
+  console.log(`${padGraphemes(name, 12)}₦${kobo / 100}`);
+}
+
+console.log(lines.map(([name]) => width(padGraphemes(name, 12))));
+console.log(lines.map(([name]) => width(name.padEnd(12))));
+</example>
+<output>
+Rice 5kg    ₦8500
+Àkàrà       ₦1500
+Jollof 🍲    ₦3500
+[ 12, 12, 12 ]
+[ 12, 9, 11 ]
+</output>
+<p>The last two lines measure the padded names in graphemes. <code>padGraphemes</code> gives exactly 12 every time. <code>padEnd(12)</code> gives 12 only for plain text: the decomposed <code>Àkàrà</code> is 8 code units but 5 graphemes, and the emoji is 2 code units, so both come out short. On a real terminal the emoji is also drawn two columns wide, which no string function can know; receipt printers usually avoid emoji for that reason.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A JavaScript string is a sequence of UTF-16 code units. <code>length</code>, indexes, <code>slice</code>, <code>split("")</code> and <code>padEnd</code> all count code units.</li>
+<li>Code points above U+FFFF (most emoji) are two code units, a surrogate pair. Iteration (<code>for...of</code>, <code>[...text]</code>) walks code points; <code>codePointAt</code> reads them.</li>
+<li>What a person sees as one character is a grapheme cluster, possibly many code points. Count and cut with <code>Intl.Segmenter</code>. Cutting code units can leave lone surrogates, which break <code>encodeURIComponent</code> and turn into <code>�</code>.</li>
+<li>Equal-looking text can differ in code points. Normalise to NFC at the boundary; use NFKD plus removing <code>\p{M}</code> for forgiving search keys.</li>
+<li>Case mapping can change length and depends on language. Use <code>toLowerCase()</code> for identifiers, and collators with a <code>sensitivity</code> for "ignore case or accents" comparisons.</li>
+<li>Sort text for people with <code>Intl.Collator</code> (reuse one; add <code>numeric: true</code> for numbers inside names) and always pass the reader's locale.</li>
+<li>Pass a function to <code>replace</code> when the replacement comes from data; use a tag to escape every value inserted into HTML; format lists and plurals with <code>Intl.ListFormat</code> and <code>Intl.PluralRules</code>.</li>
+</ul>
+<p>Next: <a href="/learn/js-numbers">Numbers in depth</a>, where naira prices, kobo, BigInt order ids and <code>Intl.NumberFormat</code> meet the limits of floating point.</p>
+</section>

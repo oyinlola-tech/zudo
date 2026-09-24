@@ -1,0 +1,1033 @@
+---
+title: Events, processes and workers
+description: Coordinate a Node.js program with EventEmitter, run other programs as child processes, move heavy work to worker threads, and shut down cleanly on SIGTERM.
+minutes: 55
+youNeed: What Node.js is, Files, paths and your computer, and Streams and buffers
+youBuild: A supervisor that runs an invoice worker in a child process, restarts it after a crash, skips a poison job and shuts down cleanly on SIGTERM
+keywords: node eventemitter, events.once, captureRejections, MaxListenersExceededWarning, child_process spawn exec execFile fork, shell injection, worker_threads, SIGTERM SIGINT SIGKILL, graceful shutdown, process uncaughtException unhandledRejection, os module, exit codes
+objectives: Build services on EventEmitter and avoid its traps: synchronous emit, async listeners, leaked listeners | Run other programs with execFile and spawn, pass arguments safely and handle exit codes, timeouts and output limits | Move CPU-heavy JavaScript to a worker thread so the event loop stays responsive | Handle SIGTERM and SIGINT with a graceful shutdown that finishes in-flight work and has a deadline | Supervise a child process: detect a crash, restart it and stop retrying a poison job
+---
+<section>
+<h2 id="problem">One program, four jobs it cannot do alone</h2>
+<p>Picture the order server of an online shop. A customer pays ₦45,000 for a pair of shoes, and four things have to happen:</p>
+<ol>
+<li>Several parts of the program must hear about the payment: stock must go down, a receipt e-mail must go out, the analytics counter must go up. The payment code should not have to know about all of them.</li>
+<li>A PDF invoice has to be made. Your team already has a program that does it, and it is not written in JavaScript.</li>
+<li>At midnight a sales report adds up ten million orders. That takes a second or more of pure calculation, and while it runs the server must still answer customers.</li>
+<li>Twice a day a new version is deployed. The hosting platform tells the old server to stop. A payment that is half written to the database must not be cut in the middle.</li>
+</ol>
+<p>Each job needs a different Node.js tool: <strong>events</strong> for the first, <strong>child processes</strong> for the second, <strong>worker threads</strong> for the third and <strong>signals</strong> for the fourth. You met plain <code>EventEmitter</code> and the <code>process</code> object in <a href="/learn/node-apis#events">Files, paths and your computer</a> and <a href="/learn/node-runtime#process">What Node.js is</a>. This lesson goes deeper into each tool, shows how it fails, and ends with a small supervisor that uses all of them together.</p>
+<p>Every example needs Node.js, so they are marked <em>Node.js only</em>. Run them in your <code>learn-node</code> folder with <code>node file.js</code>.</p>
+</section>
+
+<section>
+<h2 id="emitter">EventEmitter in depth</h2>
+<p>Real Node.js code rarely creates a bare <code>new EventEmitter()</code>. It <strong>extends</strong> it: a class does its own job and announces what happened, and other code listens. This is how <code>http.Server</code>, streams and child processes work inside Node.js.</p>
+<example file="order-service.js" browser="no">
+import { EventEmitter } from "node:events";
+
+class OrderService extends EventEmitter {
+  #orders = new Map();
+
+  pay(orderId, amount) {
+    if (!(amount > 0)) throw new RangeError(`Invalid amount: ${amount}`);
+    const order = { orderId, amount, status: "paid" };
+    this.#orders.set(orderId, order);
+    const heard = this.emit("paid", order);
+    console.log(`${orderId} paid, listeners notified: ${heard}`);
+    return order;
+  }
+}
+
+const orders = new OrderService();
+orders.pay("ORD-1", 45_000);
+
+orders.on("paid", (order) => console.log(`[stock] reserve items for ${order.orderId}`));
+orders.on("paid", (order) => console.log(`[mail] receipt for ₦${order.amount.toLocaleString("en-NG")}`));
+
+orders.pay("ORD-2", 12_500);
+console.log("events:", orders.eventNames(), "paid listeners:", orders.listenerCount("paid"));
+</example>
+<output>
+ORD-1 paid, listeners notified: false
+[stock] reserve items for ORD-2
+[mail] receipt for ₦12,500
+ORD-2 paid, listeners notified: true
+events: [ 'paid' ] paid listeners: 2
+</output>
+<ul>
+<li><code>emit</code> returns <code>true</code> when at least one listener was called, and <code>false</code> when nobody was listening. The first payment happened before anyone subscribed, so nobody heard it. Events are not stored: a listener added later does not see earlier events.</li>
+<li><code>eventNames()</code> and <code>listenerCount()</code> let you inspect an emitter, which is useful in tests and when you hunt for leaks.</li>
+<li><code>#orders</code> is a private field: listeners get the order they are given, not the whole store.</li>
+</ul>
+
+<h3>emit is synchronous</h3>
+<p>This surprises almost everyone. <code>emit</code> does not schedule anything. It calls every listener, one after another, <em>before</em> it returns. So a listener that throws stops the listeners after it, and the error flies out of <code>emit</code> into the code that emitted:</p>
+<example file="sync-emit.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const orders = new EventEmitter();
+orders.on("paid", (order) => console.log(`[stock] reserve items for ${order.orderId}`));
+orders.on("paid", () => {
+  throw new Error("analytics server unreachable");
+});
+orders.on("paid", (order) => console.log(`[mail] receipt for ${order.orderId}`));
+
+function pay(orderId) {
+  console.log("before emit");
+  try {
+    orders.emit("paid", { orderId });
+  } catch (error) {
+    console.log("pay() got the listener's error:", error.message);
+  }
+  console.log("after emit");
+}
+
+pay("ORD-3");
+</example>
+<output>
+before emit
+[stock] reserve items for ORD-3
+pay() got the listener's error: analytics server unreachable
+after emit
+</output>
+<p>The customer paid, but no receipt was sent, because the analytics listener failed first. Two rules follow. First, a listener that can fail must catch its own errors: a side job such as analytics should never break the payment. Second, if a listener does slow work, it must not do it synchronously, or every <code>emit</code> waits for it.</p>
+
+<h3>Async listeners and captureRejections</h3>
+<p>So you make the e-mail listener <code>async</code>. Now a new problem appears: <code>emit</code> ignores the promise the listener returns. If it rejects, nobody is waiting for it, and an unhandled rejection crashes a Node.js program. The option <code>captureRejections: true</code> tells the emitter to catch those rejections and turn them into an <code>"error"</code> event:</p>
+<example file="async-listener.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const orders = new EventEmitter({ captureRejections: true });
+
+orders.on("paid", async (order) => {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  throw new Error(`mail server refused receipt for ${order.orderId}`);
+});
+
+orders.on("error", (error) => {
+  console.log("[error handler]", error.message);
+});
+
+const heard = orders.emit("paid", { orderId: "ORD-4" });
+console.log("emit returned", heard, "before the e-mail was even tried");
+</example>
+<output>
+emit returned true before the e-mail was even tried
+[error handler] mail server refused receipt for ORD-4
+</output>
+<p>Without <code>captureRejections</code> the same program would end with an unhandled rejection. With it, you still need an <code>"error"</code> listener: as you saw in the earlier lesson, an <code>"error"</code> event that nobody listens for throws.</p>
+
+<h3>Waiting for one event: events.once</h3>
+<p>Often you want to <em>wait</em> for an event: "continue when the database says ready". The function <code>once</code> from <code>node:events</code> (not the method) returns a promise. It resolves with an array of the event's arguments, and it rejects if the emitter emits <code>"error"</code> first:</p>
+<example file="wait-once.js" browser="no">
+import { EventEmitter, once } from "node:events";
+
+function connect(shouldFail) {
+  const db = new EventEmitter();
+  setTimeout(() => {
+    if (shouldFail) db.emit("error", new Error("connection refused"));
+    else db.emit("ready", "postgres", 5432);
+  }, 20);
+  return db;
+}
+
+const [name, port] = await once(connect(false), "ready");
+console.log(`connected to ${name} on port ${port}`);
+
+try {
+  await once(connect(true), "ready");
+} catch (error) {
+  console.log("startup failed:", error.message);
+}
+</example>
+<output>
+connected to postgres on port 5432
+startup failed: connection refused
+</output>
+<p>This is the clean way to turn "wait for an event" into <code>await</code>, and it is what you will use in tests.</p>
+
+<h3>Removing listeners</h3>
+<p><code>off(name, fn)</code> (also called <code>removeListener</code>) removes a listener, but only when you pass the <em>same function</em> you added. An arrow function written inline cannot be removed later, because you have no reference to it:</p>
+<example file="off.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const stock = new EventEmitter();
+const logLow = (item) => console.log(`low stock: ${item}`);
+
+stock.on("low", logLow);
+stock.on("low", (item) => console.log(`reorder ${item}`));
+
+stock.off("low", logLow);
+stock.off("low", (item) => console.log(`reorder ${item}`));
+
+console.log("listeners left:", stock.listenerCount("low"));
+stock.emit("low", "sneakers size 42");
+</example>
+<output>
+listeners left: 1
+reorder sneakers size 42
+</output>
+<p>The second <code>off</code> did nothing: it created a new function that looks the same but is a different object. Keep a reference to every listener you plan to remove.</p>
+</section>
+
+<section>
+<h2 id="leaks">Listener leaks</h2>
+<reason title="A listener per request">
+<p>A developer wants each HTTP request to log when the shop's price list is reloaded. Inside the request handler they write <code>prices.on("reloaded", () => log(requestId))</code>. The server handles 2,000 requests an hour and restarts once a week. Before reading on, think it through:</p>
+<ul>
+<li>How many listeners does <code>prices</code> have after one hour? After a week?</li>
+<li>What does each listener keep alive?</li>
+<li>What happens on the next <code>"reloaded"</code> event?</li>
+<li>How would you notice before the server runs out of memory?</li>
+</ul>
+<answer>
+<p>Nothing ever removes the listeners. After one hour there are 2,000; after a week, about 336,000. Each one is a closure, so it keeps its <code>requestId</code> and anything else it refers to (maybe the whole request object) alive: the garbage collector can never free them. The next <code>"reloaded"</code> event calls all 336,000 functions synchronously, freezing the server. This is a <strong>memory leak</strong>: memory that is still reachable but will never be used again.</p>
+<p>Node.js helps you notice. When an emitter gets more than 10 listeners for one event, it prints a warning. Ten is not a hard limit; it is a smoke detector. The fix is to add the listener once, at startup, or to remove it when the request ends.</p>
+</answer>
+</reason>
+<p>Here is the warning. It normally goes to stderr; the program also catches it with <code>process.on("warning")</code> so you can see its parts:</p>
+<example file="leak.js" browser="no">
+import { EventEmitter } from "node:events";
+
+class PriceList extends EventEmitter {}
+const prices = new PriceList();
+
+process.on("warning", (warning) => {
+  console.log(warning.name);
+  console.log(warning.message);
+});
+
+function handleRequest(requestId) {
+  prices.on("reloaded", () => console.log(`request ${requestId} saw new prices`));
+}
+
+for (let id = 1; id <= 11; id++) handleRequest(id);
+console.log("listeners:", prices.listenerCount("reloaded"));
+</example>
+<output>
+listeners: 11
+MaxListenersExceededWarning
+Possible EventEmitter memory leak detected. 11 reloaded listeners added to [PriceList]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+</output>
+<p>The warning names the class (<code>PriceList</code>), the event and the count. When you see it, do not just raise the limit with <code>setMaxListeners</code>. First ask why listeners keep being added. Raise the limit only when many listeners are genuinely expected, such as one per connected WebSocket client that removes itself on disconnect.</p>
+<tip>Browsers use <code>EventTarget</code> (<code>addEventListener</code>) instead of <code>EventEmitter</code>, and Node.js has it too. <code>addEventListener</code> accepts <code>{ signal }</code>: aborting that signal removes the listener, which is a tidy way to remove many listeners at once. You will use it in <a href="/learn/browser-events">Events in the browser</a>.</tip>
+</section>
+
+<section>
+<h2 id="process-events">Events on the process itself</h2>
+<p>The global <code>process</code> is an event emitter too. Its events tell you about the life of the whole program:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Event</th><th>When it fires</th><th>What to do in it</th></tr></thead>
+<tbody>
+<tr><td><code>"exit"</code></td><td>The process is about to end, for any reason except a kill signal</td><td>Synchronous last words only; timers and promises no longer run</td></tr>
+<tr><td><code>"beforeExit"</code></td><td>The event loop is empty (not after <code>process.exit()</code>)</td><td>Rarely needed</td></tr>
+<tr><td><code>"uncaughtException"</code></td><td>A thrown error reached the top with no <code>catch</code></td><td>Log it, then exit. The program is in an unknown state</td></tr>
+<tr><td><code>"unhandledRejection"</code></td><td>A rejected promise had no handler</td><td>Log it and exit; since Node.js 15 the default is to crash</td></tr>
+<tr><td><code>"warning"</code></td><td>Node.js emits a warning, such as the listener leak</td><td>Send it to your logs</td></tr>
+<tr><td><code>"SIGTERM"</code>, <code>"SIGINT"</code></td><td>The operating system sends a signal</td><td>Start a graceful shutdown (see <a href="#signals">Signals</a>)</td></tr>
+</tbody>
+</table></div>
+<example file="last-words.js" browser="no">
+process.on("exit", (code) => {
+  console.log(`exit event, code ${code}`);
+  setTimeout(() => console.log("this never prints"), 0);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.log("unhandled rejection:", reason.message);
+  process.exitCode = 1;
+});
+
+async function chargeCard(amount) {
+  throw new Error(`card declined for ₦${amount}`);
+}
+
+chargeCard(45_000);
+console.log("the main code finished");
+</example>
+<output>
+the main code finished
+unhandled rejection: card declined for ₦45000
+exit event, code 1
+</output>
+<p>The rejected promise from <code>chargeCard</code> had no <code>await</code> and no <code>.catch</code>, so the handler caught it. The <code>setTimeout</code> inside <code>"exit"</code> never runs: by then the event loop has stopped. Do not try to save data or send a log over the network in <code>"exit"</code>.</p>
+<warn title="DO NOT KEEP RUNNING AFTER UNCAUGHT ERRORS">It is tempting to add <code>process.on("uncaughtException", () => {})</code> so the server "never crashes". Don't. The error stopped some function halfway: a transfer may have left one account and never arrived in the other, a lock may be held forever. The safe response is to log the error, stop taking new work and exit with a non-zero code, and let a supervisor (Docker, systemd, Kubernetes, or the one you build below) start a fresh process.</warn>
+</section>
+
+<section>
+<h2 id="child-processes">Running other programs: child processes</h2>
+<p>A <strong>child process</strong> is another program your program starts. It runs separately, with its own memory, and your program talks to it through its <strong>standard streams</strong>: stdin (what it reads), stdout (what it prints) and stderr (its errors), plus its exit code. You use one when:</p>
+<ul>
+<li>the job is done by another program: <code>git</code>, <code>ffmpeg</code> for video, an invoice renderer, a Python script;</li>
+<li>code might crash or hang, and must not take your server down with it;</li>
+<li>you want another Node.js program to run in parallel.</li>
+</ul>
+<p><code>node:child_process</code> has four ways to start one:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Function</th><th>Starts</th><th>Output</th><th>Use it for</th></tr></thead>
+<tbody>
+<tr><td><code>execFile(file, args)</code></td><td>The program directly, arguments as an array</td><td>Buffered, handed over at the end</td><td>Short commands with small output. Your default</td></tr>
+<tr><td><code>spawn(file, args)</code></td><td>The program directly</td><td>Streams, as it arrives</td><td>Long-running programs, big output, feeding stdin</td></tr>
+<tr><td><code>exec(command)</code></td><td>A <strong>shell</strong> (<code>sh</code> or <code>cmd.exe</code>) that parses one command string</td><td>Buffered</td><td>Your own fixed shell commands with pipes. Never with user input</td></tr>
+<tr><td><code>fork(modulePath)</code></td><td>Another Node.js program</td><td>Inherited, plus a message channel</td><td>Node.js helpers you talk to with messages</td></tr>
+</tbody>
+</table></div>
+<p>The examples start Node.js itself as the child, with <code>node -e "code"</code>, so they work on every computer. <code>process.execPath</code> is the full path of the <code>node</code> program that is running now, which is safer than hoping <code>node</code> is on the <code>PATH</code>.</p>
+
+<h3>execFile: run, wait, read the output</h3>
+<example file="render-invoice.js" browser="no">
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const run = promisify(execFile);
+
+const renderer = `
+  const [invoiceId, amount] = process.argv.slice(1);
+  console.log("rendered " + invoiceId + " for NGN " + amount);
+`;
+
+const { stdout, stderr } = await run(process.execPath, ["-e", renderer, "INV-1042", "45000"]);
+console.log("stdout:", JSON.stringify(stdout));
+console.log("stderr:", JSON.stringify(stderr));
+</example>
+<output>
+stdout: "rendered INV-1042 for NGN 45000\n"
+stderr: ""
+</output>
+<ul>
+<li><code>promisify(execFile)</code> turns the callback function into one that returns a promise of <code>{ stdout, stderr }</code>. Promisifying came up in <a href="/learn/js-promises">Promises in depth</a>.</li>
+<li>The output is text with a trailing newline, exactly as the child printed it. Trim it before you use it.</li>
+<li>With <code>node -e</code>, the arguments after the code start at <code>process.argv[1]</code>, not <code>[2]</code>, because there is no file name.</li>
+</ul>
+
+<h3>Exit codes and failures</h3>
+<p>A child that ends with a non-zero exit code makes the promise reject. The error carries the code, and the output collected so far:</p>
+<example file="child-fails.js" browser="no">
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const run = promisify(execFile);
+
+async function tryRun(label, code) {
+  try {
+    await run(process.execPath, ["-e", code]);
+    console.log(`${label}: ok`);
+  } catch (error) {
+    const firstError = error.stderr.split("\n").find((line) => line.startsWith("Error"));
+    console.log(`${label}: exit code ${error.code}, ${firstError ?? "no message"}`);
+  }
+}
+
+await tryRun("renders", "console.log('done')");
+await tryRun("printer offline", "throw new Error('printer offline')");
+await tryRun("bad input", "console.error('Error: amount missing'); process.exit(2)");
+await tryRun("missing program", "require('node:child_process').execFileSync('invoice-pdf-renderer')");
+</example>
+<output>
+renders: ok
+printer offline: exit code 1, Error: printer offline
+bad input: exit code 2, Error: amount missing
+missing program: exit code 1, Error: spawnSync invoice-pdf-renderer ENOENT
+</output>
+<p>An uncaught error in the child gives exit code 1. A program can choose its own codes, like <code>2</code> for bad input, so the parent can tell kinds of failure apart. The last child tried to start a program that does not exist; in the child that is an <code>ENOENT</code> error ("no such file"), the same code you met for missing files.</p>
+
+<h3>Timeouts and output limits</h3>
+<p>A child can hang forever: a renderer waiting for a network drive, a script stuck in a loop. Always set a <code>timeout</code>. When it passes, Node.js kills the child (with <code>SIGTERM</code> by default) and rejects. The buffered functions also have a <code>maxBuffer</code>, 1 MiB of output by default. A child that prints more is killed:</p>
+<example file="limits.js" browser="no">
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const run = promisify(execFile);
+
+try {
+  await run(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { timeout: 300 });
+} catch (error) {
+  console.log("hung child:", { killed: error.killed, signal: error.signal });
+}
+
+try {
+  await run(process.execPath, ["-e", "console.log('x'.repeat(5000))"], { maxBuffer: 1024 });
+} catch (error) {
+  console.log("chatty child:", error.code);
+}
+</example>
+<output>
+hung child: { killed: true, signal: 'SIGTERM' }
+chatty child: ERR_CHILD_PROCESS_STDIO_MAXBUFFER
+</output>
+<p>If you expect a lot of output, such as a log or a generated file, use <code>spawn</code> and read it as a stream instead of raising <code>maxBuffer</code>.</p>
+
+<h3>Shell injection</h3>
+<reason title="The customer's name goes into a command">
+<p>Your invoice renderer is a command-line program. A developer builds the command with a template string and runs it with <code>exec</code>: <code>exec(`render-invoice --name "${customer.name}"`)</code>. The name comes from the sign-up form. Think before you read on:</p>
+<ul>
+<li>Who decides what is inside <code>customer.name</code>?</li>
+<li>Which program reads the command string before the renderer does?</li>
+<li>Which characters mean something special to that program?</li>
+</ul>
+<answer>
+<p>The customer decides the name, so it is untrusted input. <code>exec</code> hands the whole string to a shell, and the shell treats <code>;</code>, <code>&amp;&amp;</code>, <code>|</code>, <code>$( )</code>, backticks and quotes as instructions. A name such as <code>Ada"; rm -rf ~; echo "</code> closes the quote and adds commands of the customer's choosing, which run with your server's permissions. This is <strong>shell injection</strong> (also called command injection). Quoting or escaping by hand is easy to get wrong. The fix is to not use a shell at all: <code>execFile</code> and <code>spawn</code> pass each argument to the program as a separate value, and no shell ever reads it.</p>
+</answer>
+</reason>
+<p>Here is the attack, made harmless: the injected command only prints a line. The example uses <code>echo</code>, a command that exists on macOS and Linux:</p>
+<example file="injection.js" browser="no">
+import { exec, execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const runShell = promisify(exec);
+const run = promisify(execFile);
+
+const name = 'Ada"; echo "INJECTED: your server runs my command';
+
+const viaShell = await runShell(`echo "Invoice for ${name}"`);
+console.log("exec:    ", viaShell.stdout.trim().split("\n"));
+
+const direct = await run("echo", ["Invoice for", name]);
+console.log("execFile:", direct.stdout.trim().split("\n"));
+</example>
+<output>
+exec:     [ 'Invoice for Ada', 'INJECTED: your server runs my command' ]
+execFile: [ 'Invoice for Ada"; echo "INJECTED: your server runs my command' ]
+</output>
+<p>Through the shell, the name became a second command. With <code>execFile</code>, the same text was just an argument, printed as it is. Use <code>exec</code> only for fixed commands you wrote yourself, and never pass <code>{ shell: true }</code> to <code>spawn</code> or <code>execFile</code> with user input either.</p>
+
+<h3>spawn: streams in and out</h3>
+<p><code>spawn</code> gives you the child's streams directly. This child is a pricing program: it reads an order as JSON from stdin, reports progress on stdout line by line, and ends with the total. The parent writes the order, reads the lines as they arrive with <code>readline</code> (from <a href="/learn/node-streams#build">Streams and buffers</a>), and waits for <code>"close"</code>:</p>
+<example file="pricing.js" browser="no">
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
+
+const pricer = `
+  let input = "";
+  process.stdin.on("data", (chunk) => (input += chunk));
+  process.stdin.on("end", () => {
+    const order = JSON.parse(input);
+    let total = 0;
+    for (const item of order.items) {
+      total += item.price * item.qty;
+      console.log("priced " + item.sku);
+    }
+    console.log("TOTAL " + total);
+  });
+`;
+
+const child = spawn(process.execPath, ["-e", pricer]);
+child.stdin.end(JSON.stringify({ items: [
+  { sku: "SHOE-42", price: 45_000, qty: 1 },
+  { sku: "SOCK-3", price: 2_500, qty: 3 },
+] }));
+
+for await (const line of createInterface({ input: child.stdout })) {
+  console.log("child says:", line);
+}
+
+const [code, signal] = await once(child, "close");
+console.log("closed with code", code, "signal", signal);
+</example>
+<output>
+child says: priced SHOE-42
+child says: priced SOCK-3
+child says: TOTAL 52500
+closed with code 0 signal null
+</output>
+<ul>
+<li><code>child.stdin.end(text)</code> writes the text and closes the stream, which is how the child knows the input is complete (its <code>"end"</code> event).</li>
+<li><code>"exit"</code> fires when the child process ends; <code>"close"</code> fires after that, when its streams are also closed. Wait for <code>"close"</code> when you read its output, so you never miss the last lines.</li>
+<li>A child that fails to start at all (the program does not exist) emits <code>"error"</code>, not <code>"exit"</code>. Listen for it, or the error crashes your program.</li>
+</ul>
+
+<h3>fork: a Node.js helper with a message channel</h3>
+<p><code>fork</code> starts a Node.js file and opens an <strong>IPC channel</strong> (inter-process communication) between the two programs. Each side sends objects with <code>send</code> and receives them as <code>"message"</code> events; they are converted to JSON and back on the way. Save the helper as <code>tax-helper.js</code>:</p>
+<example file="tax-helper.js" project="fork" browser="no">
+process.on("message", (order) => {
+  const vat = Math.round(order.amount * 0.075);
+  process.send({ orderId: order.orderId, vat, total: order.amount + vat });
+});
+</example>
+<example file="fork-tax.js" project="fork" browser="no">
+import { fork } from "node:child_process";
+import { once } from "node:events";
+
+const helper = fork("./tax-helper.js");
+
+for (const order of [{ orderId: "ORD-5", amount: 45_000 }, { orderId: "ORD-6", amount: 12_500 }]) {
+  helper.send(order);
+  const [reply] = await once(helper, "message");
+  console.log(reply);
+}
+
+helper.disconnect();
+const [code] = await once(helper, "exit");
+console.log("helper exited with code", code);
+</example>
+<output>
+{ orderId: 'ORD-5', vat: 3375, total: 48375 }
+{ orderId: 'ORD-6', vat: 938, total: 13438 }
+helper exited with code 0
+</output>
+<p>An open IPC channel keeps both programs alive. <code>disconnect()</code> closes it, the helper has nothing left to wait for, and it exits by itself with code 0.</p>
+</section>
+
+<section>
+<h2 id="signals">Signals and graceful shutdown</h2>
+<p>A <strong>signal</strong> is a short message the operating system delivers to a process, identified by a name and a number. You will meet four:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Signal</th><th>Number</th><th>Sent when</th><th>Can the program handle it?</th></tr></thead>
+<tbody>
+<tr><td><code>SIGINT</code></td><td>2</td><td>You press <kbd>Ctrl</kbd> + <kbd>C</kbd> in the terminal</td><td>Yes</td></tr>
+<tr><td><code>SIGTERM</code></td><td>15</td><td>Docker, Kubernetes, systemd or <code>kill</code> asks the program to stop</td><td>Yes</td></tr>
+<tr><td><code>SIGKILL</code></td><td>9</td><td>A stop that cannot be refused, often after SIGTERM was ignored too long</td><td>No, the process dies at once</td></tr>
+<tr><td><code>SIGHUP</code></td><td>1</td><td>The terminal window was closed</td><td>Yes</td></tr>
+</tbody>
+</table></div>
+<p>If a Node.js program has no listener for SIGINT or SIGTERM, it dies immediately, in the middle of whatever it was doing. A listener replaces that default: the program keeps running until <em>you</em> end it. A parent sends a signal to its child with <code>child.kill(signalName)</code>:</p>
+<example file="kill-child.js" browser="no">
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+
+async function stop(label, code, signal) {
+  const child = spawn(process.execPath, ["-e", code]);
+  child.stdout.setEncoding("utf8");
+  await once(child.stdout, "data");
+  child.kill(signal);
+  let said = "";
+  child.stdout.on("data", (text) => (said += text));
+  const [exitCode, exitSignal] = await once(child, "close");
+  console.log(`${label}: code ${exitCode}, signal ${exitSignal}, said ${JSON.stringify(said.trim())}`);
+}
+
+const busy = "console.log('ready'); setInterval(() => {}, 1000);";
+const polite = `
+  const timer = setInterval(() => {}, 1000);
+  process.on('SIGTERM', () => { console.log('closing'); clearInterval(timer); });
+  console.log('ready');
+`;
+
+await stop("no handler, SIGTERM", busy, "SIGTERM");
+await stop("no handler, SIGINT ", busy, "SIGINT");
+await stop("handler,    SIGTERM", polite, "SIGTERM");
+await stop("handler,    SIGKILL", polite, "SIGKILL");
+</example>
+<output>
+no handler, SIGTERM: code null, signal SIGTERM, said ""
+no handler, SIGINT : code null, signal SIGINT, said ""
+handler,    SIGTERM: code 0, signal null, said "closing"
+handler,    SIGKILL: code null, signal SIGKILL, said ""
+</output>
+<ul>
+<li>A process killed by a signal has exit code <code>null</code> and the signal's name in <code>signal</code>. Shells report it as <code>128 + number</code>: 130 after Ctrl + C, 143 after SIGTERM, 137 after SIGKILL. You will see 137 in Docker when a container used too much memory.</li>
+<li>The child that listened for SIGTERM said "closing", stopped its timer, and ended normally with code 0 once nothing was left to do.</li>
+<li>SIGKILL ignored the handler completely. That is why your shutdown code must be quick: the platform sends SIGKILL if you take too long (Docker waits 10 seconds, Kubernetes 30 by default).</li>
+<li>The child prints <code>ready</code> only <em>after</em> it has set up its handler, and the parent waits for that line before sending the signal. When this lesson was written, the first version printed <code>ready</code> first and registered the handler one line later. The parent was fast enough to send SIGTERM in between, and the "polite" child died like the others. Always announce readiness last.</li>
+</ul>
+
+<h3>A graceful shutdown</h3>
+<p>A <strong>graceful shutdown</strong> means: stop taking new work, finish the work in progress, close connections, then exit. And, because "finish" might never happen, give up after a deadline. Here the "server" is a loop that processes payments, each taking a moment, and the program sends itself SIGTERM halfway, the way a deployment would:</p>
+<example file="graceful.js" browser="no">
+const queue = ["PAY-1", "PAY-2", "PAY-3", "PAY-4", "PAY-5"];
+let shuttingDown = false;
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function processPayments() {
+  while (queue.length > 0 && !shuttingDown) {
+    const id = queue.shift();
+    console.log(`processing ${id}`);
+    await wait(100);
+    console.log(`committed ${id}`);
+  }
+}
+
+function shutdown(signal) {
+  if (shuttingDown) {
+    console.log(`second ${signal}: exiting now`);
+    process.exit(1);
+  }
+  shuttingDown = true;
+  console.log(`${signal} received: finishing current payment, taking no new ones`);
+  setTimeout(() => {
+    console.log("shutdown took too long, giving up");
+    process.exit(1);
+  }, 5_000).unref();
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+
+setTimeout(() => process.kill(process.pid, "SIGTERM"), 150);
+
+await processPayments();
+console.log(`stopped cleanly, ${queue.length} payments left for the next process`);
+</example>
+<output>
+processing PAY-1
+committed PAY-1
+processing PAY-2
+SIGTERM received: finishing current payment, taking no new ones
+committed PAY-2
+stopped cleanly, 3 payments left for the next process
+</output>
+<ul>
+<li>The signal arrived while PAY-2 was being processed. PAY-2 was still committed, then the loop stopped taking new ones. Nothing was cut in half, and the remaining payments stay in the queue (in real life, a database table) for the new version.</li>
+<li>The deadline timer is <code>unref()</code>ed: an unref'd timer does not keep the process alive by itself, so a quick shutdown exits at once instead of waiting 5 seconds.</li>
+<li>A second Ctrl + C exits immediately. People press it again when they are impatient, and should get what they asked for.</li>
+<li>An HTTP server shuts down the same way: <code>server.close()</code> stops accepting connections and calls back when open requests have finished. <a href="/learn/node-task-api#server">Building a Task API</a> uses it.</li>
+</ul>
+<p>Here is a real server that handles SIGTERM this way:</p>
+<file name="shop-server.js">
+import http from "node:http";
+
+const server = http.createServer((req, res) => res.end("ok\n"));
+server.listen(3000, () => console.log("listening on port 3000"));
+
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received: closing the server");
+  server.close(() => console.log("all requests finished, bye"));
+});
+</file>
+<p>Start it in the background with <code>&amp;</code>, then stop it with the <code>kill</code> command, which sends SIGTERM by default. <code>$!</code> is the process id of the last program started in the background:</p>
+<shell>
+$ node shop-server.js &amp;
+listening on port 3000
+$ kill $!
+SIGTERM received: closing the server
+all requests finished, bye
+[1]+  Done                       node shop-server.js
+</shell>
+<p>Nothing more had to be done after <code>server.close()</code>: once the server and its connections were closed, the event loop was empty and Node.js ended with code 0 by itself. Your terminal also prints a job number and process id right after the first command, such as <code>[1] 48213</code>.</p>
+<note>Windows has no real signals. Node.js emulates SIGINT for Ctrl + C in a console, and <code>child.kill()</code> always ends the child forcefully there, whatever the signal name. Servers usually run on Linux, so write your shutdown for SIGTERM and SIGINT and test it there, for example in Docker.</note>
+</section>
+
+<section>
+<h2 id="workers">Worker threads for heavy work</h2>
+<p>Back to the midnight sales report. It is pure calculation: no files, no network, just a loop over ten million orders. Making it <code>async</code> does not help, because <code>async</code> only helps while you wait for something. While JavaScript is calculating, the event loop is busy and every other request waits, as you saw in <a href="/learn/node-runtime#blocking">Do not block the loop</a>.</p>
+<p>A <strong>thread</strong> is a separate line of execution inside the same process. <code>node:worker_threads</code> starts a <strong>worker</strong>: a second JavaScript engine with its own event loop, running a file of your choice on another processor core. The main thread stays free. Save the report as <code>report-worker.js</code>:</p>
+<example file="report-worker.js" project="report" browser="no">
+import { parentPort, workerData } from "node:worker_threads";
+
+function salesReport(orderCount) {
+  const totals = { card: 0, transfer: 0, cash: 0 };
+  const methods = ["card", "transfer", "cash"];
+  let seed = 42;
+  for (let i = 0; i < orderCount; i++) {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    const amount = 500 + (seed % 49_500);
+    totals[methods[seed % 3]] += amount;
+  }
+  return totals;
+}
+
+parentPort.postMessage(salesReport(workerData.orderCount));
+</example>
+<p>The orders are made up with a fixed formula (a seeded pseudo-random generator) so the totals are the same on every run. The main program starts the worker and keeps a heartbeat timer running at the same time, to prove the event loop is still free:</p>
+<example file="report.js" project="report" browser="no">
+import { Worker } from "node:worker_threads";
+import { once } from "node:events";
+
+let beats = 0;
+const heartbeat = setInterval(() => beats++, 50);
+
+const worker = new Worker(new URL("./report-worker.js", import.meta.url), {
+  workerData: { orderCount: 10_000_000 },
+});
+
+const [totals] = await once(worker, "message");
+clearInterval(heartbeat);
+
+for (const [method, kobo] of Object.entries(totals)) {
+  console.log(method.padEnd(9), "₦" + (kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 }));
+}
+console.log("heartbeat kept beating during the report:", beats >= 3);
+</example>
+<output>
+card      ₦839,540,969.29
+transfer  ₦841,524,004.44
+cash      ₦850,430,935.59
+heartbeat kept beating during the report: true
+</output>
+<ul>
+<li><code>workerData</code> is copied into the worker when it starts. <code>parentPort.postMessage</code> sends the result back; the main thread receives it as a <code>"message"</code> event.</li>
+<li><code>new URL("./report-worker.js", import.meta.url)</code> finds the file next to the current module, wherever you start the program from.</li>
+<li>The heartbeat timer kept firing while ten million orders were added up. Run the same loop on the main thread and <code>beats</code> stays 0 until it ends.</li>
+</ul>
+
+<h3>Messages are copies</h3>
+<p>Workers do not share ordinary objects. Everything you post is copied with the <strong>structured clone</strong> algorithm (the one behind <code>structuredClone</code>), and functions cannot be copied at all. A worker that throws emits <code>"error"</code> in the main thread, and then <code>"exit"</code> with code 1:</p>
+<example file="worker-copy.js" browser="no">
+import { Worker } from "node:worker_threads";
+import { once } from "node:events";
+
+const code = `
+  const { parentPort } = require("node:worker_threads");
+  parentPort.on("message", (cart) => {
+    cart.items.push("changed inside the worker");
+    parentPort.postMessage(cart.items.length);
+    if (cart.items.length > 2) throw new Error("cart too big for this worker");
+  });
+`;
+
+const cart = { items: ["SHOE-42"] };
+const worker = new Worker(code, { eval: true });
+
+worker.postMessage(cart);
+console.log("worker saw", (await once(worker, "message"))[0], "items; main still has", cart.items.length);
+
+try {
+  worker.postMessage({ items: ["A", "B"], total() {} });
+} catch (error) {
+  console.log(error.name + ":", error.message);
+}
+
+worker.on("error", (error) => console.log("worker error:", error.message));
+const exited = new Promise((resolve) => worker.on("exit", resolve));
+worker.postMessage({ items: ["A", "B"] });
+console.log("worker exit code:", await exited);
+</example>
+<output>
+worker saw 2 items; main still has 1
+DataCloneError: total() {} could not be cloned.
+worker error: cart too big for this worker
+worker exit code: 1
+</output>
+<p>Notice the last lines wait for <code>"exit"</code> with a plain promise, not with <code>once(worker, "exit")</code>. <code>once</code> rejects when the emitter emits <code>"error"</code> while it waits, and this worker is <em>expected</em> to fail, so <code>once</code> would have thrown the worker's error at the <code>await</code> and crashed the program. That is what happened when this example was first run.</p>
+<p>For very large data, copying costs time. You can <strong>transfer</strong> an <code>ArrayBuffer</code> instead (it moves to the worker and becomes unusable in the sender), or share memory with a <code>SharedArrayBuffer</code>. Most programs never need either; send small inputs and small results.</p>
+
+<h3>Which tool for which job</h3>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>The work is…</th><th>Use</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Waiting: database, files, HTTP calls</td><td>Plain <code>async</code>/<code>await</code></td><td>The event loop already handles thousands of waits at once</td></tr>
+<tr><td>Heavy JavaScript calculation</td><td>Worker threads</td><td>Runs on another core, cheap to start, fast messages</td></tr>
+<tr><td>Another program, or code that may crash or leak</td><td>Child process</td><td>Separate memory; a crash cannot take the parent down</td></tr>
+<tr><td>A web server that should use every core</td><td>Several processes (<code>node:cluster</code>, or several containers)</td><td>Each process has its own event loop behind one port or a load balancer</td></tr>
+</tbody>
+</table></div>
+<p>Starting a worker costs several milliseconds and a few megabytes, so busy servers keep a <strong>pool</strong>: a fixed set of workers, usually one per core, that take jobs from a queue. <code>os.availableParallelism()</code> tells you how many cores there are.</p>
+</section>
+
+<section>
+<h2 id="os">The os module for process work</h2>
+<p><a href="/learn/node-apis#os">Files, paths and your computer</a> used <code>node:os</code> for the platform and memory. A few more parts matter when you manage processes:</p>
+<example file="machine-for-workers.js" browser="no">
+import os from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+
+const cores = os.availableParallelism();
+console.log("worker pool size:", Math.max(1, cores - 1), "(one core left for the main thread)");
+
+const [oneMinute] = os.loadavg();
+console.log("load average is a number:", typeof oneMinute === "number");
+console.log("uptime in seconds is positive:", os.uptime() > 0);
+
+const { SIGINT, SIGTERM, SIGKILL } = os.constants.signals;
+console.log({ SIGINT, SIGTERM, SIGKILL });
+console.log("shell exit code after SIGTERM:", 128 + SIGTERM);
+
+const scratch = await mkdtemp(join(os.tmpdir(), "invoices-"));
+console.log("private temp folder inside tmpdir:", scratch.startsWith(os.tmpdir()));
+await rm(scratch, { recursive: true });
+</example>
+<output>
+worker pool size: 7 (one core left for the main thread)
+load average is a number: true
+uptime in seconds is positive: true
+{ SIGINT: 2, SIGTERM: 15, SIGKILL: 9 }
+shell exit code after SIGTERM: 143
+private temp folder inside tmpdir: true
+</output>
+<ul>
+<li><strong>Load average</strong> (<code>os.loadavg()</code>, macOS and Linux) is the average number of processes wanting a processor over the last 1, 5 and 15 minutes. A value above the number of cores means work is queueing. On Windows it is always <code>[0, 0, 0]</code>.</li>
+<li><code>os.constants.signals</code> maps signal names to numbers, which explains the 128 + n exit codes.</li>
+<li><code>os.tmpdir()</code> is the system's temporary folder. <code>mkdtemp</code> creates a new, uniquely named folder inside it, the right place for a child process to write intermediate files that you delete afterwards.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="build">Build: a supervised invoice worker</h2>
+<p>Now combine the pieces. A <strong>supervisor</strong> is a program whose job is to keep another program running. Yours will:</p>
+<ol>
+<li>start an invoice worker as a child process with <code>fork</code> and send it jobs one at a time;</li>
+<li>notice when the worker crashes, log the reason and start a new one;</li>
+<li>give up on a job that crashed the worker twice (a <strong>poison job</strong>) and put it aside, so one bad invoice cannot block all the others;</li>
+<li>on SIGTERM, let the current job finish, stop the worker and exit cleanly.</li>
+</ol>
+<p>The worker renders one invoice per message. An invoice with a negative amount makes it throw, standing in for a bug that crashes a real renderer:</p>
+<example file="invoice-worker.js" project="supervisor" browser="no">
+process.on("message", async (job) => {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  if (job.amount < 0) throw new Error(`cannot render negative amount ${job.amount}`);
+  process.send({ type: "done", id: job.id });
+});
+
+process.on("SIGTERM", () => {
+  process.disconnect();
+});
+
+process.send({ type: "ready" });
+</example>
+<example file="supervisor.js" project="supervisor" browser="no">
+import { fork } from "node:child_process";
+import { once } from "node:events";
+
+const jobs = [
+  { id: "INV-1", amount: 45_000 },
+  { id: "INV-2", amount: -500 },
+  { id: "INV-3", amount: 12_500 },
+  { id: "INV-4", amount: 8_000 },
+  { id: "INV-5", amount: 3_000 },
+];
+const failures = new Map();
+const deadLetters = [];
+let stopping = false;
+
+function startWorker() {
+  const child = fork("./invoice-worker.js", { silent: true });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => (stderr += chunk));
+  child.lastError = () => stderr.split("\n").find((line) => line.startsWith("Error")) ?? "unknown";
+  return child;
+}
+
+async function runJob(child, job) {
+  child.send(job);
+  const reply = once(child, "message").then(([message]) => message);
+  const crash = once(child, "exit").then(([code]) => ({ type: "crashed", code }));
+  return Promise.race([reply, crash]);
+}
+
+process.on("SIGTERM", () => {
+  console.log("supervisor: SIGTERM, finishing the current job");
+  stopping = true;
+});
+
+let worker = startWorker();
+await once(worker, "message");
+console.log("supervisor: worker", worker.pid > 0 ? "started" : "failed");
+
+while (jobs.length > 0 && !stopping) {
+  const job = jobs.shift();
+  const result = await runJob(worker, job);
+  if (result.type === "done") {
+    console.log(`done ${job.id}`);
+    if (job.id === "INV-3") process.kill(process.pid, "SIGTERM");
+    continue;
+  }
+  const count = (failures.get(job.id) ?? 0) + 1;
+  failures.set(job.id, count);
+  console.log(`worker crashed on ${job.id} (exit code ${result.code}): ${worker.lastError()}`);
+  if (count >= 2) {
+    deadLetters.push(job.id);
+    console.log(`giving up on ${job.id} after ${count} crashes`);
+  } else {
+    jobs.unshift(job);
+  }
+  worker = startWorker();
+  await once(worker, "message");
+  console.log("supervisor: worker restarted");
+}
+
+worker.kill("SIGTERM");
+const [code, signal] = await once(worker, "exit");
+console.log(`worker stopped: code ${code}, signal ${signal}`);
+console.log("not started:", jobs.map((job) => job.id), "dead letters:", deadLetters);
+</example>
+<output>
+supervisor: worker started
+done INV-1
+worker crashed on INV-2 (exit code 1): Error: cannot render negative amount -500
+supervisor: worker restarted
+worker crashed on INV-2 (exit code 1): Error: cannot render negative amount -500
+giving up on INV-2 after 2 crashes
+supervisor: worker restarted
+done INV-3
+supervisor: SIGTERM, finishing the current job
+done INV-4
+worker stopped: code 0, signal null
+not started: [ 'INV-5' ] dead letters: [ 'INV-2' ]
+</output>
+<p>Follow the output line by line:</p>
+<ul>
+<li><code>runJob</code> races two promises: the worker's reply and the worker's exit. Whichever comes first decides the result, so a crash never leaves the supervisor waiting forever for a reply.</li>
+<li>INV-2 crashed the worker twice. The supervisor retried once (a crash can be a fluke), then moved it to <code>deadLetters</code>. In a real system a person looks at dead letters; the name comes from the post office's pile of undeliverable mail.</li>
+<li><code>{ silent: true }</code> gives the parent the child's stdout and stderr as streams instead of mixing them into its own output. The supervisor keeps the stderr text to log the first <code>Error</code> line.</li>
+<li>After INV-3 the program sends itself SIGTERM, standing in for a deployment. The supervisor finished nothing halfway, left INV-4 and INV-5 for the next run, and stopped the worker with SIGTERM. The worker's handler closed its IPC channel, so it ended normally with code 0.</li>
+</ul>
+<p>Real supervisors, such as systemd, Docker's restart policies and Kubernetes, work on the same ideas: watch the exit, restart, back off, and give up after too many crashes in a row. Queues such as <a href="/learn/zudo-queue">ZudoJS queues</a> keep retries and dead letters for jobs.</p>
+</section>
+
+<section>
+<h2 id="failures">Failure cases, testing and production</h2>
+<h3>What goes wrong</h3>
+<ul>
+<li><strong>A listener throws</strong> and the emitting code fails with it, or later listeners never run. Catch errors inside listeners that do side jobs.</li>
+<li><strong>An async listener rejects</strong> with nobody listening, and the process crashes with an unhandled rejection. Use <code>captureRejections</code> plus an <code>"error"</code> listener, or catch inside.</li>
+<li><strong>Listeners leak</strong>, one per request. Watch for <code>MaxListenersExceededWarning</code> in your logs.</li>
+<li><strong>A child never ends</strong>. Always pass a <code>timeout</code> or kill it yourself.</li>
+<li><strong>A child is never started</strong> (<code>ENOENT</code>): the program is missing on the server even though it exists on your laptop. Check required programs at startup.</li>
+<li><strong>Orphans</strong>: when a parent is killed with SIGKILL, its children keep running. Kill children in your shutdown code.</li>
+<li><strong>Shutdown never finishes</strong> because a connection or timer stays open. The deadline timer turns that into an exit with code 1, which your logs will show.</li>
+</ul>
+<h3>Testing</h3>
+<p>Test events by waiting for them with <code>once</code>, and give every wait a deadline so a broken test fails instead of hanging. Test child-process code against a tiny <code>node -e</code> child whose behaviour you control, as every example above did. Here is a helper with a timeout, plus a check:</p>
+<example file="wait-for.js" browser="no">
+import { EventEmitter, once } from "node:events";
+import assert from "node:assert/strict";
+
+async function waitFor(emitter, event, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error(`no "${event}" within ${ms} ms`)), ms);
+  try {
+    return await once(emitter, event, { signal: controller.signal });
+  } catch (error) {
+    throw controller.signal.aborted ? controller.signal.reason : error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const orders = new EventEmitter();
+setTimeout(() => orders.emit("paid", { orderId: "ORD-7" }), 10);
+const [order] = await waitFor(orders, "paid", 500);
+assert.equal(order.orderId, "ORD-7");
+console.log("PASS paid event arrives");
+
+await assert.rejects(waitFor(orders, "refunded", 50), /no "refunded" within 50 ms/);
+console.log("PASS missing event times out");
+</example>
+<output>
+PASS paid event arrives
+PASS missing event times out
+</output>
+<p><code>once</code> accepts an <code>AbortSignal</code>; aborting it rejects the wait with a generic <code>AbortError</code>, so the helper throws the signal's <code>reason</code> instead, which says which event was missing. The <code>finally</code> clears the timer so a successful test does not keep the process alive. (<code>AbortSignal.timeout(ms)</code> looks shorter, but its timer does not keep the process alive, so a test waiting only on it can end silently with "unsettled top-level await".)</p>
+<h3>Production concerns</h3>
+<ul>
+<li><strong>Let the platform restart you.</strong> Exit with a non-zero code on fatal errors, and let Docker, systemd or Kubernetes start a fresh process.</li>
+<li><strong>Receive the signal.</strong> In Docker, start your server with <code>CMD ["node", "server.js"]</code>, not through a shell script, so SIGTERM reaches Node.js. <a href="/learn/deployment">Deployment</a> covers containers.</li>
+<li><strong>Keep shutdown under the grace period</strong>: 10 seconds in Docker, 30 in Kubernetes by default. Put your deadline below it.</li>
+<li><strong>Limit parallel children and workers.</strong> Starting one per request lets a traffic spike exhaust memory. Use a pool with a fixed size.</li>
+<li><strong>Log child stderr.</strong> It is where a failing program explains itself.</li>
+<li><strong>Never build shell commands from input.</strong> <code>execFile</code> and <code>spawn</code> with an argument array, always.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A stock alert that cleans up after itself">
+<p>Write a function <code>watchStock(stock, sku)</code> that listens for <code>"low"</code> events on an emitter, logs only the ones for its <code>sku</code>, and returns a function that removes the listener. Show that after calling it, <code>listenerCount("low")</code> is 0 again.</p>
+<solution>
+<example file="watch-stock.js" browser="no">
+import { EventEmitter } from "node:events";
+
+function watchStock(stock, sku) {
+  const listener = (item) => {
+    if (item.sku === sku) console.log(`${sku} is low: ${item.left} left`);
+  };
+  stock.on("low", listener);
+  return () => stock.off("low", listener);
+}
+
+const stock = new EventEmitter();
+const stopWatching = watchStock(stock, "SHOE-42");
+
+stock.emit("low", { sku: "SHOE-42", left: 2 });
+stock.emit("low", { sku: "SOCK-3", left: 1 });
+stopWatching();
+stock.emit("low", { sku: "SHOE-42", left: 1 });
+console.log("listeners:", stock.listenerCount("low"));
+</example>
+<output>
+SHOE-42 is low: 2 left
+listeners: 0
+</output>
+<p>The returned function closes over the exact <code>listener</code> reference, which is what <code>off</code> needs. Returning an "unsubscribe" function is a common pattern; many libraries do the same.</p>
+</solution>
+</exercise>
+<exercise title="Check a required program at startup">
+<p>A server needs Node.js 24 or newer in its child processes. Write <code>checkNode()</code> that runs <code>node --version</code> with <code>execFile</code>, parses the major version and throws a clear error if it is too old. Also show what happens when the program is missing, by running a program name that does not exist.</p>
+<solution>
+<example file="check-node.js" browser="no">
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const run = promisify(execFile);
+
+async function checkProgram(file, minMajor) {
+  try {
+    const { stdout } = await run(file, ["--version"], { timeout: 5_000 });
+    const major = Number(stdout.trim().replace(/^v/, "").split(".")[0]);
+    if (major < minMajor) throw new Error(`${file} ${major} is too old, need ${minMajor}+`);
+    return `${file}: major version ${major >= minMajor ? "ok" : "too old"}`;
+  } catch (error) {
+    if (error.code === "ENOENT") return `${file}: not installed`;
+    throw error;
+  }
+}
+
+console.log(await checkProgram(process.execPath, 24).then((text) => text.replace(process.execPath, "node")));
+console.log(await checkProgram("invoice-pdf-renderer", 1));
+</example>
+<output>
+node: major version ok
+invoice-pdf-renderer: not installed
+</output>
+<p>When the program itself is missing, <code>execFile</code> rejects with <code>error.code === "ENOENT"</code>, not with an exit code, because nothing ever ran. Checking at startup turns a mystery failure at the first invoice into a clear message when the server boots.</p>
+</solution>
+</exercise>
+<exercise title="Split the report across workers">
+<p>Change the sales report so the main program starts 4 workers, each adding up a quarter of the orders (pass <code>start</code> and <code>end</code> in <code>workerData</code>), and combines the results. To keep it self-contained, use an <code>eval</code> worker that sums the numbers from <code>start</code> to <code>end - 1</code>, and check the combined total against the formula <code>n * (n - 1) / 2</code>.</p>
+<solution>
+<example file="report-pool.js" browser="no">
+import { Worker } from "node:worker_threads";
+import { once } from "node:events";
+
+const code = `
+  const { parentPort, workerData } = require("node:worker_threads");
+  let sum = 0;
+  for (let i = workerData.start; i < workerData.end; i++) sum += i;
+  parentPort.postMessage(sum);
+`;
+
+function runPart(start, end) {
+  const worker = new Worker(code, { eval: true, workerData: { start, end } });
+  return once(worker, "message").then(([sum]) => sum);
+}
+
+const n = 40_000_000;
+const parts = 4;
+const size = Math.ceil(n / parts);
+const ranges = Array.from({ length: parts }, (_, i) => [i * size, Math.min(n, (i + 1) * size)]);
+console.log(ranges);
+
+const sums = await Promise.all(ranges.map(([start, end]) => runPart(start, end)));
+const total = sums.reduce((a, b) => a + b, 0);
+console.log("total:", total, "expected:", (n * (n - 1)) / 2, "match:", total === (n * (n - 1)) / 2);
+</example>
+<output>
+[
+  [ 0, 10000000 ],
+  [ 10000000, 20000000 ],
+  [ 20000000, 30000000 ],
+  [ 30000000, 40000000 ]
+]
+total: 799999980000000 expected: 799999980000000 match: true
+</output>
+<p><code>Promise.all</code> runs the four workers at the same time and waits for all of them. Each part must be independent for this to work: splitting only helps when no part needs another part's result.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Extend <code>EventEmitter</code> to announce what a class did. <code>emit</code> is synchronous: listeners run before it returns, and a throwing listener stops the rest. Use <code>captureRejections</code> for async listeners, and <code>events.once</code> to await an event.</li>
+<li>Remove listeners you add per request, with the same function reference. <code>MaxListenersExceededWarning</code> is a leak detector, not a limit to raise.</li>
+<li><code>process</code> events: <code>"exit"</code> is synchronous only; after <code>"uncaughtException"</code> or <code>"unhandledRejection"</code>, log and exit.</li>
+<li>Child processes: <code>execFile</code> by default, <code>spawn</code> for streams, <code>fork</code> for Node.js helpers with messages, <code>exec</code> only for fixed commands. Set a timeout, handle exit codes and <code>ENOENT</code>, and never build a shell command from input.</li>
+<li>SIGINT and SIGTERM can be handled; SIGKILL cannot. A graceful shutdown stops new work, finishes current work and has a deadline.</li>
+<li>Worker threads run heavy JavaScript on another core; messages are copied. Use them for calculation, child processes for other programs and isolation, plain async for waiting.</li>
+</ul>
+<p>Next, <a href="/learn/node-crypto">Cryptography with node:crypto</a> hashes passwords, signs webhooks and encrypts data, and uses a worker-backed function, <code>scrypt</code>, that you will now recognise.</p>
+</section>

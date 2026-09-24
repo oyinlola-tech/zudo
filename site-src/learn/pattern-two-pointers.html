@@ -1,0 +1,595 @@
+---
+title: The two pointers pattern
+description: Walk sorted data from both ends or at two speeds: pair refunds, dedupe order ids in place, size a tank, and find loops and midpoints with O(1) extra space.
+minutes: 50
+youNeed: Big O and complexity, Arrays and strings under the hood, Hash maps and sets, and The frequency counter pattern
+youBuild: A refund matcher, an in-place order id deduplicator, a best-container finder and a forwarding-loop detector, each checked against a brute-force reference
+keywords: two pointers pattern, two sum sorted array, remove duplicates sorted array in place, container with most water, fast and slow pointers, floyd cycle detection, middle of linked list, merge sorted arrays, javascript algorithms, o(1) space
+objectives: Recognise problems where sorted order or a linked structure lets two indexes replace a nested loop | Explain why moving one pointer safely discards candidates, using an invariant | Solve pair sum, in-place dedupe and container problems in O(n) time and O(1) extra space | Use fast and slow pointers to find the middle of a list and detect a cycle and its start | Test a two-pointer function against a brute-force reference on generated input
+---
+<section>
+<h2 id="problem">The problem: which two payments make the refund?</h2>
+<p>A customer of an online shop was refunded ₦23,500, but the refund did not go out as one payment: the payment provider split it into two payouts. Now the finance team has to find those two payouts in the day's payout list to close the ticket. The list comes from the provider already sorted by amount, smallest first, in kobo (whole numbers of the smallest unit, so there are no rounding errors; see <a href="/learn/logic-math">Mathematical reasoning</a>).</p>
+<p>So the task is: in a sorted list of amounts, find two different entries that add up to exactly a target. You solved an unsorted version of this, "two-sum", with a <code>Map</code> in <a href="/learn/dsa-hash-maps#uses">Hash maps and sets</a>. This lesson uses the fact that the list is <em>sorted</em>, and gets the same speed with no extra memory at all.</p>
+<reason title="Before you code: pairs in a sorted list">
+<ul>
+<li>Can one payout be paired with itself? What about two different payouts of the same amount?</li>
+<li>What should happen when no pair adds up to the target?</li>
+<li>You add the smallest and the largest amount and the sum is too big. Which of the two can never be part of the answer, and why?</li>
+<li>And if the sum is too small?</li>
+</ul>
+<answer>
+<p><strong>Itself:</strong> no. A payout of ₦11,750 is one payment, not two. Two separate payouts of ₦11,750 each are fine: they are different entries that happen to have the same amount. So pair different <em>positions</em>, not different amounts.</p>
+<p><strong>No pair:</strong> return <code>null</code>. It is a normal outcome (maybe the refund failed), not a crash.</p>
+<p><strong>Too big:</strong> the largest amount is out. Its best possible partner is the smallest amount, and even that is too much, so every other partner (all bigger) is too much as well. Drop it.</p>
+<p><strong>Too small:</strong> by the mirror argument, the smallest amount is out: even the largest partner cannot lift it to the target. Drop it.</p>
+<p>That third answer is the whole pattern. Each comparison rules out one entry for good.</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="naive">A naive solution: try every pair</h2>
+<p>The first working solution tries every pair of positions <code>i &lt; j</code>:</p>
+<example file="naive-pair.js">
+function refundPairNaive(amounts, target) {
+  for (let i = 0; i < amounts.length; i++) {
+    for (let j = i + 1; j < amounts.length; j++) {
+      if (amounts[i] + amounts[j] === target) return [amounts[i], amounts[j]];
+    }
+  }
+  return null;
+}
+
+const payouts = [150000, 420000, 850000, 1175000, 1175000, 1500000, 1900000];
+console.log(refundPairNaive(payouts, 2350000));
+console.log(refundPairNaive(payouts, 2320000));
+console.log(refundPairNaive(payouts, 1000000));
+console.log(refundPairNaive([1175000, 1175000], 2350000), refundPairNaive([1175000], 2350000));
+</example>
+<output>
+[ 850000, 1500000 ]
+[ 420000, 1900000 ]
+[ 150000, 850000 ]
+[ 1175000, 1175000 ] null
+</output>
+<p>It is correct. It returns the first matching pair in the order it tries them (for ₦23,500 that is ₦8,500 + ₦15,000, although the two ₦11,750 payouts would also match), it accepts two different payouts of equal amount, and it never pairs an entry with itself because <code>j</code> starts at <code>i + 1</code>.</p>
+</section>
+
+<section>
+<h2 id="whats-wrong">What is wrong with it: count the operations</h2>
+<p>A payment provider can send tens of thousands of payouts a day. Count the additions the naive version makes when there is no matching pair, which is its worst case (it has to try everything before it can say no):</p>
+<example file="naive-pair-count.js">
+function refundPairNaive(amounts, target, counter) {
+  for (let i = 0; i < amounts.length; i++) {
+    for (let j = i + 1; j < amounts.length; j++) {
+      counter.adds++;
+      if (amounts[i] + amounts[j] === target) return [i, j];
+    }
+  }
+  return null;
+}
+
+for (const n of [10, 100, 1000, 10000]) {
+  const amounts = Array.from({ length: n }, (_, i) => 10000 + i * 200); // even kobo amounts
+  const counter = { adds: 0 };
+  const pair = refundPairNaive(amounts, 1, counter); // an odd target: no pair exists
+  console.log(`n=${String(n).padEnd(6)} pair=${pair} adds=${counter.adds}`);
+}
+</example>
+<output>
+n=10     pair=null adds=45
+n=100    pair=null adds=4950
+n=1000   pair=null adds=499500
+n=10000  pair=null adds=49995000
+</output>
+<p>That is <code>n(n − 1) / 2</code> additions: O(n²). At 10,000 payouts, about 50 million. The waste is the same as in <a href="/learn/pattern-frequency#whats-wrong">the frequency lesson</a>: the naive solution ignores information it already has. Here that information is the <em>order</em>. After one addition it knows that a sum is too big or too small, which rules out a whole row of pairs, yet it goes on and tries them anyway.</p>
+<p>The <code>Map</code> two-sum from the hash maps lesson would do this in O(n) time, but it builds a table of up to <code>n</code> entries: O(n) extra memory. On sorted data you can have O(n) time <em>and</em> O(1) extra space.</p>
+</section>
+
+<section>
+<h2 id="pattern">The pattern: two indexes that each only move one way</h2>
+<p>A <strong>pointer</strong>, in this pattern, is simply a variable that holds a position: an array index or a reference to a list node. The <strong>two pointers</strong> pattern keeps two of them and moves them through the data by a rule, so that together they visit it in one pass instead of a nested loop. It comes in three shapes:</p>
+<pre>
+1. Opposite ends, moving inwards      (pair sum, container, palindrome)
+   [ 1  4  8  11  11  15  19 ]
+     L -&gt;                &lt;- R
+
+2. Same direction: a reader and a writer   (remove duplicates in place)
+   [ 3  3  5  7  7  7  9 ]
+     W  R -&gt;
+     (R reads every item; W marks where the next kept item goes)
+
+3. Same direction, different speeds: fast and slow   (middle, cycles)
+   A -&gt; B -&gt; C -&gt; D -&gt; E
+   S    F                  S moves one step, F moves two
+</pre>
+<p>Why is this allowed to skip pairs? Because of an <strong>invariant</strong>: a statement that is true before every step of a loop, which you prove once and then rely on. For pair sum it is:</p>
+<blockquote><p>If a matching pair exists, both of its entries lie between <code>left</code> and <code>right</code> (inclusive).</p></blockquote>
+<p>It is true at the start, when the pointers are at the two ends. Each move keeps it true, by the argument from the reason block: when the sum is too big, the entry at <code>right</code> cannot be in any matching pair, so moving <code>right</code> left drops nothing useful; when it is too small, the same holds for <code>left</code>. When the pointers meet, no pair is left, and by the invariant none existed. Each step moves one pointer one place, so there are at most <code>n − 1</code> steps.</p>
+<h3>How to recognise it</h3>
+<ul>
+<li>The input is <strong>sorted</strong> (or you can afford to sort it), and the question is about pairs: a sum, a difference, the closest pair.</li>
+<li>You must change an array <strong>in place</strong>, keeping some items and dropping others, with O(1) extra space.</li>
+<li>The question compares the two <strong>ends</strong> of something: palindromes, "the widest", "from both sides".</li>
+<li>The data is a <strong>linked structure</strong> (each item points to the next one) and you need its middle, its <em>k</em>-th item from the end, or to know whether it loops.</li>
+<li>Two sorted lists must be <strong>merged</strong> or compared, one pointer per list.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="improved">The improved solution</h2>
+<example file="refund-pair.js">
+function refundPair(amounts, target, counter = { adds: 0 }) {
+  let left = 0;
+  let right = amounts.length - 1;
+  while (left < right) {           // two different positions
+    counter.adds++;
+    const sum = amounts[left] + amounts[right];
+    if (sum === target) return [left, right];
+    if (sum > target) right--;     // amounts[right] is too big for any partner
+    else left++;                   // amounts[left] is too small for any partner
+  }
+  return null;
+}
+
+const payouts = [150000, 420000, 850000, 1175000, 1175000, 1500000, 1900000];
+console.log(refundPair(payouts, 2350000));
+console.log(refundPair(payouts, 2320000));
+console.log(refundPair(payouts, 1000000));
+console.log(refundPair([1175000], 2350000), refundPair([], 0));
+
+for (const n of [10, 100, 1000, 10000]) {
+  const amounts = Array.from({ length: n }, (_, i) => 10000 + i * 200);
+  const counter = { adds: 0 };
+  refundPair(amounts, 1, counter);
+  console.log(`n=${String(n).padEnd(6)} adds=${counter.adds}`);
+}
+</example>
+<output>
+[ 2, 5 ]
+[ 1, 6 ]
+[ 0, 2 ]
+null null
+n=10     adds=9
+n=100    adds=99
+n=1000   adds=999
+n=10000  adds=9999
+</output>
+<p><code>left &lt; right</code> (not <code>&lt;=</code>) is what stops a single ₦11,750 payout from pairing with itself, and it also handles lists of zero or one entry without any special case. The counts drop from <code>n(n − 1) / 2</code> to at most <code>n − 1</code>: at 10,000 payouts, 9,999 additions instead of 49,995,000.</p>
+<p>The function returns positions, which is what finance needs to find the two payout records. Here is the search traced for a target of ₦23,500 (2,350,000 kobo), amounts shown in thousands of kobo:</p>
+<pre>
+[150  420  850  1175  1175  1500  1900]
+ L                                R     150 + 1900 = 2050  too small: L++
+      L                           R     420 + 1900 = 2320  too small: L++
+           L                      R     850 + 1900 = 2750  too big:   R--
+           L                R           850 + 1500 = 2350  found [2, 5]
+</pre>
+<p>The pair it finds is ₦8,500 + ₦15,000, not the two ₦11,750 payouts: several pairs can match, and this function returns the first one its walk reaches. If finance needs <em>all</em> matching pairs, that is a different question; exercise 2 counts them.</p>
+</section>
+
+<section>
+<h2 id="complexity">Its complexity</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Approach</th><th>Time</th><th>Extra space</th><th>Needs sorted input?</th></tr></thead>
+<tbody>
+<tr><td>every pair</td><td>O(n²)</td><td>O(1)</td><td>no</td></tr>
+<tr><td><code>Map</code> of seen amounts</td><td>O(n) average</td><td>O(n)</td><td>no</td></tr>
+<tr><td>sort, then two pointers</td><td>O(n log n)</td><td>O(n) for a sorted copy, or O(1) if you may sort in place</td><td>no, it sorts first</td></tr>
+<tr><td>two pointers on sorted input</td><td>O(n)</td><td>O(1)</td><td>yes</td></tr>
+</tbody>
+</table></div>
+<p>The pattern's advantage is the memory column. When the data arrives sorted (from a database <code>ORDER BY</code>, a sorted export, an index) it is the best choice. When it does not, sorting costs O(n log n), and the <code>Map</code> version may be faster; which to pick depends on whether memory or time is scarcer, and whether you need the sorted order anyway. <a href="/learn/dsa-sorting">Sorting</a> covers what sorting costs.</p>
+</section>
+
+<section>
+<h2 id="dedupe">Same direction: removing duplicate order ids in place</h2>
+<p>Two exports of order ids were merged and sorted, and some ids now appear twice or three times. The list has 5 million entries on a small worker machine, so the fix must happen <strong>in place</strong>: inside the same array, without building a second one.</p>
+<p>The naive in-place fix walks the array and <code>splice</code>s out every repeat. It looks linear, but each <code>splice</code> shifts every later element one place to the left, as <a href="/learn/dsa-arrays-strings#insert-delete">Arrays and strings</a> showed. Count the shifts:</p>
+<example file="dedupe-splice.js">
+function dedupeSplice(ids, counter) {
+  let i = 1;
+  while (i < ids.length) {
+    if (ids[i] === ids[i - 1]) {
+      counter.shifts += ids.length - i - 1; // what splice moves
+      ids.splice(i, 1);
+    } else {
+      i++;
+    }
+  }
+  return ids.length;
+}
+
+for (const n of [1000, 10000, 100000]) {
+  const ids = Array.from({ length: n }, (_, i) => Math.floor(i / 2)); // every id twice
+  const counter = { shifts: 0 };
+  const kept = dedupeSplice(ids, counter);
+  console.log(`n=${String(n).padEnd(6)} kept=${String(kept).padEnd(5)} shifts=${counter.shifts}`);
+}
+</example>
+<output>
+n=1000   kept=500   shifts=249500
+n=10000  kept=5000  shifts=24995000
+n=100000 kept=50000 shifts=2499950000
+</output>
+<p>Quadratic again: 100,000 ids cause 2.5 billion element moves. The two-pointer version uses a <strong>reader</strong> that visits every element once and a <strong>writer</strong> that marks where the next kept element goes. Because the array is sorted, a duplicate is always equal to the last element <em>kept</em>, which sits just before the writer:</p>
+<example file="dedupe-in-place.js">
+function dedupeSorted(ids, counter = { writes: 0 }) {
+  if (ids.length === 0) return 0;
+  let write = 1;                      // ids[0 .. write-1] are the kept, unique ids
+  for (let read = 1; read < ids.length; read++) {
+    if (ids[read] !== ids[write - 1]) {
+      ids[write] = ids[read];
+      write++;
+      counter.writes++;
+    }
+  }
+  ids.length = write;                 // cut off the leftovers
+  return write;
+}
+
+const orders = ["ORD-101", "ORD-101", "ORD-104", "ORD-107", "ORD-107", "ORD-107", "ORD-110"];
+console.log(dedupeSorted(orders), orders);
+console.log(dedupeSorted([]), dedupeSorted(["ORD-1"]));
+
+for (const n of [1000, 10000, 100000]) {
+  const ids = Array.from({ length: n }, (_, i) => Math.floor(i / 2));
+  const counter = { writes: 0 };
+  const kept = dedupeSorted(ids, counter);
+  console.log(`n=${String(n).padEnd(6)} kept=${String(kept).padEnd(5)} writes=${counter.writes}`);
+}
+</example>
+<output>
+4 [ 'ORD-101', 'ORD-104', 'ORD-107', 'ORD-110' ]
+0 1
+n=1000   kept=500   writes=499
+n=10000  kept=5000  writes=4999
+n=100000 kept=50000 writes=49999
+</output>
+<p>The invariant here: before each step, <code>ids[0]</code> to <code>ids[write − 1]</code> are exactly the distinct ids seen so far, in order. The reader moves every step; the writer moves only when something new is found. One pass: O(n) time, O(1) extra space. <code>ids.length = write</code> truncates the array in O(1) amortized time (the engine just forgets the tail).</p>
+<warn>An in-place function changes the caller's array. That is the point here (there is no memory for a copy), but it surprises callers who still need the original. Name such functions clearly, document it, and prefer a copying version whenever memory allows.</warn>
+</section>
+
+<section>
+<h2 id="container">Opposite ends again: the biggest tank</h2>
+<p>A classic interview problem shows that the opposite-ends shape is not only for sums. A farm has a row of wall panels of different heights, one metre apart. You may pick any two panels as the sides of a water tank; the water level can only reach the shorter of the two, and the width is the distance between them. Which two panels hold the most water? (This problem is known as <strong>container with most water</strong>.)</p>
+<pre>
+heights:  3  8  6  2  5  4  8  3  7
+index:    0  1  2  3  4  5  6  7  8
+
+panels 1 and 8: width 7, level min(8, 7) = 7, area 49
+</pre>
+<reason title="Before you code: which pointer moves?">
+<ul>
+<li>Start with the widest tank: the first and last panel. To try a different pair you must bring one side inwards, which makes the tank narrower. How could a narrower tank ever hold more?</li>
+<li>Suppose the left panel is shorter than the right one. Is there any better tank that still uses the left panel?</li>
+</ul>
+<answer>
+<p>A narrower tank only wins if it is <strong>taller</strong>, and the level is limited by the <em>shorter</em> side.</p>
+<p>If the left panel is the shorter one, every other tank that uses it is narrower (the right side moves in) and its level is still at most the left panel's height. So none of them can beat the current tank: the left panel is finished, and <code>left++</code> is safe. Moving the <em>taller</em> side instead could never help, because the short side would still cap the level while the width shrinks. Always move the shorter side; on a tie, either.</p>
+</answer>
+</reason>
+<example file="container.js">
+function biggestTankNaive(heights, counter) {
+  let best = 0;
+  for (let i = 0; i < heights.length; i++) {
+    for (let j = i + 1; j < heights.length; j++) {
+      counter.checks++;
+      best = Math.max(best, (j - i) * Math.min(heights[i], heights[j]));
+    }
+  }
+  return best;
+}
+
+function biggestTank(heights, counter) {
+  let left = 0;
+  let right = heights.length - 1;
+  let best = 0;
+  while (left < right) {
+    counter.checks++;
+    best = Math.max(best, (right - left) * Math.min(heights[left], heights[right]));
+    if (heights[left] < heights[right]) left++;
+    else right--;
+  }
+  return best;
+}
+
+const panels = [3, 8, 6, 2, 5, 4, 8, 3, 7];
+for (const fn of [biggestTankNaive, biggestTank]) {
+  const counter = { checks: 0 };
+  console.log(fn.name, fn(panels, counter), `${counter.checks} checks`);
+}
+
+const many = Array.from({ length: 5000 }, (_, i) => ((i * 7919) % 97) + 1);
+for (const fn of [biggestTankNaive, biggestTank]) {
+  const counter = { checks: 0 };
+  console.log(fn.name, fn(many, counter), `${counter.checks} checks`);
+}
+</example>
+<output>
+biggestTankNaive 49 36 checks
+biggestTank 49 8 checks
+biggestTankNaive 474912 12497500 checks
+biggestTank 474912 4999 checks
+</output>
+<p>Same answers, <code>n − 1</code> checks instead of <code>n(n − 1) / 2</code>. Note what makes this correct: not the sorting (these heights are not sorted) but the argument that each move discards a side that cannot be in any better answer. Every two-pointer solution needs such an argument; if you cannot make it, the pattern does not apply.</p>
+</section>
+
+<section>
+<h2 id="fast-slow">Fast and slow pointers</h2>
+<p>The third shape runs two pointers in the same direction at different speeds. It is at its best on <strong>linked</strong> data, where each item knows only the next item and there is no index to jump to. <a href="/learn/dsa-linked-lists">Linked lists</a> builds that structure fully; here a node is just an object <code>{ stop, next }</code>, and <code>next</code> is <code>null</code> at the end.</p>
+
+<h3>The middle, and the k-th stop from the end</h3>
+<p>A delivery route is stored as a linked list of stops. In the <a href="/learn/dsa-linked-lists#practice">Linked lists practice</a> you found its middle stop in one walk: the fast pointer moves two stops per step, the slow one moves one, so when the fast pointer reaches the end, the slow one is halfway. A close relative answers "which stop is <code>k</code> from the end?" (the rider wants a warning three stops before the last one). Give the lead pointer a head start of <code>k</code> stops, then move both one stop at a time. They stay <code>k</code> apart, so when the lead falls off the end, the trailing pointer is <code>k</code> from the end:</p>
+<example file="route-pointers.js">
+function routeFrom(stops) {
+  let head = null;
+  for (let i = stops.length - 1; i >= 0; i--) head = { stop: stops[i], next: head };
+  return head;
+}
+
+function middleStop(head) {
+  let slow = head;
+  let fast = head;
+  while (fast !== null && fast.next !== null) {
+    slow = slow.next;
+    fast = fast.next.next;
+  }
+  return slow?.stop ?? null;
+}
+
+function stopFromEnd(head, k) {
+  let lead = head;
+  for (let i = 0; i < k; i++) {
+    if (lead === null) return null; // fewer than k stops
+    lead = lead.next;
+  }
+  let trail = head;
+  while (lead !== null) {
+    lead = lead.next;
+    trail = trail.next;
+  }
+  return trail?.stop ?? null;
+}
+
+const route = routeFrom(["Depot", "Yaba", "Surulere", "Ikeja", "Maryland", "Lekki"]);
+console.log(middleStop(route), stopFromEnd(route, 1), stopFromEnd(route, 3));
+console.log(stopFromEnd(route, 6), stopFromEnd(route, 7), middleStop(null));
+</example>
+<output>
+Ikeja Lekki Ikeja
+Depot null null
+</output>
+<p>Both walk the list once and keep two references: O(n) time, O(1) space. With an even number of stops there are two middles and this loop returns the second. The condition <code>fast !== null &amp;&amp; fast.next !== null</code> checks both nodes the fast pointer is about to jump over, so it never reads <code>.next</code> of <code>null</code>; in <code>stopFromEnd</code>, the head-start loop is where "fewer than <code>k</code> stops" is caught.</p>
+
+<h3>Detecting a forwarding loop</h3>
+<p>A payments app lets an account forward incoming money to another account. Each account forwards to at most one other, so following the forwards is walking a linked structure. A misconfiguration (Ada forwards to Bola, Bola to Chidi, Chidi back to Bola) creates a loop, and a naive "follow until you reach an account that keeps the money" never ends.</p>
+<p><a href="/learn/dsa-linked-lists#cycles">Linked lists</a> detected such a cycle two ways: a <code>Set</code> of visited nodes (O(n) space) and <strong>Floyd's cycle detection</strong>, the tortoise and the hare (O(1) space): a slow pointer moves one step and a fast pointer two; with no loop the fast pointer reaches the end, and with a loop the fast one gains one step per move and must land on the slow one within a lap. Support needs more than "there is a loop", though: to fix the settings they need to know <em>which account</em> closes it.</p>
+<p>Floyd's method has a second phase that finds where the loop starts: once they meet, put one pointer back at the start and move both one step at a time; they meet again exactly at the first account inside the loop. (Why: if the start is <code>a</code> steps from the loop and they met <code>b</code> steps into a loop of length <code>L</code>, the fast pointer walked twice as far, which works out to <code>a</code> being a whole number of laps minus <code>b</code>. So walking <code>a</code> more steps from the meeting point also lands on the loop's start.)</p>
+<example file="forwarding-loop.js">
+function findLoopStart(forwards, from, counter = { steps: 0 }) {
+  const next = (account) => forwards.get(account) ?? null;
+  let slow = from;
+  let fast = from;
+  while (fast !== null && next(fast) !== null) {
+    counter.steps++;
+    slow = next(slow);
+    fast = next(next(fast));
+    if (slow === fast) {
+      let a = from;
+      let b = slow;
+      while (a !== b) {
+        counter.steps++;
+        a = next(a);
+        b = next(b);
+      }
+      return a;                  // the first account inside the loop
+    }
+  }
+  return null;                   // reached an account that keeps the money
+}
+
+const healthy = new Map([["ada", "bola"], ["bola", "chidi"]]);
+const broken = new Map([["ada", "bola"], ["bola", "chidi"], ["chidi", "dayo"], ["dayo", "bola"]]);
+console.log(findLoopStart(healthy, "ada"));
+console.log(findLoopStart(broken, "ada"));
+console.log(findLoopStart(broken, "dayo"));
+console.log(findLoopStart(new Map([["eze", "eze"]]), "eze"));
+
+const long = new Map(Array.from({ length: 100000 }, (_, i) => [`acct-${i}`, `acct-${(i + 1) % 100000}`]));
+const counter = { steps: 0 };
+console.log(findLoopStart(long, "acct-0", counter), counter.steps, "steps");
+</example>
+<output>
+null
+bola
+dayo
+eze
+acct-0 100000 steps
+</output>
+<p>An account that forwards to itself is a loop of length 1, and it is found like any other. On a loop of 100,000 accounts the whole search takes about 100,000 steps and remembers only two account names. The <code>Set</code> version would be simpler to read and just as fast; choose Floyd's method when memory is tight or the structure is huge, and the <code>Set</code> when clarity matters more.</p>
+</section>
+
+<section>
+<h2 id="failure-cases">Failure cases</h2>
+<ul>
+<li><strong>Unsorted input.</strong> The pair-sum argument ("everything to the left is smaller") is only true for sorted data. On unsorted amounts <code>refundPair</code> silently misses pairs. Either sort first, check the order, or use the <code>Map</code> version.</li>
+<li><strong>Sorted the wrong way.</strong> Numbers sorted with the default <code>sort()</code> are sorted as <em>strings</em> (<code>[100, 25, 3]</code>), which breaks every argument above. Sort numbers with <code>(a, b) =&gt; a - b</code>.</li>
+<li><strong><code>&lt;</code> versus <code>&lt;=</code>.</strong> <code>while (left &lt;= right)</code> in pair sum pairs an entry with itself. Decide whether the pointers may meet, and write it down.</li>
+<li><strong>A pointer that never moves.</strong> If some branch of the loop moves neither pointer, the loop never ends. Every branch must move at least one pointer towards the other.</li>
+<li><strong>Floating-point money.</strong> <code>0.1 + 0.2 === 0.3</code> is false, so an exact target sum in naira with decimals can be missed. Keep amounts in integer kobo.</li>
+<li><strong>Reading past the end.</strong> In fast and slow pointers, check <code>fast</code> and <code>fast.next</code> before jumping two steps.</li>
+<li><strong>Mutating shared data.</strong> In-place algorithms change the caller's array; a caller that reuses it afterwards sees the truncated version.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="testing">Testing two-pointer code</h2>
+<p>Two-pointer bugs hide in edges: the first and last element, equal values, the pointers meeting. The brute-force versions are slow but obviously correct, so compare against them on many small generated inputs, where edges come up constantly. Small value ranges make duplicates and matches common:</p>
+<example file="two-pointers-test.js">
+function refundPair(a, target) {
+  let left = 0, right = a.length - 1;
+  while (left < right) {
+    const sum = a[left] + a[right];
+    if (sum === target) return [left, right];
+    if (sum > target) right--;
+    else left++;
+  }
+  return null;
+}
+
+function hasPairBrute(a, target) {
+  for (let i = 0; i < a.length; i++) for (let j = i + 1; j < a.length; j++) if (a[i] + a[j] === target) return true;
+  return false;
+}
+
+function xorshift(seed) {
+  return () => {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return (seed >>> 0) / 4294967296;
+  };
+}
+
+const random = xorshift(99);
+let agree = 0, found = 0, validPairs = 0;
+for (let t = 0; t < 3000; t++) {
+  const a = Array.from({ length: Math.floor(random() * 8) }, () => Math.floor(random() * 10)).sort((x, y) => x - y);
+  const target = Math.floor(random() * 20);
+  const pair = refundPair(a, target);
+  if ((pair !== null) === hasPairBrute(a, target)) agree++;
+  if (pair !== null) {
+    found++;
+    const [i, j] = pair;
+    if (i < j && a[i] + a[j] === target) validPairs++;
+  }
+}
+console.log(`${agree}/3000 agree with brute force; ${found} pairs found, ${validPairs} of them valid`);
+</example>
+<output>
+3000/3000 agree with brute force; 627 pairs found, 627 of them valid
+</output>
+<p>The test checks two different things: that the fast version finds a pair exactly when one exists, and that every pair it returns is really valid (two different positions that add up). Comparing only "found or not" would pass a function that returned the wrong positions.</p>
+</section>
+
+<section>
+<h2 id="production">Two pointers in production</h2>
+<ul>
+<li><strong>Databases merge with two pointers.</strong> When both sides of a SQL join are sorted on the join key, the database can use a <em>merge join</em>: one pointer per table, advancing whichever key is smaller. It is the same walk as merging two sorted lists.</li>
+<li><strong>Files too big for memory.</strong> Sorting a 50 GB log is done by sorting chunks, writing them to disk, then merging the sorted chunks with one pointer per file (an <em>external merge sort</em>). Memory use stays small because each file is read front to back once.</li>
+<li><strong>Reconciliation.</strong> Matching a bank statement against the ledger, both sorted by reference, is two pointers: advance the smaller reference, report a reference present on only one side.</li>
+<li><strong>Is sorting worth it?</strong> If you have to sort just to use two pointers, the sort dominates (O(n log n)). Often the data is already sorted by an index; take advantage of that, and ask the database for sorted rows rather than sorting in your server.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practise">New problems to practise</h2>
+<exercise title="Merge two sorted statements">
+<p>A bank statement and the shop's ledger are both sorted by amount (in kobo). Write <code>mergeSorted(a, b)</code> that returns one sorted array with every entry of both, in O(n + m) time, without calling <code>sort</code>.</p>
+<solution>
+<example file="merge-sorted.js">
+function mergeSorted(a, b) {
+  const out = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] <= b[j]) out.push(a[i++]);
+    else out.push(b[j++]);
+  }
+  while (i < a.length) out.push(a[i++]);
+  while (j < b.length) out.push(b[j++]);
+  return out;
+}
+
+console.log(mergeSorted([1500, 4000, 9000], [2000, 4000, 12000, 15000]));
+console.log(mergeSorted([], [300]), mergeSorted([], []));
+</example>
+<output>
+[
+   1500,  2000,
+   4000,  4000,
+   9000, 12000,
+  15000
+]
+[ 300 ] []
+</output>
+<p>One pointer per list; each step copies the smaller head and advances only that pointer. Every element is copied once: O(n + m) time and O(n + m) space for the result. Using <code>&lt;=</code> takes from <code>a</code> first on ties, so equal amounts keep the order "statement before ledger". That property is called <strong>stability</strong>, and merge sort relies on it (see <a href="/learn/dsa-sorting">Sorting</a>).</p>
+</solution>
+</exercise>
+
+<exercise title="How many pairs fit the budget?">
+<p>A customer has a gift card for ₦20,000 and wants to buy exactly two different items. Given the item prices sorted ascending (in naira, whole numbers), count how many pairs of positions cost at most ₦20,000 together, in O(n).</p>
+<solution>
+<example file="budget-pairs.js">
+function pairsWithinBudget(prices, budget) {
+  let left = 0;
+  let right = prices.length - 1;
+  let pairs = 0;
+  while (left < right) {
+    if (prices[left] + prices[right] <= budget) {
+      pairs += right - left; // left pairs with every index from left+1 to right
+      left++;
+    } else {
+      right--;
+    }
+  }
+  return pairs;
+}
+
+console.log(pairsWithinBudget([3000, 5000, 8000, 12000, 17000], 20000));
+console.log(pairsWithinBudget([15000, 16000], 20000), pairsWithinBudget([10000, 10000], 20000));
+</example>
+<output>
+7
+0 1
+</output>
+<p>When <code>prices[left] + prices[right]</code> fits, every item between them is cheaper than <code>prices[right]</code>, so <code>left</code> fits with all <code>right − left</code> of them at once, and <code>left</code> is done. When it does not fit, <code>right</code> is too expensive even with the cheapest partner, so it is done. That counts up to <code>n(n − 1) / 2</code> pairs in O(n) steps, without listing them.</p>
+</solution>
+</exercise>
+
+<exercise title="The closest pair to a refund">
+<p>Sometimes no two payouts add up exactly, because a fee was deducted. Write <code>closestPair(amounts, target)</code> for a sorted list that returns the pair of positions whose sum is closest to the target. What is the argument that the pointer moves stay safe?</p>
+<solution>
+<example file="closest-pair.js">
+function closestPair(amounts, target) {
+  let left = 0;
+  let right = amounts.length - 1;
+  let best = null;
+  while (left < right) {
+    const sum = amounts[left] + amounts[right];
+    if (best === null || Math.abs(sum - target) < Math.abs(best.sum - target)) {
+      best = { left, right, sum };
+    }
+    if (sum === target) break;
+    if (sum > target) right--;
+    else left++;
+  }
+  return best;
+}
+
+console.log(closestPair([150000, 420000, 850000, 1500000, 1900000], 2330000));
+console.log(closestPair([500], 1000));
+</example>
+<output>
+{ left: 1, right: 4, sum: 2320000 }
+null
+</output>
+<p>When the sum is too big, every other pair using <code>right</code> (with a partner further right than <code>left</code>) is bigger still, so it is further from the target on the same side: <code>right</code> cannot improve on what was already seen, and it is safe to drop. The mirror holds for too small. So the same moves as exact pair sum work; you just remember the best sum seen. O(n) time, O(1) space.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="summary">Summary</h2>
+<ul>
+<li>Two pointers are two position variables moved by a rule, replacing a nested loop with one pass: from both ends inwards, reader and writer in the same direction, or fast and slow.</li>
+<li>The rule is only correct if each move discards something that cannot be part of the answer. State that invariant; if you cannot, the pattern does not apply.</li>
+<li>On sorted input, pair sum drops from <code>n(n − 1) / 2</code> additions to at most <code>n − 1</code>, with O(1) extra space, where a <code>Map</code> needs O(n).</li>
+<li>A reader and a writer remove duplicates from a sorted array in place in O(n), where repeated <code>splice</code> is O(n²).</li>
+<li>Container with most water: always move the shorter side.</li>
+<li>Fast and slow pointers find the middle of a linked list in one walk and detect a cycle (and its start) in O(1) space.</li>
+<li>Test against brute force on small generated inputs, and check that returned positions are really valid, not only that something was found.</li>
+</ul>
+<p>Next: <a href="/learn/pattern-sliding-window">Sliding window and prefix sums</a>, where two pointers mark the edges of a range that slides along the data: the best 7 days of revenue, the longest on-time streak.</p>
+</section>

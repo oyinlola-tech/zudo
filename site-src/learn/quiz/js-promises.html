@@ -148,6 +148,9 @@ b.then((n) => console.log(n));
 a.then((n) => console.log(n));
 </code>
 <option correct>false
+1
+2</option>
+<option>false
 2
 1</option>
 <option>true
@@ -159,7 +162,7 @@ a.then((n) => console.log(n));
 <option>true
 1
 1</option>
-<explain><p><code>then</code> never changes the promise it is called on. It returns a new promise, <code>b</code>, fulfilled with the handler's return value. <code>a</code> still holds 1. Handlers run in the order their promises were ready: <code>b</code>'s value was already waiting, but it only became fulfilled after <code>a</code>'s handler ran, which happened before the last <code>a.then</code> was attached.</p></explain>
+<explain><p><code>then</code> never changes the promise it is called on. It returns a new promise, <code>b</code>, fulfilled with the handler's return value, 2, while <code>a</code> still holds 1. The order: <code>a</code> is already fulfilled, so its two handlers are queued first (<code>n + 1</code>, then the second <code>log</code>). <code>b</code> only becomes fulfilled when <code>n + 1</code> has run, so its <code>log</code> is queued after <code>a</code>'s <code>log</code>.</p></explain>
 </question>
 
 <question id="prom-no-return-value" type="output">
@@ -440,7 +443,8 @@ function promisify(fn) {
 const sms = {
   sender: "ShopNG",
   send(to, callback) {
-    setTimeout(() => callback(null, `${this.sender} -> ${to}`), 10);
+    const from = this.sender;
+    setTimeout(() => callback(null, `${from} -> ${to}`), 10);
   },
 };
 
@@ -462,7 +466,7 @@ ShopNG -> +2348031234567</option>
 undefined -> +2348031234567</option>
 <option>ShopNG -> +2348031234567
 undefined -> +2348031234567</option>
-<explain><p>The wrapper forwards its own <code>this</code> with <code>fn.call(this, …)</code>. Called as <code>sms.sendAsync(…)</code>, <code>this</code> is <code>sms</code>. Called as a plain function, <code>this</code> is <code>undefined</code> (module code is strict), so reading <code>this.sender</code> throws a TypeError inside the timer callback... except that it happens inside the SDK's arrow function, which reads <code>this</code> from <code>send</code>: <code>undefined.sender</code>. The throw is in a timer callback, not the executor? No: <code>this.sender</code> is read when the timer fires, so it would crash. Read the explanation below the question.</p></explain>
+<explain><p>The wrapper forwards its own <code>this</code> with <code>fn.call(this, …)</code>. Called as <code>sms.sendAsync(…)</code>, <code>this</code> is <code>sms</code>. Called as a plain function, <code>this</code> is <code>undefined</code> (module code is strict), so <code>this.sender</code> throws a TypeError. Because <code>send</code> runs inside the executor, that throw becomes a rejection, and the <code>try</code>/<code>catch</code> around <code>await</code> catches it. Bind it (<code>promisify(sms.send.bind(sms))</code>) or call it as a method.</p></explain>
 </question>
 
 <question id="prom-antipattern" type="choice">
@@ -617,11 +621,11 @@ failed: too heavy: 45 kg
 </question>
 
 <question id="prom-code-flatten" type="code" file="flatten.js">
-<q><p>Rewrite the nested chain as one flat chain with a single <code>.catch</code> at the end. It must print the same thing.</p></q>
+<q><p>This nested chain crashes: the card is declined, and no handler can reach the rejection inside the nested callbacks. Rewrite it as one flat chain with a single <code>.catch</code> at the end that prints <code>checkout failed: MESSAGE</code>.</p></q>
 <starter>
 const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
 const reserve = (order) => wait(10, { ...order, reserved: true });
-const charge = (order) => wait(10, { ...order, chargeId: "ch_9" });
+const charge = (order) => wait(10).then(() => { throw new Error(`card declined for order ${order.id}`); });
 const receipt = (order) => wait(10, `order ${order.id} paid with ${order.chargeId}`);
 
 reserve({ id: 12 }).then((reserved) => {
@@ -633,7 +637,7 @@ reserve({ id: 12 }).then((reserved) => {
 <solution>
 const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
 const reserve = (order) => wait(10, { ...order, reserved: true });
-const charge = (order) => wait(10, { ...order, chargeId: "ch_9" });
+const charge = (order) => wait(10).then(() => { throw new Error(`card declined for order ${order.id}`); });
 const receipt = (order) => wait(10, `order ${order.id} paid with ${order.chargeId}`);
 
 reserve({ id: 12 })
@@ -642,8 +646,8 @@ reserve({ id: 12 })
   .then((text) => console.log(text))
   .catch((error) => console.log("checkout failed:", error.message));
 </solution>
-<expected>order 12 paid with ch_9</expected>
-<explain><p>Each handler <em>returns</em> the next promise, so the chain waits for it and passes its value on. One <code>catch</code> at the end covers every step, which the nested version could not do.</p></explain>
+<expected>checkout failed: card declined for order 12</expected>
+<explain><p>Each handler <em>returns</em> the next promise, so the chain waits for it and a rejection travels down to the one <code>catch</code> at the end. In the nested version the inner promises are floating: their rejections reach no handler.</p></explain>
 </question>
 
 <question id="prom-code-rethrow" type="code" file="rethrow.js">

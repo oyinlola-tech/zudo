@@ -1,0 +1,958 @@
+---
+title: Generators
+description: Write iterators as ordinary loops with function* and yield, then stream order lines lazily from a paged API into a CSV export, with cleanup that always runs.
+minutes: 50
+youNeed: Iterables and iterators, Closures in depth and Recursion
+youBuild: A streaming CSV export of order lines that reads a paged API lazily, stops early without leaking, and is tested with a fake API
+keywords: javascript generator, function*, yield, generator object, lazy sequence, infinite sequence, yield*, delegation, generator return, generator throw, try finally generator, next with argument, async generator, for await, streaming, pipeline, csv export, exponential backoff
+objectives: Explain how a generator pauses at yield and resumes on next(), and predict the order of its output | Rewrite a hand-written iterator as a generator, including reusable iterables and class iterators | Build lazy, infinite and composed sequences with generators and yield* | Clean up with try/finally, and explain what return() and throw() do to a paused generator | Use async generators and for await...of to stream a paged API | Build and test a streaming export pipeline
+---
+<section>
+<h2 id="problem">Thirty lines of bookkeeping</h2>
+<p>In <a href="/learn/js-iterators#build">Iterables and iterators</a> you built a paginator that fetches pages only when they are needed. It works, but look at how much of it is bookkeeping rather than logic: a buffer, a <code>started</code> flag, a <code>finished</code> flag, a <code>while</code> loop inside <code>next()</code>, a separate <code>return()</code>. Now the reporting team wants more: an export that walks every order, then every <strong>line</strong> of every order (one product, a quantity, a price), and writes one CSV row per line. Doing that by hand means an iterator over pages, holding an iterator over orders, holding an iterator over lines, each with its own position variables.</p>
+<p>Here is a small taste of that style: just the "lines of all orders" part, written as a hand-made iterator.</p>
+<example file="by-hand.js">
+const orders = [
+  { id: "ORD-1", lines: [{ sku: "RICE-5", qty: 2 }, { sku: "OIL-1", qty: 1 }] },
+  { id: "ORD-2", lines: [] },
+  { id: "ORD-3", lines: [{ sku: "SALT", qty: 4 }] },
+];
+
+function allLines(orders) {
+  return {
+    [Symbol.iterator]() {
+      let orderIndex = 0;
+      let lineIndex = 0;
+      return {
+        next() {
+          while (orderIndex < orders.length) {
+            const order = orders[orderIndex];
+            if (lineIndex < order.lines.length) {
+              const line = order.lines[lineIndex++];
+              return { value: { orderId: order.id, ...line }, done: false };
+            }
+            orderIndex++;
+            lineIndex = 0;
+          }
+          return { value: undefined, done: true };
+        },
+      };
+    },
+  };
+}
+
+for (const line of allLines(orders)) console.log(line);
+</example>
+<output>
+{ orderId: 'ORD-1', sku: 'RICE-5', qty: 2 }
+{ orderId: 'ORD-1', sku: 'OIL-1', qty: 1 }
+{ orderId: 'ORD-3', sku: 'SALT', qty: 4 }
+</output>
+<p>It works, but the logic you actually have in your head, "for each order, for each line, hand out the line", is buried. You had to turn two nested loops inside out into two index variables, because <code>next()</code> must <em>return</em> after every item and remember where it was. Every early return is a chance for an off-by-one bug.</p>
+<p>The same iterator as a <strong>generator</strong>:</p>
+<example file="as-generator.js">
+const orders = [
+  { id: "ORD-1", lines: [{ sku: "RICE-5", qty: 2 }, { sku: "OIL-1", qty: 1 }] },
+  { id: "ORD-2", lines: [] },
+  { id: "ORD-3", lines: [{ sku: "SALT", qty: 4 }] },
+];
+
+function* allLines(orders) {
+  for (const order of orders) {
+    for (const line of order.lines) {
+      yield { orderId: order.id, ...line };
+    }
+  }
+}
+
+for (const line of allLines(orders)) console.log(line);
+</example>
+<output>
+{ orderId: 'ORD-1', sku: 'RICE-5', qty: 2 }
+{ orderId: 'ORD-1', sku: 'OIL-1', qty: 1 }
+{ orderId: 'ORD-3', sku: 'SALT', qty: 4 }
+</output>
+<p>Same output, and the code reads exactly like the idea: two ordinary nested loops. The function can <em>pause</em> in the middle of both loops, hand out a line, and later carry on from exactly that spot. This lesson explains how that pausing works, what it costs, and how to use it: lazy and infinite sequences, delegation, cleanup, and, at the end, a streaming CSV export built from small generators.</p>
+</section>
+
+<section>
+<h2 id="basics">function*, yield and the generator object</h2>
+<p>A <strong>generator function</strong> is declared with an asterisk: <code>function*</code>. Inside it, the keyword <code>yield</code> hands out a value and pauses. Calling a generator function is different from calling a normal function in one important way: <strong>the body does not run</strong>. Instead you get back a <strong>generator object</strong>, which is an iterator. The body only runs when you call <code>next()</code>, and only until the next <code>yield</code>:</p>
+<example file="pause.js">
+function* checkoutSteps() {
+  console.log("  [start: validate cart]");
+  yield "cart ok";
+  console.log("  [charge card]");
+  yield "paid";
+  console.log("  [send receipt]");
+  return "done";
+}
+
+const steps = checkoutSteps();
+console.log("created, nothing ran yet");
+console.log(steps.next());
+console.log(steps.next());
+console.log(steps.next());
+console.log(steps.next());
+</example>
+<output>
+created, nothing ran yet
+  [start: validate cart]
+{ value: 'cart ok', done: false }
+  [charge card]
+{ value: 'paid', done: false }
+  [send receipt]
+{ value: 'done', done: true }
+{ value: undefined, done: true }
+</output>
+<p>Follow the output line by line:</p>
+<ol>
+<li>Calling <code>checkoutSteps()</code> printed nothing. It only created the generator object, paused before the first line of the body.</li>
+<li>The first <code>next()</code> ran the body up to the first <code>yield</code>, which became <code>{ value: "cart ok", done: false }</code>.</li>
+<li>Each later <code>next()</code> resumed right after the <code>yield</code> where it stopped, with all local variables intact, and ran to the next <code>yield</code>.</li>
+<li>The <code>return</code> statement finished the generator: its value arrived with <code>done: true</code>. After that, the generator is finished for good.</li>
+</ol>
+<figure class="lx-diagram">
+<pre>
+  gen = fn()          next()             next()              next() → return
+ ┌───────────┐  ┌──────────────┐  ┌──────────────┐     ┌───────────────┐
+ │ suspended │─►│   running    │─►│  suspended   │ ─► …│   completed   │
+ │ at start  │  │ until yield  │  │ at a yield   │     │ done: true    │
+ └───────────┘  └──────────────┘  └──────────────┘     └───────────────┘
+   body not run   locals live on     resumes here on      every next() now
+                  between calls      the next next()      returns done: true
+</pre>
+<figcaption>A generator moves between these states. Only next(), return() and throw() move it.</figcaption>
+</figure>
+<p>A generator's local variables live on between calls, the way a closure's variables do (<a href="/learn/js-closures#environments">Closures in depth</a>): the paused call's environment is kept alive inside the generator object. That is what replaces the index variables you had to manage by hand.</p>
+<h3>A generator object is an iterator, and iterable</h3>
+<p>Because the generator object has <code>next()</code> and a <code>[Symbol.iterator]()</code> that returns itself, every consumer from the last lesson accepts it: <code>for...of</code>, spread, destructuring, <code>Array.from</code>. It also inherits from <code>Iterator.prototype</code>, so the iterator helpers work on it directly:</p>
+<example file="consumers.js">
+function* vatRates() {
+  yield 0.075;
+  yield 0.05;
+  yield 0;
+}
+
+console.log([...vatRates()]);
+const [standard] = vatRates();
+console.log(standard);
+console.log(vatRates().map((rate) => `${rate * 100}%`).toArray());
+
+const gen = vatRates();
+console.log(gen[Symbol.iterator]() === gen);
+console.log([...gen], [...gen]);
+</example>
+<output>
+[ 0.075, 0.05, 0 ]
+0.075
+[ '7.5%', '5%', '0%' ]
+true
+[ 0.075, 0.05, 0 ] []
+</output>
+<p>The last line is the one-shot rule from <a href="/learn/js-iterators#one-shot">the previous lesson</a>. A generator <em>object</em> is one walk. To walk again, call the generator <em>function</em> again, which creates a new object.</p>
+</section>
+
+<section>
+<h2 id="rewrite">Rewriting iterators as generators</h2>
+<h3>A range</h3>
+<p>The <code>range</code> from the previous lesson needed an object, a <code>[Symbol.iterator]</code> method, a <code>next</code> method and result objects. As a generator, the loop you would naturally write <em>is</em> the iterator:</p>
+<example file="range.js">
+function* range(start, end, step = 1) {
+  if (step === 0) throw new RangeError("step must not be 0");
+  for (let n = start; step > 0 ? n < end : n > end; n += step) {
+    yield n;
+  }
+}
+
+console.log([...range(1, 6)]);
+console.log([...range(10, 0, -3)]);
+
+const nights = range(12, 15);
+console.log([...nights], [...nights]);
+
+try {
+  range(1, 5, 0);
+  console.log("no error yet");
+  [...range(1, 5, 0)];
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+[ 1, 2, 3, 4, 5 ]
+[ 10, 7, 4, 1 ]
+[ 12, 13, 14 ] []
+no error yet
+RangeError: step must not be 0
+</output>
+<p>Two differences from the hand-written version, both caused by "the body does not run until <code>next()</code>":</p>
+<ul>
+<li><code>range(12, 15)</code> is now a one-shot generator object, not a reusable iterable. The second spread got nothing.</li>
+<li>The validation moved: <code>range(1, 5, 0)</code> did not throw. The <code>throw</code> is part of the body, so it only runs on the first <code>next()</code>. A bug can now surface far from the line that caused it.</li>
+</ul>
+<h3>Reusable iterables with a generator method</h3>
+<p>Both problems have the same fix: validate in a normal function, and put the generator in the <code>[Symbol.iterator]</code> method, written <code>*[Symbol.iterator]()</code>. Every walk calls that method, so every walk gets a new generator:</p>
+<example file="range-reusable.js" project="range">
+export function range(start, end, step = 1) {
+  if (step === 0 || !Number.isFinite(step)) throw new RangeError("step must be a non-zero number");
+  return {
+    *[Symbol.iterator]() {
+      for (let n = start; step > 0 ? n < end : n > end; n += step) yield n;
+    },
+  };
+}
+</example>
+<example file="use-range.js" project="range">
+import { range } from "./range-reusable.js";
+
+const nights = range(12, 15);
+console.log([...nights], [...nights]);
+
+try {
+  range(1, 5, 0);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+[ 12, 13, 14 ] [ 12, 13, 14 ]
+RangeError: step must be a non-zero number
+</output>
+<p>This is the pattern to use for anything that should behave like a collection. It also works in classes: a <code>Cart</code> can define <code>*[Symbol.iterator]() { yield* this.#lines.values(); }</code>, and <code>yield*</code> is explained <a href="#delegation">below</a>.</p>
+<h3>The paginator in eight lines</h3>
+<p>Here is the paginator from the previous lesson as a generator. Compare it with the version that needed a buffer and three flags:</p>
+<example file="paginate.js" project="export">
+export function* paginate(fetchPage) {
+  let cursor = null;
+  do {
+    const page = fetchPage(cursor);
+    yield* page.items;
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+}
+</example>
+<p>The "buffer" is gone: the generator simply pauses inside <code>yield* page.items</code> (which hands out each item of the page in turn) until the caller asks for more. When the caller stops early, the generator stays paused and no further page is ever fetched. The <code>do...while</code> expresses "always fetch the first page, then follow cursors until there are none", which the hand-written version needed a <code>started</code> flag for. You will test this paginator in the <a href="#build">build</a>.</p>
+</section>
+
+<section>
+<h2 id="lazy">Lazy and infinite sequences</h2>
+<p>Because a generator only runs when asked, an infinite loop inside one is fine, as long as the consumer stops. That makes generators the natural way to describe sequences that have no natural end.</p>
+<h3>Retry delays with exponential backoff</h3>
+<p>When a payment provider times out, you retry, but not immediately and not forever. A common rule is <strong>exponential backoff</strong>: wait 200 ms, then 400, 800, 1,600, doubling each time, never more than a cap. The rule is an infinite sequence; how many attempts to make is a separate decision:</p>
+<example file="backoff.js">
+function* backoff({ firstMs = 200, factor = 2, maxMs = 5000 } = {}) {
+  let delay = firstMs;
+  while (true) {
+    yield delay;
+    delay = Math.min(delay * factor, maxMs);
+  }
+}
+
+console.log(backoff().take(8).toArray());
+
+for (const [attempt, waitMs] of backoff({ firstMs: 100, maxMs: 1000 }).take(3).map((ms, i) => [i + 1, ms])) {
+  console.log(`attempt ${attempt} failed, retrying in ${waitMs} ms`);
+}
+</example>
+<output>
+[
+   200,  400,  800,
+  1600, 3200, 5000,
+  5000, 5000
+]
+attempt 1 failed, retrying in 100 ms
+attempt 2 failed, retrying in 200 ms
+attempt 3 failed, retrying in 400 ms
+</output>
+<p>The generator describes the delays and nothing else; <code>take(3)</code> decides how many attempts. Separating "what the sequence is" from "how much of it you use" is the main design benefit of lazy sequences. (The helpers' <code>map</code> passes a counter as the second argument, like the array version, which gives the attempt number.)</p>
+<h3>Composing generators</h3>
+<p>Small generators that take an iterable and yield a transformed one can be chained like pipes. This is how the iterator helpers work inside, and writing a few yourself shows why nothing runs until the end of the chain pulls:</p>
+<example file="compose.js">
+function* withVat(lines, rate) {
+  for (const line of lines) {
+    console.log(`  vat on ${line.sku}`);
+    yield { ...line, vatKobo: Math.round(line.priceKobo * line.qty * rate) };
+  }
+}
+
+function* over(lines, minKobo) {
+  for (const line of lines) {
+    if (line.priceKobo * line.qty >= minKobo) yield line;
+  }
+}
+
+function* first(items, count) {
+  if (count <= 0) return;
+  for (const item of items) {
+    yield item;
+    if (--count === 0) return;
+  }
+}
+
+const lines = [
+  { sku: "RICE-5", qty: 2, priceKobo: 850000 },
+  { sku: "SALT", qty: 1, priceKobo: 20000 },
+  { sku: "OIL-1", qty: 3, priceKobo: 320000 },
+  { sku: "TV-55", qty: 1, priceKobo: 45000000 },
+];
+
+const pipeline = first(over(withVat(lines, 0.075), 500000), 2);
+console.log("pipeline built");
+for (const line of pipeline) console.log(line.sku, line.vatKobo);
+</example>
+<output>
+pipeline built
+  vat on RICE-5
+RICE-5 127500
+  vat on SALT
+  vat on OIL-1
+OIL-1 72000
+</output>
+<p>Building the pipeline printed nothing. Each line then flowed through all three stages before the next one started, and the TV was never processed because <code>first</code> returned after two items. Note the <code>return</code> right after the second <code>yield</code> in <code>first</code>: checking <em>after</em> yielding means it stops without pulling one extra item from upstream. Checking before would have run <code>withVat</code> on the TV for nothing.</p>
+</section>
+
+<section>
+<h2 id="delegation">Delegation with yield*</h2>
+<p><code>yield* iterable</code> hands out every value of another iterable, one by one, as if the generator had yielded them itself. It works with any iterable: arrays, strings, sets, other generators. You used it on <code>page.items</code> in the paginator.</p>
+<p>Its real power shows on recursive data. A shop's product categories form a tree, and listing every category with its full path is a recursive walk (<a href="/learn/js-recursion#nested-data">Recursion</a>). With a generator, the recursive call is delegated with <code>yield*</code>, and the caller gets a flat, lazy stream:</p>
+<example file="categories.js">
+const catalog = {
+  name: "Shop",
+  children: [
+    { name: "Food", children: [{ name: "Grains", children: [] }, { name: "Oils", children: [] }] },
+    { name: "Electronics", children: [{ name: "TVs", children: [{ name: "OLED", children: [] }] }] },
+  ],
+};
+
+function* categoryPaths(node, prefix = "") {
+  const path = prefix ? `${prefix} > ${node.name}` : node.name;
+  yield path;
+  for (const child of node.children) {
+    yield* categoryPaths(child, path);
+  }
+}
+
+for (const path of categoryPaths(catalog)) console.log(path);
+
+const firstElectronics = categoryPaths(catalog).find((p) => p.includes("Electronics"));
+console.log("found:", firstElectronics);
+</example>
+<output>
+Shop
+Shop > Food
+Shop > Food > Grains
+Shop > Food > Oils
+Shop > Electronics
+Shop > Electronics > TVs
+Shop > Electronics > TVs > OLED
+found: Shop > Electronics
+</output>
+<p>Without <code>yield*</code> you would have to collect every child's paths into an array and return it, building the whole list before the caller sees the first path. With it, <code>find</code> stops the walk the moment it has a match, and the deeper categories are never visited.</p>
+<h3>What yield* evaluates to</h3>
+<p>A generator's <code>return</code> value is not handed out by <code>for...of</code> (the loop stops at <code>done: true</code> and ignores its value). But <code>yield*</code> gives that value back as the result of the <code>yield*</code> expression. That lets a delegated generator report something to its parent, such as a count:</p>
+<example file="yield-star-value.js">
+function* orderLines(order) {
+  for (const line of order.lines) yield `${order.id},${line.sku},${line.qty}`;
+  return order.lines.length;
+}
+
+function* allRows(orders) {
+  let total = 0;
+  for (const order of orders) {
+    const count = yield* orderLines(order);
+    total += count;
+  }
+  return total;
+}
+
+const orders = [
+  { id: "ORD-1", lines: [{ sku: "RICE-5", qty: 2 }, { sku: "OIL-1", qty: 1 }] },
+  { id: "ORD-2", lines: [{ sku: "SALT", qty: 4 }] },
+];
+
+const rows = allRows(orders);
+console.log([...rows]);
+
+const again = allRows(orders);
+let result = again.next();
+while (!result.done) result = again.next();
+console.log("lines written:", result.value);
+</example>
+<output>
+[ 'ORD-1,RICE-5,2', 'ORD-1,OIL-1,1', 'ORD-2,SALT,4' ]
+lines written: 3
+</output>
+<p>Spread dropped the return value, like <code>for...of</code>. The manual <code>next()</code> loop saw it on the final result. Keep this in mind: if a value matters to the caller, <code>yield</code> it; a <code>return</code> value is only visible to code that reads the final result itself, or to a parent using <code>yield*</code>.</p>
+</section>
+
+<section>
+<h2 id="two-way">Sending values in: next(value)</h2>
+<p><code>yield</code> is an expression, not just a statement. When the generator resumes, <code>yield</code> evaluates to the argument that was passed to that <code>next()</code> call. So a caller can send values <em>into</em> a paused generator. A till that keeps a running total shows the idea:</p>
+<example file="till.js">
+function* till() {
+  let totalKobo = 0;
+  while (true) {
+    const scanned = yield totalKobo;
+    if (scanned === undefined) continue;
+    totalKobo += scanned;
+  }
+}
+
+const lane = till();
+console.log(lane.next(999).value);
+console.log(lane.next(850000).value);
+console.log(lane.next(20000).value);
+console.log(lane.next().value);
+</example>
+<output>
+0
+850000
+870000
+870000
+</output>
+<p>The first <code>next(999)</code> printed 0: the argument of the <strong>first</strong> <code>next()</code> is always thrown away, because at that moment the generator has not reached any <code>yield</code> that could receive it. It only starts the body and runs to the first <code>yield</code>. Each later argument becomes the value of the <code>yield</code> the generator was paused on.</p>
+<p>This two-way style is how some libraries write state machines and how <code>async</code>/<code>await</code> was emulated before it existed: a runner calls <code>next(result)</code> with each resolved promise. In everyday code it is rare, and a small class or closure is usually clearer. Use it when you meet it; reach for it only when the pause-and-resume shape really fits.</p>
+</section>
+
+<section>
+<h2 id="cleanup">Cleanup: return(), throw() and finally</h2>
+<p>In the previous lesson, closing a cursor early needed a hand-written <code>return()</code> method. A generator gets <code>return()</code> for free, and uses the language's own cleanup tool: a <code>try</code>/<code>finally</code> around the <code>yield</code>s. When a consumer stops early, the generator is resumed as if a <code>return</code> statement stood at the paused <code>yield</code>, so its <code>finally</code> block runs:</p>
+<example file="finally.js">
+function* openCursor(rows) {
+  console.log("  cursor opened");
+  try {
+    for (const row of rows) yield row;
+  } finally {
+    console.log("  cursor closed");
+  }
+}
+
+const rows = ["ORD-1", "ORD-2", "ORD-3"];
+
+console.log("break:");
+for (const id of openCursor(rows)) {
+  console.log(" ", id);
+  if (id === "ORD-2") break;
+}
+
+console.log("find:");
+console.log(" ", openCursor(rows).find((id) => id.endsWith("1")));
+
+console.log("manual return():");
+const cursor = openCursor(rows);
+cursor.next();
+console.log(" ", cursor.return("stopped"));
+console.log(" ", cursor.next());
+</example>
+<output>
+break:
+  cursor opened
+  ORD-1
+  ORD-2
+  cursor closed
+find:
+  cursor opened
+  cursor closed
+  ORD-1
+manual return():
+  cursor opened
+  cursor closed
+  { value: 'stopped', done: true }
+  { value: undefined, done: true }
+</output>
+<p>Every early exit closed the cursor. <code>return(value)</code> finished the generator and reported <code>value</code> with <code>done: true</code>.</p>
+<h3>throw(): an error at the pause point</h3>
+<p><code>gen.throw(error)</code> resumes the generator by <em>throwing</em> the error at the paused <code>yield</code>. If the generator catches it, it can recover and keep yielding; if not, the error comes out of the <code>throw()</code> call, and the generator is finished. A price feed that must skip a corrupt price instead of dying is an example of the first case:</p>
+<example file="throw.js">
+function* priceFeed(prices) {
+  for (const price of prices) {
+    try {
+      yield price;
+    } catch (error) {
+      console.log(`  feed: skipped ${price} (${error.message})`);
+    }
+  }
+}
+
+const feed = priceFeed([850000, -1, 320000]);
+console.log(feed.next().value);
+console.log(feed.next().value);
+console.log(feed.throw(new Error("negative price")).value);
+console.log(feed.next());
+</example>
+<output>
+850000
+-1
+  feed: skipped -1 (negative price)
+320000
+{ value: undefined, done: true }
+</output>
+<p>The consumer rejected <code>-1</code> by throwing into the generator. The generator's <code>catch</code> logged it, the loop moved on, and the <code>throw()</code> call itself returned the next yielded value. You will rarely call <code>throw()</code> yourself, but async generators and some stream libraries use it to deliver errors, and knowing it exists explains why a <code>try</code> around <code>yield</code> can catch errors that come from outside.</p>
+<h3>The generator that never finishes</h3>
+<p>There is one case where <code>finally</code> does not run: a paused generator that nobody finishes and nobody calls <code>return()</code> on. If you call <code>next()</code> by hand and then simply drop the generator, it stays paused until the garbage collector frees it, and the <code>finally</code> never runs:</p>
+<example file="abandoned.js">
+function* lockSeat(seat) {
+  console.log(`  lock ${seat}`);
+  try {
+    yield seat;
+  } finally {
+    console.log(`  unlock ${seat}`);
+  }
+}
+
+console.log("abandoned:");
+const booking = lockSeat("12A");
+booking.next();
+console.log("  (dropped without return)");
+
+console.log("with try/finally in the caller:");
+const safe = lockSeat("12B");
+try {
+  safe.next();
+} finally {
+  safe.return();
+}
+</example>
+<output>
+abandoned:
+  lock 12A
+  (dropped without return)
+with try/finally in the caller:
+  lock 12B
+  unlock 12B
+</output>
+<p>Seat 12A is locked forever. <code>for...of</code>, spread, destructuring and the iterator helpers always finish or <code>return()</code> the generator, so this only bites code that drives <code>next()</code> by hand. When you do, pair it with <code>try</code>/<code>finally</code> and <code>return()</code>, as with 12B.</p>
+</section>
+
+<section>
+<h2 id="failures">Common generator mistakes</h2>
+<h3>yield inside a callback</h3>
+<p><code>yield</code> only works directly in the generator's own body. A callback such as the one passed to <code>forEach</code> is a separate function, so <code>yield</code> inside it is not allowed; the code does not even parse:</p>
+<example file="yield-callback.js">
+const source = `
+  function* skus(lines) {
+    lines.forEach((line) => {
+      yield line.sku;
+    });
+  }
+`;
+try {
+  new Function(source);
+} catch (error) {
+  console.log(error.name);
+}
+
+function* skus(lines) {
+  for (const line of lines) yield line.sku;
+}
+console.log([...skus([{ sku: "RICE-5" }, { sku: "SALT" }])]);
+</example>
+<output>
+SyntaxError
+[ 'RICE-5', 'SALT' ]
+</output>
+<p>Use <code>for...of</code> inside generators, or <code>yield*</code> over a mapped iterable (<code>yield* lines.values().map((l) =&gt; l.sku)</code>).</p>
+<h3>A summary of the traps</h3>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td>Second loop gets nothing</td><td>A generator object is one-shot</td><td>Call the generator function again, or use <code>*[Symbol.iterator]()</code></td></tr>
+<tr><td>Validation error appears later than expected, or never</td><td>The body, including checks at its top, runs on the first <code>next()</code></td><td>Validate in a normal wrapper function that returns the generator</td></tr>
+<tr><td>Calling the function "does nothing"</td><td>Generator bodies do not run until something iterates</td><td>Iterate it; a generator used only for side effects is a design smell</td></tr>
+<tr><td>Return value missing</td><td><code>for...of</code> and spread ignore the <code>done: true</code> value</td><td><code>yield</code> it, or read it with <code>yield*</code> or a manual loop</td></tr>
+<tr><td>Cleanup never runs</td><td>A hand-driven generator was dropped while paused</td><td>Call <code>return()</code> in a <code>finally</code>; prefer <code>for...of</code></td></tr>
+<tr><td><code>SyntaxError</code> at <code>yield</code></td><td><code>yield</code> inside a callback or a normal function</td><td>Use a <code>for...of</code> loop in the generator body</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="async">Async generators</h2>
+<p>The previous lesson ended with an asynchronous paginator written by hand for <code>Symbol.asyncIterator</code>. An <strong>async generator</strong>, <code>async function*</code>, combines both features: you can <code>await</code> inside it, and each <code>yield</code> hands a value to a <code>for await...of</code> loop. Its <code>next()</code> returns a promise. Here is the real-world paginator, fetching over an asynchronous API:</p>
+<example file="async-paginate.js">
+const PAGES = {
+  start: { items: ["ORD-1", "ORD-2"], nextCursor: "c2" },
+  c2: { items: ["ORD-3"], nextCursor: "c3" },
+  c3: { items: ["ORD-4", "ORD-5"], nextCursor: null },
+};
+let requests = 0;
+
+async function fetchPage(cursor) {
+  requests += 1;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  return PAGES[cursor ?? "start"];
+}
+
+async function* paginate(fetchPage) {
+  let cursor = null;
+  do {
+    const page = await fetchPage(cursor);
+    yield* page.items;
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+}
+
+for await (const id of paginate(fetchPage)) {
+  console.log(id);
+  if (id === "ORD-3") break;
+}
+console.log("requests:", requests);
+</example>
+<output>
+ORD-1
+ORD-2
+ORD-3
+requests: 2
+</output>
+<p>It is the synchronous paginator with two words added: <code>async</code> and <code>await</code>. Laziness still holds: <code>break</code> after ORD-3 meant the third page was never requested. The pieces fit together in a way worth remembering:</p>
+<ul>
+<li><code>for await...of</code> waits for each item; the loop body runs one item at a time, so pages are fetched in sequence, never all at once.</li>
+<li>Node's readable streams, such as files read with <code>fs.createReadStream</code>, are async iterables too, so <code>for await (const chunk of stream)</code> works on them (<a href="/learn/node-streams#readable">Streams</a>).</li>
+<li>Fetching pages in parallel, cancelling a slow request, and limiting how many run at once are topics of <a href="/learn/js-promises">Promises in depth</a> and <a href="/learn/js-concurrency">Concurrency</a>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="reason">Before you build: the order lines export</h2>
+<reason title="Design a streaming CSV export">
+<p>Finance wants a CSV file with one row per order line: <code>orderId,sku,qty,lineTotalKobo</code>, for every order in the orders API, which returns pages of orders. There could be millions of lines. Before reading the code, think through:</p>
+<ul>
+<li>Which parts of the job should be separate generators, so each can be tested on its own?</li>
+<li>What must the file contain when there are no orders at all?</li>
+<li>A SKU or order id could contain a comma or a double quote. What happens to the CSV if you write it as it is?</li>
+<li>An operator stops the export after the first 1,000 rows to check it. How many pages should have been fetched, and what must still be cleaned up?</li>
+<li>How can a test show that the export is streaming, and not building everything in memory first?</li>
+</ul>
+<answer>
+<ul>
+<li><strong>Stages</strong>: <code>paginate</code> (pages to orders), <code>orderLines</code> (orders to lines, with <code>yield*</code>), <code>toCsv</code> (lines to text rows, header first). Each takes an iterable and yields, so each can be fed a plain array in a test.</li>
+<li><strong>No orders</strong>: the header row, and nothing else. A file with a header tells the reader "the export ran and found nothing"; an empty file looks like a crash.</li>
+<li><strong>Commas and quotes</strong>: an unquoted comma splits one field into two and shifts every column after it. Fields that contain a comma, a quote or a newline must be wrapped in quotes, with inner quotes doubled (<code>"</code> becomes <code>""</code>). That is the CSV rule (RFC 4180).</li>
+<li><strong>Early stop</strong>: only as many pages as were needed for 1,000 rows. The writer (a file, here a fake) must be closed in a <code>finally</code>, so a stop or an error still closes it.</li>
+<li><strong>Proving it streams</strong>: count the API requests when the consumer stops early. A version that loaded everything first would have made every request.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: a streaming CSV export</h2>
+<p>The paginator you already wrote, in <code>paginate.js</code> above, is the first stage. The other stages each fit in a few lines:</p>
+<example file="export.js" project="export">
+import { paginate } from "./paginate.js";
+
+export function* orderLines(orders) {
+  for (const order of orders) {
+    for (const line of order.lines) {
+      yield {
+        orderId: order.id,
+        sku: line.sku,
+        qty: line.qty,
+        lineTotalKobo: line.qty * line.priceKobo,
+      };
+    }
+  }
+}
+
+export function csvField(value) {
+  const text = String(value);
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+const COLUMNS = ["orderId", "sku", "qty", "lineTotalKobo"];
+
+export function* toCsv(rows) {
+  yield COLUMNS.join(",");
+  for (const row of rows) {
+    yield COLUMNS.map((column) => csvField(row[column])).join(",");
+  }
+}
+
+export function exportOrders(fetchPage, writer, { maxRows = Infinity } = {}) {
+  let written = 0;
+  try {
+    for (const text of toCsv(orderLines(paginate(fetchPage)))) {
+      writer.write(text + "\n");
+      written += 1;
+      if (written > maxRows) break;
+    }
+  } finally {
+    writer.close();
+  }
+  return Math.max(written - 1, 0);
+}
+</example>
+<p><code>exportOrders</code> is the only place with side effects: it pulls rows through the pipeline and writes them. The <code>finally</code> closes the writer however the loop ends. <code>maxRows</code> counts data rows; the header is row 0, hence <code>written &gt; maxRows</code> and <code>written - 1</code>. The limit is checked right <em>after</em> writing a row, for the same reason <code>first</code> checked after yielding: checking at the top of the loop would only happen once the next row had already been pulled through the pipeline, and pulling it can fetch a page that nobody needs. Now a fake API and a fake writer, so everything runs in memory:</p>
+<example file="fakes.js" project="export">
+export function createFakeOrdersApi(orders, pageSize = 2) {
+  const api = {
+    requests: 0,
+    fetchPage: (cursor) => {
+      api.requests += 1;
+      const start = cursor === null ? 0 : Number(cursor);
+      const end = start + pageSize;
+      return { items: orders.slice(start, end), nextCursor: end < orders.length ? String(end) : null };
+    },
+  };
+  return api;
+}
+
+export function createMemoryWriter() {
+  const writer = {
+    text: "",
+    closed: false,
+    write(chunk) {
+      if (writer.closed) throw new Error("write after close");
+      writer.text += chunk;
+    },
+    close() {
+      writer.closed = true;
+    },
+  };
+  return writer;
+}
+
+export const ORDERS = [
+  { id: "ORD-1", lines: [{ sku: "RICE-5", qty: 2, priceKobo: 850000 }, { sku: "OIL-1", qty: 1, priceKobo: 320000 }] },
+  { id: "ORD-2", lines: [{ sku: 'TV "55', qty: 1, priceKobo: 45000000 }] },
+  { id: "ORD-3", lines: [] },
+  { id: "ORD-4", lines: [{ sku: "SALT,FINE", qty: 3, priceKobo: 20000 }] },
+];
+</example>
+<example file="main.js" project="export">
+import { exportOrders } from "./export.js";
+import { ORDERS, createFakeOrdersApi, createMemoryWriter } from "./fakes.js";
+
+const api = createFakeOrdersApi(ORDERS);
+const file = createMemoryWriter();
+const rows = exportOrders(api.fetchPage, file);
+
+console.log(file.text.trimEnd());
+console.log(`${rows} rows, ${api.requests} requests, closed: ${file.closed}`);
+</example>
+<output>
+orderId,sku,qty,lineTotalKobo
+ORD-1,RICE-5,2,1700000
+ORD-1,OIL-1,1,320000
+ORD-2,"TV ""55",1,45000000
+ORD-4,"SALT,FINE",3,60000
+4 rows, 2 requests, closed: true
+</output>
+<p>The quote in <code>TV "55</code> was doubled and the field wrapped; the comma in <code>SALT,FINE</code> was protected; ORD-3, with no lines, produced no rows. Four orders at two per page took two requests.</p>
+<h3>Testing the export</h3>
+<example file="export.test.js" project="export">
+import { csvField, exportOrders, orderLines, toCsv } from "./export.js";
+import { ORDERS, createFakeOrdersApi, createMemoryWriter } from "./fakes.js";
+
+function check(label, actual, expected) {
+  const same = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`${same ? "PASS" : "FAIL"} ${label} -> ${JSON.stringify(actual)}`);
+}
+
+check("plain field", csvField("RICE-5"), "RICE-5");
+check("comma is quoted", csvField("a,b"), '"a,b"');
+check("quotes are doubled", csvField('say "hi"'), '"say ""hi"""');
+check("newline is quoted", csvField("line1\nline2"), '"line1\nline2"');
+
+check("no orders: header only", [...toCsv(orderLines([]))], ["orderId,sku,qty,lineTotalKobo"]);
+
+{
+  const api = createFakeOrdersApi(ORDERS, 1);
+  const file = createMemoryWriter();
+  const rows = exportOrders(api.fetchPage, file, { maxRows: 2 });
+  check("maxRows stops early", rows, 2);
+  check("only the pages needed", api.requests, 1);
+  check("closed after early stop", file.closed, true);
+}
+{
+  const file = createMemoryWriter();
+  const failingFetch = (cursor) => {
+    if (cursor !== null) throw new Error("API down");
+    return { items: ORDERS.slice(0, 1), nextCursor: "1" };
+  };
+  let message = null;
+  try {
+    exportOrders(failingFetch, file);
+  } catch (error) {
+    message = error.message;
+  }
+  check("error reaches the caller", message, "API down");
+  check("closed after an error", file.closed, true);
+  check("rows before the error were written", file.text.split("\n").length - 1, 3);
+}
+</example>
+<output>
+PASS plain field -> "RICE-5"
+PASS comma is quoted -> "\"a,b\""
+PASS quotes are doubled -> "\"say \"\"hi\"\"\""
+PASS newline is quoted -> "\"line1\nline2\""
+PASS no orders: header only -> ["orderId,sku,qty,lineTotalKobo"]
+PASS maxRows stops early -> 2
+PASS only the pages needed -> 1
+PASS closed after early stop -> true
+PASS error reaches the caller -> "API down"
+PASS closed after an error -> true
+PASS rows before the error were written -> 3
+</output>
+<p>Three things these tests check that are easy to forget:</p>
+<ul>
+<li><strong>Each stage alone.</strong> <code>csvField</code> and <code>toCsv</code> are tested with plain values and arrays, no API needed. Small generators are small units.</li>
+<li><strong>Laziness, by counting requests.</strong> With one order per page and <code>maxRows: 2</code>, the first order's two lines are enough: one request. An export that loaded all pages first would fail this test.</li>
+<li><strong>Errors propagate through the pipeline.</strong> The API error was thrown inside <code>paginate</code>, travelled through <code>orderLines</code> and <code>toCsv</code> untouched, and reached the caller of <code>exportOrders</code>, after the <code>finally</code> closed the file. Generators do not swallow errors; an error thrown inside one comes out of the <code>next()</code> call that ran it. <a href="/learn/js-error-design">Designing error handling</a> discusses who should handle it.</li>
+</ul>
+<h3>In production</h3>
+<ul>
+<li><strong>Use async generators for real I/O.</strong> A real API and a real file are asynchronous. The same stages become <code>async function*</code>, the loop becomes <code>for await</code>, and a Node writable stream replaces the fake writer. Respect the stream's backpressure (<a href="/learn/node-streams#writable">Streams</a>) so a fast producer cannot fill memory.</li>
+<li><strong>Memory stays flat.</strong> At any moment the pipeline holds one page of orders and one row of text. That is the reason to stream; a single <code>[...rows]</code> in the middle of the pipeline would silently undo it.</li>
+<li><strong>A generator is single-use state.</strong> Never store one in a module-level variable to share between requests: the first request would use it up, and the second would get nothing.</li>
+<li><strong>Keep side effects at the edges.</strong> The stages here are pure transformations; only <code>exportOrders</code> writes. That split is what made every stage testable with arrays.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Batches as a generator">
+<p>The previous lesson's <code>chunk(iterable, size)</code> needed a hand-written <code>next()</code> and <code>return()</code>. Write <code>batches(iterable, size)</code> as a generator: it yields arrays of up to <code>size</code> items, the last one possibly shorter. Validate <code>size</code> before any iteration happens. Check that stopping early also stops the source.</p>
+<solution>
+<example file="batches.js">
+function batches(iterable, size) {
+  if (!Number.isInteger(size) || size < 1) throw new RangeError("size must be a positive whole number");
+  return (function* () {
+    let batch = [];
+    for (const item of iterable) {
+      batch.push(item);
+      if (batch.length === size) {
+        yield batch;
+        batch = [];
+      }
+    }
+    if (batch.length > 0) yield batch;
+  })();
+}
+
+for (const batch of batches(["ORD-1", "ORD-2", "ORD-3", "ORD-4", "ORD-5"], 2)) console.log("INSERT", batch);
+
+function* source() {
+  try {
+    for (let n = 1; ; n++) yield n;
+  } finally {
+    console.log("source closed");
+  }
+}
+const [firstBatch] = batches(source(), 3);
+console.log(firstBatch);
+
+try {
+  batches([], 0);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+INSERT [ 'ORD-1', 'ORD-2' ]
+INSERT [ 'ORD-3', 'ORD-4' ]
+INSERT [ 'ORD-5' ]
+source closed
+[ 1, 2, 3 ]
+RangeError: size must be a positive whole number
+</output>
+<p>The wrapper validates immediately and returns a generator made by an inner <code>function*</code> that is called on the spot. Early stop needs no extra code: when destructuring calls <code>return()</code> on the outer generator, it finishes at its paused <code>yield</code>, which exits the <code>for...of</code> inside it, which calls <code>return()</code> on the source, whose <code>finally</code> runs. Cleanup travels down the whole chain automatically.</p>
+</solution>
+</exercise>
+<exercise title="Retry with backoff">
+<p>Write <code>retry(task, delays)</code>, where <code>task</code> is a function that may throw and <code>delays</code> is any iterable of wait times (such as <code>backoff().take(3)</code>). Call <code>task</code>; if it throws, take the next delay, log it and try again. When the delays run out, throw the last error. To keep the example fast, log the delays instead of waiting.</p>
+<solution>
+<example file="retry.js">
+function* backoff({ firstMs = 200, factor = 2, maxMs = 5000 } = {}) {
+  for (let delay = firstMs; ; delay = Math.min(delay * factor, maxMs)) yield delay;
+}
+
+function retry(task, delays) {
+  const waits = delays[Symbol.iterator]();
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return task(attempt);
+    } catch (error) {
+      const next = waits.next();
+      if (next.done) throw error;
+      console.log(`attempt ${attempt} failed (${error.message}), waiting ${next.value} ms`);
+    }
+  }
+}
+
+const flaky = (attempt) => {
+  if (attempt < 3) throw new Error("gateway timeout");
+  return "charged";
+};
+console.log(retry(flaky, backoff().take(5)));
+
+try {
+  retry(() => { throw new Error("card declined"); }, backoff().take(2));
+} catch (error) {
+  console.log("gave up:", error.message);
+}
+</example>
+<output>
+attempt 1 failed (gateway timeout), waiting 200 ms
+attempt 2 failed (gateway timeout), waiting 400 ms
+charged
+attempt 1 failed (card declined), waiting 200 ms
+attempt 2 failed (card declined), waiting 400 ms
+gave up: card declined
+</output>
+<p>The retry loop does not know the backoff rule, and the backoff generator does not know about retries: <code>take(n)</code> joins them. In a real service, the task and the waiting are asynchronous (<code>await</code> a timer), and you only retry errors that can succeed on a second try: a timeout, yes; "card declined", no. Deciding which errors are retryable is part of <a href="/learn/js-error-design">error design</a>.</p>
+</solution>
+</exercise>
+<exercise title="Paths to every file">
+<p>A storage bucket is a tree of folders with <code>files</code> (names) and <code>folders</code>. Write a generator <code>filePaths(folder, prefix)</code> that yields the full path of every file, depth first, using <code>yield*</code> for subfolders. Then use it to find the first <code>.pdf</code> without walking the rest.</p>
+<solution>
+<example file="file-paths.js">
+const bucket = {
+  name: "invoices",
+  files: ["readme.txt"],
+  folders: [
+    { name: "2025", files: ["jan.csv", "feb.pdf"], folders: [] },
+    { name: "2026", files: ["mar.pdf"], folders: [{ name: "drafts", files: ["apr.txt"], folders: [] }] },
+  ],
+};
+
+let visited = 0;
+function* filePaths(folder, prefix = "") {
+  visited += 1;
+  const here = `${prefix}${folder.name}/`;
+  for (const file of folder.files) yield here + file;
+  for (const sub of folder.folders) yield* filePaths(sub, here);
+}
+
+console.log([...filePaths(bucket)]);
+visited = 0;
+console.log(filePaths(bucket).find((path) => path.endsWith(".pdf")), "folders visited:", visited);
+</example>
+<output>
+[
+  'invoices/readme.txt',
+  'invoices/2025/jan.csv',
+  'invoices/2025/feb.pdf',
+  'invoices/2026/mar.pdf',
+  'invoices/2026/drafts/apr.txt'
+]
+invoices/2025/feb.pdf folders visited: 2
+</output>
+<p>Only two folders were opened to find the first PDF. With a real storage API, each folder would be a request, and the lazy walk saves every request after the match.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Calling a <code>function*</code> returns a generator object and runs nothing. Each <code>next()</code> runs the body to the next <code>yield</code>, and pauses with its local variables intact. <code>return</code> finishes it with <code>done: true</code>.</li>
+<li>A generator object is an iterator and is iterable, and has the iterator helpers. It is one-shot: call the function again, or define <code>*[Symbol.iterator]()</code>, for a reusable iterable. Validate arguments in a normal wrapper, because the body starts late.</li>
+<li>Generators make lazy and infinite sequences (backoff delays, ids) and composable pipeline stages. <code>yield*</code> delegates to another iterable, flattens recursive walks, and evaluates to the delegate's return value.</li>
+<li><code>yield</code> receives the argument of the next <code>next(value)</code>; the first argument is ignored.</li>
+<li>Early exits call <code>return()</code>, which runs <code>finally</code> blocks around the paused <code>yield</code>. <code>throw(error)</code> raises an error there. A hand-driven generator that is dropped while paused never runs its <code>finally</code>.</li>
+<li><code>async function*</code> with <code>for await...of</code> streams asynchronous sources, such as paged APIs and Node streams, one item at a time.</li>
+</ul>
+<p>Next: <a href="/learn/js-symbols">Symbols</a>, the unique keys behind <code>Symbol.iterator</code>, and the other hooks they let your objects plug into.</p>
+</section>

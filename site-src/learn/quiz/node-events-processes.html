@@ -1,0 +1,816 @@
+<question id="nep-emit-return" type="output">
+<q>What does this print?</q>
+<code file="emit-return.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const orders = new EventEmitter();
+const first = orders.emit("paid", { orderId: "ORD-1" });
+orders.on("paid", () => {});
+const second = orders.emit("paid", { orderId: "ORD-2" });
+console.log(first, second);
+</code>
+<option correct>false true</option>
+<option>true true</option>
+<option>false false</option>
+<option>undefined undefined</option>
+<explain><p><code>emit</code> returns whether any listener was called. The first event happened before anyone listened, and events are not stored for later listeners, so it returned <code>false</code>.</p></explain>
+</question>
+
+<question id="nep-sync-order" type="output">
+<q>What does this print?</q>
+<code file="sync-order.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const bank = new EventEmitter();
+bank.on("transfer", (amount) => console.log(`listener: ₦${amount}`));
+
+console.log("before");
+bank.emit("transfer", 5000);
+console.log("after");
+</code>
+<option correct>before
+listener: ₦5000
+after</option>
+<option>before
+after
+listener: ₦5000</option>
+<option>listener: ₦5000
+before
+after</option>
+<option>before
+after</option>
+<explain><p><code>emit</code> is synchronous: it calls every listener before it returns. Nothing is scheduled for later, so the listener runs between "before" and "after".</p></explain>
+</question>
+
+<question id="nep-throwing-listener" type="output">
+<q>The second listener throws. What does this print?</q>
+<code file="throwing.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const orders = new EventEmitter();
+orders.on("paid", () => console.log("stock"));
+orders.on("paid", () => { throw new Error("analytics down"); });
+orders.on("paid", () => console.log("receipt"));
+
+try {
+  orders.emit("paid");
+} catch (error) {
+  console.log("caught:", error.message);
+}
+</code>
+<option correct>stock
+caught: analytics down</option>
+<option>stock
+receipt
+caught: analytics down</option>
+<option>stock
+caught: analytics down
+receipt</option>
+<option>caught: analytics down</option>
+<explain><p>Listeners run one after another inside <code>emit</code>. The throw stops the loop, so the receipt listener never runs, and the error travels out of <code>emit</code> to the caller.</p></explain>
+</question>
+
+<question id="nep-once-method" type="output">
+<q>What does this print?</q>
+<code file="once-method.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const shop = new EventEmitter();
+shop.once("opened", (day) => console.log(`opened on ${day}`));
+
+shop.emit("opened", "Monday");
+shop.emit("opened", "Tuesday");
+console.log(shop.listenerCount("opened"));
+</code>
+<option correct>opened on Monday
+0</option>
+<option>opened on Monday
+opened on Tuesday
+1</option>
+<option>opened on Monday
+1</option>
+<option>opened on Tuesday
+0</option>
+<explain><p>A <code>once</code> listener removes itself right before it is called the first time. The second emit finds no listener, and the count is 0.</p></explain>
+</question>
+
+<question id="nep-off-inline" type="output">
+<q>What does this print?</q>
+<code file="off-inline.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const stock = new EventEmitter();
+stock.on("low", (sku) => console.log(`reorder ${sku}`));
+stock.off("low", (sku) => console.log(`reorder ${sku}`));
+
+stock.emit("low", "SHOE-42");
+console.log(stock.listenerCount("low"));
+</code>
+<option correct>reorder SHOE-42
+1</option>
+<option>0</option>
+<option>reorder SHOE-42
+0</option>
+<option>TypeError: listener not found</option>
+<explain><p><code>off</code> removes a listener by identity. The second arrow function is a new, different function that happens to look the same, so nothing is removed. Keep a reference to any listener you want to remove.</p></explain>
+</question>
+
+<question id="nep-prepend" type="output">
+<q>What does this print?</q>
+<code file="prepend.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const payments = new EventEmitter();
+payments.on("received", () => console.log("mail"));
+payments.on("received", () => console.log("ledger"));
+payments.prependListener("received", () => console.log("fraud check"));
+
+payments.emit("received");
+</code>
+<option correct>fraud check
+mail
+ledger</option>
+<option>mail
+ledger
+fraud check</option>
+<option>ledger
+mail
+fraud check</option>
+<option>fraud check</option>
+<explain><p>Listeners run in the order they were added, and <code>prependListener</code> puts a listener at the front of the list instead of the end.</p></explain>
+</question>
+
+<question id="nep-events-once" type="output">
+<q>What does this print?</q>
+<code file="events-once.js" browser="no">
+import { EventEmitter, once } from "node:events";
+
+const db = new EventEmitter();
+setTimeout(() => db.emit("ready", "postgres", 5432), 10);
+
+const result = await once(db, "ready");
+console.log(result);
+</code>
+<option correct>[ 'postgres', 5432 ]</option>
+<option>postgres</option>
+<option>postgres 5432</option>
+<option>{ name: 'postgres', port: 5432 }</option>
+<explain><p>The <code>once</code> function from <code>node:events</code> resolves with an <strong>array</strong> of all the arguments passed to <code>emit</code>, which is why you usually destructure it: <code>const [name, port] = await once(db, "ready")</code>.</p></explain>
+</question>
+
+<question id="nep-exit-timer" type="output">
+<q>What does this print?</q>
+<code file="exit-timer.js" browser="no">
+process.on("exit", (code) => {
+  console.log(`exit ${code}`);
+  setTimeout(() => console.log("saved the report"), 0);
+});
+
+process.exitCode = 3;
+console.log("done");
+</code>
+<option correct>done
+exit 3</option>
+<option>done
+exit 3
+saved the report</option>
+<option>done
+exit 0</option>
+<option>exit 3
+done</option>
+<explain><p>The <code>"exit"</code> event gets the final exit code, here the one set in <code>process.exitCode</code>. By then the event loop has stopped, so the timer never runs. Only synchronous code works in an exit listener.</p></explain>
+</question>
+
+<question id="nep-execfile-stdout" type="output">
+<q>What does this print?</q>
+<code file="stdout.js" browser="no">
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const run = promisify(execFile);
+const { stdout } = await run(process.execPath, ["-e", "console.log(2 + 3)"]);
+console.log(JSON.stringify(stdout), typeof stdout);
+</code>
+<option correct>"5\n" string</option>
+<option>5 number</option>
+<option>"5" string</option>
+<option>"2 + 3\n" string</option>
+<explain><p>A child process hands back text, exactly as it printed it, including the newline <code>console.log</code> adds. You must trim and convert it yourself.</p></explain>
+</question>
+
+<question id="nep-killed-child" type="output">
+<q>The child has no SIGTERM listener. What does this print?</q>
+<code file="killed.js" browser="no">
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+
+const child = spawn(process.execPath, ["-e", "console.log('up'); setInterval(() => {}, 1000)"]);
+await once(child.stdout, "data");
+child.kill("SIGTERM");
+
+const [code, signal] = await once(child, "exit");
+console.log(code, signal);
+</code>
+<option correct>null SIGTERM</option>
+<option>0 null</option>
+<option>143 SIGTERM</option>
+<option>1 null</option>
+<explain><p>A process ended by a signal has no exit code (<code>null</code>); Node.js reports the signal's name instead. Shells turn this into 128 + 15 = 143, but Node.js gives you the two values separately.</p></explain>
+</question>
+
+<question id="nep-worker-copy" type="output">
+<q>What does this print?</q>
+<code file="worker-copy.js" browser="no">
+import { Worker } from "node:worker_threads";
+import { once } from "node:events";
+
+const worker = new Worker(`
+  const { parentPort } = require("node:worker_threads");
+  parentPort.on("message", (cart) => {
+    cart.items.push("HAT");
+    parentPort.postMessage(cart.items.length);
+    process.exit(0);
+  });
+`, { eval: true });
+
+const cart = { items: ["SHOE-42", "SOCK-3"] };
+worker.postMessage(cart);
+const [count] = await once(worker, "message");
+console.log(count, cart.items.length);
+</code>
+<option correct>3 2</option>
+<option>3 3</option>
+<option>2 2</option>
+<option>2 3</option>
+<explain><p>Messages to a worker are copied with the structured clone algorithm. The worker changed its own copy (3 items); the main thread's cart still has 2.</p></explain>
+</question>
+
+<question id="nep-capture-rejections" type="output">
+<q>What does this print?</q>
+<code file="capture.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const orders = new EventEmitter({ captureRejections: true });
+orders.on("paid", async () => {
+  throw new Error("mail server down");
+});
+orders.on("error", (error) => console.log("handled:", error.message));
+
+console.log("emit returned", orders.emit("paid"));
+</code>
+<option correct>emit returned true
+handled: mail server down</option>
+<option>handled: mail server down
+emit returned true</option>
+<option>emit returned false</option>
+<option>emit returned true</option>
+<explain><p><code>emit</code> does not wait for the async listener, so it returns first. The rejection happens a moment later, and <code>captureRejections</code> turns it into an <code>"error"</code> event instead of an unhandled rejection.</p></explain>
+</question>
+
+<question id="nep-exec-injection" type="choice">
+<q>A customer's name is used to run an invoice program. Which call is safe?</q>
+<option correct><code>execFile("render-invoice", ["--name", customer.name])</code></option>
+<option><code>exec(`render-invoice --name "${customer.name}"`)</code></option>
+<option><code>exec(`render-invoice --name '${customer.name.replaceAll('"', "")}'`)</code></option>
+<option><code>spawn(`render-invoice --name ${customer.name}`, { shell: true })</code></option>
+<explain><p><code>execFile</code> passes each argument straight to the program; no shell reads it, so characters like <code>;</code> or <code>$( )</code> mean nothing. Every other option hands the text to a shell, and removing one kind of quote does not stop the others.</p></explain>
+</question>
+
+<question id="nep-which-function" type="choice">
+<q>A child program produces a 300 MB CSV export on stdout. Which function should start it?</q>
+<option correct><code>spawn</code>, reading <code>child.stdout</code> as a stream</option>
+<option><code>execFile</code> with <code>maxBuffer: 400 * 1024 * 1024</code></option>
+<option><code>exec</code>, because it uses a shell</option>
+<option><code>fork</code>, because the output is big</option>
+<explain><p><code>execFile</code> and <code>exec</code> collect all output in memory before handing it over. For big output, <code>spawn</code> lets you process it piece by piece, for example piping it into a file, with constant memory.</p></explain>
+</question>
+
+<question id="nep-sigkill" type="choice">
+<q>Your server has a SIGTERM handler that takes 45 seconds to finish. Kubernetes uses its default 30-second grace period. What happens?</q>
+<option correct>After 30 seconds Kubernetes sends SIGKILL and the process dies mid-shutdown</option>
+<option>Kubernetes waits until the handler finishes</option>
+<option>The handler also receives SIGKILL and can finish</option>
+<option>Node.js ignores the SIGTERM because a handler is running</option>
+<explain><p>SIGKILL cannot be caught or delayed. The grace period is a hard limit, so a shutdown must finish well within it, which is why the lesson's shutdown has its own shorter deadline.</p></explain>
+</question>
+
+<question id="nep-137" type="choice">
+<q>A container stops and Docker reports exit code 137. What does that tell you?</q>
+<option correct>The process was killed by signal 9 (SIGKILL), for example for using too much memory</option>
+<option>The program called <code>process.exit(137)</code> after an error</option>
+<option>The program crashed with an uncaught exception</option>
+<option>The program handled SIGTERM and exited normally</option>
+<explain><p>Shells and Docker report a death by signal as 128 + the signal number. 137 = 128 + 9, SIGKILL. The out-of-memory killer and an expired grace period both send SIGKILL.</p></explain>
+</question>
+
+<question id="nep-async-cpu" type="choice">
+<q>A report loops over 10 million orders and takes 2 seconds of pure calculation. A developer makes the function <code>async</code>. What changes?</q>
+<option correct>Nothing useful: the loop still blocks the event loop for 2 seconds</option>
+<option>The loop now runs in the background on another core</option>
+<option>The loop is split into small pieces automatically</option>
+<option>Other requests are now answered between iterations</option>
+<option>It runs twice as fast</option>
+<explain><p><code>async</code> only lets a function pause while it <em>waits</em> for something with <code>await</code>. A loop that only calculates never pauses. Moving it to a worker thread is what frees the event loop.</p></explain>
+</question>
+
+<question id="nep-tool-choice" type="choice">
+<q>Which job is the best fit for a worker thread?</q>
+<option correct>Resizing thousands of images with a pure JavaScript image library</option>
+<option>Waiting for 50 database queries at the same time</option>
+<option>Running the <code>git</code> command</option>
+<option>Reading a large file line by line</option>
+<explain><p>Workers are for heavy JavaScript calculation. Waiting for databases and files is already handled by the event loop, and <code>git</code> is another program, which needs a child process.</p></explain>
+</question>
+
+<question id="nep-uncaught" type="choice">
+<q>What is the right thing to do in a <code>process.on("uncaughtException")</code> handler of a server?</q>
+<option correct>Log the error, stop taking new work and exit with a non-zero code so a supervisor restarts the server</option>
+<option>Log the error and carry on as if nothing happened</option>
+<option>Do nothing, so the server never crashes</option>
+<option>Retry the function that threw</option>
+<explain><p>The error stopped some code halfway, so the program's state may be broken: half-finished transfers, locks never released. A fresh process is the only state you can trust.</p></explain>
+</question>
+
+<question id="nep-close-vs-exit" type="choice">
+<q>You read a child's stdout line by line. Which event tells you that you have received every line?</q>
+<option correct><code>"close"</code></option>
+<option><code>"exit"</code></option>
+<option><code>"spawn"</code></option>
+<option><code>"disconnect"</code></option>
+<explain><p><code>"exit"</code> fires when the process ends, but its output streams may still hold data. <code>"close"</code> fires after the process has ended <em>and</em> its streams are closed.</p></explain>
+</question>
+
+<question id="nep-maxbuffer" type="choice">
+<q><code>execFile</code> rejects with <code>ERR_CHILD_PROCESS_STDIO_MAXBUFFER</code>. What happened?</q>
+<option correct>The child printed more than <code>maxBuffer</code> bytes, so Node.js killed it</option>
+<option>The child ran out of memory</option>
+<option>The child's exit code was too large</option>
+<option>The child tried to read from stdin</option>
+<explain><p>The buffered functions keep all output in memory, up to <code>maxBuffer</code> (1 MiB by default). Past that limit the child is killed. Use <code>spawn</code> for large output.</p></explain>
+</question>
+
+<question id="nep-shutdown-order" type="choice">
+<q>Which order is right for a graceful shutdown of a payment server?</q>
+<option correct>Stop accepting new requests, finish the requests in progress, close database connections, exit</option>
+<option>Close database connections, finish the requests in progress, stop accepting new requests, exit</option>
+<option>Exit at once, the platform will retry the requests</option>
+<option>Finish the requests in progress, then keep accepting new ones until none arrive</option>
+<explain><p>First stop new work, so the amount of work can only shrink. Then finish what was started, which may still need the database, and only then close the connections.</p></explain>
+</question>
+
+<question id="nep-unref" type="choice">
+<q>Why is the shutdown deadline timer <code>unref()</code>ed?</q>
+<option correct>So that it does not keep the process alive: a quick shutdown exits at once instead of waiting for the timer</option>
+<option>So that it fires earlier</option>
+<option>So that it cannot be cleared</option>
+<option>So that it survives SIGKILL</option>
+<option>So that it runs in a worker thread</option>
+<explain><p>An active timer keeps a Node.js process running. <code>unref()</code> tells Node.js not to count it, so the timer only matters when other work is still holding the process open.</p></explain>
+</question>
+
+<question id="nep-leak-warning" type="choice">
+<q>Your logs show <code>MaxListenersExceededWarning: ... 11 reloaded listeners added to [PriceList]</code>. What should you do first?</q>
+<option correct>Find the code that adds a listener repeatedly (for example once per request) and make it add once or remove it</option>
+<option>Call <code>setMaxListeners(1000)</code> to silence it</option>
+<option>Nothing: the eleventh listener was not added</option>
+<option>Restart the server every hour</option>
+<explain><p>The warning is a leak detector. The eleventh listener <em>was</em> added. Raising the limit only hides the leak until memory runs out.</p></explain>
+</question>
+
+<question id="nep-poison" type="choice">
+<q>In the supervisor you built, why does a job that crashed the worker twice go to the dead letters instead of being retried forever?</q>
+<option correct>Otherwise one bad job would crash every new worker and block all the jobs behind it</option>
+<option>Because a worker can only be restarted twice in Node.js</option>
+<option>Because dead-letter jobs run faster</option>
+<option>Because crashed jobs are always caused by the network</option>
+<explain><p>A job that crashes the worker every time is a poison job. Retrying it forever turns one bad invoice into a total outage. One retry covers a fluke; after that, set it aside for a person to look at.</p></explain>
+</question>
+
+<question id="nep-ready-last" type="choice">
+<q>A child prints <code>ready</code> and then registers <code>process.on("SIGTERM", …)</code>. The parent sends SIGTERM as soon as it reads <code>ready</code>. What can happen?</q>
+<option correct>Sometimes the signal arrives before the handler exists, and the child is killed instead of shutting down gracefully</option>
+<option>Nothing, because Node.js queues signals until a handler exists</option>
+<option>The parent receives the SIGTERM instead</option>
+<option>The child always ignores the signal</option>
+<explain><p>This is a race: whether the handler exists depends on which process happens to be faster. Announce readiness only after everything, handlers included, is set up.</p></explain>
+</question>
+
+<question id="nep-once-rejects" type="choice">
+<q>You <code>await once(worker, "exit")</code>, and the worker throws an error before it exits. What happens at the <code>await</code>?</q>
+<option correct>It throws the worker's error, because <code>once</code> rejects when <code>"error"</code> is emitted while it waits</option>
+<option>It resolves with exit code 1 and ignores the error</option>
+<option>It waits forever</option>
+<option>It resolves with the error object</option>
+<explain><p><code>events.once</code> treats <code>"error"</code> specially and rejects with it. If a failure is expected, listen for <code>"error"</code> yourself and wait for <code>"exit"</code> with a plain promise, as the lesson's worker example does.</p></explain>
+</question>
+
+<question id="nep-enoent" type="choice">
+<q><code>execFile("invoice-pdf-renderer", [])</code> rejects with <code>error.code === "ENOENT"</code>. What does that mean?</q>
+<option correct>The program could not be found, so it never ran</option>
+<option>The program ran and exited with an error</option>
+<option>The program's output file is missing</option>
+<option>The program took too long</option>
+<explain><p>ENOENT means "no such file". The program is not installed or not on the <code>PATH</code>. There is no exit code, because no process ever started. Checking required programs at startup turns this into a clear message.</p></explain>
+</question>
+
+<question id="nep-clone-function" type="choice">
+<q>What happens when you <code>postMessage({ total() {} })</code> to a worker?</q>
+<option correct>It throws a <code>DataCloneError</code>: functions cannot be copied between threads</option>
+<option>The function is sent and runs in the worker</option>
+<option>The function is silently dropped and <code>{}</code> arrives</option>
+<option>The worker receives the function's source code as a string</option>
+<explain><p>Structured cloning copies data, not code. Send plain data and let the worker's own code act on it.</p></explain>
+</question>
+
+<question id="nep-docker-cmd" type="choice">
+<q>Why start a Node.js server in Docker with <code>CMD ["node", "server.js"]</code> rather than through a shell script?</q>
+<option correct>So that SIGTERM from Docker reaches the Node.js process and its shutdown handler runs</option>
+<option>So that Node.js starts faster</option>
+<option>Because shell scripts cannot start Node.js</option>
+<option>So that the server can use more memory</option>
+<explain><p>With a wrapper shell, the shell receives the signal and may not pass it on. Node.js then never hears SIGTERM, and Docker kills it with SIGKILL after the grace period.</p></explain>
+</question>
+
+<question id="nep-orphans" type="choice">
+<q>A parent process is killed with SIGKILL while two child processes run. What happens to the children?</q>
+<option correct>They keep running as orphans unless something else stops them</option>
+<option>They are killed automatically with SIGKILL too</option>
+<option>They receive SIGTERM and shut down gracefully</option>
+<option>They pause until the parent is restarted</option>
+<explain><p>Killing a parent does not kill its children. A graceful shutdown should stop its children itself, and a SIGKILL gives it no chance to, which is another reason to keep shutdowns short.</p></explain>
+</question>
+
+<question id="nep-pool" type="choice">
+<q>A server starts a new worker thread for every incoming report request. What is the main risk?</q>
+<option correct>A burst of requests starts hundreds of workers, each with its own memory, and the server runs out of memory or thrashes</option>
+<option>Workers cannot be started more than once</option>
+<option>Reports come back in the wrong order</option>
+<option>The main thread gets blocked by the workers</option>
+<explain><p>Each worker is a whole JavaScript engine. A fixed-size pool, usually about one worker per core, queues extra work instead of multiplying the cost.</p></explain>
+</question>
+
+<question id="nep-spawn-error" type="choice">
+<q>You <code>spawn</code> a program that does not exist and only listen for <code>"close"</code>. What goes wrong?</q>
+<option correct>The child emits <code>"error"</code> with nobody listening, which throws and crashes your program</option>
+<option>Nothing, <code>"close"</code> fires with code 127</option>
+<option>The spawn call returns <code>null</code></option>
+<option>Node.js installs the program</option>
+<explain><p>A child that fails to start emits <code>"error"</code>. Like on any emitter, an <code>"error"</code> event with no listener throws. Always listen for <code>"error"</code> on child processes.</p></explain>
+</question>
+
+<question id="nep-windows" type="choice">
+<q>What should you know about signals on Windows?</q>
+<option correct>They are emulated: Ctrl + C gives SIGINT in a console, and <code>child.kill()</code> always ends the child forcefully</option>
+<option>They work exactly as on Linux</option>
+<option>Node.js cannot start child processes on Windows</option>
+<option>Windows sends SIGTERM when you close a window</option>
+<explain><p>Windows has no real POSIX signals. Write your shutdown for SIGTERM and SIGINT, and test it on Linux, where servers usually run.</p></explain>
+</question>
+
+<question id="nep-code-emitter" type="code" file="emitter.js">
+<q><p>Write a tiny <code>Emitter</code> class with <code>on(name, fn)</code>, <code>off(name, fn)</code> and <code>emit(name, ...args)</code>. <code>emit</code> calls the listeners in order and returns <code>true</code> if there was at least one, like Node.js.</p></q>
+<starter>
+class Emitter {
+  // your code here
+}
+
+const orders = new Emitter();
+const log = (id) => console.log(`paid ${id}`);
+console.log(orders.emit("paid", "ORD-1"));
+orders.on("paid", log);
+orders.on("paid", (id) => console.log(`receipt ${id}`));
+console.log(orders.emit("paid", "ORD-2"));
+orders.off("paid", log);
+orders.emit("paid", "ORD-3");
+</starter>
+<solution>
+class Emitter {
+  #listeners = new Map();
+
+  on(name, fn) {
+    if (!this.#listeners.has(name)) this.#listeners.set(name, []);
+    this.#listeners.get(name).push(fn);
+    return this;
+  }
+
+  off(name, fn) {
+    const list = this.#listeners.get(name) ?? [];
+    const index = list.indexOf(fn);
+    if (index !== -1) list.splice(index, 1);
+    return this;
+  }
+
+  emit(name, ...args) {
+    const list = [...(this.#listeners.get(name) ?? [])];
+    for (const fn of list) fn(...args);
+    return list.length > 0;
+  }
+}
+
+const orders = new Emitter();
+const log = (id) => console.log(`paid ${id}`);
+console.log(orders.emit("paid", "ORD-1"));
+orders.on("paid", log);
+orders.on("paid", (id) => console.log(`receipt ${id}`));
+console.log(orders.emit("paid", "ORD-2"));
+orders.off("paid", log);
+orders.emit("paid", "ORD-3");
+</solution>
+<expected>
+false
+paid ORD-2
+receipt ORD-2
+true
+receipt ORD-3
+</expected>
+<explain><p>A map from event name to an array of functions is the whole idea. <code>emit</code> copies the array before looping, so a listener that removes itself during <code>emit</code> does not make the loop skip the next one; Node.js does the same.</p></explain>
+</question>
+
+<question id="nep-code-once" type="code" file="once.js">
+<q><p>Add a <code>once(name, fn)</code> method to this emitter: the listener runs on the first event only and then removes itself.</p></q>
+<starter>
+class Emitter {
+  #listeners = new Map();
+  on(name, fn) {
+    if (!this.#listeners.has(name)) this.#listeners.set(name, []);
+    this.#listeners.get(name).push(fn);
+  }
+  off(name, fn) {
+    const list = this.#listeners.get(name) ?? [];
+    const index = list.indexOf(fn);
+    if (index !== -1) list.splice(index, 1);
+  }
+  emit(name, ...args) {
+    for (const fn of [...(this.#listeners.get(name) ?? [])]) fn(...args);
+  }
+  count(name) {
+    return (this.#listeners.get(name) ?? []).length;
+  }
+  // write once(name, fn) here
+}
+
+const shop = new Emitter();
+shop.once("opened", (day) => console.log(`opened on ${day}`));
+shop.emit("opened", "Monday");
+shop.emit("opened", "Tuesday");
+console.log("listeners:", shop.count("opened"));
+</starter>
+<solution>
+class Emitter {
+  #listeners = new Map();
+  on(name, fn) {
+    if (!this.#listeners.has(name)) this.#listeners.set(name, []);
+    this.#listeners.get(name).push(fn);
+  }
+  off(name, fn) {
+    const list = this.#listeners.get(name) ?? [];
+    const index = list.indexOf(fn);
+    if (index !== -1) list.splice(index, 1);
+  }
+  emit(name, ...args) {
+    for (const fn of [...(this.#listeners.get(name) ?? [])]) fn(...args);
+  }
+  count(name) {
+    return (this.#listeners.get(name) ?? []).length;
+  }
+  once(name, fn) {
+    const wrapper = (...args) => {
+      this.off(name, wrapper);
+      fn(...args);
+    };
+    this.on(name, wrapper);
+  }
+}
+
+const shop = new Emitter();
+shop.once("opened", (day) => console.log(`opened on ${day}`));
+shop.emit("opened", "Monday");
+shop.emit("opened", "Tuesday");
+console.log("listeners:", shop.count("opened"));
+</solution>
+<expected>
+opened on Monday
+listeners: 0
+</expected>
+<explain><p>Register a wrapper function that first removes <em>itself</em> (the wrapper, not <code>fn</code>, since the wrapper is what was registered) and then calls the real listener.</p></explain>
+</question>
+
+<question id="nep-code-exit-description" type="code" file="exit.js">
+<q><p>Write <code>describeExit(code, signal)</code> for a supervisor's log. A normal exit gives <code>exited with code N</code>. A signal gives <code>killed by NAME (shell reports M)</code>, where M is 128 plus the signal's number. Use the numbers in <code>SIGNALS</code>.</p></q>
+<starter>
+const SIGNALS = { SIGHUP: 1, SIGINT: 2, SIGKILL: 9, SIGTERM: 15 };
+
+function describeExit(code, signal) {
+  // your code here
+}
+
+console.log(describeExit(0, null));
+console.log(describeExit(1, null));
+console.log(describeExit(null, "SIGTERM"));
+console.log(describeExit(null, "SIGKILL"));
+</starter>
+<solution>
+const SIGNALS = { SIGHUP: 1, SIGINT: 2, SIGKILL: 9, SIGTERM: 15 };
+
+function describeExit(code, signal) {
+  if (signal !== null) return `killed by ${signal} (shell reports ${128 + SIGNALS[signal]})`;
+  return `exited with code ${code}`;
+}
+
+console.log(describeExit(0, null));
+console.log(describeExit(1, null));
+console.log(describeExit(null, "SIGTERM"));
+console.log(describeExit(null, "SIGKILL"));
+</solution>
+<expected>
+exited with code 0
+exited with code 1
+killed by SIGTERM (shell reports 143)
+killed by SIGKILL (shell reports 137)
+</expected>
+<explain><p>Node.js gives you either an exit code or a signal name, never both. Shells and Docker combine them into one number, 128 + signal, which is why 143 and 137 are worth recognising.</p></explain>
+</question>
+
+<question id="nep-code-ranges" type="code" file="ranges.js">
+<q><p>Write <code>splitRanges(total, parts)</code> that splits the numbers <code>0 … total - 1</code> into <code>parts</code> ranges <code>[start, end)</code> for workers. The last range may be shorter; no range may go past <code>total</code>.</p></q>
+<starter>
+function splitRanges(total, parts) {
+  // your code here
+}
+
+console.log(JSON.stringify(splitRanges(10, 3)));
+console.log(JSON.stringify(splitRanges(8, 4)));
+</starter>
+<solution>
+function splitRanges(total, parts) {
+  const size = Math.ceil(total / parts);
+  const ranges = [];
+  for (let start = 0; start < total; start += size) {
+    ranges.push([start, Math.min(total, start + size)]);
+  }
+  return ranges;
+}
+
+console.log(JSON.stringify(splitRanges(10, 3)));
+console.log(JSON.stringify(splitRanges(8, 4)));
+</solution>
+<expected>
+[[0,4],[4,8],[8,10]]
+[[0,2],[2,4],[4,6],[6,8]]
+</expected>
+<explain><p>Rounding the size up with <code>Math.ceil</code> guarantees every number is covered; <code>Math.min</code> stops the last range at <code>total</code>. Each range can then go to its own worker, as in the lesson's report pool.</p></explain>
+</question>
+
+<question id="nep-code-shutdown" type="code" file="shutdown.js">
+<q><p>Write <code>createShutdown()</code>. It returns a function <code>onSignal(name)</code>: the first call returns <code>graceful: NAME</code>, every later call returns <code>force: NAME</code> (the impatient second Ctrl + C).</p></q>
+<starter>
+function createShutdown() {
+  // your code here
+}
+
+const onSignal = createShutdown();
+console.log(onSignal("SIGTERM"));
+console.log(onSignal("SIGINT"));
+console.log(onSignal("SIGINT"));
+
+const other = createShutdown();
+console.log(other("SIGINT"));
+</starter>
+<solution>
+function createShutdown() {
+  let shuttingDown = false;
+  return (name) => {
+    if (shuttingDown) return `force: ${name}`;
+    shuttingDown = true;
+    return `graceful: ${name}`;
+  };
+}
+
+const onSignal = createShutdown();
+console.log(onSignal("SIGTERM"));
+console.log(onSignal("SIGINT"));
+console.log(onSignal("SIGINT"));
+
+const other = createShutdown();
+console.log(other("SIGINT"));
+</solution>
+<expected>
+graceful: SIGTERM
+force: SIGINT
+force: SIGINT
+graceful: SIGINT
+</expected>
+<explain><p>A closure keeps the <code>shuttingDown</code> flag private to each shutdown controller. In a real program the graceful branch would stop new work and start the deadline timer, and the force branch would call <code>process.exit(1)</code>.</p></explain>
+</question>
+
+<question id="nep-code-retry" type="code" file="retry.js">
+<q><p>Write <code>decide(failures, jobId, maxCrashes)</code> for the supervisor. It records one more crash for the job in the <code>failures</code> map and returns <code>"retry"</code>, or <code>"dead-letter"</code> once the job has crashed <code>maxCrashes</code> times.</p></q>
+<starter>
+function decide(failures, jobId, maxCrashes) {
+  // your code here
+}
+
+const failures = new Map();
+console.log(decide(failures, "INV-2", 2));
+console.log(decide(failures, "INV-7", 2));
+console.log(decide(failures, "INV-2", 2));
+console.log(JSON.stringify([...failures]));
+</starter>
+<solution>
+function decide(failures, jobId, maxCrashes) {
+  const count = (failures.get(jobId) ?? 0) + 1;
+  failures.set(jobId, count);
+  return count >= maxCrashes ? "dead-letter" : "retry";
+}
+
+const failures = new Map();
+console.log(decide(failures, "INV-2", 2));
+console.log(decide(failures, "INV-7", 2));
+console.log(decide(failures, "INV-2", 2));
+console.log(JSON.stringify([...failures]));
+</solution>
+<expected>
+retry
+retry
+dead-letter
+[["INV-2",2],["INV-7",1]]
+</expected>
+<explain><p>Counting per job, not in total, matters: one poison job should not use up the retries of healthy jobs. <code>?? 0</code> starts a job with no record at zero.</p></explain>
+</question>
+
+<question id="nep-code-timeout" type="code" file="timeout.js">
+<q><p>Write <code>withTimeout(promise, ms, message)</code>: it resolves like <code>promise</code>, or rejects with <code>new Error(message)</code> if <code>ms</code> milliseconds pass first. Clear the timer either way.</p></q>
+<starter>
+function withTimeout(promise, ms, message) {
+  // your code here
+}
+
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+
+console.log(await withTimeout(wait(10, "invoice rendered"), 200, "renderer timed out"));
+try {
+  await withTimeout(wait(500, "too late"), 50, "renderer timed out");
+} catch (error) {
+  console.log("error:", error.message);
+}
+</starter>
+<solution>
+function withTimeout(promise, ms, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+
+console.log(await withTimeout(wait(10, "invoice rendered"), 200, "renderer timed out"));
+try {
+  await withTimeout(wait(500, "too late"), 50, "renderer timed out");
+} catch (error) {
+  console.log("error:", error.message);
+}
+</solution>
+<expected>
+invoice rendered
+error: renderer timed out
+</expected>
+<explain><p><code>Promise.race</code> settles with whichever promise settles first. Clearing the timer in <code>finally</code> matters in Node.js: a forgotten timer keeps the process alive, and a thousand forgotten timers keep a thousand closures in memory.</p></explain>
+</question>
+
+<question id="nep-code-args" type="code" file="args.js">
+<q><p>Write <code>invoiceArgs(invoice)</code> that returns the argument array for <code>execFile("render-invoice", args)</code>: <code>["--id", id, "--amount", amount-as-text]</code>. Throw <code>Error("bad amount")</code> unless the amount is a positive integer (kobo). The name is passed as it is: no quoting needed, since no shell reads it.</p></q>
+<starter>
+function invoiceArgs(invoice) {
+  // your code here
+}
+
+console.log(JSON.stringify(invoiceArgs({ id: "INV-1", amount: 4500000, name: 'Ada"; rm -rf ~' })));
+try {
+  invoiceArgs({ id: "INV-2", amount: -5 });
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function invoiceArgs(invoice) {
+  if (!Number.isInteger(invoice.amount) || invoice.amount <= 0) throw new Error("bad amount");
+  const args = ["--id", invoice.id, "--amount", String(invoice.amount)];
+  if (invoice.name !== undefined) args.push("--name", invoice.name);
+  return args;
+}
+
+console.log(JSON.stringify(invoiceArgs({ id: "INV-1", amount: 4500000, name: 'Ada"; rm -rf ~' })));
+try {
+  invoiceArgs({ id: "INV-2", amount: -5 });
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+["--id","INV-1","--amount","4500000","--name","Ada\"; rm -rf ~"]
+bad amount
+</expected>
+<explain><p>Each value is its own array element, so the dangerous-looking name is just text for the program. Validating the amount is still your job: <code>execFile</code> prevents injection, not bad data.</p></explain>
+</question>

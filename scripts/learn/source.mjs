@@ -11,6 +11,10 @@
  *                                                            mask: parts that differ per run,
  *                                                            see MASKS in check-node.mjs)
  *   <file name="package.json" project="p">contents</file>  (shown, not run)
+ *   <file name="dist/a.js" project="p" check="emit" tsc="--target ES2019">  (what tsc emits for the
+ *                                                            project's .ts files so far; the checker
+ *                                                            runs tsc and compares; .d.ts turns on
+ *                                                            --declaration)
  *   <shell title="…">$ command\noutput</shell>              (run on your computer)
  *   <note>, <tip>, <warn>                                    (callouts)
  *   <exercise title="…"> … <solution> … </solution></exercise>
@@ -103,6 +107,7 @@ export function extractExamples(lesson) {
       browser: a.browser !== "no",
       runtime: a.runtime || "node",
       check: a.check || null,
+      tscFlags: a.tsc || "",
       code: dedent(m[3]),
       expected: m[4] ? dedent(m[6]) : null,
       outputKind: m[4] ? attrs(m[5]).kind || "run" : null,

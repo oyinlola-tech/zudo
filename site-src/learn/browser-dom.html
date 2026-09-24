@@ -1,0 +1,484 @@
+---
+title: The DOM
+description: Read and change a web page from JavaScript: find, create, update and remove elements safely, avoid innerHTML XSS, and build a task list UI rendered from data.
+minutes: 50
+youNeed: JavaScript fundamentals, Recursion and the Advanced JavaScript lessons on this and prototypes
+youBuild: A task list UI rendered from an array of tasks with a template, safe against HTML injection, with checks that read the page back
+keywords: dom, document object model, querySelector, nodes vs elements, textContent vs innerHTML, xss, createElement, append, remove, attributes vs properties, dataset, classList, documentfragment, template element, task list ui
+objectives: Explain how a browser turns HTML into a tree of nodes, and tell nodes from elements | Find elements with selectors and move around the tree without tripping over text nodes | Create, update, move and remove elements, and choose between attributes and properties | Put user text on a page without opening an XSS hole | Render a list from data with a template and a DocumentFragment, and check the result by reading the page back
+---
+<section>
+<h2 id="problem">A page that has to change</h2>
+<p>Ada runs a small cleaning business and keeps her jobs in a task app. The server sends the page as HTML: a heading, a list of three tasks and a line that says how many there are. Then Ada types a new task and presses Enter. The server's HTML cannot change by itself: it was sent once, as text, and the browser has already read it. Yet the new task has to appear, straight away, without reloading the page.</p>
+<p>Something between the HTML text and the pixels on the screen must be changeable from JavaScript. That something is the <strong>DOM</strong>, the <strong>Document Object Model</strong>: a tree of JavaScript objects that the browser builds from the HTML, one object for every element and every piece of text. The browser draws the screen from this tree, not from the HTML text. Change the tree, and the screen follows.</p>
+<p>Here is Ada's page. Every example in this lesson runs against a real page like it, in a preview frame that appears when you press <em>Run in browser</em>:</p>
+<file name="index.html" project="tasks-page">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ada's jobs</title>
+  <base href="https://tasks.example/">
+</head>
+<body>
+  <main id="app">
+    <h1>Today</h1>
+    <!-- the server rendered these three tasks -->
+    <ul id="tasks" class="task-list">
+      <li class="task" data-id="1">Buy detergent</li>
+      <li class="task done" data-id="2">Pay the electricity bill</li>
+      <li class="task" data-id="3">Clean the Okafor flat</li>
+    </ul>
+    <p class="summary">3 tasks</p>
+    <a id="history" href="jobs/2026?view=list">All jobs</a>
+  </main>
+</body>
+</html>
+</file>
+<p>This program adds a fourth task to the tree:</p>
+<example file="add-task.js" project="tasks-page" runtime="dom">
+const list = document.querySelector("#tasks");
+
+const item = document.createElement("li");
+item.textContent = "Collect keys from Mrs Bello";
+list.append(item);
+
+console.log("items in the list:", list.children.length);
+console.log("summary says:", document.querySelector(".summary").textContent);
+</example>
+<output>
+items in the list: 4
+summary says: 3 tasks
+</output>
+<p>The new task shows up in the preview. But look at the second line: the summary still says "3 tasks". The page now contradicts itself. Nothing in the DOM knows that the summary is <em>about</em> the list; each element is just an object in a tree. Keeping every part of the page in step with your data is the real work of browser code, and this lesson ends with a design that makes it easy: keep the tasks in an array, and <strong>render</strong> the page from that array every time it changes.</p>
+<p>On the way you will learn how the tree is built, how to find things in it, how to change it safely (one wrong property turns a task title into an attack), and how to change a lot of it at once without making the browser do the same work many times.</p>
+</section>
+
+<section>
+<h2 id="tree">The document is a tree of nodes</h2>
+<p>When the browser receives HTML, it <strong>parses</strong> it: it reads the text from start to end and builds the tree. Every element becomes an object; the text between tags becomes objects too. The global <code>document</code> is the root of the tree. The top of Ada's page looks like this:</p>
+<figure class="lx-diagram">
+<pre>document
+└── html
+    ├── head
+    │   ├── meta
+    │   ├── title ── "Ada's jobs"
+    │   └── base
+    └── body
+        └── main#app
+            ├── "⏎  "                 (text: just whitespace)
+            ├── h1 ── "Today"
+            ├── "⏎  "
+            ├── &lt;!-- comment --&gt;
+            ├── "⏎  "
+            ├── ul#tasks
+            │   ├── "⏎  "
+            │   ├── li ── "Buy detergent"
+            │   └── …
+            └── …</pre>
+<figcaption>Part of the DOM tree for Ada's page. Every box is a node; only some nodes are elements.</figcaption>
+</figure>
+<p>Every object in the tree is a <strong>node</strong>. There are several kinds, and each has a number in <code>nodeType</code>:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Kind</th><th><code>nodeType</code></th><th>Example</th></tr></thead>
+<tbody>
+<tr><td>Element node</td><td>1</td><td><code>&lt;li&gt;</code>, <code>&lt;ul&gt;</code>: anything with a tag</td></tr>
+<tr><td>Text node</td><td>3</td><td>The words inside an element, <em>and the line breaks and spaces between tags</em></td></tr>
+<tr><td>Comment node</td><td>8</td><td><code>&lt;!-- … --&gt;</code></td></tr>
+<tr><td>Document node</td><td>9</td><td><code>document</code> itself</td></tr>
+</tbody>
+</table></div>
+<p>An <strong>element</strong> is a node that came from a tag. The difference matters because the whitespace you use to indent HTML becomes text nodes. This walks the tree recursively (the technique from <a href="/learn/js-recursion">Recursion</a>) and prints every node under <code>#app</code>:</p>
+<example file="walk.js" project="tasks-page" runtime="dom">
+function describe(node) {
+  if (node.nodeType === Node.ELEMENT_NODE) return `<${node.tagName.toLowerCase()}>`;
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent.trim() === "" ? "(whitespace)" : JSON.stringify(node.textContent);
+  }
+  if (node.nodeType === Node.COMMENT_NODE) return "<!-- comment -->";
+  return node.nodeName;
+}
+
+function walk(node, depth = 0) {
+  console.log("  ".repeat(depth) + describe(node));
+  for (const child of node.childNodes) walk(child, depth + 1);
+}
+
+walk(document.querySelector("#tasks"));
+
+const app = document.querySelector("#app");
+console.log("childNodes of #app:", app.childNodes.length, "children of #app:", app.children.length);
+</example>
+<output>
+<ul>
+  (whitespace)
+  <li>
+    "Buy detergent"
+  (whitespace)
+  <li>
+    "Pay the electricity bill"
+  (whitespace)
+  <li>
+    "Clean the Okafor flat"
+  (whitespace)
+childNodes of #app: 11 children of #app: 4
+</output>
+<p><code>childNodes</code> gives <em>every</em> child node, whitespace included; <code>children</code> gives only the element children. <code>#app</code> has 4 elements (<code>h1</code>, <code>ul</code>, <code>p</code>, <code>a</code>) but 11 nodes. Most of the time you want elements, so most of the time you want the properties with <code>Element</code> in their name, which you will meet in the section on moving around the tree.</p>
+<p>Each node is an object made from a class, and the classes form a prototype chain, as you saw in <a href="/learn/js-prototypes">Prototypes</a>. An <code>&lt;li&gt;</code> is an <code>HTMLLIElement</code>, which is an <code>HTMLElement</code>, which is an <code>Element</code>, which is a <code>Node</code>, which is an <code>EventTarget</code>. That is why every element has <code>textContent</code> (from <code>Node</code>), <code>querySelector</code> (from <code>Element</code>) and <code>addEventListener</code> (from <code>EventTarget</code>):</p>
+<example file="chain.js" project="tasks-page" runtime="dom">
+const li = document.querySelector("li");
+const chain = [];
+for (let proto = Object.getPrototypeOf(li); proto; proto = Object.getPrototypeOf(proto)) {
+  chain.push(proto.constructor.name);
+}
+console.log(chain.join(" -> "));
+console.log(li instanceof HTMLElement, li instanceof Node, li instanceof EventTarget);
+</example>
+<output>
+HTMLLIElement -> HTMLElement -> Element -> Node -> EventTarget -> Object
+true true true
+</output>
+<note>The DOM is not part of JavaScript. It is a <strong>Web API</strong>: an interface the browser gives to JavaScript, specified by the WHATWG DOM and HTML standards. Node.js runs the same JavaScript language without a <code>document</code>, which is why these examples only run in the browser. <a href="/learn/browser-apis">Browser APIs</a> looks at the other Web APIs.</note>
+</section>
+
+<section>
+<h2 id="finding">Finding elements</h2>
+<p>Before you can change an element you need a reference to it. The modern tools take a <strong>CSS selector</strong>, the same pattern language you use in stylesheets:</p>
+<ul>
+<li><code>document.querySelector(selector)</code> returns the <em>first</em> matching element, or <code>null</code>.</li>
+<li><code>document.querySelectorAll(selector)</code> returns <em>all</em> matches as a <code>NodeList</code>, which you can loop over with <code>for...of</code> or turn into an array with <code>[...list]</code>.</li>
+<li><code>document.getElementById(id)</code> is the older, direct way to find one element by its <code>id</code>.</li>
+</ul>
+<p>Both query methods also exist on every element, and then they search only inside that element:</p>
+<example file="find.js" project="tasks-page" runtime="dom">
+const titles = (elements) => [...elements].map((el) => el.textContent);
+
+console.log(document.querySelector("li").textContent);
+console.log(titles(document.querySelectorAll("li.task:not(.done)")));
+console.log(titles(document.querySelectorAll('[data-id="3"]')));
+console.log(document.getElementById("tasks") === document.querySelector("#tasks"));
+
+const list = document.querySelector("#tasks");
+console.log(list.querySelectorAll("li").length, document.querySelectorAll("*").length);
+console.log(document.querySelector(".invoice"));
+</example>
+<output>
+Buy detergent
+[ 'Buy detergent', 'Clean the Okafor flat' ]
+[ 'Clean the Okafor flat' ]
+true
+3 14
+null
+</output>
+<p>The last line is the one that bites. <code>querySelector</code> returns <code>null</code> when nothing matches, and the very next line, <code>.textContent</code> on <code>null</code>, throws a <code>TypeError</code>. A typo in a selector, or an element that another script removed, fails far away from its cause. For elements your page cannot work without, fail loudly and early with a helper that names the selector:</p>
+<example file="must-find.js" project="tasks-page" runtime="dom">
+function mustFind(selector, root = document) {
+  const el = root.querySelector(selector);
+  if (el === null) throw new Error(`Page is missing ${selector}`);
+  return el;
+}
+
+console.log(mustFind("#tasks").id);
+try {
+  mustFind("#task").textContent;
+} catch (error) {
+  console.log(error.message);
+}
+try {
+  document.querySelector("#task").textContent;
+} catch (error) {
+  console.log(error.name + ": " + error.message);
+}
+</example>
+<output>
+tasks
+Page is missing #task
+TypeError: Cannot read properties of null (reading 'textContent')
+</output>
+<p>Two more selector methods help when you already have an element: <code>el.matches(selector)</code> asks "does this element match?", and <code>el.closest(selector)</code> walks <em>up</em> from the element (starting with itself) and returns the first ancestor that matches. <code>closest</code> is the key to event delegation in <a href="/learn/browser-events">the next lesson</a>.</p>
+<example file="closest.js" project="tasks-page" runtime="dom">
+const bill = document.querySelector('[data-id="2"]');
+console.log(bill.matches(".done"), bill.matches(".task:not(.done)"));
+console.log(bill.closest("ul").id, bill.closest("main").id);
+console.log(bill.closest("form"));
+</example>
+<output>
+true false
+tasks app
+null
+</output>
+
+<h3>Live and static collections</h3>
+<p><code>querySelectorAll</code> returns a <strong>static</strong> list: a snapshot of the matches at the moment you called it. The older <code>getElementsByClassName</code> and <code>getElementsByTagName</code> return a <strong>live</strong> <code>HTMLCollection</code> that updates itself whenever the document changes. Watch both after a fourth task is added:</p>
+<example file="live.js" project="tasks-page" runtime="dom">
+const live = document.getElementsByClassName("task");
+const snapshot = document.querySelectorAll(".task");
+
+const item = document.createElement("li");
+item.className = "task";
+item.textContent = "Order new mop heads";
+document.querySelector("#tasks").append(item);
+
+console.log("live:", live.length, "snapshot:", snapshot.length);
+</example>
+<output>
+live: 4 snapshot: 3
+</output>
+<p>A live collection sounds convenient, and it causes one of the classic DOM bugs, which you will see in <a href="#failures">When DOM code fails</a>. Prefer <code>querySelectorAll</code>: a snapshot never changes under your feet.</p>
+</section>
+
+<section>
+<h2 id="traversing">Moving around the tree</h2>
+<p>From any node you can reach its relatives. There are two sets of properties, and the difference is the whitespace you saw earlier:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Any node (includes text)</th><th>Elements only</th></tr></thead>
+<tbody>
+<tr><td><code>parentNode</code></td><td><code>parentElement</code></td></tr>
+<tr><td><code>childNodes</code></td><td><code>children</code></td></tr>
+<tr><td><code>firstChild</code>, <code>lastChild</code></td><td><code>firstElementChild</code>, <code>lastElementChild</code></td></tr>
+<tr><td><code>nextSibling</code>, <code>previousSibling</code></td><td><code>nextElementSibling</code>, <code>previousElementSibling</code></td></tr>
+</tbody>
+</table></div>
+<example file="traverse.js" project="tasks-page" runtime="dom">
+const list = document.querySelector("#tasks");
+const first = list.firstElementChild;
+
+console.log(JSON.stringify(list.firstChild.textContent));
+console.log(first.textContent);
+console.log(first.nextElementSibling.textContent);
+console.log(JSON.stringify(first.nextSibling.textContent));
+console.log(list.lastElementChild.dataset.id, list.parentElement.id);
+console.log(list.previousElementSibling.nodeName, list.nextElementSibling.className);
+</example>
+<output>
+"\n      "
+Buy detergent
+Pay the electricity bill
+"\n      "
+3 app
+H1 summary
+</output>
+<p><code>firstChild</code> is the line break and indentation after <code>&lt;ul&gt;</code>, not the first task. If code that worked yesterday breaks after someone reformats the HTML, look for a <code>firstChild</code> or <code>nextSibling</code> that should have been the <code>Element</code> version. Better still, don't depend on the exact shape of the tree: find elements by selector, with <code>closest</code> and <code>querySelector</code>, so that adding a wrapper <code>&lt;div&gt;</code> later breaks nothing.</p>
+</section>
+
+<section>
+<h2 id="content">Reading and changing content</h2>
+<p>Three properties read and write what is inside an element:</p>
+<ul>
+<li><code>textContent</code>: all the text inside, as plain text. Setting it replaces every child with a single text node. Whatever string you give it is shown as text, even if it looks like HTML.</li>
+<li><code>innerHTML</code>: the inside as an HTML string. Setting it makes the browser <em>parse</em> your string as HTML and build new elements from it.</li>
+<li><code>innerText</code>: like <code>textContent</code>, but it follows the CSS: it leaves out hidden text and adds line breaks where the layout has them. It has to ask the browser how the page is laid out, which makes it slower. Use <code>textContent</code> unless you really want "the text as the user sees it".</li>
+</ul>
+<example file="content.js" project="tasks-page" runtime="dom">
+const summary = document.querySelector(".summary");
+summary.textContent = "4 tasks <b>today</b>";
+console.log(summary.textContent);
+console.log(summary.innerHTML);
+console.log(summary.children.length);
+
+summary.innerHTML = "4 tasks <b>today</b>";
+console.log(summary.textContent);
+console.log(summary.children.length, summary.firstElementChild.tagName);
+</example>
+<output>
+4 tasks <b>today</b>
+4 tasks &lt;b&gt;today&lt;/b&gt;
+0
+4 tasks today
+1 B
+</output>
+<p>With <code>textContent</code>, the angle brackets are just characters: <code>innerHTML</code> shows them escaped as <code>&amp;lt;</code> and <code>&amp;gt;</code>, and no <code>&lt;b&gt;</code> element exists. With <code>innerHTML</code>, the browser built a real <code>&lt;b&gt;</code> element. That difference is harmless for a string you wrote. It is dangerous for a string a <em>user</em> wrote.</p>
+
+<h3>innerHTML and XSS</h3>
+<p>Task titles come from users. Suppose someone saves a task with this title. It looks like a broken image tag, and it contains a small program in its <code>onerror</code> attribute:</p>
+<example file="xss.js" project="tasks-page" runtime="dom">
+const title = `Fix sink <img src="data:," onerror="window.stolen = 'attacker code ran'">`;
+
+const list = document.querySelector("#tasks");
+list.innerHTML += `<li class="task">${title}</li>`;
+
+const img = list.querySelector("img");
+await new Promise((resolve) => img.addEventListener("error", resolve));
+console.log("images in the list:", list.querySelectorAll("img").length);
+console.log(window.stolen);
+</example>
+<output>
+images in the list: 1
+attacker code ran
+</output>
+<p>The browser parsed the title as HTML, created a real <code>&lt;img&gt;</code>, failed to load the empty image, and ran the attacker's <code>onerror</code> code, in your page, with your page's permissions. This is <strong>cross-site scripting</strong> (<strong>XSS</strong>): an attacker gets their script to run on your site. Here it only set a variable. A real one would read the user's data, send requests as the logged-in user, or replace the login form with one that sends the password elsewhere. Every other user who opens the task list runs it too.</p>
+<p>The fix costs nothing: put user text in with <code>textContent</code>, on an element you created yourself:</p>
+<example file="safe.js" project="tasks-page" runtime="dom">
+const title = `Fix sink <img src="data:," onerror="window.stolen = 'attacker code ran'">`;
+
+const li = document.createElement("li");
+li.className = "task";
+li.textContent = title;
+document.querySelector("#tasks").append(li);
+
+console.log("images in the list:", document.querySelectorAll("#tasks img").length);
+console.log(li.textContent === title);
+console.log(window.stolen);
+</example>
+<output>
+images in the list: 0
+true
+undefined
+</output>
+<p>The title is stored exactly as the user typed it, shown exactly as they typed it, and nothing runs. Remember the rule as: <strong>data goes in with <code>textContent</code> (or <code>value</code>, or <code>setAttribute</code>), never with <code>innerHTML</code></strong>. <code>innerHTML</code> is fine only for HTML you wrote yourself, with no user data in it.</p>
+<warn>A <code>&lt;script&gt;</code> tag inserted with <code>innerHTML</code> does not run, which makes people think <code>innerHTML</code> is safe. It is not: event-handler attributes such as <code>onerror</code> and <code>onload</code> run, as you just saw. The same goes for <code>insertAdjacentHTML</code>, <code>outerHTML</code> and <code>document.write</code>. The <a href="/learn/sec-web">web security lesson</a> covers XSS in full, including Content Security Policy, a response header that tells the browser to refuse inline scripts like this one.</warn>
+<p>Sometimes you really do need to build HTML as a string, for example in a server-side template. Then every piece of data must be <strong>escaped</strong>: the five characters that mean something in HTML are replaced by their entity names:</p>
+<example file="escape.js" project="tasks-page" runtime="dom">
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+const title = `Fix sink <img src="data:," onerror="alert(1)">`;
+const li = document.querySelector("li");
+li.innerHTML = `<span class="title">${escapeHtml(title)}</span>`;
+
+console.log(li.querySelector(".title").textContent === title);
+console.log(li.querySelectorAll("img").length);
+console.log(escapeHtml(`Bello & Sons' "deluxe" <clean>`));
+</example>
+<output>
+true
+0
+Bello &amp; Sons&#39; &quot;deluxe&quot; &lt;clean&gt;
+</output>
+<p>The <code>&amp;</code> must be replaced first; otherwise the <code>&amp;</code> in <code>&amp;lt;</code> would be escaped a second time. That kind of ordering detail is why hand-written escaping is a last resort, and <code>textContent</code> is the default.</p>
+</section>
+
+<section>
+<h2 id="creating">Creating, inserting, moving and removing</h2>
+<p><code>document.createElement(tag)</code> makes a new element that is not in the page yet. It appears only when you insert it. The modern insertion methods accept elements and strings (strings become text nodes, never HTML), and several at once:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Method</th><th>Where the new nodes go</th></tr></thead>
+<tbody>
+<tr><td><code>parent.append(…nodes)</code></td><td>at the end, inside <code>parent</code></td></tr>
+<tr><td><code>parent.prepend(…nodes)</code></td><td>at the start, inside <code>parent</code></td></tr>
+<tr><td><code>el.before(…nodes)</code> / <code>el.after(…nodes)</code></td><td>just before or after <code>el</code>, as its siblings</td></tr>
+<tr><td><code>el.replaceWith(…nodes)</code></td><td>in place of <code>el</code></td></tr>
+<tr><td><code>parent.replaceChildren(…nodes)</code></td><td>replaces all of <code>parent</code>'s children</td></tr>
+<tr><td><code>el.remove()</code></td><td>takes <code>el</code> out of the page</td></tr>
+</tbody>
+</table></div>
+<example file="insert.js" project="tasks-page" runtime="dom">
+const list = document.querySelector("#tasks");
+const titles = () => [...list.children].map((li) => li.textContent).join(" | ");
+
+function taskItem(title) {
+  const li = document.createElement("li");
+  li.className = "task";
+  li.textContent = title;
+  return li;
+}
+
+list.prepend(taskItem("Urgent: return the Adeyemi deposit"));
+list.querySelector('[data-id="2"]').after(taskItem("File the receipt"));
+list.querySelector('[data-id="3"]').remove();
+console.log(titles());
+
+const first = list.firstElementChild;
+list.append(first);
+console.log(titles());
+console.log(list.children.length);
+</example>
+<output>
+Urgent: return the Adeyemi deposit | Buy detergent | Pay the electricity bill | File the receipt
+Buy detergent | Pay the electricity bill | File the receipt | Urgent: return the Adeyemi deposit
+4
+</output>
+<p>The last three lines show something surprising: <code>append</code> on an element that is already in the page <em>moves</em> it. A node can only be in one place, so inserting it somewhere removes it from where it was. To have a copy, clone it: <code>el.cloneNode(true)</code> copies the element and everything inside it (<code>false</code> copies only the element itself).</p>
+<p>A removed element is not destroyed. It is an ordinary object: as long as a variable refers to it, you can inspect it and insert it again. It is garbage-collected only once nothing refers to it any more.</p>
+</section>
+
+<section>
+<h2 id="attributes">Attributes and properties</h2>
+<p>In the HTML, <code>class="task done"</code> and <code>data-id="2"</code> are <strong>attributes</strong>: name and text value pairs written in the tag. On the element object, there are <strong>properties</strong>: normal JavaScript properties such as <code>li.className</code> or <code>input.value</code>. For many attributes the browser keeps a matching property in sync, which makes them look like the same thing. They are not, and three differences cause real bugs.</p>
+<h3>1. Properties have types; attributes are always strings</h3>
+<p><code>getAttribute</code> returns the text from the tag, or <code>null</code> if it is missing. Properties are converted into something useful: <code>href</code> becomes a full address, resolved against the page's base URL, and boolean attributes such as <code>hidden</code>, <code>disabled</code> and <code>checked</code> become <code>true</code> or <code>false</code>:</p>
+<example file="attr-types.js" project="tasks-page" runtime="dom">
+const link = document.querySelector("#history");
+console.log(link.getAttribute("href"));
+console.log(link.href);
+
+const summary = document.querySelector(".summary");
+console.log(summary.hidden, summary.getAttribute("hidden"));
+summary.hidden = true;
+console.log(summary.hidden, JSON.stringify(summary.getAttribute("hidden")));
+summary.setAttribute("hidden", "false");
+console.log(summary.hidden);
+</example>
+<output>
+jobs/2026?view=list
+https://tasks.example/jobs/2026?view=list
+false null
+true ""
+true
+</output>
+<p>The last line is the trap: a boolean attribute is on when it is <em>present</em>, whatever its value. <code>hidden="false"</code> hides the element. To switch it off, use the property (<code>summary.hidden = false</code>) or <code>removeAttribute("hidden")</code>.</p>
+<h3>2. Form values: the attribute is the starting value</h3>
+<p>For an <code>&lt;input&gt;</code>, the <code>value</code> attribute is the <em>default</em> value from the HTML. The <code>value</code> property is what is in the box right now, including whatever the user typed. Typing changes the property, never the attribute:</p>
+<file name="index.html" project="task-form">
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>New task</title></head>
+<body>
+  <form id="new-task">
+    <label>Title <input name="title" value="Buy detergent"></label>
+    <label><input type="checkbox" name="urgent"> Urgent</label>
+  </form>
+</body>
+</html>
+</file>
+<example file="value.js" project="task-form" runtime="dom">
+const input = document.querySelector('input[name="title"]');
+input.value = "Buy detergent and gloves";
+
+console.log("property:", input.value);
+console.log("attribute:", input.getAttribute("value"));
+console.log("defaultValue:", input.defaultValue);
+
+const urgent = document.querySelector('input[name="urgent"]');
+urgent.checked = true;
+console.log(urgent.checked, urgent.hasAttribute("checked"));
+
+document.querySelector("#new-task").reset();
+console.log("after reset:", input.value, urgent.checked);
+</example>
+<output>
+property: Buy detergent and gloves
+attribute: Buy detergent
+defaultValue: Buy detergent
+true false
+after reset: Buy detergent false
+</output>
+<p>Read what the user entered from <code>input.value</code> and <code>checkbox.checked</code>. Reading <code>getAttribute("value")</code> is a common bug: it always returns what the HTML said, so a form handler that uses it ignores everything the user typed.</p>
+<h3>3. class and data-* have their own tools</h3>
+<p><code>class</code> is a reserved word in JavaScript, so the property is <code>className</code> (the whole string). Better is <code>classList</code>, which adds, removes and toggles one class without touching the others. Custom <code>data-*</code> attributes, the standard place to keep small bits of data on an element such as a task's id, appear on <code>dataset</code>, with the name after <code>data-</code> turned into camelCase. Their values are always strings:</p>
+<example file="classes-data.js" project="tasks-page" runtime="dom">
+const li = document.querySelector('[data-id="1"]');
+
+li.classList.add("urgent");
+li.classList.toggle("done");
+console.log(li.className, li.classList.contains("done"));
+
+console.log(li.dataset.id, typeof li.dataset.id);
+li.dataset.dueDate = "2026-10-01";
+console.log(li.getAttribute("data-due-date"));
+console.log(li.outerHTML);
+</example>
+<output>
+task urgent done 1 string
+2026-10-01
+<li class="task urgent done" data-id="1" data-due-date="2026-10-01">Buy detergent</li>
+</output>
+<p><code>dataset.id</code> is the string <code>"1"</code>, not the number 1. When you look a task up by the id stored on its element, convert it first (<code>Number(li.dataset.id)</code>), or <code>tasks.find((t) =&gt; t.id === li.dataset.id)</code> will never find anything. <code>outerHTML</code> is the element itself as HTML, handy for seeing what your code really produced.</p>
+<p>Style works the same way: <code>el.style.color = "red"</code> sets an inline style, one property at a time. Prefer toggling a class and keeping the looks in CSS; the stylesheet stays the one place that decides how a "done" task looks, and your code only says <em>that</em> it is done.</p>
+</section>

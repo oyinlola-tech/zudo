@@ -152,6 +152,28 @@ export function ensureDeps(lessons, log, root) {
   return dir;
 }
 
+/*
+ * <file check="emit">: compile the project with emit on (into a scratch folder, so the
+ * project's own files stay as the lesson shows them) and compare the emitted file.
+ */
+function checkEmit(ex, dir, bin, label) {
+  const out = mkdtempSync(join(tmpdir(), "zudo-learn-emit-"));
+  try {
+    const decl = /\.d\.ts$/.test(ex.file) ? " --declaration" : "";
+    const root = ex.file.split("/")[0];
+    const r = runMerged(`${join(bin, "tsc")} -p . --noEmit false --outDir ${out} --rootDir .${decl} ${ex.tscFlags}`, dir);
+    if (r.status !== 0) return { label, ok: false, detail: "tsc failed:\n" + normalize(r.text) };
+    const rel = ex.file.slice(root.length + 1);
+    const emitted = join(out, rel);
+    if (!existsSync(emitted)) return { label, ok: false, detail: `tsc did not emit ${rel} (the path after "${root}/" must match the source file)` };
+    const want = normalize(ex.code);
+    const got = normalize(readFileSync(emitted, "utf8"));
+    return { label, ok: want === got, detail: want === got ? "" : diff(want, got) };
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+}
+
 function lockIsStale(lock) {
   try {
     const pid = Number(readFileSync(join(lock, "pid"), "utf8"));
@@ -196,7 +218,11 @@ function diff(want, got) {
   return lines.join("\n");
 }
 
-export function checkNode(lessons, { log = console.log, only = null, root = null } = {}) {
+/*
+ * fill: pass an array and every example whose <output> is empty gets its real
+ * output pushed as { slug, index, text } (site-learn.mjs --fill writes it back).
+ */
+export function checkNode(lessons, { log = console.log, only = null, root = null, fill = null } = {}) {
   const deps = ensureDeps(lessons, log, root);
   const bin = join(deps, "node_modules", ".bin");
   const results = [];
@@ -224,12 +250,17 @@ export function checkNode(lessons, { log = console.log, only = null, root = null
       const target = join(dir, ex.file);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, ex.code + "\n");
+      if (ex.tag === "file" && ex.check === "emit") {
+        results.push(checkEmit(ex, dir, bin, `${lesson.slug} #${i} ${ex.file} (emit)`));
+        return;
+      }
       if (ex.tag === "file" || ex.check === "skip" || ex.runtime === "dom") return;
       const isTs = /\.(ts|mts)$/.test(ex.file);
       const label = `${lesson.slug} #${i} ${ex.file}`;
 
       if (ex.check === "tsc-error") {
         const r = runMerged(`${join(bin, "tsc")} --noEmit --pretty`, dir);
+        if (fill && ex.expected === "" && r.status !== 0) fill.push({ slug: lesson.slug, index: i, text: normalize(r.text) });
         const got = applyMasks(normalize(r.text), ex.mask);
         /* No <output> at all: only "tsc fails" is checked. An empty <output> is compared like any other. */
         const want = ex.expected !== null ? applyMasks(normalize(ex.expected), ex.mask) : null;
@@ -250,6 +281,7 @@ export function checkNode(lessons, { log = console.log, only = null, root = null
       if (ex.expected === null) return;
       const cmd = isTs ? `${join(bin, "tsx")} ${ex.file}` : `node ${ex.file}`;
       const r = runMerged(cmd, dir);
+      if (fill && ex.expected === "") fill.push({ slug: lesson.slug, index: i, text: normalize(r.text) });
       const got = applyMasks(normalize(r.text), ex.mask);
       const want = applyMasks(normalize(ex.expected), ex.mask);
       const ok = got === want;

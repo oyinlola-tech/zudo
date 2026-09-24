@@ -1,0 +1,744 @@
+<question id="loop-rule" type="choice">
+<q>Which description of the event loop is right?</q>
+<option>Run one microtask, then one task, alternating</option>
+<option correct>Run one task to completion, then every microtask until the queue is empty, then the next task</option>
+<option>Run all tasks, then all microtasks</option>
+<option>Run whichever callback was scheduled first, task or microtask</option>
+<explain><p>After each task, the microtask queue is drained completely, including microtasks added during the drain. Only then does the next task start.</p></explain>
+</question>
+
+<question id="loop-run-to-completion" type="choice">
+<q>A request handler runs a synchronous loop for 300 ms. A timer was due after 10 ms. When does the timer's callback run?</q>
+<option>After 10 ms, pausing the loop</option>
+<option>In parallel with the loop, on another thread</option>
+<option correct>After the loop and the rest of the handler finish, and after any microtasks</option>
+<option>Never; timers that are late are dropped</option>
+<explain><p>Run to completion: nothing interrupts a running task. The due timer waits in the task queue until the stack is empty and microtasks are drained.</p></explain>
+</question>
+
+<question id="loop-host" type="choice">
+<q>Where do the timer and network features that feed the task queue come from?</q>
+<option>The ECMAScript language itself</option>
+<option correct>The host: the browser or Node.js, which embeds the JavaScript engine</option>
+<option>The V8 garbage collector</option>
+<option>The operating system calls JavaScript functions directly</option>
+<explain><p>The language defines promises and the microtask queue (called jobs in the specification). Timers, I/O and events are provided by the host, which queues their callbacks as tasks.</p></explain>
+</question>
+
+<question id="loop-classify-then" type="choice">
+<q>Which of these is scheduled as a <strong>microtask</strong>?</q>
+<option>A <code>setTimeout(fn, 0)</code> callback</option>
+<option>A click handler</option>
+<option correct>The rest of an async function after <code>await</code></option>
+<option>A <code>setImmediate</code> callback</option>
+<explain><p>Code after <code>await</code>, promise handlers and <code>queueMicrotask</code> callbacks are microtasks. Timers, events, I/O and <code>setImmediate</code> are tasks.</p></explain>
+</question>
+
+<question id="loop-first" type="output">
+<q>What does this print?</q>
+<code file="first.js">
+setTimeout(() => console.log("timer"), 0);
+Promise.resolve().then(() => console.log("then"));
+queueMicrotask(() => console.log("micro"));
+console.log("sync");
+</code>
+<option correct>sync
+then
+micro
+timer</option>
+<option>timer
+then
+micro
+sync</option>
+<option>sync
+timer
+then
+micro</option>
+<option>sync
+micro
+then
+timer</option>
+<explain><p>Synchronous code first. Then the microtasks in the order they were queued (<code>then</code> before <code>micro</code>). The timer is a task, so it runs after the drain, despite being scheduled first with 0 ms.</p></explain>
+</question>
+
+<question id="loop-async-sync-part" type="output">
+<q>What does this print?</q>
+<code file="async-part.js">
+async function checkout() {
+  console.log("checkout: validate cart");
+  await null;
+  console.log("checkout: charge card");
+}
+
+console.log("request received");
+checkout();
+console.log("response sent");
+</code>
+<option correct>request received
+checkout: validate cart
+response sent
+checkout: charge card</option>
+<option>request received
+response sent
+checkout: validate cart
+checkout: charge card</option>
+<option>request received
+checkout: validate cart
+checkout: charge card
+response sent</option>
+<option>checkout: validate cart
+request received
+response sent
+checkout: charge card</option>
+<explain><p>An async function runs synchronously up to its first <code>await</code>. Even <code>await null</code> pauses it, so the rest becomes a microtask that runs after the current synchronous code.</p></explain>
+</question>
+
+<question id="loop-interleave" type="output">
+<q>What does this print?</q>
+<code file="interleave.js">
+const ready = Promise.resolve();
+ready.then(() => console.log("A1")).then(() => console.log("A2"));
+ready.then(() => console.log("B1")).then(() => console.log("B2"));
+</code>
+<option correct>A1
+B1
+A2
+B2</option>
+<option>A1
+A2
+B1
+B2</option>
+<option>B1
+B2
+A1
+A2</option>
+<option>A1
+B1
+B2
+A2</option>
+<explain><p>Only <code>A1</code> and <code>B1</code> are queued at first. Running <code>A1</code> queues <code>A2</code> behind <code>B1</code>. So the two chains take turns one step at a time.</p></explain>
+</question>
+
+<question id="loop-nested-micro" type="output">
+<q>What does this print?</q>
+<code file="nested.js">
+setTimeout(() => console.log("timer"), 0);
+queueMicrotask(() => {
+  console.log("micro 1");
+  queueMicrotask(() => console.log("micro 2"));
+});
+</code>
+<option correct>micro 1
+micro 2
+timer</option>
+<option>micro 1
+timer
+micro 2</option>
+<option>timer
+micro 1
+micro 2</option>
+<option>micro 2
+micro 1
+timer</option>
+<explain><p>The microtask queue is drained until it is empty, including microtasks added during the drain. So <code>micro 2</code> runs before the timer task.</p></explain>
+</question>
+
+<question id="loop-micro-in-timer" type="output">
+<q>What does this print?</q>
+<code file="in-timer.js">
+setTimeout(() => {
+  console.log("timer 1");
+  Promise.resolve().then(() => console.log("micro from timer 1"));
+}, 0);
+setTimeout(() => console.log("timer 2"), 0);
+</code>
+<option correct>timer 1
+micro from timer 1
+timer 2</option>
+<option>timer 1
+timer 2
+micro from timer 1</option>
+<option>micro from timer 1
+timer 1
+timer 2</option>
+<option>timer 2
+timer 1
+micro from timer 1</option>
+<explain><p>Every task, including a timer callback, is followed by a full microtask drain. The microtask scheduled in timer 1 runs before timer 2 starts.</p></explain>
+</question>
+
+<question id="loop-await-pending" type="output">
+<q>What does this print?</q>
+<code file="await-pending.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+(async () => {
+  await wait(20);
+  console.log("stock reserved");
+})();
+(async () => {
+  await null;
+  console.log("price checked");
+})();
+setTimeout(() => console.log("timer 0"), 0);
+</code>
+<option correct>price checked
+timer 0
+stock reserved</option>
+<option>stock reserved
+price checked
+timer 0</option>
+<option>price checked
+stock reserved
+timer 0</option>
+<option>timer 0
+price checked
+stock reserved</option>
+<explain><p><code>await null</code> resumes in the microtask drain. <code>await wait(20)</code> resumes only when that promise settles, inside a timer task 20 ms later, so the 0 ms timer comes first.</p></explain>
+</question>
+
+<question id="loop-timer-order" type="output">
+<q>What does this print?</q>
+<code file="timers.js">
+setTimeout(() => console.log("B"), 20);
+setTimeout(() => console.log("A"), 0);
+setTimeout(() => console.log("C"), 20);
+</code>
+<option correct>A
+B
+C</option>
+<option>B
+A
+C</option>
+<option>A
+C
+B</option>
+<option>B
+C
+A</option>
+<explain><p>Timers run by due time, and timers with the same delay run in the order they were created. So A (0 ms) first, then B and C in creation order.</p></explain>
+</question>
+
+<question id="loop-timer-minimum" type="choice">
+<q>What does the <code>100</code> in <code>setTimeout(fn, 100)</code> promise?</q>
+<option>fn runs exactly 100 ms from now</option>
+<option correct>fn will not run before 100 ms have passed; it may run later</option>
+<option>fn runs within 100 ms</option>
+<option>fn interrupts whatever is running after 100 ms</option>
+<explain><p>The delay is a minimum. After it passes, the callback is queued and waits for the current task and microtasks, and for tasks ahead of it.</p></explain>
+</question>
+
+<question id="loop-busy-timer" type="output">
+<q>What does this print?</q>
+<code file="busy.js">
+const start = Date.now();
+setTimeout(() => {
+  console.log("timer ran after 100 ms or more:", Date.now() - start >= 100);
+}, 10);
+
+while (Date.now() - start < 100) {}
+console.log("loop done");
+</code>
+<option correct>loop done
+timer ran after 100 ms or more: true</option>
+<option>timer ran after 100 ms or more: false
+loop done</option>
+<option>loop done
+timer ran after 100 ms or more: false</option>
+<option>timer ran after 100 ms or more: true
+loop done</option>
+<explain><p>The busy loop is part of the current task and cannot be interrupted. The timer was due at 10 ms but could only run after the loop ended, at 100 ms or later.</p></explain>
+</question>
+
+<question id="loop-queue-microtask-use" type="choice">
+<q>A cart's <code>add</code> method may be called ten times in one task. What does scheduling the "save cart" call with <code>queueMicrotask</code> (once per task) achieve?</q>
+<option>The cart is saved ten times, but faster</option>
+<option correct>All ten changes are saved once, right after the current task, before any timer or I/O runs</option>
+<option>The save is delayed until the next timer</option>
+<option>The save runs on another thread</option>
+<explain><p>Batching: the first change schedules one microtask; later changes in the same task just add to the pending state. The flush still happens before anything else in the task queue.</p></explain>
+</question>
+
+<question id="loop-batch-output" type="output">
+<q>What does this print?</q>
+<code file="batch.js">
+let pending = [];
+function notify(message) {
+  if (pending.length === 0) queueMicrotask(() => {
+    console.log("send:", pending.join(" + "));
+    pending = [];
+  });
+  pending.push(message);
+}
+
+notify("order 7 paid");
+notify("order 8 paid");
+console.log("handler done");
+setTimeout(() => notify("order 9 paid"), 0);
+</code>
+<option correct>handler done
+send: order 7 paid + order 8 paid
+send: order 9 paid</option>
+<option>send: order 7 paid
+send: order 8 paid
+handler done
+send: order 9 paid</option>
+<option>handler done
+send: order 7 paid + order 8 paid + order 9 paid</option>
+<option>send: order 7 paid + order 8 paid
+handler done
+send: order 9 paid</option>
+<explain><p>Both notifications in the first task are collected and sent in one microtask after <code>handler done</code>. The notification in the later timer task starts a new batch.</p></explain>
+</question>
+
+<question id="loop-queue-vs-then" type="choice">
+<q>How does <code>queueMicrotask(fn)</code> differ from <code>Promise.resolve().then(fn)</code>?</q>
+<option>queueMicrotask runs fn as a task, after timers</option>
+<option>queueMicrotask runs fn synchronously</option>
+<option correct>Both put fn in the microtask queue; queueMicrotask creates no promise, and a throw in fn is reported as an uncaught exception instead of a rejected promise</option>
+<option>There is no difference at all</option>
+<explain><p>Same queue, same timing. <code>queueMicrotask</code> states the intent directly and does not turn errors into promise rejections.</p></explain>
+</question>
+
+<question id="loop-nexttick-order" type="output">
+<q>This runs in Node.js. What does it print?</q>
+<code file="node-order.js" browser="no">
+setTimeout(() => {
+  setTimeout(() => console.log("timeout"), 0);
+  setImmediate(() => console.log("immediate"));
+  Promise.resolve().then(() => console.log("promise"));
+  process.nextTick(() => console.log("nextTick"));
+}, 5);
+</code>
+<option correct>nextTick
+promise
+immediate
+timeout</option>
+<option>promise
+nextTick
+immediate
+timeout</option>
+<option>nextTick
+promise
+timeout
+immediate</option>
+<option>immediate
+timeout
+nextTick
+promise</option>
+<explain><p>After the timer callback, Node drains <code>nextTick</code> first, then promise microtasks. The loop then continues from the timers phase to the check phase (<code>setImmediate</code>) before it comes round to timers again (<code>setTimeout</code> 0).</p></explain>
+</question>
+
+<question id="loop-nexttick-where" type="choice">
+<q>In Node.js, when do <code>process.nextTick</code> callbacks run?</q>
+<option>In the check phase, with setImmediate</option>
+<option>In the timers phase</option>
+<option correct>As soon as the current callback finishes, before the promise microtasks</option>
+<option>Only when the process is about to exit</option>
+<explain><p>Node keeps a separate nextTick queue, drained after each callback just before the promise microtask queue. (At the very top level of an ES module, a promise may run first, as the Node.js runtime lesson showed.)</p></explain>
+</question>
+
+<question id="loop-setimmediate-yield" type="choice">
+<q>In Node.js, a long job runs in pieces and wants to let pending I/O (incoming requests) be handled between pieces. Which should schedule the next piece?</q>
+<option><code>process.nextTick</code></option>
+<option><code>queueMicrotask</code></option>
+<option correct><code>setImmediate</code></option>
+<option><code>Promise.resolve().then</code></option>
+<explain><p><code>setImmediate</code> runs in the check phase, after the poll phase has handled I/O. <code>nextTick</code> and microtasks run before the loop moves on, so they would starve I/O.</p></explain>
+</question>
+
+<question id="loop-nexttick-starve" type="choice">
+<q>A function reschedules itself forever with <code>process.nextTick</code>. What happens to a server's incoming requests?</q>
+<option>They are handled between ticks as usual</option>
+<option correct>They are never handled: the nextTick queue never empties, so the loop never reaches the poll phase</option>
+<option>Node throws a RangeError after 1,000 ticks</option>
+<option>They are handled on a second thread</option>
+<explain><p>The nextTick queue (like the microtask queue) is drained completely before the loop moves on. An endless chain starves everything else.</p></explain>
+</question>
+
+<question id="loop-browser-only" type="choice">
+<q>Which of these exists only in Node.js, not in browsers?</q>
+<option><code>queueMicrotask</code></option>
+<option><code>setTimeout</code></option>
+<option correct><code>setImmediate</code> and <code>process.nextTick</code></option>
+<option><code>Promise.resolve</code></option>
+<explain><p><code>setImmediate</code> and <code>process.nextTick</code> are Node APIs. Portable code uses <code>queueMicrotask</code> and <code>setTimeout</code>.</p></explain>
+</question>
+
+<question id="loop-await-no-yield" type="choice">
+<q>A loop does <code>await null</code> on every iteration for 2 seconds. Can a 0 ms timer that was queued before the loop run during those 2 seconds?</q>
+<option>Yes, every await gives the timer a turn</option>
+<option correct>No: each await only goes through the microtask queue, which is drained before any task, so the timer waits</option>
+<option>Yes, but only every 1,000 iterations</option>
+<option>No, because await null throws</option>
+<explain><p>Awaiting an already-available value resumes in the same microtask drain. To let tasks run, you must return to the task queue, for example by awaiting a timer.</p></explain>
+</question>
+
+<question id="loop-starve-output" type="output">
+<q>What does this print?</q>
+<code file="starve.js">
+let timerRan = false;
+setTimeout(() => (timerRan = true), 0);
+
+let rounds = 0;
+async function work() {
+  while (rounds < 10_000) {
+    await null;
+    rounds += 1;
+  }
+  console.log("timer ran during the loop:", timerRan);
+}
+work();
+</code>
+<option correct>timer ran during the loop: false</option>
+<option>timer ran during the loop: true</option>
+<option>RangeError: Maximum call stack size exceeded</option>
+<option>Nothing is printed</option>
+<explain><p>All 10,000 iterations run inside one microtask drain, so the timer task cannot run until the loop is over. <code>await</code> does not yield to timers by itself.</p></explain>
+</question>
+
+<question id="loop-yield-output" type="output">
+<q>What does this print?</q>
+<code file="yield.js">
+let timerRan = false;
+setTimeout(() => (timerRan = true), 0);
+const yieldToLoop = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+async function work() {
+  for (let round = 1; round <= 3; round++) {
+    await yieldToLoop();
+    console.log(`round ${round}, timer ran: ${timerRan}`);
+  }
+}
+work();
+</code>
+<option correct>round 1, timer ran: true
+round 2, timer ran: true
+round 3, timer ran: true</option>
+<option>round 1, timer ran: false
+round 2, timer ran: false
+round 3, timer ran: false</option>
+<option>round 1, timer ran: false
+round 2, timer ran: true
+round 3, timer ran: true</option>
+<option>round 1, timer ran: true
+round 2, timer ran: false
+round 3, timer ran: false</option>
+<explain><p>Awaiting a timer puts the rest of the loop into the task queue <em>behind</em> the timer that was already waiting. So that timer runs before round 1 continues.</p></explain>
+</question>
+
+<question id="loop-slicing" type="choice">
+<q>Why does the export use a time budget per slice (process rows until about 8 ms have passed) rather than a fixed number of rows?</q>
+<option>Fixed counts are not allowed in async functions</option>
+<option correct>Rows differ in cost and machines differ in speed; a time budget keeps each slice short everywhere</option>
+<option>It makes the total export faster than the blocking version</option>
+<option>setTimeout requires a time budget</option>
+<explain><p>What matters to other work is how long each slice holds the thread. A time budget bounds that directly; a row count only bounds it on the machine you tested.</p></explain>
+</question>
+
+<question id="loop-slicing-cost" type="choice">
+<q>Compared with doing it in one go, a time-sliced export…</q>
+<option>finishes much sooner</option>
+<option correct>takes slightly longer in total, but other work (requests, health checks) keeps running during it</option>
+<option>runs on several CPU cores</option>
+<option>uses no main-thread time</option>
+<explain><p>Slicing does the same work, plus a little overhead for each yield. It does not make the work parallel; it shares the thread fairly. Truly heavy work belongs in a worker thread or a job queue.</p></explain>
+</question>
+
+<question id="loop-worker" type="choice">
+<q>A report takes 20 seconds of pure computation. What is the best way to keep the server responsive?</q>
+<option>Add more await statements inside the loop</option>
+<option>Wrap the loop in Promise.all</option>
+<option correct>Run it in a worker thread or a background job, off the main thread</option>
+<option>Use process.nextTick between rows</option>
+<explain><p>Slicing 20 seconds of work only spreads the slowdown. A worker thread has its own event loop and runs in parallel, so the main loop stays free for requests.</p></explain>
+</question>
+
+<question id="loop-lag" type="choice">
+<q>What does <strong>event-loop lag</strong> measure?</q>
+<option>How long a network request takes</option>
+<option>How many callbacks are in the task queue</option>
+<option correct>How late timers run compared with when they were due, which shows how long tasks are holding the thread</option>
+<option>The time the garbage collector takes</option>
+<explain><p>A healthy loop runs timers within a millisecond or two of their due time. Large lag means long tasks (or microtask chains) are blocking the thread, so every request waits.</p></explain>
+</question>
+
+<question id="loop-render" type="choice">
+<q>In a browser, a microtask chain runs for 3 seconds. What happens to the page?</q>
+<option>It keeps repainting between microtasks</option>
+<option correct>It freezes: rendering happens between tasks, after the microtask queue is empty</option>
+<option>The browser moves the microtasks to a worker</option>
+<option>Only clicks are delayed; painting continues</option>
+<explain><p>The render step comes after the microtask drain. A long microtask chain blocks rendering and input exactly like a long synchronous task.</p></explain>
+</question>
+
+<question id="loop-fake-timers" type="choice">
+<q>A retry helper waits 30 seconds between attempts. How do you test it without the test taking minutes?</q>
+<option>Lower the wait to 30 ms only in production</option>
+<option correct>Use fake timers (for example vi.useFakeTimers()) and move the clock forward in the test</option>
+<option>Skip the test</option>
+<option>Replace setTimeout with queueMicrotask</option>
+<explain><p>Fake timers replace <code>setTimeout</code> with a clock the test controls, so a 30-second wait is tested instantly and deterministically.</p></explain>
+</question>
+
+<question id="loop-dont-depend" type="choice">
+<q>Code works only because one promise chain happens to finish two microtask steps before another. What is the right fix?</q>
+<option>Add an extra <code>.then(() =&gt; {})</code> to be safe</option>
+<option correct>Make the second piece of work explicitly wait for the first (await it or chain on it)</option>
+<option>Use setTimeout(…, 0) to push it later</option>
+<option>Nothing, microtask step counts never change</option>
+<explain><p>Step counts change when anyone refactors (one more <code>await</code>, one fewer <code>then</code>). If B needs A, express the dependency; do not rely on accidental timing.</p></explain>
+</question>
+
+<question id="loop-predict-mixed" type="output">
+<q>What does this print?</q>
+<code file="mixed.js">
+console.log("1");
+setTimeout(() => console.log("2"), 0);
+(async () => {
+  console.log("3");
+  await Promise.resolve();
+  console.log("4");
+})();
+Promise.resolve().then(() => console.log("5"));
+console.log("6");
+</code>
+<option correct>1
+3
+6
+4
+5
+2</option>
+<option>1
+3
+6
+5
+4
+2</option>
+<option>1
+6
+3
+4
+5
+2</option>
+<option>1
+3
+4
+6
+5
+2</option>
+<explain><p>Sync: 1, then the async function up to its <code>await</code>: 3, then 6. Microtasks in queue order: the continuation after <code>await</code> (queued first) prints 4, then 5. Finally the timer task prints 2.</p></explain>
+</question>
+
+<question id="loop-code-order" type="code" file="order.js">
+<q><p>Using exactly one <code>setTimeout</code> (0 ms), one <code>queueMicrotask</code> and one plain <code>console.log</code>, print the three lines in the order shown. The starter prints them in the wrong order.</p></q>
+<starter>
+console.log("3. email the receipt");
+console.log("2. update the stock count");
+console.log("1. respond to the customer");
+</starter>
+<solution>
+setTimeout(() => console.log("3. email the receipt"), 0);
+queueMicrotask(() => console.log("2. update the stock count"));
+console.log("1. respond to the customer");
+</solution>
+<expected>
+1. respond to the customer
+2. update the stock count
+3. email the receipt
+</expected>
+<explain><p>Synchronous code runs first, then microtasks, then the timer task, whatever order you schedule them in.</p></explain>
+</question>
+
+<question id="loop-code-batch" type="code" file="batch-alerts.js">
+<q><p>Finish <code>reportLow(sku)</code> so that all SKUs reported during one task are printed in a single line <code>ALERT: A, B, C</code>, without duplicates, using <code>queueMicrotask</code>.</p></q>
+<starter>
+const pending = new Set();
+
+function reportLow(sku) {
+  // your code here
+}
+
+for (const sku of ["oil-1l", "sugar-1kg", "oil-1l"]) reportLow(sku);
+setTimeout(() => reportLow("salt-500g"), 0);
+</starter>
+<solution>
+const pending = new Set();
+
+function reportLow(sku) {
+  if (pending.size === 0) {
+    queueMicrotask(() => {
+      console.log("ALERT:", [...pending].join(", "));
+      pending.clear();
+    });
+  }
+  pending.add(sku);
+}
+
+for (const sku of ["oil-1l", "sugar-1kg", "oil-1l"]) reportLow(sku);
+setTimeout(() => reportLow("salt-500g"), 0);
+</solution>
+<expected>
+ALERT: oil-1l, sugar-1kg
+ALERT: salt-500g
+</expected>
+<explain><p>The first report in a task schedules one flush; later reports only add to the set, which removes duplicates. The report in the later timer task starts a new batch.</p></explain>
+</question>
+
+<question id="loop-code-yield" type="code" file="yield-loop.js">
+<q><p>The loop sends 20 reminders, but the timer queued before it cannot run until all are sent. Add a <code>yieldToLoop</code> helper that awaits a 0 ms timer, and call it after each reminder so the timer runs after the first one.</p></q>
+<starter>
+const log = [];
+setTimeout(() => log.push("TIMER"), 0);
+
+for (let n = 1; n <= 20; n++) {
+  await Promise.resolve();
+  log.push(n);
+}
+setTimeout(() => console.log("timer position:", log.indexOf("TIMER")), 0);
+</starter>
+<solution>
+const log = [];
+setTimeout(() => log.push("TIMER"), 0);
+const yieldToLoop = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+for (let n = 1; n <= 20; n++) {
+  await Promise.resolve();
+  log.push(n);
+  await yieldToLoop();
+}
+setTimeout(() => console.log("timer position:", log.indexOf("TIMER")), 0);
+</solution>
+<expected>timer position: 1</expected>
+<explain><p>Awaiting a resolved promise stays in the microtask queue. Awaiting a timer puts the rest of the loop behind the waiting timer, so the timer runs right after reminder 1 (position 1 in the log).</p></explain>
+</question>
+
+<question id="loop-code-slices" type="code" file="slices.js">
+<q><p>Finish <code>processInSlices(items, perSlice, fn)</code>: call <code>fn</code> on each item, and after every <code>perSlice</code> items (but not after the last one) await a 0 ms timer. Return how many slices were used.</p></q>
+<starter>
+async function processInSlices(items, perSlice, fn) {
+  // your code here
+}
+
+let checks = 0;
+const health = setInterval(() => checks++, 0);
+const done = [];
+const slices = await processInSlices([1, 2, 3, 4, 5, 6, 7], 3, (id) => done.push(id));
+clearInterval(health);
+console.log("processed:", done.length, "slices:", slices, "checks ran:", checks > 0);
+</starter>
+<solution>
+async function processInSlices(items, perSlice, fn) {
+  let slices = 0;
+  for (let i = 0; i < items.length; i += perSlice) {
+    for (const item of items.slice(i, i + perSlice)) fn(item);
+    slices += 1;
+    if (i + perSlice < items.length) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return slices;
+}
+
+let checks = 0;
+const health = setInterval(() => checks++, 0);
+const done = [];
+const slices = await processInSlices([1, 2, 3, 4, 5, 6, 7], 3, (id) => done.push(id));
+clearInterval(health);
+console.log("processed:", done.length, "slices:", slices, "checks ran:", checks > 0);
+</solution>
+<expected>processed: 7 slices: 3 checks ran: true</expected>
+<explain><p>Seven items in slices of three gives 3 + 3 + 1. The yields between slices return to the task queue, so the interval's task gets to run.</p></explain>
+</question>
+
+<question id="loop-code-async-order" type="code" file="async-order.js">
+<q><p>Add one <code>await</code> somewhere inside <code>saveOrder</code> so the program prints the lines in the order shown.</p></q>
+<starter>
+async function saveOrder() {
+  console.log("saving");
+  console.log("saved");
+}
+
+saveOrder();
+console.log("responding");
+</starter>
+<solution>
+async function saveOrder() {
+  console.log("saving");
+  await null;
+  console.log("saved");
+}
+
+saveOrder();
+console.log("responding");
+</solution>
+<expected>
+saving
+responding
+saved
+</expected>
+<explain><p>An async function runs synchronously until its first <code>await</code>. Putting the <code>await</code> between the two logs makes the second one a microtask that runs after <code>responding</code>.</p></explain>
+</question>
+
+<question id="loop-code-lag" type="code" file="lag.js">
+<q><p>Finish <code>monitorLag(ms)</code>: start a <code>setInterval</code> every <code>ms</code> milliseconds that records how late each tick is (actual time minus expected time), and return a <code>stop()</code> function that clears the interval and returns the worst lag.</p></q>
+<starter>
+function monitorLag(ms) {
+  // your code here
+}
+
+const monitor = monitorLag(10);
+await new Promise((resolve) => setTimeout(resolve, 15));
+const end = Date.now() + 100;
+while (Date.now() < end) {}
+await new Promise((resolve) => setTimeout(resolve, 30));
+console.log("saw the 100 ms block:", monitor.stop() > 60);
+</starter>
+<solution>
+function monitorLag(ms) {
+  let expected = Date.now() + ms;
+  let worst = 0;
+  const timer = setInterval(() => {
+    worst = Math.max(worst, Date.now() - expected);
+    expected = Date.now() + ms;
+  }, ms);
+  return {
+    stop() {
+      clearInterval(timer);
+      return worst;
+    },
+  };
+}
+
+const monitor = monitorLag(10);
+await new Promise((resolve) => setTimeout(resolve, 15));
+const end = Date.now() + 100;
+while (Date.now() < end) {}
+await new Promise((resolve) => setTimeout(resolve, 30));
+console.log("saw the 100 ms block:", monitor.stop() > 60);
+</solution>
+<expected>saw the 100 ms block: true</expected>
+<explain><p>Each tick compares when it ran with when it should have run. During the 100 ms block no tick can run, so the first tick after it is late by roughly 90 ms or more.</p></explain>
+</question>
+
+<question id="loop-code-chain-order" type="code" file="chains.js">
+<q><p>Two chains take turns and print <code>stock 1, email 1, stock 2, email 2</code>. Change the code so the stock chain finishes completely before the email chain starts, printing the expected lines.</p></q>
+<starter>
+const paid = Promise.resolve();
+paid.then(() => console.log("stock 1")).then(() => console.log("stock 2"));
+paid.then(() => console.log("email 1")).then(() => console.log("email 2"));
+</starter>
+<solution>
+const paid = Promise.resolve();
+paid
+  .then(() => console.log("stock 1"))
+  .then(() => console.log("stock 2"))
+  .then(() => console.log("email 1"))
+  .then(() => console.log("email 2"));
+</solution>
+<expected>
+stock 1
+stock 2
+email 1
+email 2
+</expected>
+<explain><p>If the email steps must wait for the stock steps, say so: chain them after the stock chain (or <code>await</code> it). Relying on queue positions would break with the next refactor.</p></explain>
+</question>

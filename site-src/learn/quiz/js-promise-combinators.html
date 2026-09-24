@@ -1,0 +1,712 @@
+<question id="comb-waterfall-time" type="choice">
+<q>A handler does <code>const a = await getSales(); const b = await getRefunds();</code>. Each service takes 100 ms and neither needs the other's result. About how long does the handler wait, and what is this shape called?</q>
+<option>About 100 ms; parallel</option>
+<option correct>About 200 ms; a waterfall</option>
+<option>About 100 ms; a waterfall</option>
+<option>About 200 ms; a race condition</option>
+<explain><p>Each <code>await</code> waits before the next request even starts, so the times add up. Independent requests should start together and be awaited together.</p></explain>
+</question>
+
+<question id="comb-when-start" type="output">
+<q>When does a promise's work start? What does this print?</q>
+<code file="start.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const log = [];
+
+async function load(name) {
+  log.push(`start ${name}`);
+  await wait(10);
+  log.push(`end ${name}`);
+}
+
+const a = load("sales");
+const b = load("refunds");
+log.push("both created");
+await a;
+await b;
+console.log(log.join(", "));
+</code>
+<option correct>start sales, start refunds, both created, end sales, end refunds</option>
+<option>both created, start sales, end sales, start refunds, end refunds</option>
+<option>start sales, end sales, start refunds, end refunds, both created</option>
+<option>start sales, start refunds, end sales, end refunds, both created</option>
+<explain><p>Calling an async function runs it until its first <code>await</code> straight away. Both loads started before <code>await a</code>, so they ran at the same time. <code>await</code> only waits for work that is already happening.</p></explain>
+</question>
+
+<question id="comb-trap" type="choice">
+<q>Why is <code>const a = loadA(); const b = loadB(); try { use(await a, await b); } catch {}</code> risky when both can fail?</q>
+<option>The two loads run one after another</option>
+<option correct>If <code>b</code> rejects while the code is still waiting on <code>a</code>, <code>b</code> has no handler yet, which is an unhandled rejection</option>
+<option><code>await</code> cannot be used twice in one expression</option>
+<option>The catch block catches both errors twice</option>
+<explain><p>Only the promise currently being awaited has a handler. A combinator like <code>Promise.all</code> attaches handlers to every input immediately, so no rejection is left unhandled.</p></explain>
+</question>
+
+<question id="comb-all-order" type="output">
+<q>What does this print?</q>
+<code file="order.js">
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+
+const result = await Promise.all([wait(30, "sales"), wait(10, "refunds"), "stock"]);
+console.log(result);
+</code>
+<option correct>[ 'sales', 'refunds', 'stock' ]</option>
+<option>[ 'stock', 'refunds', 'sales' ]</option>
+<option>[ 'refunds', 'sales', 'stock' ]</option>
+<option>[ 'sales', 'refunds' ]</option>
+<explain><p><code>Promise.all</code> keeps the input order, whichever finishes first. A plain value like <code>"stock"</code> counts as an already-fulfilled promise.</p></explain>
+</question>
+
+<question id="comb-all-empty" type="output">
+<q>An order with no items is processed. What does this print?</q>
+<code file="empty.js">
+const items = [];
+const prices = await Promise.all(items.map(async (item) => item.price));
+console.log(prices, prices.length);
+</code>
+<option correct>[] 0</option>
+<option>Nothing: the await never finishes</option>
+<option>undefined 0</option>
+<option>TypeError: Promise.all needs at least one promise</option>
+<explain><p><code>Promise.all([])</code> fulfils immediately with an empty array. Compare <code>Promise.race([])</code>, which never settles, and <code>Promise.any([])</code>, which rejects.</p></explain>
+</question>
+
+<question id="comb-all-failfast" type="output">
+<q>What does this print?</q>
+<code file="fail-fast.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const fail = (ms, message) => wait(ms).then(() => { throw new Error(message); });
+
+try {
+  await Promise.all([fail(30, "stock service down"), fail(10, "price service down"), wait(5)]);
+} catch (error) {
+  console.log(error.message);
+}
+</code>
+<option correct>price service down</option>
+<option>stock service down</option>
+<option>stock service down, price service down</option>
+<option>AggregateError: All promises were rejected</option>
+<explain><p><code>Promise.all</code> rejects with the <em>first</em> rejection in time, not the first in the array. The price service failed at 10 ms, before the stock service at 30 ms.</p></explain>
+</question>
+
+<question id="comb-all-no-cancel" type="choice">
+<q><code>Promise.all([chargeCard(), sendConfirmationEmail()])</code> rejects because the card is declined. What happens to the email?</q>
+<option>It is cancelled automatically</option>
+<option>It is rolled back</option>
+<option correct>It still runs to completion; only its result is ignored</option>
+<option>It is retried</option>
+<explain><p>A promise is a receipt for work that is already running. <code>Promise.all</code> can stop waiting, but it cannot stop the work. Side effects that depend on a check must run after the check, or be cancellable.</p></explain>
+</question>
+
+<question id="comb-allnamed" type="choice">
+<q>Why might a team prefer an <code>allNamed({ sales, refunds })</code> helper returning an object over <code>const [sales, refunds] = await Promise.all([...])</code>?</q>
+<option>It runs faster</option>
+<option>It cancels the other promises on failure</option>
+<option correct>Results are matched by name, so reordering the inputs cannot silently swap values</option>
+<option>It never rejects</option>
+<explain><p>Positional destructuring depends on two lists staying in the same order. Names make the mapping explicit. It is still <code>Promise.all</code> underneath, with the same fail-fast behaviour.</p></explain>
+</question>
+
+<question id="comb-allsettled-shape" type="output">
+<q>What does this print?</q>
+<code file="settled.js">
+const reports = await Promise.allSettled([
+  Promise.resolve("₦48,250"),
+  Promise.reject(new Error("503")),
+]);
+console.log(reports.map((r) => r.status));
+console.log(reports[0].value, reports[1].reason.message);
+</code>
+<option correct>[ 'fulfilled', 'rejected' ]
+₦48,250 503</option>
+<option>[ 'resolved', 'rejected' ]
+₦48,250 503</option>
+<option>[ 'fulfilled', 'rejected' ]
+₦48,250 undefined</option>
+<option>Error: 503</option>
+<explain><p>Each report has <code>status</code>: <code>"fulfilled"</code> with a <code>value</code>, or <code>"rejected"</code> with a <code>reason</code>. <code>allSettled</code> itself never rejects.</p></explain>
+</question>
+
+<question id="comb-allsettled-never" type="choice">
+<q>When does the promise returned by <code>Promise.allSettled</code> reject?</q>
+<option>When any input rejects</option>
+<option>When all inputs reject</option>
+<option correct>Never; it fulfils once every input has settled</option>
+<option>When an input takes longer than 30 seconds</option>
+<explain><p>That is why you must check every report's <code>status</code> yourself: failures are data now, not exceptions. And because it waits for every input, a very slow one holds everything.</p></explain>
+</question>
+
+<question id="comb-allsettled-slow" type="choice">
+<q>A dashboard uses <code>allSettled</code> over five widgets. One widget's service sometimes hangs for 30 seconds. What should you add?</q>
+<option>Nothing, allSettled already skips slow promises</option>
+<option>Switch to Promise.race</option>
+<option correct>A time limit on each widget's promise, so a slow one becomes a rejection</option>
+<option>Switch to Promise.all</option>
+<explain><p><code>allSettled</code> waits for the slowest input. Wrapping each promise in <code>withTimeout</code> turns "too slow" into an ordinary rejection that the dashboard can show as unavailable.</p></explain>
+</question>
+
+<question id="comb-dashboard-choice" type="choice">
+<q>Which combinator fits "show every widget that loaded, and mark the rest as unavailable"?</q>
+<option><code>Promise.all</code></option>
+<option correct><code>Promise.allSettled</code></option>
+<option><code>Promise.race</code></option>
+<option><code>Promise.any</code></option>
+<explain><p>Partial results are useful here, so you need a report for each widget. <code>all</code> would lose every result on the first failure; <code>race</code> and <code>any</code> give only one result.</p></explain>
+</question>
+
+<question id="comb-race-output" type="output">
+<q>What does this print?</q>
+<code file="race.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const result = await Promise.race([
+  wait(10).then(() => { throw new Error("gateway error"); }),
+  wait(30).then(() => "paid"),
+]).catch((error) => `failed: ${error.message}`);
+
+console.log(result);
+</code>
+<option correct>failed: gateway error</option>
+<option>paid</option>
+<option>failed: gateway error, then paid</option>
+<option>AggregateError</option>
+<explain><p><code>race</code> settles like the first input to settle, success or failure. The rejection came first. For "first success", use <code>Promise.any</code>.</p></explain>
+</question>
+
+<question id="comb-race-empty" type="choice">
+<q>What does <code>await Promise.race([])</code> do?</q>
+<option>Fulfils with undefined</option>
+<option>Rejects with an AggregateError</option>
+<option correct>Waits forever: with no inputs, nothing can ever win</option>
+<option>Throws a TypeError at once</option>
+<explain><p>An empty race never settles. If the list of promises comes from data, check that it is not empty, or the request hangs.</p></explain>
+</question>
+
+<question id="comb-timeout-loser" type="choice">
+<q><code>withTimeout(chargeCard(order), 3000)</code> rejects with a TimeoutError. What do you know about the payment?</q>
+<option>It failed; tell the customer to try again</option>
+<option>It was cancelled by the timeout</option>
+<option correct>Its status is unknown: the request may still complete, so check with the provider before charging again</option>
+<option>It succeeded, because timeouts only happen on success</option>
+<explain><p>A timeout stops waiting, not the work. The provider may charge the card after you gave up. Record "unknown", query the status, and use an idempotency key so a retry cannot charge twice.</p></explain>
+</question>
+
+<question id="comb-timeout-clear" type="choice">
+<q>Why does <code>withTimeout</code> call <code>clearTimeout(timer)</code> in <code>finally</code>?</q>
+<option>To make the payment faster</option>
+<option>To cancel the payment when it is slow</option>
+<option correct>So the timer does not stay pending after the race is over, holding resources and keeping a Node.js process alive</option>
+<option>Because race rejects if the timer is still running</option>
+<explain><p>If the work wins, the timer still counts down. In a server that handles thousands of requests, each would leave a timer behind. <code>finally</code> clears it whichever side won.</p></explain>
+</question>
+
+<question id="comb-timeout-output" type="output">
+<q>What does this print?</q>
+<code file="timeout.js">
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+
+console.log(await withTimeout(wait(10, "rates loaded"), 50, "rates"));
+console.log(await withTimeout(wait(80, "stock loaded"), 20, "stock").catch((e) => e.message));
+</code>
+<option correct>rates loaded
+stock timed out</option>
+<option>rates timed out
+stock loaded</option>
+<option>rates loaded
+stock loaded</option>
+<option>rates timed out
+stock timed out</option>
+<explain><p>The rates arrived after 10 ms, before the 50 ms limit. The stock would take 80 ms but the limit was 20 ms, so the timer's rejection won the race.</p></explain>
+</question>
+
+<question id="comb-any-output" type="output">
+<q>What does this print?</q>
+<code file="any.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const down = (ms, name) => wait(ms).then(() => { throw new Error(`${name} down`); });
+const up = (ms, name) => wait(ms).then(() => name);
+
+console.log(await Promise.any([down(5, "mirror-a"), up(30, "mirror-b"), up(20, "mirror-c")]));
+</code>
+<option correct>mirror-c</option>
+<option>mirror-b</option>
+<option>mirror-a</option>
+<option>AggregateError: All promises were rejected</option>
+<explain><p><code>any</code> ignores failures and takes the first success in time. <code>mirror-a</code> failed first and was skipped; <code>mirror-c</code> succeeded at 20 ms, before <code>mirror-b</code> at 30 ms.</p></explain>
+</question>
+
+<question id="comb-any-errors" type="output">
+<q>What does this print?</q>
+<code file="any-errors.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const down = (ms, name) => wait(ms).then(() => { throw new Error(`${name} down`); });
+
+try {
+  await Promise.any([down(30, "rates-a"), down(10, "rates-b")]);
+} catch (error) {
+  console.log(error.name, error.errors.map((e) => e.message));
+}
+</code>
+<option correct>AggregateError [ 'rates-a down', 'rates-b down' ]</option>
+<option>AggregateError [ 'rates-b down', 'rates-a down' ]</option>
+<option>Error [ 'rates-b down' ]</option>
+<option>AggregateError undefined</option>
+<explain><p>When every input fails, <code>any</code> rejects with an <code>AggregateError</code> whose <code>errors</code> array follows the <em>input</em> order, not the order of failure.</p></explain>
+</question>
+
+<question id="comb-any-empty" type="choice">
+<q>What does <code>Promise.any([])</code> do?</q>
+<option>Fulfils with undefined</option>
+<option correct>Rejects straight away with an AggregateError</option>
+<option>Never settles</option>
+<option>Fulfils with []</option>
+<explain><p>No input can succeed, so <code>any</code> rejects at once. Only <code>race</code> hangs on an empty list; <code>all</code> and <code>allSettled</code> fulfil with <code>[]</code>.</p></explain>
+</question>
+
+<question id="comb-choose-any" type="choice">
+<q>Three exchange-rate providers can answer; any one answer is fine and you want the fastest working one. Which combinator?</q>
+<option><code>Promise.all</code></option>
+<option><code>Promise.allSettled</code></option>
+<option><code>Promise.race</code></option>
+<option correct><code>Promise.any</code></option>
+<explain><p>Redundant sources are what <code>any</code> is for. <code>race</code> would fail as soon as the fastest provider returned an error, even if another would succeed a moment later.</p></explain>
+</question>
+
+<question id="comb-with-resolvers" type="choice">
+<q>What does <code>Promise.withResolvers()</code> return?</q>
+<option>A promise that is already fulfilled</option>
+<option correct>An object <code>{ promise, resolve, reject }</code>, so other code can settle the promise later</option>
+<option>An array of the resolve functions of every pending promise</option>
+<option>A function that resolves any promise passed to it</option>
+<explain><p>It is the same as creating a promise with <code>new Promise</code> and copying <code>resolve</code> and <code>reject</code> out of the executor. It suits one-off events, such as waiting for a payment webhook.</p></explain>
+</question>
+
+<question id="comb-with-resolvers-output" type="output">
+<q>What does this print?</q>
+<code file="deferred.js">
+const { promise, resolve } = Promise.withResolvers();
+
+setTimeout(() => resolve("webhook: order 7 paid"), 10);
+setTimeout(() => resolve("webhook: order 7 paid again"), 20);
+
+console.log("waiting");
+console.log(await promise);
+</code>
+<option correct>waiting
+webhook: order 7 paid</option>
+<option>waiting
+webhook: order 7 paid again</option>
+<option>webhook: order 7 paid
+waiting</option>
+<option>waiting
+webhook: order 7 paid
+webhook: order 7 paid again</option>
+<explain><p>The promise settles once, with the first <code>resolve</code>. The duplicate webhook's <code>resolve</code> is ignored, which is handy: providers do sometimes send the same webhook twice.</p></explain>
+</question>
+
+<question id="comb-promise-try" type="output">
+<q>What does this print?</q>
+<code file="try.js">
+function stockOf(sku) {
+  if (!sku) throw new TypeError("sku is required");
+  return Promise.resolve(12);
+}
+
+console.log(await Promise.try(stockOf, "rice-5kg"));
+console.log(await Promise.try(stockOf, "").catch((e) => e.name));
+</code>
+<option correct>12
+TypeError</option>
+<option>12
+Uncaught TypeError: sku is required</option>
+<option>Promise { 12 }
+TypeError</option>
+<option>12
+undefined</option>
+<explain><p><code>Promise.try(fn, ...args)</code> calls <code>fn</code> and always returns a promise. A synchronous throw becomes a rejection, so one <code>.catch</code> handles both kinds of failure.</p></explain>
+</question>
+
+<question id="comb-foreach" type="output">
+<q>What does this print?</q>
+<code file="foreach.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sent = [];
+
+["ada", "bola", "chidi"].forEach(async (name) => {
+  await wait(10);
+  sent.push(name);
+});
+
+console.log("sent:", sent.length);
+</code>
+<option correct>sent: 0</option>
+<option>sent: 3</option>
+<option>sent: 1</option>
+<option>TypeError: forEach does not accept async functions</option>
+<explain><p><code>forEach</code> calls the async callback for each item and ignores the promises it returns, so it finishes before any email is sent. Use <code>for...of</code> with <code>await</code> for sequential work, or <code>Promise.all(items.map(fn))</code> for parallel work.</p></explain>
+</question>
+
+<question id="comb-sequential-when" type="choice">
+<q>Which job should run strictly one item at a time?</q>
+<option>Loading five independent dashboard widgets</option>
+<option>Fetching the prices of ten products</option>
+<option correct>Posting a list of ledger entries where each entry's balance depends on the previous one</option>
+<option>Asking three mirrors for the same file</option>
+<explain><p>When each step depends on the result of the step before, the work must be sequential. Running those posts in parallel creates a race condition: overlapping reads and writes lose entries.</p></explain>
+</question>
+
+<question id="comb-race-condition" type="output">
+<q>What does this print?</q>
+<code file="race-condition.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let stock = 10;
+
+async function sell(qty) {
+  const current = stock;
+  await wait(10);
+  stock = current - qty;
+}
+
+await Promise.all([sell(2), sell(3)]);
+console.log(stock);
+</code>
+<option correct>7</option>
+<option>5</option>
+<option>8</option>
+<option>0</option>
+<explain><p>Both sales read <code>10</code> before either wrote. The first wrote <code>8</code>, then the second overwrote it with <code>10 - 3 = 7</code>. One sale was lost. Read-then-write on shared state must not overlap: run such updates sequentially, or make the update itself atomic.</p></explain>
+</question>
+
+<question id="comb-bounded" type="choice">
+<q>Why is <code>await Promise.all(customers.map(sendEmail))</code> dangerous when <code>customers</code> comes from the database?</q>
+<option>Promise.all cannot take more than 1,000 promises</option>
+<option correct>It starts every send at once; with 100,000 customers that overwhelms the mail server or your rate limit</option>
+<option>The emails are sent in random order</option>
+<option>map does not work with async functions</option>
+<explain><p>Parallelism must be bounded when the list size is not under your control. Use batches or a pool with a fixed limit, which the concurrency lesson builds.</p></explain>
+</question>
+
+<question id="comb-batch-weakness" type="choice">
+<q>Emails are sent in batches of 5 with <code>Promise.all</code> per batch. One email in a batch takes 5 seconds, the others 100 ms. What is wasted?</q>
+<option>Nothing, batching is optimal</option>
+<option correct>For almost 5 seconds only one email is in flight, while four slots sit empty waiting for the batch to finish</option>
+<option>The slow email is sent five times</option>
+<option>The next batch starts before the slow email finishes</option>
+<option>The whole batch is retried</option>
+<explain><p>A batch finishes with its slowest item. A pool starts the next job as soon as any slot is free, which keeps all slots busy.</p></explain>
+</question>
+
+<question id="comb-batches-output" type="output">
+<q>What does this print?</q>
+<code file="batches.js">
+async function inBatches(items, size, fn) {
+  const results = [];
+  for (let i = 0; i < items.length; i += size) {
+    const batch = items.slice(i, i + size);
+    console.log("batch", batch);
+    results.push(...(await Promise.all(batch.map(fn))));
+  }
+  return results;
+}
+
+const out = await inBatches([1, 2, 3, 4, 5], 2, async (id) => `order ${id}`);
+console.log(out.length);
+</code>
+<option correct>batch [ 1, 2 ]
+batch [ 3, 4 ]
+batch [ 5 ]
+5</option>
+<option>batch [ 1, 2 ]
+batch [ 3, 4 ]
+4</option>
+<option>batch [ 1, 2, 3, 4, 5 ]
+5</option>
+<option>batch [ 1, 2 ]
+batch [ 3, 4 ]
+batch [ 5 ]
+3</option>
+<explain><p><code>slice</code> past the end just returns what is left, so the last batch has one item. The results of all batches are collected into one flat array of 5.</p></explain>
+</question>
+
+<question id="comb-required-optional" type="choice">
+<q>In the dashboard build, <code>Promise.all([account, Promise.allSettled(widgets)])</code> is used. When can this <code>Promise.all</code> reject?</q>
+<option>When any widget fails</option>
+<option>When all widgets fail</option>
+<option correct>Only when the account promise rejects, because allSettled never rejects</option>
+<option>Never</option>
+<explain><p>Nesting combinators expresses the rules: the account is required (its failure fails the page), the widgets are optional (their failures become reports).</p></explain>
+</question>
+
+<question id="comb-webhook-leak" type="choice">
+<q>A service keeps a <code>Map</code> from order id to the <code>resolve</code>/<code>reject</code> of a waiting promise. What must it also do?</q>
+<option>Nothing; resolved entries are removed automatically</option>
+<option correct>Delete each entry once its promise settles, and put a time limit on the wait, or the map grows forever</option>
+<option>Resolve every entry twice to be sure</option>
+<option>Store the promises in an array instead</option>
+<explain><p>A map holds its entries until you delete them. Without cleanup and a timeout for webhooks that never arrive, it is a slow memory leak.</p></explain>
+</question>
+
+<question id="comb-code-parallel" type="code" file="parallel.js">
+<q><p>Load the product, its reviews and its stock in parallel (they are independent) and print the line shown. It should take about one 30 ms round, not three.</p></q>
+<starter>
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+const getProduct = (sku) => wait(30, { sku, name: "Rice 5kg" });
+const getReviews = (sku) => wait(30, [5, 4, 5]);
+const getStock = (sku) => wait(30, 12);
+
+const start = Date.now();
+// your code here
+</starter>
+<solution>
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+const getProduct = (sku) => wait(30, { sku, name: "Rice 5kg" });
+const getReviews = (sku) => wait(30, [5, 4, 5]);
+const getStock = (sku) => wait(30, 12);
+
+const start = Date.now();
+const [product, reviews, stock] = await Promise.all([
+  getProduct("rice-5kg"),
+  getReviews("rice-5kg"),
+  getStock("rice-5kg"),
+]);
+console.log(`${product.name}: ${reviews.length} reviews, ${stock} in stock`);
+console.log("one round:", Date.now() - start < 80);
+</solution>
+<expected>
+Rice 5kg: 3 reviews, 12 in stock
+one round: true
+</expected>
+<explain><p>Start all three calls inside one <code>Promise.all</code> and destructure the results in input order.</p></explain>
+</question>
+
+<question id="comb-code-settled" type="code" file="widgets.js">
+<q><p>Load all widgets with <code>Promise.allSettled</code>. Print each widget as <code>NAME: VALUE</code> or <code>NAME: unavailable (REASON)</code>.</p></q>
+<starter>
+const widgets = {
+  sales: async () => "₦482,500",
+  lowStock: async () => { throw new Error("HTTP 503"); },
+  customers: async () => "5 new",
+};
+
+// your code here
+</starter>
+<solution>
+const widgets = {
+  sales: async () => "₦482,500",
+  lowStock: async () => { throw new Error("HTTP 503"); },
+  customers: async () => "5 new",
+};
+
+const names = Object.keys(widgets);
+const reports = await Promise.allSettled(names.map((name) => widgets[name]()));
+reports.forEach((report, i) => {
+  const text = report.status === "fulfilled" ? report.value : `unavailable (${report.reason.message})`;
+  console.log(`${names[i]}: ${text}`);
+});
+</solution>
+<expected>
+sales: ₦482,500
+lowStock: unavailable (HTTP 503)
+customers: 5 new
+</expected>
+<explain><p>Keep the names in an array so report <code>i</code> can be matched to widget <code>i</code>, then branch on <code>status</code>.</p></explain>
+</question>
+
+<question id="comb-code-timeout" type="code" file="with-timeout.js">
+<q><p>Finish <code>withTimeout(promise, ms, label)</code>: it rejects with an error named <code>TimeoutError</code> and message <code>LABEL timed out after MS ms</code> if the promise takes longer, and clears its timer either way.</p></q>
+<starter>
+function withTimeout(promise, ms, label) {
+  // your code here
+}
+
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+
+console.log(await withTimeout(wait(10, "paid"), 100, "payment"));
+try {
+  await withTimeout(wait(200, "paid"), 30, "payment");
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</starter>
+<solution>
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`${label} timed out after ${ms} ms`);
+      error.name = "TimeoutError";
+      reject(error);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+
+console.log(await withTimeout(wait(10, "paid"), 100, "payment"));
+try {
+  await withTimeout(wait(200, "paid"), 30, "payment");
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</solution>
+<expected>
+paid
+TimeoutError: payment timed out after 30 ms
+</expected>
+<explain><p>Race the work against a timer that rejects, and clear the timer in <code>finally</code>. Setting <code>error.name</code> lets callers tell a timeout from a real failure.</p></explain>
+</question>
+
+<question id="comb-code-any" type="code" file="first-rate.js">
+<q><p>Use <code>Promise.any</code> to get the first working exchange rate. If every provider fails, print <code>no rates: </code> followed by the reasons joined with <code>, </code>.</p></q>
+<starter>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const provider = (name, ms, rate) => async () => {
+  await wait(ms);
+  if (rate === null) throw new Error(`${name} down`);
+  return `${name}: ${rate}`;
+};
+
+async function firstRate(providers) {
+  // your code here
+}
+
+console.log(await firstRate([provider("a", 5, null), provider("b", 20, 1540), provider("c", 10, 1538)]));
+console.log(await firstRate([provider("a", 5, null), provider("b", 10, null)]));
+</starter>
+<solution>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const provider = (name, ms, rate) => async () => {
+  await wait(ms);
+  if (rate === null) throw new Error(`${name} down`);
+  return `${name}: ${rate}`;
+};
+
+async function firstRate(providers) {
+  try {
+    return await Promise.any(providers.map((ask) => ask()));
+  } catch (error) {
+    return `no rates: ${error.errors.map((e) => e.message).join(", ")}`;
+  }
+}
+
+console.log(await firstRate([provider("a", 5, null), provider("b", 20, 1540), provider("c", 10, 1538)]));
+console.log(await firstRate([provider("a", 5, null), provider("b", 10, null)]));
+</solution>
+<expected>
+c: 1538
+no rates: a down, b down
+</expected>
+<explain><p><code>any</code> skips failures and takes the first success. When all fail, the <code>AggregateError</code>'s <code>errors</code> array holds every reason in input order.</p></explain>
+</question>
+
+<question id="comb-code-series" type="code" file="ledger.js">
+<q><p>The ledger entries must be posted one after another, or entries are lost. Replace the <code>forEach</code> so the final balance is right.</p></q>
+<starter>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let balance = 10000;
+
+async function post(amount) {
+  const before = balance;
+  await wait(5);
+  balance = before + amount;
+}
+
+const entries = [5000, -3000, 2500];
+entries.forEach(async (amount) => {
+  await post(amount);
+});
+await wait(30);
+console.log("balance:", balance);
+</starter>
+<solution>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let balance = 10000;
+
+async function post(amount) {
+  const before = balance;
+  await wait(5);
+  balance = before + amount;
+}
+
+const entries = [5000, -3000, 2500];
+for (const amount of entries) {
+  await post(amount);
+}
+await wait(30);
+console.log("balance:", balance);
+</solution>
+<expected>balance: 14500</expected>
+<explain><p><code>forEach</code> starts every post at once and does not wait; they all read the starting balance. <code>for...of</code> with <code>await</code> finishes each post before starting the next.</p></explain>
+</question>
+
+<question id="comb-code-named" type="code" file="all-named.js">
+<q><p>Write <code>allNamed(tasks)</code>: it takes an object whose values are promises and resolves to an object with the same keys and the resolved values.</p></q>
+<starter>
+async function allNamed(tasks) {
+  // your code here
+}
+
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+console.log(await allNamed({ orders: wait(20, 37), refunds: wait(10, 2), shop: "Mama Put" }));
+</starter>
+<solution>
+async function allNamed(tasks) {
+  const names = Object.keys(tasks);
+  const values = await Promise.all(Object.values(tasks));
+  return Object.fromEntries(names.map((name, i) => [name, values[i]]));
+}
+
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+console.log(await allNamed({ orders: wait(20, 37), refunds: wait(10, 2), shop: "Mama Put" }));
+</solution>
+<expected>{ orders: 37, refunds: 2, shop: 'Mama Put' }</expected>
+<explain><p><code>Object.keys</code> and <code>Object.values</code> return the entries in the same order, and <code>Promise.all</code> keeps that order, so name <code>i</code> matches value <code>i</code>.</p></explain>
+</question>
+
+<question id="comb-code-resolvers" type="code" file="confirm.js">
+<q><p>Finish <code>waitForConfirmation(orderId)</code> with <code>Promise.withResolvers</code>: store the <code>resolve</code> in <code>waiting</code> under the order id, return the promise, and delete the entry once it settles.</p></q>
+<starter>
+const waiting = new Map();
+
+function waitForConfirmation(orderId) {
+  // your code here
+}
+
+function onWebhook(orderId, ref) {
+  waiting.get(orderId)?.(ref);
+}
+
+setTimeout(() => onWebhook(7, "PSK_81"), 10);
+const ref = await waitForConfirmation(7);
+console.log("confirmed:", ref, "still waiting:", waiting.size);
+</starter>
+<solution>
+const waiting = new Map();
+
+function waitForConfirmation(orderId) {
+  const { promise, resolve } = Promise.withResolvers();
+  waiting.set(orderId, resolve);
+  return promise.finally(() => waiting.delete(orderId));
+}
+
+function onWebhook(orderId, ref) {
+  waiting.get(orderId)?.(ref);
+}
+
+setTimeout(() => onWebhook(7, "PSK_81"), 10);
+const ref = await waitForConfirmation(7);
+console.log("confirmed:", ref, "still waiting:", waiting.size);
+</solution>
+<expected>confirmed: PSK_81 still waiting: 0</expected>
+<explain><p>The webhook handler and the waiting code share the promise's <code>resolve</code> through the map. <code>finally</code> removes the entry so the map does not grow forever.</p></explain>
+</question>
