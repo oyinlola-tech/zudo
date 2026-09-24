@@ -91,6 +91,23 @@ function updateSearchIndex(course, lessons) {
 }
 
 /* The browser terminal's formatter must print exactly what Node prints. */
+/* Circular structures: Node numbers them and prefixes the target with <ref *N>. */
+function circular() {
+  const cart = { name: "cart", items: [] };
+  cart.self = cart;
+  const order = { lines: {} };
+  order.lines.parent = order;
+  order.all = [order];
+  const a = {};
+  const b = { a };
+  a.b = b;
+  const c = { id: 1 };
+  c.me = c;
+  const d = { id: 2 };
+  d.me = d;
+  return [cart, [cart], order, a, { c, d }];
+}
+
 function checkInspect() {
   const src = readFileSync(join(ROOT, "site", "js", "playground.js"), "utf8");
   const body = src.slice(src.indexOf("/* node-inspect:start"), src.indexOf("/* node-inspect:end */"));
@@ -110,7 +127,7 @@ function checkInspect() {
     [{ s: "it's" }], [function named() {}], [() => {}], [class Foo {}], [new Date(0)], [/ab+c/gi], ["%s is %d", "Ada", 36],
     [Object.create(null)], [new Uint8Array([1, 2])], [Array.from({ length: 120 }, (_, i) => i)],
     [[{ id: 1, title: "Write tests", done: true }, { id: 2, title: "Ship the API", done: false }, { id: 3, title: "Celebrate", done: false }]],
-    [{ [Symbol("s")]: 1 }], [{ get g() { return 1; } }], [{ a: "line one of a long text\nline two of the long text that goes on\nline three" }],
+    [{ [Symbol("s")]: 1 }], [{ get g() { return 1; } }], circular(), [{ a: "line one of a long text\nline two of the long text that goes on\nline three" }],
   ];
   return cases.map((c, i) => {
     const want = format(...c);

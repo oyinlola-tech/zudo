@@ -456,7 +456,12 @@
   function formatValue(ctx, v, recurseTimes) {
     if (v === null) return 'null';
     if (typeof v !== 'object' && typeof v !== 'function') return formatPrimitive(ctx, v);
-    if (ctx.seen.indexOf(v) !== -1) return '[Circular *1]';
+    if (ctx.seen.indexOf(v) !== -1) {
+      /* Like Node: number each circular target, and formatRaw prefixes it with <ref *N>. */
+      if (!ctx.circular) ctx.circular = new Map();
+      if (!ctx.circular.has(v)) ctx.circular.set(v, ctx.circular.size + 1);
+      return '[Circular *' + ctx.circular.get(v) + ']';
+    }
     return formatRaw(ctx, v, recurseTimes);
   }
 
@@ -567,6 +572,10 @@
     var output = formatter ? formatter() : [];
     for (var i = 0; i < keys.length && !noEntries; i++) output.push(formatProperty(ctx, v, keys[i], recurseTimes, false));
     ctx.seen.pop();
+    if (ctx.circular && ctx.circular.has(v)) {
+      var ref = '<ref *' + ctx.circular.get(v) + '>';
+      base = base === '' ? ref : ref + ' ' + base;
+    }
     var res = reduceToSingleString(ctx, output, base, braces, isArrayType, recurseTimes, v);
     ctx.extraItems = false;
     return res;

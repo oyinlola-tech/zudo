@@ -1,0 +1,961 @@
+---
+title: Designing generic APIs
+description: Design generic interfaces and classes that stay easy to call - type parameters that earn their place, inference, NoInfer, keyof constraints and defaults - by building Repository, Result, Page, ApiResponse, Cache and typed events.
+minutes: 55
+youNeed: Generics, and Tuples
+youBuild: A small typed banking toolkit - Repository, Result helpers, cursor pages, API responses, a TTL cache and a typed event emitter - composed into a transfer service
+keywords: typescript generic design, generic interface, generic class, type parameter defaults, keyof constraint, NoInfer, return-only generic, generic repository pattern, Result type helpers, cursor pagination Page type, ApiResponse type, generic cache, typed event emitter, ts-expect-error type tests
+objectives: Decide whether a type parameter earns its place, and spot return-only generics that hide an assertion | Design signatures that infer well, using parameter order and NoInfer | Use keyof and indexed access constraints to make wrong calls unwritable | Give type parameters sensible constraints and defaults | Build and compose Repository, Result, Page, ApiResponse, Cache and typed event types | Test generic code at runtime and at the type level
+---
+<section>
+<h2 id="problem">Three repositories, three contracts</h2>
+<p>A banking backend grew one feature at a time. Each team wrote its own data access class, and each one answers "not found" differently:</p>
+<example file="drift.ts" project="drift">
+class TaskRepository {
+  private rows = [{ id: "T1", title: "Verify BVN" }];
+  find(id: string) {
+    return this.rows.find((row) => row.id === id);
+  }
+}
+
+class UserRepository {
+  private rows = [{ id: "U1", name: "Ada" }];
+  get(id: string) {
+    return this.rows.find((row) => row.id === id) ?? null;
+  }
+}
+
+class AccountRepository {
+  private rows = [{ id: "ACC-1", kobo: 500000 }];
+  findById(id: string) {
+    const row = this.rows.find((r) => r.id === id);
+    if (!row) throw new Error(`account ${id} not found`);
+    return row;
+  }
+}
+
+console.log(new TaskRepository().find("T9"));
+console.log(new UserRepository().get("U9"));
+try {
+  new AccountRepository().findById("ACC-9");
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+undefined
+null
+Error: account ACC-9 not found
+</output>
+<p>Three method names, three answers for a missing row: <code>undefined</code>, <code>null</code> and an exception. Every caller has to remember which is which, and code that moves between them breaks in quiet ways. The fix is one <em>generic</em> contract, written once, that every entity uses. You already know the syntax from <a href="/learn/ts-generics">Generics</a>. This lesson is about <strong>design</strong>: which type parameters to have, where to put them, what to constrain, what to default, and how the pieces fit together into an API that is hard to misuse. By the end you will have built the generic toolkit most TypeScript backends grow, and composed it into a transfer service.</p>
+</section>
+
+<section>
+<h2 id="earn-their-place">Type parameters must earn their place</h2>
+<p>A type parameter exists to <strong>connect</strong> types: an input to an output, one argument to another, a method to the class it belongs to. A useful rule of thumb: <em>a type parameter should appear at least twice</em>. When it appears once, it connects nothing, and a plain type says the same thing more simply:</p>
+<example file="once.ts" project="params">
+function logAmountsGeneric<T extends number>(amounts: readonly T[]): void {
+  console.log(amounts.join(", "));
+}
+
+function logAmounts(amounts: readonly number[]): void {
+  console.log(amounts.join(", "));
+}
+
+logAmountsGeneric([5000, 1200]);
+logAmounts([5000, 1200]);
+</example>
+<output>
+5000, 1200
+5000, 1200
+</output>
+<p>Both do the same thing; the second is easier to read. Compare <code>first&lt;T&gt;(items: readonly T[]): T | undefined</code> from the Generics lesson: there <code>T</code> appears in the input and the output, and that link is the whole point.</p>
+<h3>Return-only generics are assertions in disguise</h3>
+<p>The dangerous case is a type parameter that appears <em>only</em> in the return type. Nothing can infer it, so the caller simply writes it, and gets back whatever they asked for:</p>
+<example file="return-only.ts" project="params">
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
+}
+
+interface Account {
+  id: string;
+  kobo: number;
+}
+
+const account = parseJson<Account>('{"id": "ACC-1", "balance": "5000"}');
+console.log(account.kobo, typeof account.kobo);
+try {
+  console.log(account.kobo.toFixed(2));
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+undefined undefined
+TypeError: Cannot read properties of undefined (reading 'toFixed')
+</output>
+<p><code>parseJson&lt;Account&gt;(…)</code> looks like a checked call, but it is exactly <code>JSON.parse(…) as Account</code>, the unchecked assertion from <a href="/learn/ts-assertions">Type assertions</a>, wearing a generic's clothes. The honest signature is <code>parseJson(text: string): unknown</code>, followed by a guard or a validator. You will meet return-only generics in real libraries too (for example, the <code>get&lt;TValue&gt;(key)</code> method of <code>@zudojs/cache</code>'s adapter contract). They are convenient, but treat what they return like data from outside: the type is a promise you made, not one anyone checked.</p>
+</section>
+
+<section>
+<h2 id="inference">Design for inference</h2>
+<p>A good generic API is called without angle brackets. TypeScript infers type parameters from the arguments, so put each type parameter where a value will reveal it, and let callers write ordinary code.</p>
+<h3>Choose the inference site with NoInfer</h3>
+<p>Sometimes a type parameter appears in two arguments, and only one of them should decide it. A function that picks a customer's currency from the allowed list, with a fallback:</p>
+<example file="no-infer.ts" project="inference">
+function chooseLoose<C extends string>(allowed: readonly C[], wanted: string, fallback: C): C {
+  return allowed.find((c) => c === wanted) ?? fallback;
+}
+
+console.log(chooseLoose(["NGN", "USD"], "EUR", "GBP"));
+</example>
+<output>
+GBP
+</output>
+<p>That compiles, and returns <code>"GBP"</code>, which is not in the allowed list. TypeScript inferred <code>C</code> from <em>both</em> <code>allowed</code> and <code>fallback</code>, so <code>C</code> became <code>"NGN" | "USD" | "GBP"</code>. Wrapping the second use in <code>NoInfer&lt;C&gt;</code> (TypeScript 5.4) tells the compiler "do not infer <code>C</code> from here, only check against it":</p>
+<example file="no-infer.ts" project="inference" check="tsc-error">
+function choose<C extends string>(allowed: readonly C[], wanted: string, fallback: NoInfer<C>): C {
+  return allowed.find((c) => c === wanted) ?? fallback;
+}
+
+console.log(choose(["NGN", "USD"], "EUR", "GBP"));
+</example>
+<output kind="tsc">
+no-infer.ts:5:43 - error TS2345: Argument of type '"GBP"' is not assignable to parameter of type '"NGN" | "USD"'.
+
+5 console.log(choose(["NGN", "USD"], "EUR", "GBP"));
+                                            ~~~~~
+
+
+Found 1 error in no-infer.ts:5
+</output>
+<p>Now <code>allowed</code> alone decides <code>C</code>, and the bad fallback is caught at the call site. The same trick fits any "default value" parameter: a <code>Result</code>'s <code>unwrapOr(result, fallback)</code>, a select box's initial value, a cache's placeholder.</p>
+<h3>Other inference habits</h3>
+<ul>
+<li><strong>Infer from values, not from callbacks.</strong> In <code>groupBy(items, keyOf)</code>, <code>T</code> comes from <code>items</code>, and the callback's parameter is then typed from <code>T</code>. Putting the array first also gives the callback good autocompletion.</li>
+<li><strong>Constrain with <code>extends</code>, not by annotating the value.</strong> <code>&lt;C extends string&gt;</code> keeps the literal types <code>"NGN" | "USD"</code>; a parameter typed <code>string[]</code> would lose them.</li>
+<li><strong>When nothing can be inferred, ask for it explicitly.</strong> <code>new Map&lt;string, number&gt;()</code> and <code>createState&lt;string | null&gt;(null)</code> are fine; they are the caller stating a fact.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="constraints-defaults">Constraints and defaults</h2>
+<p>A <strong>constraint</strong> (<code>T extends Shape</code>) lists what your code needs from <code>T</code>, and nothing more. Too loose, and the implementation cannot do its job; too tight, and callers with perfectly good types are turned away. A classic example of "too tight": requiring an index signature from an event map.</p>
+<example file="too-tight.ts" project="constraints" check="tsc-error">
+class StrictEmitter<Events extends Record<string, unknown>> {
+  emit<K extends keyof Events>(name: K, payload: Events[K]): void {
+    console.log(String(name), payload);
+  }
+}
+
+interface BankEvents {
+  "transfer.completed": { kobo: number };
+}
+
+const events = new StrictEmitter<BankEvents>();
+</example>
+<output kind="tsc">
+too-tight.ts:11:34 - error TS2344: Type 'BankEvents' does not satisfy the constraint 'Record<string, unknown>'.
+  Index signature for type 'string' is missing in type 'BankEvents'.
+
+11 const events = new StrictEmitter<BankEvents>();
+                                    ~~~~~~~~~~
+
+
+Found 1 error in too-tight.ts:11
+</output>
+<p><code>Record&lt;string, unknown&gt;</code> means "an object that can have <em>any</em> string key", and an interface only promises its listed keys. The class never needed arbitrary keys, only <code>keyof Events</code>. Loosening the constraint to <code>Events extends object</code> accepts interfaces and type aliases alike; the typed emitter later in this lesson does exactly that.</p>
+<h3>Defaults</h3>
+<p>A <strong>default</strong> (<code>Id = string</code>) is used when the caller does not pass that type argument and nothing can be inferred. Defaults make the common case short and the unusual case possible. Parameters with defaults must come after the ones without. Here is how the published <code>@zudojs/database</code> package declares its repository contract:</p>
+<pre><code>interface Repository&lt;TEntity, TId = string, TCreateInput = Partial&lt;TEntity&gt;,
+                     TUpdateInput = Partial&lt;TEntity&gt;, TFilter = unknown&gt; { … }</code></pre>
+<p>Five type parameters, but most code writes <code>Repository&lt;Account&gt;</code> and gets string ids and partial inputs. Only a repository with numeric ids or a custom filter type spells out more. Notice how the defaults refer to earlier parameters: <code>Partial&lt;TEntity&gt;</code> uses <code>TEntity</code>. That is allowed, because by then it is known.</p>
+</section>
+
+<section>
+<h2 id="repository">Repository&lt;T, Id&gt;</h2>
+<reason title="Before you design the repository">
+<p>You are writing the one repository contract every entity will use. Before the code, decide:</p>
+<ul>
+<li>What does <code>findById</code> return for a missing row: <code>null</code>, <code>undefined</code>, or does it throw? Who is best placed to decide what "missing" means?</li>
+<li>Ids are strings for accounts (<code>"ACC-001"</code>) but numbers for branches. How does one contract allow both, without allowing <code>boolean</code> ids?</li>
+<li>What may a caller pass to <code>create</code> and <code>update</code>? Can a caller change an id, or choose one?</li>
+<li>How do you allow "find accounts where <code>frozen</code> is <code>true</code>" without allowing <code>frozen</code> to be compared with a string?</li>
+</ul>
+<answer>
+<p>A lookup that finds nothing is a normal outcome, not an exception, so <code>findById</code> returns <code>T | undefined</code> (the same as <code>Map.get</code> and <code>Array.find</code>) and the caller, who knows whether missing is an error, decides. The id type is a second type parameter, constrained to <code>string | number</code>, with <code>string</code> as the default. <code>create</code> takes <code>Omit&lt;T, "id"&gt;</code>, so ids are always generated by the repository, and <code>update</code> takes <code>Partial&lt;Omit&lt;T, "id"&gt;&gt;</code>, so ids can never be changed. Queries use a <code>keyof</code> constraint: <code>findBy&lt;K extends keyof T&gt;(key: K, value: T[K])</code> ties the value's type to the chosen field.</p>
+</answer>
+</reason>
+<p>The contract is an interface, so the rest of the code depends on it rather than on one implementation. The in-memory class implements it; a PostgreSQL version would implement the same interface:</p>
+<example file="repository.ts" project="design">
+export interface Repository<T extends { id: Id }, Id extends string | number = string> {
+  findById(id: Id): Promise<T | undefined>;
+  findBy<K extends keyof T>(key: K, value: T[K]): Promise<T[]>;
+  create(input: Omit<T, "id">): Promise<T>;
+  update(id: Id, patch: Partial<Omit<T, "id">>): Promise<T | undefined>;
+}
+
+export class MemoryRepository<T extends { id: Id }, Id extends string | number = string>
+  implements Repository<T, Id>
+{
+  private readonly rows = new Map<Id, T>();
+
+  constructor(private readonly nextId: () => Id) {}
+
+  async findById(id: Id): Promise<T | undefined> {
+    return this.rows.get(id);
+  }
+
+  async findBy<K extends keyof T>(key: K, value: T[K]): Promise<T[]> {
+    return [...this.rows.values()].filter((row) => row[key] === value);
+  }
+
+  async create(input: Omit<T, "id">): Promise<T> {
+    const row = { ...input, id: this.nextId() } as T;
+    this.rows.set(row.id, row);
+    return row;
+  }
+
+  async update(id: Id, patch: Partial<Omit<T, "id">>): Promise<T | undefined> {
+    const current = this.rows.get(id);
+    if (current === undefined) return undefined;
+    const next = { ...current, ...patch, id };
+    this.rows.set(id, next);
+    return next;
+  }
+}
+</example>
+<ul>
+<li><code>T extends { id: Id }</code> refers to <code>Id</code>, declared after it. Type parameters in one list can refer to each other in constraints.</li>
+<li>The one <code>as T</code> in <code>create</code> is a justified assertion: <code>Omit&lt;T, "id"&gt;</code> plus an <code>id</code> is a <code>T</code> for every real entity, but TypeScript cannot prove it for an unknown generic <code>T</code>. It is the "proof the compiler cannot follow" case from <a href="/learn/ts-assertions#justified">Type assertions</a>, sitting in one place, under test.</li>
+<li>In <code>update</code>, <code>id</code> is spread <em>last</em>. The type already forbids an <code>id</code> in the patch, but a caller that got its patch from JSON could still smuggle one in at runtime; the order makes sure it never wins.</li>
+</ul>
+<p>Using it for two entities with different id types:</p>
+<example file="repository-demo.ts" project="design">
+import { MemoryRepository } from "./repository.js";
+
+interface Account {
+  id: string;
+  owner: string;
+  kobo: number;
+  frozen: boolean;
+}
+
+interface Branch {
+  id: number;
+  city: string;
+}
+
+let accountSeq = 0;
+const accounts = new MemoryRepository<Account>(() => `ACC-${String(++accountSeq).padStart(3, "0")}`);
+let branchSeq = 100;
+const branches = new MemoryRepository<Branch, number>(() => ++branchSeq);
+
+const ada = await accounts.create({ owner: "Ada", kobo: 500000, frozen: false });
+await accounts.create({ owner: "Tunde", kobo: 0, frozen: true });
+await branches.create({ city: "Lagos" });
+
+console.log(ada.id, (await accounts.findBy("frozen", true)).map((account) => account.owner));
+console.log(await accounts.update(ada.id, { kobo: 450000 }));
+console.log(await branches.findById(101), await accounts.findById("ACC-404"));
+</example>
+<output>
+ACC-001 [ 'Tunde' ]
+{ owner: 'Ada', kobo: 450000, frozen: false, id: 'ACC-001' }
+{ city: 'Lagos', id: 101 } undefined
+</output>
+<p>And the calls the design makes unwritable:</p>
+<example file="repository-misuse.ts" project="design" check="tsc-error">
+import { MemoryRepository } from "./repository.js";
+
+interface Account {
+  id: string;
+  owner: string;
+  kobo: number;
+  frozen: boolean;
+}
+
+const accounts = new MemoryRepository<Account>(() => "ACC-001");
+
+await accounts.findBy("frozen", "yes");
+await accounts.update("ACC-001", { id: "ACC-999" });
+await accounts.create({ id: "ACC-777", owner: "Eve", kobo: 0, frozen: false });
+</example>
+<output kind="tsc">
+repository-misuse.ts:12:33 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'boolean'.
+
+12 await accounts.findBy("frozen", "yes");
+                                   ~~~~~
+
+repository-misuse.ts:13:36 - error TS2353: Object literal may only specify known properties, and 'id' does not exist in type 'Partial<Omit<Account, "id">>'.
+
+13 await accounts.update("ACC-001", { id: "ACC-999" });
+                                      ~~
+
+repository-misuse.ts:14:25 - error TS2353: Object literal may only specify known properties, and 'id' does not exist in type 'Omit<Account, "id">'.
+
+14 await accounts.create({ id: "ACC-777", owner: "Eve", kobo: 0, frozen: false });
+                           ~~
+
+
+Found 3 errors in the same file, starting at: repository-misuse.ts:12
+</output>
+</section>
+
+<section>
+<h2 id="result">Result&lt;T, E&gt; with helpers</h2>
+<p><a href="/learn/ts-generics#result">Generics</a> introduced <code>Result&lt;T, E&gt;</code>. Its real power shows when <code>E</code> is a union of error codes and small generic helpers combine results, so each step's possible failures add up in the type automatically:</p>
+<example file="result.ts" project="design">
+export type Result<T, E = string> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: E };
+
+export function ok<T>(value: T): Result<T, never> {
+  return { ok: true, value };
+}
+
+export function err<const E>(error: E): Result<never, E> {
+  return { ok: false, error };
+}
+
+export function map<T, U, E>(result: Result<T, E>, fn: (value: T) => U): Result<U, E> {
+  return result.ok ? ok(fn(result.value)) : result;
+}
+
+export function andThen<T, U, E, F>(result: Result<T, E>, fn: (value: T) => Result<U, F>): Result<U, E | F> {
+  return result.ok ? fn(result.value) : result;
+}
+
+export function unwrapOr<T, E>(result: Result<T, E>, fallback: NoInfer<T>): T {
+  return result.ok ? result.value : fallback;
+}
+</example>
+<ul>
+<li><code>err&lt;const E&gt;</code> uses a const type parameter (from <a href="/learn/ts-tuples#inference">Tuples</a>) so <code>err("insufficient-funds")</code> keeps the literal error code instead of widening it to <code>string</code>.</li>
+<li><code>map</code> transforms the value and passes errors through untouched. <code>andThen</code> runs a next step that can fail too, and its error type is <code>E | F</code>: the union of both steps' failures.</li>
+<li>In the failure branches, <code>return result</code> is allowed because a failed <code>Result&lt;T, E&gt;</code> is also a failed <code>Result&lt;U, E&gt;</code>: it has no value, so <code>T</code> does not matter.</li>
+</ul>
+<example file="result-demo.ts" project="design">
+import { andThen, err, map, ok, unwrapOr } from "./result.js";
+import type { Result } from "./result.js";
+
+interface Account {
+  id: string;
+  kobo: number;
+}
+
+const accounts = new Map<string, Account>([
+  ["ACC-1", { id: "ACC-1", kobo: 500000 }],
+  ["ACC-2", { id: "ACC-2", kobo: 1000 }],
+]);
+
+function checkAmount(kobo: number) {
+  return Number.isInteger(kobo) && kobo > 0 ? ok(kobo) : err("invalid-amount");
+}
+
+function findAccount(id: string) {
+  const account = accounts.get(id);
+  return account ? ok(account) : err("account-not-found");
+}
+
+function debit(account: Account, kobo: number) {
+  return account.kobo >= kobo ? ok({ ...account, kobo: account.kobo - kobo }) : err("insufficient-funds");
+}
+
+type WithdrawError = "invalid-amount" | "account-not-found" | "insufficient-funds";
+
+function withdraw(id: string, kobo: number): Result<number, WithdrawError> {
+  const debited = andThen(checkAmount(kobo), (amount) => andThen(findAccount(id), (account) => debit(account, amount)));
+  return map(debited, (account) => account.kobo);
+}
+
+const attempts: [string, number][] = [["ACC-1", 250000], ["ACC-2", 5000], ["ACC-9", 100], ["ACC-1", -5]];
+for (const [id, kobo] of attempts) {
+  const result = withdraw(id, kobo);
+  console.log(result.ok ? `${id}: new balance ${result.value}` : `${id}: ${result.error}`);
+}
+console.log(unwrapOr(withdraw("ACC-9", 100), 0));
+</example>
+<output>
+ACC-1: new balance 250000
+ACC-2: insufficient-funds
+ACC-9: account-not-found
+ACC-1: invalid-amount
+0
+</output>
+<p>None of the three steps has a written return type, yet <code>withdraw</code> compiles against <code>Result&lt;number, WithdrawError&gt;</code>: the helpers collected <code>"invalid-amount" | "account-not-found" | "insufficient-funds"</code> on their own. Remove one of the codes from <code>WithdrawError</code> and <code>tsc</code> points at <code>withdraw</code>. That is the design goal: the types track the failures so people do not have to.</p>
+</section>
+
+<section>
+<h2 id="page-response">Page&lt;T&gt; and ApiResponse&lt;T&gt;</h2>
+<h3>Cursor pages</h3>
+<p>The <code>Page&lt;T&gt;</code> in the Generics lesson used page numbers. Real APIs that list transactions usually use a <strong>cursor</strong> instead: the id of the last item the client has seen. New transactions arriving between two requests then do not shift the pages. The generic part is the same: the page shape does not care what it holds.</p>
+<example file="page.ts" project="design">
+export interface Page<T> {
+  readonly items: readonly T[];
+  readonly nextCursor: string | null;
+}
+
+export function paginate<T extends { id: string }>(all: readonly T[], limit: number, after: string | null = null): Page<T> {
+  const index = after === null ? -1 : all.findIndex((item) => item.id === after);
+  if (after !== null && index === -1) throw new RangeError(`unknown cursor ${after}`);
+  const items = all.slice(index + 1, index + 1 + limit);
+  const last = items.at(-1);
+  const more = index + 1 + limit < all.length;
+  return { items, nextCursor: more && last !== undefined ? last.id : null };
+}
+
+export function mapPage<T, U>(page: Page<T>, fn: (item: T) => U): Page<U> {
+  return { ...page, items: page.items.map(fn) };
+}
+</example>
+<p><code>mapPage&lt;T, U&gt;</code> is a small but important design move: it changes what a page holds (full accounts to public summaries) while keeping everything else, so no endpoint can forget to copy <code>nextCursor</code>.</p>
+<h3>One response shape for every endpoint</h3>
+<p>Clients are simpler when every endpoint answers in the same envelope: a <code>status</code> discriminant, then either <code>data</code> or an <code>error</code> with a code and a message. The data type varies per endpoint, and the error code can be narrowed per endpoint too:</p>
+<example file="api.ts" project="design">
+import type { Result } from "./result.js";
+
+export type ApiResponse<T, E extends string = string> =
+  | { readonly status: "success"; readonly data: T }
+  | { readonly status: "error"; readonly error: { readonly code: E; readonly message: string } };
+
+export function toResponse<T, E extends string>(result: Result<T, E>, messages: Record<E, string>): ApiResponse<T, E> {
+  if (result.ok) return { status: "success", data: result.value };
+  return { status: "error", error: { code: result.error, message: messages[result.error] } };
+}
+</example>
+<p>The <code>messages: Record&lt;E, string&gt;</code> parameter is the keyof-style design trick again: the object must have a message for <em>every</em> error code in <code>E</code>. Add a new failure to a service and every endpoint that turns it into a response stops compiling until someone writes the message.</p>
+<example file="api-demo.ts" project="design">
+import { mapPage, paginate } from "./page.js";
+import { toResponse } from "./api.js";
+import { err, ok } from "./result.js";
+import type { Result } from "./result.js";
+
+interface Account {
+  id: string;
+  owner: string;
+  kobo: number;
+  frozen: boolean;
+}
+
+const all: Account[] = [
+  { id: "ACC-001", owner: "Ada", kobo: 500000, frozen: false },
+  { id: "ACC-002", owner: "Tunde", kobo: 0, frozen: true },
+  { id: "ACC-003", owner: "Ngozi", kobo: 120000, frozen: false },
+];
+
+const first = paginate(all, 2);
+const summaries = mapPage(first, (account) => ({ id: account.id, owner: account.owner }));
+console.log(summaries);
+console.log(paginate(all, 2, first.nextCursor).items.map((account) => account.id));
+
+type LookupError = "not-found" | "frozen";
+const messages: Record<LookupError, string> = { "not-found": "No such account", frozen: "This account is frozen" };
+
+function lookup(id: string): Result<Account, LookupError> {
+  const account = all.find((a) => a.id === id);
+  if (account === undefined) return err("not-found");
+  return account.frozen ? err("frozen") : ok(account);
+}
+
+for (const id of ["ACC-003", "ACC-002", "ACC-404"]) {
+  console.log(JSON.stringify(toResponse(lookup(id), messages)));
+}
+</example>
+<output>
+{
+  items: [
+    { id: 'ACC-001', owner: 'Ada' },
+    { id: 'ACC-002', owner: 'Tunde' }
+  ],
+  nextCursor: 'ACC-002'
+}
+[ 'ACC-003' ]
+{"status":"success","data":{"id":"ACC-003","owner":"Ngozi","kobo":120000,"frozen":false}}
+{"status":"error","error":{"code":"frozen","message":"This account is frozen"}}
+{"status":"error","error":{"code":"not-found","message":"No such account"}}
+</output>
+<p>Leave a code out of the messages and the compiler refuses:</p>
+<example file="api-missing.ts" project="design" check="tsc-error">
+import { toResponse } from "./api.js";
+import { err } from "./result.js";
+import type { Result } from "./result.js";
+
+type LookupError = "not-found" | "frozen";
+const result: Result<string, LookupError> = err("frozen");
+
+console.log(toResponse(result, { "not-found": "No such account" }));
+</example>
+<output kind="tsc">
+api-missing.ts:8:32 - error TS2741: Property 'frozen' is missing in type '{ "not-found": string; }' but required in type 'Record<LookupError, string>'.
+
+8 console.log(toResponse(result, { "not-found": "No such account" }));
+                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in api-missing.ts:8
+</output>
+</section>
+
+<section>
+<h2 id="cache">Cache&lt;K, V&gt;</h2>
+<p>Exchange rates, account summaries and permission sets are read far more often than they change, so backends cache them. A cache has two type parameters that are genuinely independent: the key and the value. The interface is tiny; the design decisions are in the constraint and in the clock:</p>
+<example file="cache.ts" project="design">
+export interface Cache<K, V> {
+  get(key: K): V | undefined;
+  set(key: K, value: V): void;
+  getOrLoad(key: K, load: (key: K) => Promise<V>): Promise<V>;
+}
+
+export class TtlCache<K, V extends {} | null> implements Cache<K, V> {
+  private readonly entries = new Map<K, { value: V; expiresAt: number }>();
+  hits = 0;
+  misses = 0;
+
+  constructor(
+    private readonly ttlMs: number,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  get(key: K): V | undefined {
+    const entry = this.entries.get(key);
+    if (entry === undefined) return undefined;
+    if (entry.expiresAt <= this.now()) {
+      this.entries.delete(key);
+      return undefined;
+    }
+    return entry.value;
+  }
+
+  set(key: K, value: V): void {
+    this.entries.set(key, { value, expiresAt: this.now() + this.ttlMs });
+  }
+
+  async getOrLoad(key: K, load: (key: K) => Promise<V>): Promise<V> {
+    const cached = this.get(key);
+    if (cached !== undefined) {
+      this.hits++;
+      return cached;
+    }
+    this.misses++;
+    const value = await load(key);
+    this.set(key, value);
+    return value;
+  }
+}
+</example>
+<ul>
+<li><code>V extends {} | null</code> forbids <code>undefined</code> as a cached value. <code>{}</code> is the type of every value except <code>null</code> and <code>undefined</code>, so the constraint allows everything else. Without it, a cached <code>undefined</code> would be indistinguishable from a miss, and <code>getOrLoad</code> would call the loader every time. The constraint turns that subtle bug into a compile error.</li>
+<li>The clock is injected (<code>now</code>, defaulting to <code>Date.now</code>), so tests can move time forward without waiting, the same idea as the fixed clock in <a href="/learn/ts-classes#fakes">Classes in TypeScript</a>.</li>
+<li><code>K</code> has no constraint because <code>Map</code> accepts any key. But object keys are compared by identity, not content: two equal <code>{ from: "USD", to: "NGN" }</code> objects are two different keys. For composite keys, build a string such as <code>"USD/NGN"</code>.</li>
+</ul>
+<example file="cache-demo.ts" project="design">
+import { TtlCache } from "./cache.js";
+
+let clock = 0;
+const rates = new TtlCache<string, number>(60_000, () => clock);
+
+let calls = 0;
+async function fetchRate(pair: string): Promise<number> {
+  calls++;
+  return pair === "USD/NGN" ? 1550 : 2050;
+}
+
+console.log(await rates.getOrLoad("USD/NGN", fetchRate));
+console.log(await rates.getOrLoad("USD/NGN", fetchRate));
+clock += 61_000;
+console.log(await rates.getOrLoad("USD/NGN", fetchRate));
+console.log(await rates.getOrLoad("GBP/NGN", fetchRate));
+console.log({ calls, hits: rates.hits, misses: rates.misses });
+</example>
+<output>
+1550
+1550
+1550
+2050
+{ calls: 3, hits: 1, misses: 3 }
+</output>
+<p>The second call is a hit. After the fake clock moves past 60 seconds, the entry has expired and the rate is fetched again. And the constraint at work:</p>
+<example file="cache-undefined.ts" project="design" check="tsc-error">
+import { TtlCache } from "./cache.js";
+
+const profiles = new TtlCache<string, { name: string } | undefined>(30_000);
+</example>
+<output kind="tsc">
+cache-undefined.ts:3:39 - error TS2344: Type '{ name: string; } | undefined' does not satisfy the constraint '{} | null'.
+  Type 'undefined' is not assignable to type '{} | null'.
+
+3 const profiles = new TtlCache<string, { name: string } | undefined>(30_000);
+                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in cache-undefined.ts:3
+</output>
+</section>
+
+<section>
+<h2 id="events">Typed events</h2>
+<p>When a transfer completes, several parts of the system care: notifications, the fraud checker, the audit log. An <strong>event emitter</strong> lets them subscribe without the transfer code knowing about them. The generic design problem is to make every event name and every payload checked. The key is an <strong>event map</strong>: one type that lists each event name with its payload type, used with <code>keyof</code> and indexed access:</p>
+<example file="events.ts" project="design">
+export class TypedEmitter<Events extends object> {
+  private readonly listeners: { [K in keyof Events]?: Array<(payload: Events[K]) => void> } = {};
+
+  on<K extends keyof Events>(name: K, listener: (payload: Events[K]) => void): () => void {
+    const list = (this.listeners[name] ??= []);
+    list.push(listener);
+    return () => {
+      const index = list.indexOf(listener);
+      if (index >= 0) list.splice(index, 1);
+    };
+  }
+
+  emit<K extends keyof Events>(name: K, payload: Events[K]): number {
+    const list = this.listeners[name] ?? [];
+    for (const listener of [...list]) listener(payload);
+    return list.length;
+  }
+}
+</example>
+<ul>
+<li><code>K extends keyof Events</code> limits names to the events in the map, and <code>Events[K]</code> picks the payload type for exactly that name. <code>on</code> and <code>emit</code> each have their own <code>K</code>, inferred from the name you pass.</li>
+<li><code>{ [K in keyof Events]?: … }</code> is a <strong>mapped type</strong>: one optional property per event name, each holding listeners for that event's payload. <a href="/learn/ts-advanced#mapped">Advanced and utility types</a> explains mapped types fully.</li>
+<li><code>on</code> returns an unsubscribe function, so listeners can be removed without keeping a reference to the emitter's internals. <code>emit</code> loops over a copy, so a listener that unsubscribes itself does not skip the next one.</li>
+</ul>
+<example file="events-demo.ts" project="design">
+import { TypedEmitter } from "./events.js";
+
+interface BankEvents {
+  "transfer.completed": { from: string; to: string; kobo: number };
+  "account.frozen": { accountId: string; reason: string };
+}
+
+const events = new TypedEmitter<BankEvents>();
+
+const stop = events.on("transfer.completed", (event) => {
+  console.log(`notify ${event.to}: you received ₦${event.kobo / 100}`);
+});
+events.on("account.frozen", (event) => console.log(`compliance: ${event.accountId} frozen (${event.reason})`));
+
+console.log(events.emit("transfer.completed", { from: "ACC-001", to: "ACC-002", kobo: 250000 }));
+stop();
+console.log(events.emit("transfer.completed", { from: "ACC-001", to: "ACC-003", kobo: 1000 }));
+events.emit("account.frozen", { accountId: "ACC-002", reason: "KYC expired" });
+</example>
+<output>
+notify ACC-002: you received ₦2500
+1
+0
+compliance: ACC-002 frozen (KYC expired)
+</output>
+<example file="events-misuse.ts" project="design" check="tsc-error">
+import { TypedEmitter } from "./events.js";
+
+interface BankEvents {
+  "transfer.completed": { from: string; to: string; kobo: number };
+}
+
+const events = new TypedEmitter<BankEvents>();
+events.emit("transfer.complete", { from: "ACC-001", to: "ACC-002", kobo: 250000 });
+events.emit("transfer.completed", { from: "ACC-001", to: "ACC-002", kobo: "2500" });
+</example>
+<output kind="tsc">
+events-misuse.ts:8:13 - error TS2345: Argument of type '"transfer.complete"' is not assignable to parameter of type '"transfer.completed"'.
+
+8 events.emit("transfer.complete", { from: "ACC-001", to: "ACC-002", kobo: 250000 });
+              ~~~~~~~~~~~~~~~~~~~
+
+events-misuse.ts:9:69 - error TS2322: Type 'string' is not assignable to type 'number'.
+
+9 events.emit("transfer.completed", { from: "ACC-001", to: "ACC-002", kobo: "2500" });
+                                                                      ~~~~
+
+  events-misuse.ts:4:53 - The expected type comes from property 'kobo' which is declared here on type '{ from: string; to: string; kobo: number; }'
+    4   "transfer.completed": { from: string; to: string; kobo: number };
+                                                          ~~~~
+
+
+Found 2 errors in the same file, starting at: events-misuse.ts:8
+</output>
+<p>A misspelled event name and a payload of the wrong shape are both compile errors. <a href="/learn/ts-typed-events">A type-safe event system</a> in the Advanced TypeScript course takes this further (wildcards, async listeners, error isolation), and <a href="/learn/zudo-events">the ZudoJS events lesson</a> shows the production version.</p>
+</section>
+
+<section>
+<h2 id="build">Build: a transfer service from the pieces</h2>
+<p>Now compose the toolkit. The service depends on the <code>Repository</code> interface (not the memory class), returns a <code>Result</code> with a closed set of error codes, announces success with a typed event, and the endpoint turns the result into an <code>ApiResponse</code>:</p>
+<example file="transfer.ts" project="design">
+import { MemoryRepository } from "./repository.js";
+import type { Repository } from "./repository.js";
+import { TypedEmitter } from "./events.js";
+import { err, ok } from "./result.js";
+import type { Result } from "./result.js";
+import { toResponse } from "./api.js";
+
+interface Account {
+  id: string;
+  owner: string;
+  kobo: number;
+  frozen: boolean;
+}
+
+interface BankEvents {
+  "transfer.completed": { from: string; to: string; kobo: number };
+}
+
+type TransferError = "invalid-amount" | "same-account" | "account-not-found" | "account-frozen" | "insufficient-funds";
+
+class TransferService {
+  constructor(
+    private readonly accounts: Repository<Account>,
+    private readonly events: TypedEmitter<BankEvents>,
+  ) {}
+
+  private async usable(id: string): Promise<Result<Account, "account-not-found" | "account-frozen">> {
+    const account = await this.accounts.findById(id);
+    if (account === undefined) return err("account-not-found");
+    return account.frozen ? err("account-frozen") : ok(account);
+  }
+
+  async transfer(fromId: string, toId: string, kobo: number): Promise<Result<{ balance: number }, TransferError>> {
+    if (!Number.isInteger(kobo) || kobo <= 0) return err("invalid-amount");
+    if (fromId === toId) return err("same-account");
+    const from = await this.usable(fromId);
+    if (!from.ok) return from;
+    const to = await this.usable(toId);
+    if (!to.ok) return to;
+    if (from.value.kobo < kobo) return err("insufficient-funds");
+    await this.accounts.update(fromId, { kobo: from.value.kobo - kobo });
+    await this.accounts.update(toId, { kobo: to.value.kobo + kobo });
+    this.events.emit("transfer.completed", { from: fromId, to: toId, kobo });
+    return ok({ balance: from.value.kobo - kobo });
+  }
+}
+
+const messages: Record<TransferError, string> = {
+  "invalid-amount": "Amount must be a positive whole number of kobo",
+  "same-account": "You cannot transfer to the same account",
+  "account-not-found": "Account not found",
+  "account-frozen": "One of the accounts is frozen",
+  "insufficient-funds": "Insufficient funds",
+};
+
+let seq = 0;
+const accounts = new MemoryRepository<Account>(() => `ACC-${String(++seq).padStart(3, "0")}`);
+await accounts.create({ owner: "Ada", kobo: 500000, frozen: false });
+await accounts.create({ owner: "Tunde", kobo: 1000, frozen: false });
+await accounts.create({ owner: "Eve", kobo: 0, frozen: true });
+
+const events = new TypedEmitter<BankEvents>();
+events.on("transfer.completed", (e) => console.log(`[event] ${e.from} -> ${e.to} ${e.kobo}`));
+const service = new TransferService(accounts, events);
+
+const requests: [string, string, number][] = [
+  ["ACC-001", "ACC-002", 250000],
+  ["ACC-002", "ACC-001", 999999],
+  ["ACC-001", "ACC-003", 100],
+  ["ACC-001", "ACC-001", 100],
+  ["ACC-001", "ACC-404", 100],
+  ["ACC-001", "ACC-002", 10.5],
+];
+
+for (const [from, to, kobo] of requests) {
+  console.log(JSON.stringify(toResponse(await service.transfer(from, to, kobo), messages)));
+}
+console.log((await accounts.findById("ACC-002"))?.kobo);
+</example>
+<output>
+[event] ACC-001 -> ACC-002 250000
+{"status":"success","data":{"balance":250000}}
+{"status":"error","error":{"code":"insufficient-funds","message":"Insufficient funds"}}
+{"status":"error","error":{"code":"account-frozen","message":"One of the accounts is frozen"}}
+{"status":"error","error":{"code":"same-account","message":"You cannot transfer to the same account"}}
+{"status":"error","error":{"code":"account-not-found","message":"Account not found"}}
+{"status":"error","error":{"code":"invalid-amount","message":"Amount must be a positive whole number of kobo"}}
+251000
+</output>
+<p>Every piece did one job. <code>if (!from.ok) return from;</code> works because a failed <code>Result&lt;Account, "account-not-found" | "account-frozen"&gt;</code> is also a failed <code>Result&lt;{ balance: number }, TransferError&gt;</code>: its error codes are a subset of <code>TransferError</code>, and it has no value. The <code>messages</code> record must cover all five codes. The service never mentions <code>MemoryRepository</code>, so a database-backed repository can replace it without touching this class, and a test can pass a fake.</p>
+<note title="WHAT IS STILL MISSING">The two <code>update</code> calls are not atomic: if the second one fails, money has left one account and arrived nowhere. Real transfers run inside a database transaction, which <a href="/learn/zudo-transactions">the transactions lesson</a> covers. Generic types make the pieces fit; they cannot make two writes happen together.</note>
+</section>
+
+<section>
+<h2 id="testing">Testing generic code</h2>
+<p>Generic code needs two kinds of tests.</p>
+<ul>
+<li><strong>Runtime tests with at least two different type arguments.</strong> A repository tested only with string ids can hide a bug that only numbers trigger (such as a <code>Map</code> lookup with <code>"101"</code> instead of <code>101</code>). The demo above used <code>Account</code> and <code>Branch</code> for exactly that reason.</li>
+<li><strong>Type-level tests</strong> that prove wrong calls do not compile. A <code>// @ts-expect-error</code> comment tells <code>tsc</code> "the next line must have an error". If it does, the error is silenced; if it does not, <code>tsc</code> reports an unused directive. So a file full of them compiles only while your API keeps refusing what it should refuse.</li>
+</ul>
+<example file="design.type-test.ts" project="design">
+import { MemoryRepository } from "./repository.js";
+import { TtlCache } from "./cache.js";
+import { TypedEmitter } from "./events.js";
+import { toResponse } from "./api.js";
+import { err } from "./result.js";
+
+interface Account {
+  id: string;
+  kobo: number;
+  frozen: boolean;
+}
+
+const accounts = new MemoryRepository<Account>(() => "ACC-001");
+// @ts-expect-error: a boolean field cannot be compared with a string
+void accounts.findBy("frozen", "yes");
+// @ts-expect-error: ids cannot be changed through update
+void accounts.update("ACC-001", { id: "ACC-2" });
+// @ts-expect-error: undefined cannot be cached, it would look like a miss
+new TtlCache<string, number | undefined>(1000);
+
+const events = new TypedEmitter<{ "transfer.completed": { kobo: number } }>();
+// @ts-expect-error: unknown event name
+events.emit("transfer.done", { kobo: 1 });
+// @ts-expect-error: every error code needs a message
+toResponse(err("frozen" as "frozen" | "not-found"), { frozen: "Frozen" });
+
+console.log("type tests compiled");
+</example>
+<output>
+type tests compiled
+</output>
+<p>This file is checked by <code>tsc</code> like any other, so it runs in CI with no extra tool. Vitest adds <code>expectTypeOf</code> for positive type assertions too, covered in <a href="/learn/ts-testing">Testing TypeScript</a>.</p>
+</section>
+
+<section>
+<h2 id="production">Generic APIs in production</h2>
+<ul>
+<li><strong>Few type parameters, good defaults.</strong> Most calls should need zero explicit type arguments. When a type needs five parameters, give four of them defaults, as <code>@zudojs/database</code> does.</li>
+<li><strong>Depend on interfaces.</strong> Services take <code>Repository&lt;Account&gt;</code> and <code>Cache&lt;K, V&gt;</code>, not the concrete classes, so storage can change and tests can use fakes.</li>
+<li><strong>No return-only generics at boundaries.</strong> <code>fetchJson&lt;T&gt;()</code> is <code>as T</code>. Return <code>unknown</code> and validate, or accept a validator and infer <code>T</code> from it.</li>
+<li><strong>Make error codes a closed union</strong> and map them with <code>Record&lt;E, …&gt;</code>, so a new failure cannot reach clients without a message and a status.</li>
+<li><strong>Watch the runtime behind the types.</strong> A cache needs expiry, a size limit and protection against many simultaneous misses for the same key (often by caching the <em>promise</em>); an emitter needs error isolation so one failing listener does not stop the others. Types describe these objects; they do not implement them.</li>
+<li><strong>Readable names for readable APIs.</strong> <code>T</code> is fine for one parameter. With several, <code>TEntity</code>, <code>TId</code>, <code>Events</code> say more than <code>T</code>, <code>U</code>, <code>V</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Replace a return-only generic with keyof">
+<p>This settings reader returns whatever type the caller asks for. Redesign it with a <code>Settings</code> interface so the key decides the type, and a wrong key or a wrong expectation is a compile error.</p>
+<example file="settings.ts" project="ex-settings">
+const store: Record<string, unknown> = { dailyLimitKobo: 50000000, currency: "NGN", smsAlerts: true };
+
+function getSetting<T>(key: string): T {
+  return store[key] as T;
+}
+
+const limit = getSetting<string>("dailyLimitKobo");
+try {
+  console.log(limit.toUpperCase());
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+TypeError: limit.toUpperCase is not a function
+</output>
+<solution>
+<example file="settings.ts" project="ex-settings">
+interface Settings {
+  dailyLimitKobo: number;
+  currency: "NGN" | "USD";
+  smsAlerts: boolean;
+}
+
+const store: Settings = { dailyLimitKobo: 50000000, currency: "NGN", smsAlerts: true };
+
+function getSetting<K extends keyof Settings>(key: K): Settings[K] {
+  return store[key];
+}
+
+const limit = getSetting("dailyLimitKobo");
+const currency = getSetting("currency");
+console.log(limit / 100, currency.toLowerCase(), getSetting("smsAlerts"));
+</example>
+<output>
+500000 ngn true
+</output>
+<p>Now <code>K</code> is inferred from the key you pass, and <code>Settings[K]</code> gives the matching type: <code>number</code> for the limit, <code>"NGN" | "USD"</code> for the currency. The caller cannot choose a type; the key decides. <code>getSetting("dailyLimit")</code> is a compile error, and no assertion is left.</p>
+</solution>
+</exercise>
+<exercise title="Add once() to the emitter">
+<p>Add a method <code>once&lt;K extends keyof Events&gt;(name: K, listener: (payload: Events[K]) =&gt; void): void</code> to <code>TypedEmitter</code> that runs the listener for the first event only. Build it on top of <code>on</code>.</p>
+<solution>
+<example file="once.ts" project="ex-once">
+class TypedEmitter<Events extends object> {
+  private readonly listeners: { [K in keyof Events]?: Array<(payload: Events[K]) => void> } = {};
+
+  on<K extends keyof Events>(name: K, listener: (payload: Events[K]) => void): () => void {
+    const list = (this.listeners[name] ??= []);
+    list.push(listener);
+    return () => {
+      const index = list.indexOf(listener);
+      if (index >= 0) list.splice(index, 1);
+    };
+  }
+
+  once<K extends keyof Events>(name: K, listener: (payload: Events[K]) => void): void {
+    const stop = this.on(name, (payload) => {
+      stop();
+      listener(payload);
+    });
+  }
+
+  emit<K extends keyof Events>(name: K, payload: Events[K]): number {
+    const list = this.listeners[name] ?? [];
+    for (const listener of [...list]) listener(payload);
+    return list.length;
+  }
+}
+
+const events = new TypedEmitter<{ "account.opened": { owner: string } }>();
+events.once("account.opened", (e) => console.log(`welcome e-mail to ${e.owner}`));
+events.emit("account.opened", { owner: "Ada" });
+events.emit("account.opened", { owner: "Tunde" });
+</example>
+<output>
+welcome e-mail to Ada
+</output>
+<p>The wrapper listener unsubscribes itself before calling yours. Because <code>emit</code> loops over a copy of the list, removing a listener during the loop is safe. <code>once</code> has its own <code>K</code>, so its payload type is checked exactly like <code>on</code>'s.</p>
+</solution>
+</exercise>
+<exercise title="Combine a list of Results">
+<p>Write <code>all&lt;T, E&gt;(results: readonly Result&lt;T, E&gt;[]): Result&lt;T[], E&gt;</code> that returns every value when all succeeded, or the <em>first</em> error. Use it to validate a batch of transfer amounts.</p>
+<solution>
+<example file="all.ts" project="ex-all">
+type Result<T, E = string> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+
+function all<T, E>(results: readonly Result<T, E>[]): Result<T[], E> {
+  const values: T[] = [];
+  for (const result of results) {
+    if (!result.ok) return result;
+    values.push(result.value);
+  }
+  return { ok: true, value: values };
+}
+
+function checkAmount(kobo: number): Result<number, "invalid-amount"> {
+  return Number.isInteger(kobo) && kobo > 0 ? { ok: true, value: kobo } : { ok: false, error: "invalid-amount" };
+}
+
+console.log(all([5000, 1200, 700].map(checkAmount)));
+console.log(all([5000, -1, 0].map(checkAmount)));
+</example>
+<output>
+{ ok: true, value: [ 5000, 1200, 700 ] }
+{ ok: false, error: 'invalid-amount' }
+</output>
+<p>The loop stops at the first failure and returns it unchanged, which type-checks for the same reason as in <code>map</code>: a failed result carries no value. The value type changes from <code>T</code> to <code>T[]</code>, and <code>E</code> passes through.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A type parameter should connect things and appear at least twice. A return-only generic is an unchecked assertion; return <code>unknown</code> and validate instead.</li>
+<li>Design for inference: put type parameters where values reveal them, and use <code>NoInfer&lt;T&gt;</code> for arguments that should only be checked, like fallbacks.</li>
+<li>Constraints say what you need and no more (<code>Events extends object</code>, not <code>Record&lt;string, unknown&gt;</code>); defaults keep common uses short.</li>
+<li><code>K extends keyof T</code> with <code>T[K]</code> ties a value to a chosen key: repository queries, settings, event payloads. <code>Record&lt;E, …&gt;</code> forces one entry per error code.</li>
+<li><code>Repository&lt;T, Id&gt;</code>, <code>Result&lt;T, E&gt;</code> with <code>map</code>/<code>andThen</code>, <code>Page&lt;T&gt;</code> with <code>mapPage</code>, <code>ApiResponse&lt;T, E&gt;</code>, <code>Cache&lt;K, V&gt;</code> and a typed emitter compose into services whose failures are tracked by the compiler.</li>
+<li>Test generic code with several type arguments at runtime, and with <code>// @ts-expect-error</code> lines at the type level.</li>
+</ul>
+<p>Next: <a href="/learn/ts-advanced">Advanced and utility types</a>, where <code>keyof</code>, mapped types like the emitter's listener table, and utility types such as <code>Omit</code> and <code>Partial</code> get their full treatment.</p>
+</section>
