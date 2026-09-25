@@ -1,10 +1,11 @@
 ---
 title: Routes, requests and responses
-description: Serve the Task API over HTTP with @zudojs/http. Start a server, add routes with parameters, read query strings, headers, cookies and JSON bodies safely, and answer with the right status codes.
+description: Serve the Task API with @zudojs/http: a server, routes with parameters, query strings, headers, cookies and JSON bodies read safely, and the right status codes.
 minutes: 50
-youNeed: Dependency injection with @zudojs/container, and HTTP in depth
+youNeed: "DI architecture with ZudoJS", and "HTTP in depth" from the Backend course
 youBuild: GET, POST and DELETE routes for /tasks, served by the Task API and tested with fetch and curl
 keywords: zudojs http, createHttpServer, createNodeHttpAdapter, createRouter, route parameters, query string, request body Uint8Array, JSON body, TextDecoder, createResponseContext, status codes, 201 Created, 204 No Content, Location header, cookies, parseCookies, HttpError, badRequest
+objectives: Start an HTTP server with @zudojs/http and send it requests from a script | Register routes with parameters and read query strings, which are always strings or arrays of strings | Read a JSON body safely, answering 415 and 400 for the client's mistakes instead of 500 | Answer with the right status code, headers and cookies for each outcome | Connect the Task API's service to real routes through the composition root
 ---
 <section>
 <h2 id="server">A server in a few lines</h2>
@@ -201,7 +202,20 @@ await withServer(router, async (base) => {
 body is a Uint8Array: true
 POST /echo -> 200 {"bytes":20,"text":"{\"title\":\"Buy milk\"}"}
 </output>
-<p><code>TextDecoder</code> turns bytes into text, assuming UTF-8. The next step, <code>JSON.parse</code>, throws on bad input. An uncaught error is a bug, so the server would answer 500. But broken JSON is the <em>client's</em> mistake and deserves a 400. A small helper handles every case once:</p>
+<p><code>TextDecoder</code> turns bytes into text, assuming UTF-8. The next step is <code>JSON.parse</code>.</p>
+<reason title="What can go wrong with a body?">
+<p>Before reading the helper below, list what a client can send to <code>POST /tasks</code> instead of a good JSON body, and which status each deserves. Think about the <code>Content-Type</code> header, the bytes themselves, and what <code>JSON.parse</code> does with them. Which of these are the client's mistake, and which would be yours?</p>
+<answer>
+<ul>
+<li><strong>Not JSON at all</strong>: a form (<code>title=Buy+milk</code>) or plain text, announced by its <code>Content-Type</code>. The server cannot use it: <strong>415 Unsupported Media Type</strong>, before any parsing.</li>
+<li><strong>Broken JSON</strong>: <code>{"title": </code>. <code>JSON.parse</code> throws a <code>SyntaxError</code>. Uncaught, it would reach the server as an unknown error and become a 500, blaming your code for the client's mistake. Catch it and answer <strong>400</strong>.</li>
+<li><strong>Valid JSON of the wrong shape</strong>: <code>{"title": 42}</code> or <code>[]</code>. Parsing succeeds; the schema must refuse it, with a 400.</li>
+<li><strong>A huge body</strong>: the server itself refuses bodies over its limit with 413 before your route runs.</li>
+<li>Every one of these is the client's mistake, so every one gets a 4xx. A 500 should only ever mean a bug on your side.</li>
+</ul>
+</answer>
+</reason>
+<p>An uncaught error is a bug, so the server would answer 500 for broken JSON. But broken JSON is the <em>client's</em> mistake and deserves a 400. A small helper handles every case once:</p>
 <example file="read-json.ts" project="http" browser="no">
 import { badRequest, HttpError } from "@zudojs/http";
 import type { HttpRequestContext } from "@zudojs/http";
@@ -224,7 +238,7 @@ export function readJson(request: HttpRequestContext): unknown {
 <li><code>badRequest(...)</code> and <code>new HttpError(status, message)</code> come from <code>@zudojs/http</code>. Thrown from a route, they become a response with that status. <code>HttpError</code> picks its <code>code</code> from the status: 415 becomes <code>UNSUPPORTED_MEDIA_TYPE</code>. You can pass your own as a third argument, <code>{ code: "..." }</code>.</li>
 <li>It returns <code>unknown</code>, not <code>any</code>: the data is not trusted until a schema has checked it.</li>
 </ul>
-<p>Now a <code>POST /tasks</code> route that reads, validates and creates. The schema is the <code>NewTaskSchema</code> from the <a href="/learn/zudo-container#task-api">previous lesson</a>. A successful create answers <strong>201 Created</strong> with a <code>Location</code> header that says where the new task lives:</p>
+<p>Now a <code>POST /tasks</code> route that reads, validates and creates. The schema is the <code>NewTaskSchema</code> from <a href="/learn/zudo-container#task-api">the container lesson</a>. A successful create answers <strong>201 Created</strong> with a <code>Location</code> header that says where the new task lives:</p>
 <example file="create.ts" project="http" browser="no">
 import { createResponseContext, createRouter } from "@zudojs/http";
 import { schema } from "@zudojs/schema";
@@ -363,7 +377,7 @@ GET /crash -> 500 {"error":"Internal Server Error"}
 
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
-<p>Now connect the <code>TaskService</code> from the previous lesson to real routes. These files from that lesson do not change:</p>
+<p>Now connect the <code>TaskService</code> that <a href="/learn/zudo-container#task-api">the container lesson</a> built, and <a href="/learn/zudo-di-architecture#task-api">DI architecture</a> registered and checked, to real routes. These files do not change:</p>
 <details class="lx-solution"><summary>Show the unchanged files</summary>
 <file name="src/repositories/tasks.store.ts" project="task-api">
 export type Priority = "low" | "normal" | "high";
@@ -401,12 +415,9 @@ export type NewTask = Infer<typeof NewTaskSchema>;
 </file>
 <file name="src/services/tasks.service.ts" project="task-api">
 import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { Clock } from "@zudojs/types";
 import { NewTaskSchema } from "../dtos/tasks.dto.js";
 import type { StoredTask, TaskStore } from "../repositories/tasks.store.js";
-
-export interface Clock {
-  now(): Date;
-}
 
 export class TaskService {
   public constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
@@ -417,7 +428,7 @@ export class TaskService {
     if (clash) {
       throw new ConflictError(`A task called "${data.title}" already exists`);
     }
-    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: this.clock.now().toISOString() };
+    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: new Date(this.clock.now()).toISOString() };
     this.store.tasks.set(task.id, task);
     return task;
   }
@@ -603,11 +614,12 @@ export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void
 <p>The generated example resource splits this job in two: <code>examples.routes.ts</code> lists the paths, and <code>examples.controller.ts</code> reads each request and calls the service. That pays off with many routes. For three, one file is enough. This script checks the routes against a real server, with a fixed clock:</p>
 <example file="src/check-http.ts" project="task-api" browser="no">
 import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+import { FixedClock } from "@zudojs/types";
 import { TaskStore } from "./repositories/tasks.store.js";
 import { registerTaskRoutes } from "./routes/tasks.routes.js";
 import { TaskService } from "./services/tasks.service.js";
 
-const service = new TaskService(new TaskStore(), { now: () => new Date("2026-09-23T09:00:00Z") });
+const service = new TaskService(new TaskStore(), new FixedClock(Date.parse("2026-09-23T09:00:00Z")));
 const router = createRouter();
 registerTaskRoutes(router, service);
 
@@ -685,6 +697,17 @@ registerRoutes(
   }),
 );
 </example>
+<p>If you added the smoke test from <a href="/learn/zudo-project-anatomy#tests">Anatomy of a ZudoJS project</a>, it now needs a container too, and it can check the new route. Build one with the same <code>registerServices</code> the app uses:</p>
+<example file="tests/smoke.test.ts (part)" browser="no" check="skip">
+import { createContainer } from "@zudojs/container";
+import { createDependencies, registerServices } from "../src/container.js";
+
+const expected = ["/health", "/tasks", "/api/v1/examples"];
+
+const container = createContainer();
+registerServices(container);
+register(router, createDependencies({ container }));
+</example>
 <p>Errors need no wiring. A thrown <code>NotFoundError</code> or <code>badRequest</code> reaches the <code>dispatch</code> step further down in <code>src/server.ts</code>, which answers with the generated <code>errorResponse</code> helper: <code>{"error": message, "code": code}</code> and the error's status. Any other error becomes a plain 500. Start the server with <code>npm run dev</code>, and try the API from a second terminal:</p>
 <shell title="Second terminal">
 $ curl -i -X POST http://localhost:3000/tasks -H "content-type: application/json" -d '{"title":"Buy milk"}'
@@ -708,7 +731,7 @@ $ curl -X POST http://localhost:3000/tasks -d 'title=Buy milk'
 {"error":"Send JSON with Content-Type: application/json","code":"UNSUPPORTED_MEDIA_TYPE"}
 </shell>
 <tip>On Windows PowerShell, type <code>curl.exe</code>, and put the JSON in double quotes with the inner quotes escaped: <code>-d "{\"title\":\"Buy milk\"}"</code>.</tip>
-<p>The new task got id 2, and the list shows it next to the one the <code>tasks</code> module added at startup. Both live in the one <code>TaskStore</code> singleton, shared by the modules and the service through the container. The <code>…</code> stands for the other security headers, which the next lesson explains. The last request sent a form instead of JSON (<code>-d</code> without a <code>content-type</code> header does that), and got the 415 from your new check.</p>
+<p>The new task got id 2, and the list shows it next to the one the <code>tasks</code> module added at startup. Both live in the one <code>TaskStore</code> singleton, shared by the modules and the service through the container. The <code>…</code> stands for the other security headers, which <a href="/learn/zudo-middleware#headers">the middleware lesson</a> explains. The last request sent a form instead of JSON (<code>-d</code> without a <code>content-type</code> header does that), and got the 415 from your new check.</p>
 <tip>The router can also document your API. You ran <code>zudojs add openapi</code> in <a href="/learn/zudo-create-project#add">Create the Task API project</a>, so <code>src/server.ts</code> already calls <code>mountOpenAPI(router, …)</code>, which serves <code>/openapi.json</code> and a docs page at <code>/docs</code>. Only routes with an <code>openapi</code> option are listed, so the task routes are not in it yet; <code>examples.routes.ts</code> shows what the option looks like. <a href="/learn/zudo-openapi">OpenAPI documents</a> covers it. A related helper, <code>mountFetchHandler(router, path, handler)</code>, serves a web-standard <code>(request: Request) =&gt; Response</code> handler under a path of your router.</tip>
 </section>
 
@@ -775,7 +798,7 @@ limit=2 -> 200 [{"id":1,"title":"Task 1"},{"id":2,"title":"Task 2"}]
 limit=0 -> 400 {"error":"limit must be a whole number from 1 to 50","code":"BAD_REQUEST"}
 limit=1&limit=2 -> 400 {"error":"limit must be a whole number from 1 to 50","code":"BAD_REQUEST"}
 </output>
-<p>The regular expression <code>^\d+$</code> accepts digits only, so <code>"1.5"</code>, <code>"-1"</code> and <code>" 2"</code> are refused. A repeated key is an array, not a string, so it is refused too. The next lessons replace this hand-written code with a schema.</p>
+<p>The regular expression <code>^\d+$</code> accepts digits only, so <code>"1.5"</code>, <code>"-1"</code> and <code>" 2"</code> are refused. A repeated key is an array, not a string, so it is refused too. <a href="/learn/zudo-validation#coercion">Schemas and validation in depth</a> replaces this hand-written code with a schema.</p>
 </solution>
 </exercise>
 </section>
@@ -790,5 +813,5 @@ limit=1&limit=2 -> 400 {"error":"limit must be a whole number from 1 to 50","cod
 <li>Throwing <code>NotFoundError</code>, <code>ConflictError</code>, <code>badRequest()</code> or a <code>SchemaError</code> becomes the matching 4xx. Any other error becomes a generic 500.</li>
 <li>Cookies set with <code>response.cookie()</code> are <code>HttpOnly</code>, <code>Secure</code> and <code>SameSite=Lax</code> by default.</li>
 </ul>
-<p>Next, the <strong>middleware</strong> around every route: security headers, CORS, rate limits and a graceful shutdown. The CLI wrote most of it for you; the next lesson shows how it works and what to add.</p>
+<p>The Task API has three routes. Before it gets more, learn exactly how the router picks one: next, <a href="/learn/zudo-routing">Routing in depth</a>.</p>
 </section>

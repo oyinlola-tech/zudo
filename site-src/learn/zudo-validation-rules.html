@@ -701,14 +701,11 @@ export function checkTitle(raw: string): string {
 <p>In <code>src/services/tasks.service.ts</code>, import the two functions, run <code>checkTitle</code> after the schema in <code>create</code> and <code>update</code>, and compare keys in <code>assertUniqueTitle</code>. A task may be renamed to a different spelling of its own title, so the check skips the task being updated:</p>
 <example file="src/services/tasks.service.ts" project="task-api" browser="no">
 import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { Clock } from "@zudojs/types";
 import { ListTasksQuery, NewTaskSchema } from "../dtos/tasks.dto.js";
 import type { ListTasks, TaskChanges } from "../dtos/tasks.dto.js";
 import type { StoredTask, TaskStore } from "../repositories/tasks.store.js";
 import { checkTitle, titleKey } from "../validators/tasks.rules.js";
-
-export interface Clock {
-  now(): Date;
-}
 
 export class TaskService {
   public constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
@@ -717,7 +714,7 @@ export class TaskService {
     const data = NewTaskSchema.parse(input);
     const title = checkTitle(data.title);
     this.assertUniqueTitle(title);
-    const task: StoredTask = { id: this.store.nextId(), ...data, title, createdAt: this.clock.now().toISOString() };
+    const task: StoredTask = { id: this.store.nextId(), ...data, title, createdAt: new Date(this.clock.now()).toISOString() };
     this.store.tasks.set(task.id, task);
     return task;
   }
@@ -800,13 +797,14 @@ export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void
 <p>The issues are logged as <code>path: code</code> only, without messages that might quote stored values. A check script exercises it against a real server. The last request plants a broken task straight into the store, the way a bad migration or a bug in another service would:</p>
 <example file="src/check-rules.ts" project="task-api" browser="no">
 import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+import { FixedClock } from "@zudojs/types";
 import { TaskStore } from "./repositories/tasks.store.js";
 import type { StoredTask } from "./repositories/tasks.store.js";
 import { registerTaskRoutes } from "./routes/tasks.routes.js";
 import { TaskService } from "./services/tasks.service.js";
 
 const store = new TaskStore();
-const service = new TaskService(store, { now: () => new Date("2026-09-25T09:00:00Z") });
+const service = new TaskService(store, new FixedClock(Date.parse("2026-09-25T09:00:00Z")));
 const router = createRouter();
 registerTaskRoutes(router, service);
 const server = createHttpServer({

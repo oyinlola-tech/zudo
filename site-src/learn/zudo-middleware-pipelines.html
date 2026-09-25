@@ -752,12 +752,9 @@ export type NewTask = Infer<typeof NewTaskSchema>;
 </file>
 <file name="src/services/tasks.service.ts" project="task-api">
 import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { Clock } from "@zudojs/types";
 import { NewTaskSchema } from "../dtos/tasks.dto.js";
 import type { StoredTask, TaskStore } from "../repositories/tasks.store.js";
-
-export interface Clock {
-  now(): Date;
-}
 
 export class TaskService {
   public constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
@@ -768,7 +765,7 @@ export class TaskService {
     if (clash) {
       throw new ConflictError(`A task called "${data.title}" already exists`);
     }
-    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: this.clock.now().toISOString() };
+    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: new Date(this.clock.now()).toISOString() };
     this.store.tasks.set(task.id, task);
     return task;
   }
@@ -934,12 +931,13 @@ export function registerTaskImportRoutes(router: HttpRouter, importTasks: Return
 <p>Broken JSON becomes <code>undefined</code>, which the <code>validate</code> step refuses with 400, but only after the token and role checks: an anonymous client cannot probe the import format. Every other failure the route rethrows, and the generated error handling answers <code>AuthenticationError</code>, <code>AuthorizationError</code> and <code>SchemaError</code> with 401, 403 and 400; anything unexpected stays a 500. This check script runs the route against a real server, with two operators and a limit of two imports:</p>
 <example file="src/check-import.ts" project="task-api" browser="no">
 import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+import { FixedClock } from "@zudojs/types";
 import { createImportPipeline, digest } from "./pipelines/import-tasks.pipeline.js";
 import { TaskStore } from "./repositories/tasks.store.js";
 import { registerTaskImportRoutes } from "./routes/tasks.import.routes.js";
 import { TaskService } from "./services/tasks.service.js";
 
-const tasks = new TaskService(new TaskStore(), { now: () => new Date("2026-09-24T09:00:00Z") });
+const tasks = new TaskService(new TaskStore(), new FixedClock(Date.parse("2026-09-24T09:00:00Z")));
 tasks.create({ title: "Buy milk" });
 const logged: string[] = [];
 const importTasks = createImportPipeline({

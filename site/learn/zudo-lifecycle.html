@@ -1319,12 +1319,13 @@ orders: ord_1=pending, ord_2=pending</pre></div>
 <li>Or move the database's closing from <code>stop</code> to <code>dispose</code>. The <code>dispose</code> phase only begins after every component has stopped, so the drain always sees an open database, whatever the dependencies say.</li>
 </ul>
 <p>Prefer the first, and keep the second as a habit: the dependency documents the real relationship between the two parts, and closing connections in <code>dispose</code> gives a second line of defence.</p></details></div>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A capped retry</h3><p>A search cluster may take up to a few seconds to come up after a deploy. Register a <code>search</code> component that fails its first two starts, with at most four retries, a first wait of 50 ms and exponential backoff capped at 150 ms. Print the waits.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="16" data-file="capped.ts">
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A capped retry</h3><p>A search cluster may take up to a few seconds to come up after a deploy. Register a <code>search</code> component that fails its first four starts, with at most four retries, a first wait of 50 ms and exponential backoff capped at 150 ms. Print the planned waits, and check that the real ones were at least that long.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="16" data-file="capped.ts">
 <figcaption class="lx-bar"><span class="lx-file">capped.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createLifecycleManager <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/lifecycle"</span><span class="t-pn">;</span>
 
+<span class="t-kw">const</span> retry <span class="t-op">=</span> <span class="t-pn">{</span> attempts<span class="t-op">:</span> <span class="t-num">4</span><span class="t-pn">,</span> delay<span class="t-op">:</span> <span class="t-num">50</span><span class="t-pn">,</span> maxDelay<span class="t-op">:</span> <span class="t-num">150</span><span class="t-pn">,</span> backoff<span class="t-op">:</span> <span class="t-str">"exponential"</span> <span class="t-pn">}</span> <span class="t-kw">as</span> <span class="t-kw">const</span><span class="t-pn">;</span>
 <span class="t-kw">let</span> calls <span class="t-op">=</span> <span class="t-num">0</span><span class="t-pn">;</span>
-<span class="t-kw">let</span> last <span class="t-op">=</span> <span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">let</span> last <span class="t-op">=</span> <span class="t-num">0</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> waits<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> manager <span class="t-op">=</span> <span class="t-fn">createLifecycleManager</span><span class="t-pn">(</span><span class="t-pn">{</span> handleSignals<span class="t-op">:</span> <span class="t-cn">false</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 manager<span class="t-pn">.</span><span class="t-fn">register</span><span class="t-pn">(</span>
@@ -1332,20 +1333,26 @@ manager<span class="t-pn">.</span><span class="t-fn">register</span><span class=
     name<span class="t-op">:</span> <span class="t-str">"search"</span><span class="t-pn">,</span>
     start<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
       calls <span class="t-op">+=</span> <span class="t-num">1</span><span class="t-pn">;</span>
-      <span class="t-kw">if</span> <span class="t-pn">(</span>calls <span class="t-op">&gt;</span> <span class="t-num">1</span><span class="t-pn">)</span> waits<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span><span class="t-ty">Math</span><span class="t-pn">.</span><span class="t-fn">round</span><span class="t-pn">(</span><span class="t-pn">(</span><span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">-</span> last<span class="t-pn">)</span> <span class="t-op">/</span> <span class="t-num">50</span><span class="t-pn">)</span> <span class="t-op">*</span> <span class="t-num">50</span><span class="t-pn">)</span><span class="t-pn">;</span>
+      <span class="t-kw">if</span> <span class="t-pn">(</span>calls <span class="t-op">&gt;</span> <span class="t-num">1</span><span class="t-pn">)</span> waits<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span><span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">-</span> last<span class="t-pn">)</span><span class="t-pn">;</span>
       last <span class="t-op">=</span> <span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
       <span class="t-kw">if</span> <span class="t-pn">(</span>calls <span class="t-op">&lt;=</span> <span class="t-num">4</span><span class="t-pn">)</span> <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">Error</span><span class="t-pn">(</span><span class="t-str">"search cluster warming up"</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-pn">}</span><span class="t-pn">,</span>
   <span class="t-pn">}</span><span class="t-pn">,</span>
-  <span class="t-pn">{</span> retry<span class="t-op">:</span> <span class="t-pn">{</span> attempts<span class="t-op">:</span> <span class="t-num">4</span><span class="t-pn">,</span> delay<span class="t-op">:</span> <span class="t-num">50</span><span class="t-pn">,</span> maxDelay<span class="t-op">:</span> <span class="t-num">150</span><span class="t-pn">,</span> backoff<span class="t-op">:</span> <span class="t-str">"exponential"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">,</span>
+  <span class="t-pn">{</span> retry <span class="t-pn">}</span><span class="t-pn">,</span>
 <span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">await</span> manager<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">calls</span><span class="t-op">}</span> calls, waits <span class="t-op">${</span><span class="t-prop">waits.join(", ")</span><span class="t-op">}</span> ms, state <span class="t-op">${</span><span class="t-prop">manager.state</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-cmt">// Exponential backoff: delay, 2 x delay, 4 x delay, ..., each wait capped at maxDelay.</span>
+<span class="t-kw">const</span> planned <span class="t-op">=</span> waits<span class="t-pn">.</span><span class="t-fn">map</span><span class="t-pn">(</span><span class="t-pn">(</span>_<span class="t-pn">,</span> i<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-ty">Math</span><span class="t-pn">.</span><span class="t-fn">min</span><span class="t-pn">(</span>retry<span class="t-pn">.</span><span class="t-prop">delay</span> <span class="t-op">*</span> <span class="t-num">2</span> <span class="t-op">**</span> i<span class="t-pn">,</span> retry<span class="t-pn">.</span><span class="t-prop">maxDelay</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">calls</span><span class="t-op">}</span> calls, state <span class="t-op">${</span><span class="t-prop">manager.state</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"planned waits:"</span><span class="t-pn">,</span> planned<span class="t-pn">.</span><span class="t-fn">join</span><span class="t-pn">(</span><span class="t-str">", "</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-str">"ms"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"every real wait at least that long:"</span><span class="t-pn">,</span> waits<span class="t-pn">.</span><span class="t-fn">every</span><span class="t-pn">(</span><span class="t-pn">(</span>wait<span class="t-pn">,</span> i<span class="t-pn">)</span> <span class="t-op">=&gt;</span> wait <span class="t-op">&gt;=</span> planned<span class="t-pn">[</span>i<span class="t-pn">]</span><span class="t-op">!</span> <span class="t-op">-</span> <span class="t-num">2</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createLifecycleManager } from "@zudojs/lifecycle";
 
+const retry = { attempts: 4, delay: 50, maxDelay: 150, backoff: "exponential" } as const;
 let calls = 0;
-let last = Date.now();
+let last = 0;
 const waits: number[] = [];
 const manager = createLifecycleManager({ handleSignals: false });
 manager.register(
@@ -1353,18 +1360,25 @@ manager.register(
     name: "search",
     start: async () => {
       calls += 1;
-      if (calls > 1) waits.push(Math.round((Date.now() - last) / 50) * 50);
+      if (calls > 1) waits.push(Date.now() - last);
       last = Date.now();
       if (calls <= 4) throw new Error("search cluster warming up");
     },
   },
-  { retry: { attempts: 4, delay: 50, maxDelay: 150, backoff: "exponential" } },
+  { retry },
 );
 await manager.start();
-console.log(`${calls} calls, waits ${waits.join(", ")} ms, state ${manager.state}`);</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx capped.ts</code></div><pre class="lx-no-copy">5 calls, waits 50, 100, 150, 150 ms, state ready</pre></div>
+
+// Exponential backoff: delay, 2 x delay, 4 x delay, ..., each wait capped at maxDelay.
+const planned = waits.map((_, i) => Math.min(retry.delay * 2 ** i, retry.maxDelay));
+console.log(`${calls} calls, state ${manager.state}`);
+console.log("planned waits:", planned.join(", "), "ms");
+console.log("every real wait at least that long:", waits.every((wait, i) => wait >= planned[i]! - 2));</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx capped.ts</code></div><pre class="lx-no-copy">5 calls, state ready
+planned waits: 50, 100, 150, 150 ms
+every real wait at least that long: true</pre></div>
 </figure>
-<p>The doubling (50, 100, 200, …) is capped at 150, so a long outage costs a steady 150 ms per try instead of growing without limit. With the fifth call succeeding, all four retries were needed.</p></details></div>
+<p>The doubling (50, 100, 200, …) is capped at 150, so a long outage costs a steady 150 ms per try instead of growing without limit. With the fifth call succeeding, all four retries were needed. The check compares with "at least" on purpose: a timer never fires early, but on a busy machine it can fire late, so exact waits would make a flaky test.</p></details></div>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Give the queue a deadline</h3><p>Change the queue's <code>stop</code> in <code>task-shop.ts</code> so that it finishes early when <code>context.signal</code> aborts, and create the manager with <code>shutdownTimeout: 20</code>. What happens to the pending orders, and what should the queue do with them in a real system?</p><details class="lx-solution"><summary>Show a solution</summary><p>With a 20 ms deadline and a 50 ms wait, the signal aborts before the job in progress finishes. The queue returns early without draining, the database closes, and the orders stay <code>pending</code>. In a real system the queue must not keep pending work only in memory: it writes jobs to durable storage (a database table, Redis, a message broker) when they are accepted, so a worker can pick them up after the restart. The <a href="/learn/zudo-queue">queue lesson</a> does that with <code>@zudojs/queue</code>. A deadline decides how long you wait; durability decides what you lose when the wait is not enough.</p></details></div>
 </section>
 

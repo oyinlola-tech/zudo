@@ -1,8 +1,8 @@
 ---
 title: DI architecture with ZudoJS
-description: Decide where every object in a ZudoJS app is built. Keep one composition root, choose constructor or factory injection, swap fakes in tests and freeze wiring in production.
+description: Decide where every object in a ZudoJS app is built: one composition root, constructor or factory injection, fakes in tests and frozen wiring in production.
 minutes: 50
-youNeed: Dependency injection with @zudojs/container, and The application runtime and lifecycle
+youNeed: "Dependency injection with @zudojs/container", and "The application runtime and lifecycle"
 youBuild: A Task API whose wiring lives in one place, is checked at startup, is frozen in production, and can be swapped piece by piece in tests
 keywords: dependency injection architecture, composition root, constructor injection, factory injection, service locator anti-pattern, zudojs container, registerFactory, freezeRegistrations, autoRegisterClasses, snapshot restoreSnapshot, replace, test doubles, request scope, AsyncProviderError, verify container at startup
 objectives: Find the composition root of a generated ZudoJS project and explain why src/container.ts and the @zudojs/container container are two different things | Choose between constructor injection, a factory registration and an injected factory function for a given dependency | Recognise the service locator pattern and show the two failures it causes in @zudojs/container | Replace dependencies in tests with fresh containers, replace and snapshots, and avoid stale references | Make production wiring fail at startup instead of during a request, and freeze it once the app runs
@@ -184,8 +184,8 @@ TypeError Cannot read properties of undefined (reading 'now')
 <p>You have two ways to register a constructor-injected class. <code>registerClass(TaskService, TaskService, { inject: [TaskStore, CLOCK] })</code> is short, but, as the container lesson warned, its <code>inject</code> list is not compared with the constructor. A factory registration is checked, because its parameters are typed from the <code>inject</code> list:</p>
 <example file="factory-registration.ts" project="di">
 import { ContainerScope, createContainer } from "@zudojs/container";
-import { CLOCK, TaskService, TaskStore } from "./domain.js";
 import { FixedClock } from "@zudojs/types";
+import { CLOCK, TaskService, TaskStore } from "./domain.js";
 
 const container = createContainer();
 container.registerValue(CLOCK, new FixedClock(Date.parse("2026-09-24T09:00:00Z")));
@@ -261,9 +261,9 @@ smtp
 <p>The second idea: a service needs to create objects <em>while it runs</em>, several times, or with data it only learns later. An importer that reads tasks from a CSV file needs a fresh report for every import. It cannot receive one report in its constructor, because that single report would be shared by every import. It receives a <strong>factory function</strong> instead:</p>
 <example file="inject-factory.ts" project="di">
 import { createContainer, createToken } from "@zudojs/container";
+import { FixedClock } from "@zudojs/types";
 import { CLOCK } from "./domain.js";
 import type { Clock } from "./domain.js";
-import { FixedClock } from "@zudojs/types";
 
 class ImportReport {
   readonly lines: string[] = [];
@@ -380,8 +380,8 @@ DependencyResolutionError Failed to resolve DueTodayReminder: No registration fo
 <p>A factory that calls <code>container.resolve</code> inside its body, instead of listing tokens in <code>inject</code>, is a locator too, even though it sits in the composition root. The container does not know the dependency exists. When a test replaces the clock, the container rebuilds every singleton that listed <code>CLOCK</code>, and only those:</p>
 <example file="locator-replace.ts" project="di">
 import { ContainerScope, createContainer } from "@zudojs/container";
-import { CLOCK, TaskService, TaskStore } from "./domain.js";
 import { FixedClock } from "@zudojs/types";
+import { CLOCK, TaskService, TaskStore } from "./domain.js";
 
 const container = createContainer();
 container.registerValue(CLOCK, new FixedClock(Date.parse("2026-09-24T09:00:00Z")));
@@ -445,9 +445,9 @@ export function registerTaskServices(container: Container): void {
 <p>The simplest and safest approach: every test builds its own container, calls the real registration function, then replaces what it needs. Nothing leaks from one test to the next:</p>
 <example file="fresh.ts" project="di">
 import { createContainer } from "@zudojs/container";
+import { FixedClock } from "@zudojs/types";
 import { CLOCK, MAILER, TaskNotifier, TaskService } from "./domain.js";
 import { registerTaskServices } from "./registrations.js";
-import { FixedClock } from "@zudojs/types";
 
 function testContainer(fakes: { now?: string; sent?: string[] } = {}) {
   const container = createContainer({ name: "test" });
@@ -486,8 +486,8 @@ PASS tests do not share a store
 <p>When building the container is expensive, tests can share one and put it back after each change. <code>snapshot()</code> saves the registrations, <code>restoreSnapshot()</code> brings them back and rebuilds every singleton made from the changed set. Watch what happens to an object someone resolved <em>before</em> the replacement:</p>
 <example file="snapshot.ts" project="di">
 import { ContainerScope, createContainer } from "@zudojs/container";
-import { CLOCK, TaskService, TaskStore } from "./domain.js";
 import { FixedClock } from "@zudojs/types";
+import { CLOCK, TaskService, TaskStore } from "./domain.js";
 
 class Reports {
   constructor(readonly tasks: TaskService) {}
@@ -608,9 +608,9 @@ Wiring is broken:
 </ul>
 <example file="freeze.ts" project="di">
 import { createContainer } from "@zudojs/container";
+import { FixedClock } from "@zudojs/types";
 import { CLOCK, TaskService } from "./domain.js";
 import { registerTaskServices } from "./registrations.js";
-import { FixedClock } from "@zudojs/types";
 
 class ForgottenService {}
 
@@ -804,6 +804,7 @@ await verifyContainer(runtime.context.container);
 <p>A broken registration now stops <code>npm run dev</code> with one message listing every problem, before the port opens. To see both sides, save this check script as <code>src/check-wiring.ts</code>. It builds the frozen production container through <code>createApp</code>, and a test container through the same <code>registerServices</code>:</p>
 <example file="src/check-wiring.ts" browser="no" check="skip">
 import { createContainer } from "@zudojs/container";
+import { FixedClock } from "@zudojs/types";
 import { createApp } from "./app.js";
 import { loadConfig } from "./configs/index.js";
 import { CLOCK, registerServices, verifyContainer } from "./container.js";
@@ -854,9 +855,9 @@ class InvoiceSender {
 <solution>
 <example file="invoice-injected.ts" project="di">
 import { createContainer } from "@zudojs/container";
+import { FixedClock } from "@zudojs/types";
 import { CLOCK, MAILER } from "./domain.js";
 import type { Clock, Mailer } from "./domain.js";
-import { FixedClock } from "@zudojs/types";
 
 class InvoiceSender {
   constructor(private readonly clock: Clock, private readonly mailer: Mailer) {}
@@ -893,11 +894,11 @@ Failed to resolve InvoiceSender: No registration found for token "Clock". (chain
 <solution>
 <example file="test-container.ts" project="di">
 import { createContainer } from "@zudojs/container";
+import { FixedClock } from "@zudojs/types";
 import { CLOCK, MAILER, TaskService } from "./domain.js";
 import type { Clock, Mailer } from "./domain.js";
 import { registerTaskServices } from "./registrations.js";
 import { verifyContainer } from "./verify.js";
-import { FixedClock } from "@zudojs/types";
 
 interface Overrides {
   readonly clock?: Clock;

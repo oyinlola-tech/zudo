@@ -12,7 +12,6 @@ objectives: Match routes with parameters, prefer static segments, and answer 404
 <p>In <a href="/learn/framework-build-core">part 1</a> you built the core of a framework: a container, configuration, a logger, a lifecycle and an application object. Its <code>http</code> module only pretended to listen. Before building the real one, look at what Node gives you on its own. This is the BookStore's catalog as a plain <code>node:http</code> server, the kind of code <a href="/learn/node-http">An HTTP server with no framework</a> started from, hit with three ordinary requests:</p>
 <example file="raw.ts" project="fwh" browser="no">
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 
 const books: Record<string, unknown>[] = [{ id: "b1", title: "Things Fall Apart" }];
 process.on("unhandledRejection", (error) => console.log("server: unhandled rejection,", (error as Error).name));
@@ -37,7 +36,9 @@ const server = createServer(async (req, res) => {
 });
 
 await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+const address = server.address();
+if (address === null || typeof address === "string") throw new Error("expected a TCP address");
+const url = `http://127.0.0.1:${address.port}`;
 
 console.log("GET /books/ ->", (await fetch(url + "/books/")).status);
 const created = await fetch(url + "/books", { method: "POST", body: JSON.stringify({ title: "Kindred", id: "b1", featured: true }) });
@@ -1019,8 +1020,8 @@ export function httpModule<C extends { readonly port: number }>(options: HttpOpt
       logger.info("closed");
     },
     url() {
-      const address = server?.address() as AddressInfo | null;
-      if (!address) throw new Error("the server is not listening");
+      const address = server?.address();
+      if (!address || typeof address === "string") throw new Error("the server is not listening");
       return `http://127.0.0.1:${address.port}`;
     },
   };

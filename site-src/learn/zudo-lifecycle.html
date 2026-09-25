@@ -787,13 +787,14 @@ orders: ord_1=pending, ord_2=pending
 </solution>
 </exercise>
 <exercise title="A capped retry">
-<p>A search cluster may take up to a few seconds to come up after a deploy. Register a <code>search</code> component that fails its first two starts, with at most four retries, a first wait of 50 ms and exponential backoff capped at 150 ms. Print the waits.</p>
+<p>A search cluster may take up to a few seconds to come up after a deploy. Register a <code>search</code> component that fails its first four starts, with at most four retries, a first wait of 50 ms and exponential backoff capped at 150 ms. Print the planned waits, and check that the real ones were at least that long.</p>
 <solution>
 <example file="capped.ts" browser="no">
 import { createLifecycleManager } from "@zudojs/lifecycle";
 
+const retry = { attempts: 4, delay: 50, maxDelay: 150, backoff: "exponential" } as const;
 let calls = 0;
-let last = Date.now();
+let last = 0;
 const waits: number[] = [];
 const manager = createLifecycleManager({ handleSignals: false });
 manager.register(
@@ -801,20 +802,27 @@ manager.register(
     name: "search",
     start: async () => {
       calls += 1;
-      if (calls > 1) waits.push(Math.round((Date.now() - last) / 50) * 50);
+      if (calls > 1) waits.push(Date.now() - last);
       last = Date.now();
       if (calls <= 4) throw new Error("search cluster warming up");
     },
   },
-  { retry: { attempts: 4, delay: 50, maxDelay: 150, backoff: "exponential" } },
+  { retry },
 );
 await manager.start();
-console.log(`${calls} calls, waits ${waits.join(", ")} ms, state ${manager.state}`);
+
+// Exponential backoff: delay, 2 x delay, 4 x delay, ..., each wait capped at maxDelay.
+const planned = waits.map((_, i) => Math.min(retry.delay * 2 ** i, retry.maxDelay));
+console.log(`${calls} calls, state ${manager.state}`);
+console.log("planned waits:", planned.join(", "), "ms");
+console.log("every real wait at least that long:", waits.every((wait, i) => wait >= planned[i]! - 2));
 </example>
-<output mask="ms">
-5 calls, waits 50, 100, 150, 150 ms, state ready
+<output>
+5 calls, state ready
+planned waits: 50, 100, 150, 150 ms
+every real wait at least that long: true
 </output>
-<p>The doubling (50, 100, 200, …) is capped at 150, so a long outage costs a steady 150 ms per try instead of growing without limit. With the fifth call succeeding, all four retries were needed.</p>
+<p>The doubling (50, 100, 200, …) is capped at 150, so a long outage costs a steady 150 ms per try instead of growing without limit. With the fifth call succeeding, all four retries were needed. The check compares with "at least" on purpose: a timer never fires early, but on a busy machine it can fire late, so exact waits would make a flaky test.</p>
 </solution>
 </exercise>
 <exercise title="Give the queue a deadline">

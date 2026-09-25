@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Caching — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-cache.md" title="Markdown version">
-  <meta name="description" content="Keep copies of slow results so the Task API can answer again fast. Learn keys, TTL, namespaces, tags and invalidation, stampede protection, locks and cache metrics with @zudojs/cache.">
+  <meta name="description" content="Keep copies of slow results so the Task API answers fast: keys, TTL, namespaces, tags, invalidation, stampede protection, locks and metrics.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-cache">
@@ -97,7 +97,7 @@
         <div class="lx-hero-tag">LEVEL 13 · LESSON 11 OF 12</div>
         <p class="lx-hero-part">Caching <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>Caching</h1>
-        <p class="lx-hero-lead">Keep copies of slow results so the Task API can answer again fast. Learn keys, TTL, namespaces, tags and invalidation, stampede protection, locks and cache metrics with @zudojs/cache.</p>
+        <p class="lx-hero-lead">Keep copies of slow results so the Task API answers fast: keys, TTL, namespaces, tags, invalidation, stampede protection, locks and metrics.</p>
         <ul class="lx-hero-meta">
           <li><strong>40 min</strong> to read and try</li>
           <li><strong>You need:</strong> The Task API project and the Data lessons</li>
@@ -109,6 +109,17 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Build a namespaced cache key from everything the answer depends on, including the user</li>
+          <li>Read and write in one call with getOrSet, and stop a cache stampede by sharing one in-flight computation</li>
+          <li>Set a TTL that bounds how wrong a stale copy can be</li>
+          <li>Invalidate the right entries by key, tag or pattern the moment the underlying data changes</li>
+          <li>Serialize what you store instead of caching a shared, mutable object</li>
+          <li>Watch hit rate with getStats and events, and keep a broken cache adapter from becoming a fatal error</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="why">Why caching exists</h2>
@@ -494,6 +505,8 @@ queries: 1</pre></div>
 </figure>
 <p><code>Promise.all</code>, from <a href="/learn/js-async">the asynchronous JavaScript lesson</a>, starts all five at the same moment. Five answers, one query.</p>
 <div class="callout callout-note"><p class="lx-callout-label">NOTE</p>This protection works inside one process. If you run three copies of the Task API, each copy can still run one query. That is usually fine. For "exactly once across servers", you need a lock in a shared store, which the lock section covers.</div>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>db.listTasks throws instead of resolving. What happens to the four callers that were waiting on it?</h3><p>Five callers arrive together, only one runs <code>db.listTasks("ada")</code>, and the other four wait on that same in-flight computation instead of starting their own. Suppose the database is briefly down and that one call throws. Do the four waiters each get the same rejection, or does <code>getOrSet</code> retry the query for each of them since they never really ran it themselves?</p><details class="lx-solution"><summary>Show the reasoning</summary><p>They share the rejection. All five callers are really awaiting the same underlying promise; the leader's call is not copied out to the followers after the fact; they are all holding a reference to it. So when it rejects, every caller's <code>await</code> throws the same error, at the same moment, and nothing is written to the cache. That is the correct behavior for a stampede guard: retrying the query five times just because five requests happened to arrive together would defeat the point of sharing the in-flight computation, and it would mean each retry can turn a fast failure into five slow ones stacked on top of a struggling database.</p>
+<p>The trade-off is that a caller who did nothing wrong sees an error caused by "whoever happened to arrive first". That is fine for a read like a task list, where the caller retries the whole request; it would matter more for a computation with side effects, which is exactly why <code>getOrSet</code>'s callback should stay a pure read, with writes going through invalidation instead.</p></details></div>
 </section>
 
 <section>
@@ -740,7 +753,7 @@ miss: zudojs:linus:tasks.list
 entries: 1</pre></div>
 </figure>
 <ul>
-<li><code>subscribe(type, handler)</code> listens for <code>cache.hit</code>, <code>cache.miss</code>, <code>cache.set</code>, <code>cache.delete</code>, <code>cache.clear</code> or <code>cache.error</code>, or <code>"*"</code> for all. You will learn how events work in general in <a href="/learn/zudo-events">the next lesson</a>.</li>
+<li><code>subscribe(type, handler)</code> listens for <code>cache.hit</code>, <code>cache.miss</code>, <code>cache.set</code>, <code>cache.delete</code>, <code>cache.clear</code> or <code>cache.error</code>, or <code>"*"</code> for all. You will learn how events work in general later, in <a href="/learn/zudo-events">Events</a>.</li>
 <li><code>errors</code> counts failed operations, including input the cache refused, such as a bad key, namespace, pattern or tag. Each one also emits <code>cache.error</code>. A number that keeps growing usually means a bug in how you build keys.</li>
 <li><code>getHotKeys(n)</code> lists the most-read keys. It tells you where caching pays off most.</li>
 <li><code>getLatencyStats(CacheOperation.GET)</code> gives you how long reads take (p50, p95, p99). You will send numbers like these to a dashboard in <a href="/learn/zudo-observability">the observability lesson</a>.</li>
@@ -964,6 +977,7 @@ console.log("misses:", stats?.misses, "hits:", stats?.hits);</script>
 <li><code>withLock</code> runs work one at a time. The built-in lock and memory adapter only cover one process.</li>
 <li>Watch the hit rate with <code>getStats()</code> and events, and use <code>failSilently</code> so a broken cache is only slow, not fatal.</li>
 </ul>
+<p>Next, <a href="/learn/zudo-typed-design">Type-safe application design</a> closes this course by putting everything you have built behind types the compiler checks: ids, money, states, DTOs, commands, queries and events.</p>
 </section>
       </div>
 
