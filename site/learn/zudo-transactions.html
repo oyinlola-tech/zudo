@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Transactions — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-transactions.md" title="Markdown version">
-  <meta name="description" content="Coordinate transactions across many functions with @zudojs/transactions, with context that follows your code through AsyncLocalStorage, rollbacks, savepoints, after-commit hooks, retries, timeouts and rollback-only state, against real PostgreSQL.">
+  <meta name="description" content="Coordinate transactions across functions with @zudojs/transactions: propagation via AsyncLocalStorage, savepoints, after-commit hooks, retries and timeouts.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-transactions">
@@ -97,7 +97,7 @@
         <div class="lx-hero-tag">LEVEL 13 · LESSON 4 OF 12</div>
         <p class="lx-hero-part">Data <span class="lx-tier lx-tier-advanced" title="Advanced: Learn it when your application needs it.">Advanced</span></p>
         <h1>Transactions</h1>
-        <p class="lx-hero-lead">Coordinate transactions across many functions with @zudojs/transactions, with context that follows your code through AsyncLocalStorage, rollbacks, savepoints, after-commit hooks, retries, timeouts and rollback-only state, against real PostgreSQL.</p>
+        <p class="lx-hero-lead">Coordinate transactions across functions with @zudojs/transactions: propagation via AsyncLocalStorage, savepoints, after-commit hooks, retries and timeouts.</p>
         <ul class="lx-hero-meta">
           <li><strong>45 min</strong> to read and try</li>
           <li><strong>You need:</strong> The Databases with @zudojs/database lesson</li>
@@ -109,6 +109,17 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Share one transaction across functions with a transaction manager and AsyncLocalStorage</li>
+          <li>Join an existing transaction as a participant instead of starting a new one</li>
+          <li>Mark a transaction rollback-only, including for a deliberate dry run</li>
+          <li>Nest a savepoint so one part of the work can fail without undoing the rest</li>
+          <li>Run side effects such as email only after commit with afterCommit</li>
+          <li>Retry on a serialization failure and bound a transaction with a timeout</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="why">One transaction, many functions</h2>
@@ -606,6 +617,8 @@ console.log("real import, tasks:", await importTasks(["Buy milk", "Walk the dog"
 tasks after dry run: 0
 real import, tasks: 2</pre></div>
 </figure>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Why does catching the participant's error not save the outer transaction?</h3><p>In the rollback-only example, <code>recordActivity</code>'s error is caught right there, inside the outer <code>run</code> callback. The task insert that came before it looks unaffected: no exception reached it, the code carries on, and the callback returns normally. Yet the whole transaction still rolls back and the caller gets a thrown error out of what looked like a successful <code>run</code>. Why does the manager not just trust that the catch handled it?</p><details class="lx-solution"><summary>Show the reasoning</summary><p>A participant and the root share one physical database transaction and one connection. Once <code>recordActivity</code>'s query fails inside PostgreSQL, that connection is in an aborted state until a rollback (or a rollback to a savepoint) runs — every further statement on it would itself fail. Catching the JavaScript exception hides the failure from your code, but it cannot undo what already happened to the connection: the manager has no query result to trust once one participant has thrown, because it does not know what, if anything, that participant already sent to the database before failing.</p>
+<p>So "rollback-only" is the manager refusing to let a caught error mean less than it does: the participant asked to be part of one unit of work, that unit failed, and the only safe outcome is that none of it commits. If you need part of the work to survive a failure elsewhere, that is what a savepoint is for, below — it gives the failing part its own boundary to roll back to, instead of asking the whole transaction to pretend nothing happened.</p></details></div>
 </section>
 
 <section>
@@ -1139,7 +1152,7 @@ console.log(Object.fromEntries(counts));</script>
 <li><code>afterCommit</code> is where emails and messages go. Retries replay the whole callback, so keep side effects out of it. <code>attempts</code> counts retries, and <code>shouldRetry</code> picks which errors get one.</li>
 <li><code>timeout</code> rolls back and rejects at once; pass <code>tx.signal</code> to slow calls so your callback stops too. <code>readOnly</code> makes PostgreSQL refuse writes.</li>
 </ul>
-<p>That completes the data part. Next, the <a href="/learn/zudo-auth">authentication lesson</a> gives each task an owner who can log in.</p>
+<p>That completes the data part. Next, <a href="/learn/zudo-file-uploads">Project: a file upload system</a> puts this all to work: task attachments with size limits, content sniffing, safe keys, and a fenced lock on replace, all built on the storage and transaction pieces from these two lessons.</p>
 </section>
       </div>
 

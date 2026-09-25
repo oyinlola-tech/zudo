@@ -941,40 +941,37 @@ task-api production</option>
 <explain><p>Each hook gets a module context with the module's own <code>name</code>, <code>version</code> and the <code>options</code> you gave <code>BaseModule</code>. <code>runtime.context</code> holds the application's name and environment from <code>createRuntime</code>.</p></explain>
 </question>
 
-<question id="lifecycle-critical-output" type="output">
-<q>With <code>@zudojs/lifecycle</code>, the mailer is marked <code>critical: false</code> and fails. What does this print?</q>
-<code file="components.js" browser="no">
-import { createLifecycleManager } from "@zudojs/lifecycle";
+<question id="ready-while-stopping-output" type="output">
+<q>A health probe arrives while the runtime is stopping, and the store's readiness check still returns <code>true</code>. What does this print with the published <code>@zudojs/runtime</code>?</q>
+<code file="ready-stopping.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
 
-function component(name, failOnStart = false) {
-  return {
-    name,
-    start: async () => {
-      if (failOnStart) throw new Error(`${name} is unreachable`);
-    },
-  };
-}
+const store = { id: "store", name: "store", onShutdown: () => new Promise((resolve) => setTimeout(resolve, 50)) };
+const runtime = createRuntime(
+  {
+    modules: new Map([["store", store]]),
+    logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+    container: createContainer(),
+    eventBus: createEventBus(),
+  },
+  { applicationName: "task-api", environment: "development", handleSignals: false },
+);
+runtime.registerReadinessCheck("store", () => true);
 
-const manager = createLifecycleManager({ handleSignals: false });
-manager.register(component("pool"), { id: "pool" });
-manager.register(component("cache"), { id: "cache", dependsOn: ["pool"] });
-manager.register(component("mailer", true), { id: "mailer", critical: false });
-
-await manager.start();
-for (const [id, status] of manager.getStatus()) console.log(id, status.state);
-await manager.shutdown();
+await runtime.start();
+const stopping = runtime.stop();
+await runtime.runReadinessChecks();
+console.log(runtime.state, runtime.ready, runtime.state === "running" && runtime.ready);
+await stopping;
 </code>
-<option>pool ready
-cache ready
-mailer ready</option>
-<option correct>pool ready
-cache ready
-mailer failed</option>
-<option>pool stopped
-cache stopped
-mailer failed</option>
-<option>LifecycleStartError</option>
-<explain><p>Because the mailer is not critical, startup carries on and the mailer is simply marked <code>failed</code>. Had the pool failed, <code>start()</code> would have rolled back and rejected.</p></explain>
+<option>stopping false false</option>
+<option correct>stopping true false</option>
+<option>running true true</option>
+<option>stopped false false</option>
+<explain><p>Running the checks during <code>stop()</code> sets <code>runtime.ready</code> back to <code>true</code>, because the store's check passes. Only the state says the app is going away. That is why a probe must require <code>runtime.state === "running"</code> as well as <code>runtime.ready</code>.</p></explain>
 </question>
 
 <question id="code-start-order" type="code" file="start-order.js">

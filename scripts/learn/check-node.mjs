@@ -215,11 +215,11 @@ function lockIsStale(lock) {
 }
 
 /* Merged stdout+stderr in write order: run through a shell with 2>&1. */
-function runMerged(command, cwd) {
+function runMerged(command, cwd, timeoutMs = 60000) {
   const r = spawnSync("sh", ["-c", command + " 2>&1"], {
     cwd,
     encoding: "utf8",
-    timeout: 60000,
+    timeout: timeoutMs,
     env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", NODE_NO_WARNINGS: "1", TZ: CHECK_TZ },
   });
   return { status: r.status, text: r.stdout || "" };
@@ -315,7 +315,8 @@ export function checkNode(lessons, { log = console.log, only = null, root = null
 
       if (ex.expected === null) return;
       const cmd = isTs ? `${join(bin, "tsx")} ${ex.file}` : `node ${ex.file}`;
-      const r = runMerged(cmd, dir);
+      /* timeout="seconds" for heavy examples (Vitest suites, PGlite); Node-only ones get 3 minutes by default. */
+      const r = runMerged(cmd, dir, (Number(ex.timeout) || (ex.browser ? 60 : 180)) * 1000);
       if (fill && ex.expected === "") {
         fill.push({ slug: lesson.slug, index: i, text: normalize(r.text) });
         if (r.status !== 0) log(`--fill: ${label} exited with code ${r.status}; its output (filled in anyway) is:\n${normalize(r.text).split("\n").slice(0, 6).join("\n")}`);

@@ -1,10 +1,11 @@
 ---
 title: Security for every public API
-description: Protect the Task API from the open internet with @zudojs/security and the security helpers in @zudojs/http. Rate limiting, CORS, CSRF, security headers, HSTS and CSP, secure cookies, body limits, SSRF protection and input checks, each shown blocking a real attack.
+description: Protect the Task API from the open internet with @zudojs/security: rate limiting, CORS, CSRF, security headers, secure cookies, body limits, SSRF checks.
 minutes: 50
 youNeed: The Task API project, and the authentication and permissions lessons
 youBuild: A Task API that refuses login floods, other websites, oversized bodies and SSRF URLs, and sends safe headers on every response
 keywords: zudojs security, rate limiting, 429, cors, csrf, security headers, hsts, content security policy, secure cookies, body size limit, 413, ssrf, url validation, sql injection, xss, defense in depth
+objectives: Rate limit logins strictly and the whole API generously, keyed on a real connection address | Allow-list origins with CORS instead of a wildcard, and bind CSRF tokens to the session | Send secure cookies and security headers, including a strict CSP and HSTS, on every response | Enforce body-size limits with values checked as real numbers | Refuse SSRF targets by URL, by resolved address and by redirect target, not by URL alone | Treat threat detectors as a logging last line, with parameterized SQL and schema validation as the real defence
 ---
 <section>
 <h2 id="layers">Defense in depth</h2>
@@ -325,6 +326,13 @@ preview.attacker.example  blocked: resolves to a private address
 mixed.attacker.example    blocked: resolves to a private address
 </output>
 <warn title="TWO MORE HOLES TO CLOSE">A clever DNS server can answer "public" to your check and "private" a moment later, when <code>fetch</code> looks the name up again (<strong>DNS rebinding</strong>). And a public page can answer with a redirect to <code>http://169.254.169.254/</code>. So when you fetch: use <code>redirect: "manual"</code> and check every redirect target the same way, and for high-risk features connect to the exact address you checked, or send outbound requests through a proxy that only reaches the public internet.</warn>
+<reason title="checkPreviewUrl already resolved the name and found only public addresses. Is the fetch that follows now safe?">
+<p><code>checkPreviewUrl</code> resolved <code>preview.example</code>, saw a public address, and returned <code>ok</code>. Your code then calls <code>fetch(url)</code>, which resolves the same hostname <em>again</em>, on its own, to actually connect. The attacker controls the DNS server for their own domain and can answer differently each time it is asked. What does that let them do, and does resolving the name yourself before fetching actually close the hole?</p>
+<answer>
+<p>It closes the naive version of the hole (a hostname that always points at a private address) but not the general one. Because <code>checkPreviewUrl</code> and <code>fetch</code> each do their own DNS lookup, at their own moment in time, an attacker's name server can give a public address to the first lookup and a private one to the second — the check passes, and the connection that follows goes somewhere else entirely. This is a time-of-check-to-time-of-use gap, and it exists precisely because "check the URL" and "use the URL" are two separate operations against a resource (a DNS answer) that the attacker controls and can change between them.</p>
+<p>Closing it for real means removing the second, independent lookup: resolve the name once, verify that address, and then connect to <em>that exact IP</em> instead of letting <code>fetch</code> re-resolve the hostname — or route the request through a proxy that enforces the same allow-list at connection time, so no path to the private network exists even if a check is skipped. The general lesson is not specific to DNS: whenever a check and the action it guards are not atomic, the resource being checked can change in between.</p>
+</answer>
+</reason>
 </section>
 
 <section>
@@ -603,5 +611,5 @@ https://staging.app.example.com.evil.example refused
 <li>Before fetching a user's URL: <code>isSafeUrl</code>, then resolve the name and check every address, and handle redirects.</li>
 <li>Threat detectors are a last line for logging. Parameterized SQL, output encoding and schema validation are the real defences.</li>
 </ul>
-<p>The Task API is now protected at every layer. The next part of the course moves work out of the request: caching, events and background jobs.</p>
+<p>The Task API is now protected at every layer. Next, <a href="/learn/zudo-cache">Caching</a> keeps copies of slow results so it can also answer fast.</p>
 </section>

@@ -1,0 +1,734 @@
+<question id="ms-sync-or-async" type="choice">
+<q>Which arrow in Oja Market should be an event rather than a synchronous RPC call?</q>
+<option>gateway → auth: verifying the customer's token</option>
+<option>orders → users: fetching the e-mail address for the order</option>
+<option correct>orders → notifications: sending the receipt</option>
+<option>gateway → orders: placing the order</option>
+<explain><p>Nobody waits for a receipt, and a mail outage must not stop sales. The other three produce answers the customer or the next step needs right now.</p></explain>
+</question>
+
+<question id="ms-ownership" type="choice">
+<q>The notifications team needs the customer's e-mail address. What should they do?</q>
+<option>Read it from the users service's database</option>
+<option>Ask the users team for a read-only database login</option>
+<option correct>Get it from an API or an event of the service that owns it; here, it travels inside the <code>order.paid</code> event</option>
+<option>Store a hard-coded list of addresses</option>
+<explain><p>A service's database is private to it. Reading it from outside couples two teams to one schema, so neither can change it without breaking the other.</p></explain>
+</question>
+
+<question id="ms-internal-token" type="choice">
+<q>The internal services have no public port. Why do they still check a service token on every RPC request?</q>
+<option>Tokens make requests faster</option>
+<option correct>"Not public" is not a control: a bug in the gateway or an attacker inside the network could call payments directly</option>
+<option>The RPC package refuses to start without one</option>
+<option>To count requests per service</option>
+<explain><p>Each service verifies who is calling. A token per service, or mutual TLS, even says <em>which</em> service it is, so payments can refuse anyone but orders.</p></explain>
+</question>
+
+<question id="ms-metadata-trust" type="choice">
+<q>A frame's metadata carries <code>traceparent</code>. Why is it fine to take the trace from metadata, but not the user id?</q>
+<option>Metadata is encrypted for trace ids only</option>
+<option correct>A forged trace id can only misplace a span; a forged user id would let the caller act as someone else</option>
+<option>User ids are too long for metadata</option>
+<option>The RPC server rejects user ids in metadata</option>
+<explain><p>Metadata is written by the caller, so it is untrusted. What decides access must come from something verified: the token check for the calling service, and a user id that a trusted service verified and passed in the validated input.</p></explain>
+</question>
+
+<question id="ms-unavailable-wrap" type="choice">
+<q>Why does <code>serviceClient</code> rethrow a timeout or a refused connection as <code>RPCUnavailableError</code>?</q>
+<option>To retry the call automatically</option>
+<option correct>Otherwise the calling service would pass it upstream as an ordinary exception, the RPC server would hide it as <code>RPC_INTERNAL_ERROR</code>, and the customer would get a 500 instead of a 503</option>
+<option>Because <code>RPCTimeoutError</code> cannot be caught</option>
+<option>To hide the name of the failing service from logs</option>
+<explain><p>Only exposed errors keep their code across a service boundary. "A dependency did not answer" is useful to every caller up the chain, so it is turned into an error that says so.</p></explain>
+</question>
+
+<question id="ms-timeout-budget" type="choice">
+<q>Orders gives payments 1 second and users 2 seconds. What should the gateway's timeout for <code>orders.place</code> be?</q>
+<option>1 second, the shortest one</option>
+<option>The same as each of them, 2 seconds</option>
+<option correct>More than orders' own calls added up, or the gateway gives up while orders is still working</option>
+<option>No timeout at the gateway, because orders has timeouts</option>
+<explain><p>If the gateway gives up first, the customer sees an error and retries while the first attempt may still succeed. Timeouts shrink as you go down the chain; passing a deadline down makes that automatic.</p></explain>
+</question>
+
+<question id="ms-pending-payment" type="choice">
+<q>Payments is down when Ada presses "Pay". What does Oja Market answer, and why?</q>
+<option><code>201</code>, because the order will be charged later anyway</option>
+<option correct><code>202</code> with <code>status: "pending_payment"</code>: the order is accepted and honestly not paid yet</option>
+<option><code>500</code>, because a dependency failed</option>
+<option><code>402</code>, because the payment did not go through</option>
+<explain><p>202 means accepted for processing. 201 would pretend it is paid; 402 would say the card was declined, which is not true; 500 would lose a sale that can still succeed.</p></explain>
+</question>
+
+<question id="ms-charge-reference" type="choice">
+<q>Payments charged the card, then its answer was lost in a timeout. Orders retries later. What stops a second charge?</q>
+<option>The retry queue's <code>deduplicationKey</code></option>
+<option correct>The charge carries the reference <code>order-&lt;id&gt;</code>; payments finds it in its records and returns the saved result</option>
+<option>The timeout, which cancels the first charge</option>
+<option>Nothing; the customer is refunded</option>
+<explain><p>The idempotency key travels with the operation to the system with the side effect. The queue's key only prevents two jobs from waiting at the same time; it knows nothing about what payments already did.</p></explain>
+</question>
+
+<question id="ms-order-key" type="choice">
+<q>Where does the idempotency key for <code>POST /orders</code> come from?</q>
+<option>The gateway generates a random one per request</option>
+<option correct>The client sends it (<code>Idempotency-Key</code>), one per cart, so two presses of "Pay" carry the same key</option>
+<option>Orders derives it from the current time</option>
+<option>It is the user id</option>
+<explain><p>A key made per request would differ for the second press and protect nothing. Only the client knows that two requests are the same cart. The key is scoped to the user, so one customer cannot collide with another.</p></explain>
+</question>
+
+<question id="ms-outbox-why" type="choice">
+<q>Why does orders write <code>order.paid</code> to an outbox table instead of publishing it right after marking the order paid?</q>
+<option>The broker is slower than PostgreSQL</option>
+<option correct>The process can die between the update and the publish, and then a paid order never gets its event; with the outbox, both are in one transaction</option>
+<option>Events must be sorted by id</option>
+<option>So that notifications can read the orders database</option>
+<explain><p>The relay publishes committed rows until it succeeds. The cost is that a row can be published twice, so consumers must be idempotent.</p></explain>
+</question>
+
+<question id="ms-envelope" type="choice">
+<q>What does the serialization envelope add to the <code>order.paid</code> body?</q>
+<option>Encryption of the payload</option>
+<option correct>A format and version header, and type tags so that <code>paidAt</code> comes back as a <code>Date</code></option>
+<option>A signature that proves which service sent it</option>
+<option>Compression</option>
+<explain><p>With plain JSON, <code>paidAt</code> would arrive as a string without anyone noticing. The envelope's version also lets a consumer refuse a format it does not understand instead of misreading it.</p></explain>
+</question>
+
+<question id="ms-version-order" type="choice">
+<q>Orders will start publishing <code>order.paid</code> version 2. In which order should the teams release?</q>
+<option>Orders first, then notifications</option>
+<option correct>Notifications (every consumer) first, so it can read version 2 before anyone sends it</option>
+<option>Both at exactly the same moment</option>
+<option>It does not matter</option>
+<explain><p>If the producer goes first, every version 2 event lands in the consumers' rejected pile until they catch up. Consumers first, producers second, and never change the meaning of an existing field.</p></explain>
+</question>
+
+<question id="ms-unreadable-event" type="choice">
+<q>Notifications receives an event body that is not valid JSON. What should it do?</q>
+<option>Throw, so the broker redelivers it until it works</option>
+<option correct>Set it aside with the reason (a rejected list or a dead-letter queue) and move on to the next event</option>
+<option>Send an empty receipt</option>
+<option>Stop consuming until someone restarts the service</option>
+<explain><p>A broken body will be broken on every delivery. Retrying it forever blocks the events behind it; a person must look at it instead.</p></explain>
+</question>
+
+<question id="ms-duplicate-event" type="choice">
+<q>The outbox relay published order 7's <code>order.paid</code> twice. Why does Ada still get one receipt?</q>
+<option>The broker drops duplicates</option>
+<option>The event bus only calls each handler once per type</option>
+<option correct>The receipt job has a deduplication key while it waits, and the mail adapter ignores a key it already sent</option>
+<option>Notifications keeps the last event only</option>
+<explain><p>Two layers: the queue refuses a second job for <code>receipt-7</code> while the first exists, and the mail provider covers a duplicate that arrives after the first receipt went out.</p></explain>
+</question>
+
+<question id="ms-no-api" type="choice">
+<q>Notifications has no RPC procedures at all. What is the benefit?</q>
+<option>It uses less memory</option>
+<option correct>No service depends on it synchronously, so its outages can only delay receipts, never block an order</option>
+<option>It cannot be attacked</option>
+<option>It does not need a queue</option>
+<explain><p>A service that only reacts to events cannot be in anyone's critical path. The e-mail outage test proved it: orders were still answered with 201.</p></explain>
+</question>
+
+<question id="ms-trace-queue" type="choice">
+<q>The payment retry job stores <code>traceparent</code> in its data. What would be lost without it?</q>
+<option>The retry would not run</option>
+<option correct>The retry would start a new trace, so the successful charge, the event and the receipt would not appear under the trace id the customer was given</option>
+<option>The charge would happen twice</option>
+<option>The order would stay <code>pending_payment</code></option>
+<explain><p>AsyncLocalStorage does not survive a queue. Every asynchronous hop (queue job, outbox row, broker message) must carry the trace context explicitly.</p></explain>
+</question>
+
+<question id="ms-trace-header" type="choice">
+<q>Why does the gateway put the trace id in an <code>x-trace-id</code> response header?</q>
+<option>Browsers need it to cache responses</option>
+<option correct>Support can ask the customer for it and find the whole request across every service with one search</option>
+<option>It proves the response is authentic</option>
+<option>It makes the next request faster</option>
+<explain><p>A trace id is not a secret and reveals nothing about the data. It is the handle that turns "my order failed at 14:03" into one trace.</p></explain>
+</question>
+
+<question id="ms-circuit-breaker" type="choice">
+<q>While payments is down, each order still waits a full second for the payments timeout before it becomes <code>pending_payment</code>. What fixes that?</q>
+<option>A longer timeout</option>
+<option correct>A circuit breaker that, after a few failures, skips the call and goes straight to the retry queue until a trial call succeeds</option>
+<option>Retrying inside the request</option>
+<option>Removing the timeout</option>
+<explain><p>The breaker turns a slow failure into a fast one while the dependency is known to be down, and lets one trial call through to notice when it is back.</p></explain>
+</question>
+
+<question id="ms-price-source" type="choice">
+<q>Why does orders compute the total from its own price list instead of taking prices from the cart the client sent?</q>
+<option>Prices from clients are always in the wrong currency</option>
+<option correct>The client controls the request body, so a price from it would let anyone set their own price</option>
+<option>Because JSON cannot hold integers</option>
+<option>To save one database query</option>
+<explain><p>The body says what the customer wants: which products and how many. What things cost is the shop's data.</p></explain>
+</question>
+
+<question id="ms-copy-data" type="choice">
+<q>Orders calls users for every order. What is the trade-off of keeping a copy of each customer's e-mail inside orders instead?</q>
+<option>No trade-off: copies are always better</option>
+<option correct>Orders keeps selling when users is down, but its copy can be slightly out of date and must be kept current from events</option>
+<option>It makes orders the owner of the e-mail address</option>
+<option>It removes the need for a users service</option>
+<explain><p>Removing a synchronous dependency buys availability with eventual consistency. The owner of the address is still users; orders only holds a copy it updates from <code>user.updated</code>.</p></explain>
+</question>
+
+<question id="ms-output-envelope" type="output">
+<q>What does this print?</q>
+<code file="envelope.ts">
+import { createSerializer, deserializeFromEnvelope, serializeToEnvelope } from "@zudojs/serialization";
+import type { SerializedEnvelope } from "@zudojs/serialization";
+
+const serializer = createSerializer("json", { preserveTypes: true });
+const body = JSON.stringify(serializeToEnvelope({ orderId: 7, paidAt: new Date("2026-10-05T09:00:00Z") }, serializer));
+
+const plain = JSON.parse(JSON.parse(body).data);
+const typed = deserializeFromEnvelope<{ paidAt: Date }>(JSON.parse(body) as SerializedEnvelope, serializer, "json");
+console.log(typeof plain.paidAt, typed.paidAt instanceof Date);
+</code>
+<option correct>object true</option>
+<option>string true</option>
+<option>object false</option>
+<option>string false</option>
+<explain><p>Inside the envelope the date is a tagged object, <code>{ "$type": "Date", "$value": … }</code>. Parsing the data with plain <code>JSON.parse</code> gives that object; only the matching serializer turns it back into a <code>Date</code>. Producer and consumer must agree on the format, which is what the envelope records.</p></explain>
+</question>
+
+<question id="ms-output-envelope-version" type="output">
+<q>A consumer receives an envelope from a newer producer. What does this print?</q>
+<code file="future.ts">
+import { unwrapEnvelope } from "@zudojs/serialization";
+
+try {
+  unwrapEnvelope({ metadata: { format: "json", version: 2 }, data: "{}" });
+  console.log("accepted");
+} catch (error) {
+  console.log("refused:", (error as Error).message);
+}
+</code>
+<option correct>refused: Unsupported envelope schema version 2: this build understands up to 1</option>
+<option>accepted</option>
+<option>refused: Unexpected end of JSON input</option>
+<option>refused: Envelope format mismatch: expected "json", got "json"</option>
+<explain><p>The envelope's own format version is checked before the data is read, so an old consumer fails loudly instead of misreading a newer layout.</p></explain>
+</question>
+
+<question id="ms-output-payload-version" type="output">
+<q>The consumer checks the payload's <code>v</code> field. What does this print?</q>
+<code file="versions.js">
+function readOrderPaid(event) {
+  if (event.v !== 1) return `rejected: unsupported order.paid version ${String(event.v)}`;
+  return `receipt for order ${event.orderId}`;
+}
+
+console.log(readOrderPaid({ v: 1, orderId: 7 }));
+console.log(readOrderPaid({ v: 2, orderId: 8, currency: "NGN" }));
+console.log(readOrderPaid({ orderId: 9 }));
+</code>
+<option correct>receipt for order 7
+rejected: unsupported order.paid version 2
+rejected: unsupported order.paid version undefined</option>
+<option>receipt for order 7
+receipt for order 8
+receipt for order 9</option>
+<option>receipt for order 7
+receipt for order 8
+rejected: unsupported order.paid version undefined</option>
+<option>receipt for order 7
+rejected: unsupported order.paid version 2
+receipt for order 9</option>
+<explain><p>A missing version is not "version 1": it is an event of unknown shape. Refusing it is safer than guessing.</p></explain>
+</question>
+
+<question id="ms-output-dedupe-queue" type="output">
+<q>Two copies of the same event arrive while the first receipt job is still waiting. What does this print?</q>
+<code file="dedupe.ts">
+import { JobDuplicateError } from "@zudojs/errors";
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const receipts = createInMemoryQueue<{ orderId: number }>(createQueueName("receipts"), { autoProcess: false });
+for (let delivery = 1; delivery <= 2; delivery++) {
+  try {
+    await receipts.add("receipt", { orderId: 7 }, { deduplicationKey: "receipt-7" });
+    console.log(`delivery ${delivery}: queued`);
+  } catch (error) {
+    if (error instanceof JobDuplicateError) console.log(`delivery ${delivery}: already queued`);
+  }
+}
+console.log("waiting:", (await receipts.getStats()).waiting);
+await receipts.close();
+</code>
+<option correct>delivery 1: queued
+delivery 2: already queued
+waiting: 1</option>
+<option>delivery 1: queued
+delivery 2: queued
+waiting: 2</option>
+<option>delivery 1: queued
+delivery 2: already queued
+waiting: 2</option>
+<option>delivery 1: already queued
+delivery 2: already queued
+waiting: 0</option>
+<explain><p>The deduplication key refuses a second job while the first exists. <code>JobDuplicateError</code> is imported from @zudojs/errors, where the queue's errors are defined.</p></explain>
+</question>
+
+<question id="ms-output-idempotent-charge" type="output">
+<q>A payments service keeps charges by reference. What does this print?</q>
+<code file="charges.js">
+const records = new Map();
+let processorCalls = 0;
+
+function charge(reference, amountKobo) {
+  const saved = records.get(reference);
+  if (saved) return { ...saved, replayed: true };
+  processorCalls += 1;
+  const result = { chargeId: `ch_${processorCalls}`, amountKobo };
+  records.set(reference, result);
+  return { ...result, replayed: false };
+}
+
+charge("order-41", 2_850_000);
+const retry = charge("order-41", 2_850_000);
+charge("order-42", 350_000);
+console.log(retry.chargeId, retry.replayed, processorCalls);
+</code>
+<option correct>ch_1 true 2</option>
+<option>ch_2 false 3</option>
+<option>ch_1 false 2</option>
+<option>ch_1 true 3</option>
+<explain><p>The retry of <code>order-41</code> is answered from the records; only a new reference reaches the card processor. In the lesson the records live in a database, so they also survive a restart.</p></explain>
+</question>
+
+<question id="ms-output-traceparent" type="output">
+<q>What does this print?</q>
+<code file="traceparent.ts" browser="no">
+import { createObservability, formatTraceparent, parseTraceparent, SpanKind } from "@zudojs/observability";
+
+const orders = createObservability({ serviceName: "orders", useConsoleExporters: false });
+const payments = createObservability({ serviceName: "payments", useConsoleExporters: false });
+
+const call = orders.tracer.startSpan("call payments.charge", { kind: SpanKind.CLIENT });
+const header = formatTraceparent(call.context);
+const handle = payments.tracer.startSpan("payments.charge", { kind: SpanKind.SERVER, parent: parseTraceparent(header) });
+
+console.log(handle.context.traceId === call.context.traceId, handle.context.parentSpanId === call.context.spanId);
+console.log(parseTraceparent("00-not-a-trace-01"));
+handle.end();
+call.end();
+await orders.shutdown();
+await payments.shutdown();
+</code>
+<option correct>true true
+undefined</option>
+<option>true false
+undefined</option>
+<option>false false
+null</option>
+<option>true true
+{}</option>
+<explain><p>The header carries the trace id and the caller's span id, so the server's span joins the same trace as a child of the call. A malformed header gives <code>undefined</code>, and a span started with it begins a fresh trace.</p></explain>
+</question>
+
+<question id="ms-output-status" type="output">
+<q>The gateway picks the status from the order's state. What does this print?</q>
+<code file="status.js">
+const statusFor = (order) => (order.status === "paid" ? 201 : order.status === "pending_payment" ? 202 : 402);
+
+console.log(["paid", "pending_payment", "declined"].map((status) => statusFor({ status })));
+</code>
+<option correct>[ 201, 202, 402 ]</option>
+<option>[ 200, 200, 200 ]</option>
+<option>[ 201, 201, 402 ]</option>
+<option>[ 201, 503, 402 ]</option>
+<explain><p>Each state gets the status that tells the truth: created and paid, accepted but not paid yet, and payment required because the card was declined.</p></explain>
+</question>
+
+<question id="ms-output-events-isolated" type="output">
+<q>Two consumers listen to <code>order.paid</code> and one of them fails. What does this print?</q>
+<code file="consumers.ts">
+import { createEventBus } from "@zudojs/events";
+
+const broker = createEventBus();
+broker.on("order.paid", () => { throw new Error("SMTP connection refused"); }, { id: "notifications" });
+broker.on("order.paid", () => console.log("loyalty: points added"), { id: "loyalty" });
+
+const result = await broker.publishEvent({ type: "order.paid", payload: { body: "{}" } });
+console.log(result.succeeded, result.failed, result.errors.map((error) => error.handlerId));
+</code>
+<option correct>loyalty: points added
+1 1 [ 'notifications' ]</option>
+<option>1 1 [ 'notifications' ]</option>
+<option>loyalty: points added
+2 0 []</option>
+<option>Error: SMTP connection refused</option>
+<explain><p>One failing consumer does not stop the others, and the result names it. In the lesson, notifications does not throw on a mail failure at all: it queues the receipt and lets the queue retry.</p></explain>
+</question>
+
+<question id="ms-output-retry-delays" type="output">
+<q>Orders retries payments with this backoff. What does this print?</q>
+<code file="delays.ts">
+import { calculateRetryDelay, createExponentialBackoff } from "@zudojs/queue";
+
+const backoff = createExponentialBackoff(200, { jitter: "none", maxDelay: 5_000 });
+console.log([1, 2, 3, 4, 5, 6, 7].map((retry) => calculateRetryDelay(retry, backoff)).join(" "));
+</code>
+<option correct>200 400 800 1600 3200 5000 5000</option>
+<option>200 400 600 800 1000 1200 1400</option>
+<option>200 400 800 1600 3200 6400 12800</option>
+<option>0 200 400 800 1600 3200 5000</option>
+<explain><p>The wait doubles from 200 ms and is capped at 5 seconds. Seven retries cover about 16 seconds of outage; a longer outage needs a longer schedule, or the order stays pending for a person to look at.</p></explain>
+</question>
+
+<question id="ms-output-rejected" type="output">
+<q>A consumer decodes three bodies. What does this print?</q>
+<code file="decode.js">
+const rejected = [];
+function consume(body) {
+  try {
+    const event = JSON.parse(body);
+    if (event.v !== 1) throw new Error(`version ${event.v}`);
+    return `ok ${event.orderId}`;
+  } catch (error) {
+    rejected.push(error instanceof SyntaxError ? "not JSON" : error.message);
+    return "set aside";
+  }
+}
+
+console.log([consume('{"v":1,"orderId":7}'), consume('{"v":2,"orderId":8}'), consume("{ oops")]);
+console.log(rejected);
+</code>
+<option correct>[ 'ok 7', 'set aside', 'set aside' ]
+[ 'version 2', 'not JSON' ]</option>
+<option>[ 'ok 7', 'ok 8', 'set aside' ]
+[ 'not JSON' ]</option>
+<option>[ 'ok 7', 'set aside', 'set aside' ]
+[ 'not JSON', 'version 2' ]</option>
+<option>[ 'ok 7' ]
+[ 'version 2', 'not JSON' ]</option>
+<explain><p>Both bad events are set aside with a reason, in the order they arrived, and the consumer keeps going. Checking <code>SyntaxError</code> avoids printing the engine's parser message, which differs between runtimes.</p></explain>
+</question>
+
+<question id="ms-code-service-token" type="code" file="token.js">
+<q>Write <code>checkServiceToken(header, expected)</code> that returns <code>true</code> only when <code>header</code> is exactly <code>"Bearer " + expected</code>, comparing in constant time: compare every character (even after a mismatch) and the lengths. Print the result for the right token, a wrong one, a missing header and a prefix of the right one.</q>
+<starter>
+function checkServiceToken(header, expected) {
+  // your code
+}
+</starter>
+<solution>
+function checkServiceToken(header, expected) {
+  const wanted = "Bearer " + expected;
+  const given = header ?? "";
+  let difference = given.length ^ wanted.length;
+  for (let i = 0; i < wanted.length; i++) {
+    difference |= (given.charCodeAt(i) || 0) ^ wanted.charCodeAt(i);
+  }
+  return difference === 0;
+}
+
+const token = "s3cr3t-internal-token";
+console.log(checkServiceToken("Bearer s3cr3t-internal-token", token));
+console.log(checkServiceToken("Bearer guessed-token", token));
+console.log(checkServiceToken(undefined, token));
+console.log(checkServiceToken("Bearer s3cr3t", token));
+</solution>
+<expected>
+true
+false
+false
+false
+</expected>
+<explain><p>A comparison that stops at the first different character answers faster for a worse guess, and an attacker can measure that. The lesson uses <code>timingSafeEqualString</code> from @zudojs/crypto, which does this for you.</p></explain>
+</question>
+
+<question id="ms-code-status" type="code" file="gateway-errors.js">
+<q>Write <code>httpStatusFor(rpcCode)</code> for the gateway: <code>RPC_UNAUTHENTICATED</code> → 401, <code>RPC_NOT_FOUND</code> → 404, <code>RPC_VALIDATION_ERROR</code> → 400, <code>RPC_UNAVAILABLE</code>, <code>RPC_TIMEOUT</code> and <code>RPC_TRANSPORT_ERROR</code> → 503, anything else → 500. Print the statuses for the sample codes, separated by spaces.</q>
+<starter>
+const codes = ["RPC_UNAUTHENTICATED", "RPC_NOT_FOUND", "RPC_VALIDATION_ERROR", "RPC_TIMEOUT", "RPC_INTERNAL_ERROR", "RPC_TRANSPORT_ERROR"];
+
+function httpStatusFor(rpcCode) {
+  // your code
+}
+</starter>
+<solution>
+const codes = ["RPC_UNAUTHENTICATED", "RPC_NOT_FOUND", "RPC_VALIDATION_ERROR", "RPC_TIMEOUT", "RPC_INTERNAL_ERROR", "RPC_TRANSPORT_ERROR"];
+
+function httpStatusFor(rpcCode) {
+  const map = { RPC_UNAUTHENTICATED: 401, RPC_NOT_FOUND: 404, RPC_VALIDATION_ERROR: 400 };
+  if (["RPC_UNAVAILABLE", "RPC_TIMEOUT", "RPC_TRANSPORT_ERROR"].includes(rpcCode)) return 503;
+  return map[rpcCode] ?? 500;
+}
+
+console.log(codes.map(httpStatusFor).join(" "));
+</solution>
+<expected>
+401 404 400 503 500 503
+</expected>
+<explain><p>The gateway translates between two vocabularies. "A service did not answer" is a 503 the client may retry; an internal error is a 500 without details.</p></explain>
+</question>
+
+<question id="ms-code-idempotent-consumer" type="code" file="loyalty.js">
+<q>Write <code>createLoyalty()</code> returning <code>{ onOrderPaid(event), points(email) }</code>. It awards one point per ₦1,000 (100,000 kobo, rounded down) and ignores an <code>orderId</code> it has already handled. Deliver order 7 (2,850,000 kobo) twice and order 8 (350,000 kobo) once for the same e-mail, and print the points.</q>
+<starter>
+function createLoyalty() {
+  // your code
+}
+</starter>
+<solution>
+function createLoyalty() {
+  const handled = new Set();
+  const balances = new Map();
+  return {
+    onOrderPaid(event) {
+      if (handled.has(event.orderId)) return;
+      handled.add(event.orderId);
+      balances.set(event.email, (balances.get(event.email) ?? 0) + Math.floor(event.totalKobo / 100_000));
+    },
+    points: (email) => balances.get(email) ?? 0,
+  };
+}
+
+const loyalty = createLoyalty();
+const paid = { orderId: 7, email: "ada@example.ng", totalKobo: 2_850_000 };
+loyalty.onOrderPaid(paid);
+loyalty.onOrderPaid(paid);
+loyalty.onOrderPaid({ orderId: 8, email: "ada@example.ng", totalKobo: 350_000 });
+console.log(loyalty.points("ada@example.ng"));
+</solution>
+<expected>
+31
+</expected>
+<explain><p>28 + 3 points, with the duplicate delivery ignored. At-least-once delivery plus an idempotent consumer is the normal, reliable combination.</p></explain>
+</question>
+
+<question id="ms-code-outbox" type="code" file="outbox.js">
+<q>Write <code>relay(outbox, publish)</code>: for every row with <code>publishedAt === null</code>, in id order, call <code>publish(row)</code> and then set <code>publishedAt</code>. Return how many rows it published. Run it twice and print both counts and the published topics.</q>
+<starter>
+const outbox = [
+  { id: 2, topic: "order.paid", orderId: 8, publishedAt: null },
+  { id: 1, topic: "order.paid", orderId: 7, publishedAt: null },
+  { id: 3, topic: "order.paid", orderId: 6, publishedAt: "2026-10-05T09:00:00Z" },
+];
+const published = [];
+
+function relay(outbox, publish) {
+  // your code
+}
+</starter>
+<solution>
+const outbox = [
+  { id: 2, topic: "order.paid", orderId: 8, publishedAt: null },
+  { id: 1, topic: "order.paid", orderId: 7, publishedAt: null },
+  { id: 3, topic: "order.paid", orderId: 6, publishedAt: "2026-10-05T09:00:00Z" },
+];
+const published = [];
+
+function relay(outbox, publish) {
+  const due = outbox.filter((row) => row.publishedAt === null).sort((a, b) => a.id - b.id);
+  for (const row of due) {
+    publish(row);
+    row.publishedAt = "now";
+  }
+  return due.length;
+}
+
+const publish = (row) => published.push(`${row.topic}#${row.orderId}`);
+console.log(relay(outbox, publish), relay(outbox, publish));
+console.log(published);
+</solution>
+<expected>
+2 0
+[ 'order.paid#7', 'order.paid#8' ]
+</expected>
+<explain><p>Publishing before marking means a crash in between publishes the row again next time: at least once, never zero times. The reverse order could lose the event.</p></explain>
+</question>
+
+<question id="ms-code-pending" type="code" file="place.js">
+<q>Write <code>placeOrder(order, chargeFn, retryQueue)</code>. It calls <code>chargeFn(order)</code>: on <code>"succeeded"</code> the order becomes <code>paid</code>, on <code>"declined"</code> it becomes <code>declined</code>. If <code>chargeFn</code> throws an error whose <code>code</code> is <code>"RPC_UNAVAILABLE"</code>, the order becomes <code>pending_payment</code> and its id is pushed to <code>retryQueue</code>; any other error is rethrown. Print the three cases.</q>
+<starter>
+async function placeOrder(order, chargeFn, retryQueue) {
+  // your code
+}
+</starter>
+<solution>
+async function placeOrder(order, chargeFn, retryQueue) {
+  try {
+    const result = await chargeFn(order);
+    order.status = result === "succeeded" ? "paid" : "declined";
+  } catch (error) {
+    if (error.code !== "RPC_UNAVAILABLE") throw error;
+    order.status = "pending_payment";
+    retryQueue.push(order.id);
+  }
+  return order;
+}
+
+const retryQueue = [];
+const down = async () => { throw Object.assign(new Error("payments.charge did not answer."), { code: "RPC_UNAVAILABLE" }); };
+console.log(await placeOrder({ id: 1 }, async () => "succeeded", retryQueue));
+console.log(await placeOrder({ id: 2 }, async () => "declined", retryQueue));
+console.log(await placeOrder({ id: 3 }, down, retryQueue), retryQueue);
+</solution>
+<expected>
+{ id: 1, status: 'paid' }
+{ id: 2, status: 'declined' }
+{ id: 3, status: 'pending_payment' } [ 3 ]
+</expected>
+<explain><p>Only "did not answer" is turned into a later retry; a real error, such as a bug, still fails loudly. The retry is safe because the charge carries the order's reference.</p></explain>
+</question>
+
+<question id="ms-code-trace-tree" type="code" file="trace-tree.js">
+<q>Write <code>servicesInTrace(spans, traceId)</code> that returns the sorted, unique service names of the spans that belong to <code>traceId</code>. Print it for the sample spans.</q>
+<starter>
+const spans = [
+  { traceId: "t1", service: "gateway" },
+  { traceId: "t1", service: "orders" },
+  { traceId: "t2", service: "gateway" },
+  { traceId: "t1", service: "payments" },
+  { traceId: "t1", service: "orders" },
+  { traceId: "t1", service: "notifications" },
+];
+
+function servicesInTrace(spans, traceId) {
+  // your code
+}
+</starter>
+<solution>
+const spans = [
+  { traceId: "t1", service: "gateway" },
+  { traceId: "t1", service: "orders" },
+  { traceId: "t2", service: "gateway" },
+  { traceId: "t1", service: "payments" },
+  { traceId: "t1", service: "orders" },
+  { traceId: "t1", service: "notifications" },
+];
+
+function servicesInTrace(spans, traceId) {
+  return [...new Set(spans.filter((span) => span.traceId === traceId).map((span) => span.service))].sort();
+}
+
+console.log(servicesInTrace(spans, "t1"));
+</solution>
+<expected>
+[ 'gateway', 'notifications', 'orders', 'payments' ]
+</expected>
+<explain><p>This is the heart of the lesson's trace test: if a hop forgets to pass the <code>traceparent</code>, its service drops out of this list and the test names it.</p></explain>
+</question>
+
+<question id="ms-code-validate-answer" type="code" file="validate-answer.ts">
+<q>A type argument on an RPC call is not checked at runtime. Use <code>@zudojs/schema</code> to validate the answer from <code>users.get</code>: an object with a string <code>userId</code> and a string <code>email</code>. Print whether each of the two sample answers is valid.</q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+const answers: unknown[] = [
+  { userId: "u-ada", name: "Ada Obi", email: "ada@example.ng" },
+  { userId: "u-ada", name: "Ada Obi", emailAddress: "ada@example.ng" },
+];
+// const UserAnswer = schema.object({ ... });
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+const answers: unknown[] = [
+  { userId: "u-ada", name: "Ada Obi", email: "ada@example.ng" },
+  { userId: "u-ada", name: "Ada Obi", emailAddress: "ada@example.ng" },
+];
+const UserAnswer = schema.object({ userId: schema.string(), email: schema.string() });
+for (const answer of answers) console.log(UserAnswer.safeParse(answer).success);
+</solution>
+<expected>
+true
+false
+</expected>
+<explain><p>The second answer is what users might send after its team renamed a field. With the schema, orders fails clearly at the boundary instead of saving an order with an undefined e-mail address.</p></explain>
+</question>
+
+<question id="ms-output-outbox-crash" type="output">
+<q>The relay publishes a row, then crashes before it marks the row published. After a restart it runs again. What does this print?</q>
+<code file="crash.js">
+const outbox = [{ id: 1, orderId: 7, publishedAt: null }];
+const delivered = [];
+const receipts = new Set();
+
+function relay(crashAfterPublish) {
+  for (const row of outbox.filter((r) => r.publishedAt === null)) {
+    delivered.push(row.orderId);
+    if (crashAfterPublish) return;
+    row.publishedAt = "now";
+  }
+}
+function consume(orderId) {
+  receipts.add(`receipt-${orderId}`);
+}
+
+relay(true);
+relay(false);
+delivered.forEach(consume);
+console.log(delivered, receipts.size);
+</code>
+<option correct>[ 7, 7 ] 1</option>
+<option>[ 7 ] 1</option>
+<option>[ 7, 7 ] 2</option>
+<option>[] 0</option>
+<explain><p>The event was delivered twice, which is what "at least once" means. The consumer keyed its work by order id, so the customer still got one receipt.</p></explain>
+</question>
+
+<question id="ms-output-price" type="output">
+<q>A cart arrives with prices in it. What does this print?</q>
+<code file="prices.js">
+const PRICES = { "rice-5kg": 1_250_000, "palm-oil-1l": 350_000 };
+const cart = { items: [{ sku: "rice-5kg", quantity: 2, priceKobo: 100 }, { sku: "palm-oil-1l", quantity: 1, priceKobo: 100 }] };
+
+const trusting = cart.items.reduce((sum, item) => sum + item.priceKobo * item.quantity, 0);
+const safe = cart.items.reduce((sum, item) => sum + PRICES[item.sku] * item.quantity, 0);
+console.log(trusting, safe);
+</code>
+<option correct>300 2850000</option>
+<option>2850000 2850000</option>
+<option>300 300</option>
+<option>200 2850000</option>
+<explain><p>The trusting total lets the customer pay ₦3 for ₦28,500 of groceries. The body says what the customer wants; the price comes from the service that owns it.</p></explain>
+</question>
+
+<question id="ms-code-local-copy" type="code" file="copy.js">
+<q>Orders keeps a local copy of e-mail addresses, updated from <code>user.updated</code> events. Events can arrive twice or out of order, so each carries a <code>version</code> that grows with every change. Write <code>apply(copy, event)</code> that stores <code>{ email, version }</code> for <code>event.userId</code> only when the event's version is newer than the stored one. Apply the sample events in order and print the copy.</q>
+<starter>
+const events = [
+  { userId: "u-ada", email: "ada@example.ng", version: 1 },
+  { userId: "u-ada", email: "ada.obi@example.ng", version: 3 },
+  { userId: "u-ada", email: "ada@work.ng", version: 2 },
+  { userId: "u-ada", email: "ada.obi@example.ng", version: 3 },
+];
+
+function apply(copy, event) {
+  // your code
+}
+</starter>
+<solution>
+const events = [
+  { userId: "u-ada", email: "ada@example.ng", version: 1 },
+  { userId: "u-ada", email: "ada.obi@example.ng", version: 3 },
+  { userId: "u-ada", email: "ada@work.ng", version: 2 },
+  { userId: "u-ada", email: "ada.obi@example.ng", version: 3 },
+];
+
+function apply(copy, event) {
+  const current = copy.get(event.userId);
+  if (current && current.version >= event.version) return;
+  copy.set(event.userId, { email: event.email, version: event.version });
+}
+
+const copy = new Map();
+for (const event of events) apply(copy, event);
+console.log(copy);
+</solution>
+<expected>
+Map(1) { 'u-ada' => { email: 'ada.obi@example.ng', version: 3 } }
+</expected>
+<explain><p>The late version 2 would otherwise overwrite the newer address. Comparing versions makes the copy both idempotent (the repeated version 3) and safe against reordering.</p></explain>
+</question>

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Dependency injection with @zudojs/container — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-container.md" title="Markdown version">
-  <meta name="description" content="Let a container build and share your services. Learn tokens, class, factory and value providers, the singleton, scoped and transient lifetimes, circular dependency detection, disposal, and swapping real services for fakes in tests.">
+  <meta name="description" content="Let a container build and share your services: tokens, class, factory and value providers, lifetimes, cycle detection, disposal and swapping in test fakes.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-container">
@@ -105,10 +105,10 @@
         <div class="lx-hero-tag">LEVEL 12 · LESSON 10 OF 19</div>
         <p class="lx-hero-part">Dependency injection <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>Dependency injection with @zudojs/container</h1>
-        <p class="lx-hero-lead">Let a container build and share your services. Learn tokens, class, factory and value providers, the singleton, scoped and transient lifetimes, circular dependency detection, disposal, and swapping real services for fakes in tests.</p>
+        <p class="lx-hero-lead">Let a container build and share your services: tokens, class, factory and value providers, lifetimes, cycle detection, disposal and swapping in test fakes.</p>
         <ul class="lx-hero-meta">
           <li><strong>40 min</strong> to read and try</li>
-          <li><strong>You need:</strong> The application runtime and lifecycle</li>
+          <li><strong>You need:</strong> "The application runtime and lifecycle" and "Types and constants: guards, ids and time"</li>
           <li><strong>You build:</strong> A composition root for the Task API that builds the TaskService, its store and its clock</li>
         </ul>
         <div class="lx-hero-actions">
@@ -117,6 +117,16 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Explain dependency injection and what it makes possible in tests</li>
+          <li>Name dependencies with class tokens and createToken, and register value, class, factory and alias providers</li>
+          <li>Choose singleton, scoped or transient for a dependency, and explain why a singleton may not capture a scoped one</li>
+          <li>Read the container's circular-dependency and wiring errors, and dispose what it created</li>
+          <li>Replace a real service with a fake in a test and restore the original afterwards</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="why">The problem: who builds what?</h2>
@@ -164,9 +174,8 @@ console.log(new TaskService().create("Buy milk").includes("created"));</script>
 <p>The fix is called <strong>dependency injection</strong>: a class does not create what it needs, it <em>receives</em> it, usually as constructor parameters. The things it receives are its <strong>dependencies</strong>:</p>
 <figure class="lx-example" data-index="1" data-file="injected.ts">
 <figcaption class="lx-bar"><span class="lx-file">injected.ts</span><button type="button" class="lx-edit" data-index="1" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="1"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
-<pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">Clock</span> <span class="t-pn">{</span>
-  <span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Date</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">FixedClock</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/types"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Clock</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/types"</span><span class="t-pn">;</span>
 
 <span class="t-kw">class</span> <span class="t-ty">TaskStore</span> <span class="t-pn">{</span>
   <span class="t-kw">readonly</span> tasks <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Map</span><span class="t-op">&lt;</span><span class="t-ty">number</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -177,20 +186,20 @@ console.log(new TaskService().create("Buy milk").includes("created"));</script>
 
   <span class="t-fn">create</span><span class="t-pn">(</span>title<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-pn">{</span>
     <span class="t-kw">this</span><span class="t-pn">.</span><span class="t-prop">store</span><span class="t-pn">.</span><span class="t-prop">tasks</span><span class="t-pn">.</span><span class="t-kw">set</span><span class="t-pn">(</span><span class="t-kw">this</span><span class="t-pn">.</span><span class="t-prop">store</span><span class="t-pn">.</span><span class="t-prop">tasks</span><span class="t-pn">.</span><span class="t-prop">size</span> <span class="t-op">+</span> <span class="t-num">1</span><span class="t-pn">,</span> title<span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">return</span> <span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">title</span><span class="t-op">}</span> (created <span class="t-op">${</span><span class="t-prop">this.clock.now().toISOString().slice(0, 10)</span><span class="t-op">}</span>)`</span><span class="t-pn">;</span>
+    <span class="t-kw">const</span> day <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Date</span><span class="t-pn">(</span><span class="t-kw">this</span><span class="t-pn">.</span><span class="t-prop">clock</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">toISOString</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">slice</span><span class="t-pn">(</span><span class="t-num">0</span><span class="t-pn">,</span> <span class="t-num">10</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">return</span> <span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">title</span><span class="t-op">}</span> (created <span class="t-op">${</span><span class="t-prop">day</span><span class="t-op">}</span>)`</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
 <span class="t-pn">}</span>
 
-<span class="t-kw">const</span> fixedClock<span class="t-op">:</span> <span class="t-ty">Clock</span> <span class="t-op">=</span> <span class="t-pn">{</span> now<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Date</span><span class="t-pn">(</span><span class="t-str">"2026-09-23T09:00:00Z"</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> fixedClock <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">FixedClock</span><span class="t-pn">(</span><span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-str">"2026-09-23T09:00:00Z"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> store <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">TaskStore</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> service <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">TaskService</span><span class="t-pn">(</span>store<span class="t-pn">,</span> fixedClock<span class="t-pn">)</span><span class="t-pn">;</span>
 
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>service<span class="t-pn">.</span><span class="t-fn">create</span><span class="t-pn">(</span><span class="t-str">"Buy milk"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"tasks in the shared store:"</span><span class="t-pn">,</span> store<span class="t-pn">.</span><span class="t-prop">tasks</span><span class="t-pn">.</span><span class="t-prop">size</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
-<script type="text/plain" class="lx-src">interface Clock {
-  now(): Date;
-}
+<script type="text/plain" class="lx-src">import { FixedClock } from "@zudojs/types";
+import type { Clock } from "@zudojs/types";
 
 class TaskStore {
   readonly tasks = new Map<number, string>();
@@ -201,11 +210,12 @@ class TaskService {
 
   create(title: string): string {
     this.store.tasks.set(this.store.tasks.size + 1, title);
-    return `${title} (created ${this.clock.now().toISOString().slice(0, 10)})`;
+    const day = new Date(this.clock.now()).toISOString().slice(0, 10);
+    return `${title} (created ${day})`;
   }
 }
 
-const fixedClock: Clock = { now: () => new Date("2026-09-23T09:00:00Z") };
+const fixedClock = new FixedClock(Date.parse("2026-09-23T09:00:00Z"));
 const store = new TaskStore();
 const service = new TaskService(store, fixedClock);
 
@@ -214,7 +224,7 @@ console.log("tasks in the shared store:", store.tasks.size);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx injected.ts</code> and of the browser terminal</div><pre class="lx-no-copy">Buy milk (created 2026-09-23)
 tasks in the shared store: 1</pre></div>
 </figure>
-<p>Now the caller decides. The test passed a clock that always says 23 September, so the output is predictable, and it can look inside the same store the service used.</p>
+<p>Now the caller decides. <code>Clock</code> and <code>FixedClock</code> are the ones from <a href="/learn/zudo-types-constants#clock">Types and constants</a>: <code>now()</code> returns milliseconds since 1970, and a <code>FixedClock</code> stands still. The test passed a clock that always says 23 September, so the output is predictable, and it can look inside the same store the service used.</p>
 <p>Someone still has to call all those constructors in the right order. In a small app you do it by hand in one place, called the <strong>composition root</strong>. With dozens of services, a <strong>container</strong> does it for you: you tell it how to build each thing once, and it builds, shares and cleans up. <code>@zudojs/container</code> is already a dependency of the Task API; <code>src/app.ts</code> creates one with <code>createContainer()</code> and gives it to the runtime.</p>
 </section>
 
@@ -224,37 +234,33 @@ tasks in the shared store: 1</pre></div>
 <figure class="lx-example" data-index="2" data-file="tokens.ts">
 <figcaption class="lx-bar"><span class="lx-file">tokens.ts</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="2"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createContainer<span class="t-pn">,</span> createToken <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
-
-<span class="t-kw">interface</span> <span class="t-ty">Clock</span> <span class="t-pn">{</span>
-  <span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Date</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">FixedClock</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/types"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Clock</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/types"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> <span class="t-cn">CLOCK</span> <span class="t-op">=</span> createToken<span class="t-op">&lt;</span><span class="t-ty">Clock</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-str">"Clock"</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> <span class="t-cn">MAX_TASKS</span> <span class="t-op">=</span> createToken<span class="t-op">&lt;</span><span class="t-ty">number</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-str">"MaxTasks"</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> container <span class="t-op">=</span> <span class="t-fn">createContainer</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-container<span class="t-pn">.</span><span class="t-fn">registerValue</span><span class="t-pn">(</span><span class="t-cn">CLOCK</span><span class="t-pn">,</span> <span class="t-pn">{</span> now<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Date</span><span class="t-pn">(</span><span class="t-str">"2026-09-23T09:00:00Z"</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+container<span class="t-pn">.</span><span class="t-fn">registerValue</span><span class="t-pn">(</span><span class="t-cn">CLOCK</span><span class="t-pn">,</span> <span class="t-kw">new</span> <span class="t-ty">FixedClock</span><span class="t-pn">(</span><span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-str">"2026-09-23T09:00:00Z"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 container<span class="t-pn">.</span><span class="t-fn">registerValue</span><span class="t-pn">(</span><span class="t-cn">MAX_TASKS</span><span class="t-pn">,</span> <span class="t-num">500</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> clock <span class="t-op">=</span> container<span class="t-pn">.</span><span class="t-fn">resolve</span><span class="t-pn">(</span><span class="t-cn">CLOCK</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>clock<span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">toISOString</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> container<span class="t-pn">.</span><span class="t-fn">resolve</span><span class="t-pn">(</span><span class="t-cn">MAX_TASKS</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-kw">new</span> <span class="t-ty">Date</span><span class="t-pn">(</span>clock<span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">toISOString</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> container<span class="t-pn">.</span><span class="t-fn">resolve</span><span class="t-pn">(</span><span class="t-cn">MAX_TASKS</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>container<span class="t-pn">.</span><span class="t-fn">has</span><span class="t-pn">(</span><span class="t-cn">CLOCK</span><span class="t-pn">)</span><span class="t-pn">,</span> container<span class="t-pn">.</span><span class="t-fn">has</span><span class="t-pn">(</span>createToken<span class="t-op">&lt;</span><span class="t-ty">Clock</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-str">"Clock"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createContainer, createToken } from "@zudojs/container";
-
-interface Clock {
-  now(): Date;
-}
+import { FixedClock } from "@zudojs/types";
+import type { Clock } from "@zudojs/types";
 
 const CLOCK = createToken<Clock>("Clock");
 const MAX_TASKS = createToken<number>("MaxTasks");
 
 const container = createContainer();
-container.registerValue(CLOCK, { now: () => new Date("2026-09-23T09:00:00Z") });
+container.registerValue(CLOCK, new FixedClock(Date.parse("2026-09-23T09:00:00Z")));
 container.registerValue(MAX_TASKS, 500);
 
 const clock = container.resolve(CLOCK);
-console.log(clock.now().toISOString(), container.resolve(MAX_TASKS));
+console.log(new Date(clock.now()).toISOString(), container.resolve(MAX_TASKS));
 console.log(container.has(CLOCK), container.has(createToken<Clock>("Clock")));</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx tokens.ts</code> and of the browser terminal</div><pre class="lx-no-copy">2026-09-23T09:00:00.000Z 500
 true false</pre></div>
@@ -284,10 +290,8 @@ true false</pre></div>
 <figure class="lx-example" data-index="3" data-file="providers.ts">
 <figcaption class="lx-bar"><span class="lx-file">providers.ts</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="3"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createContainer<span class="t-pn">,</span> createToken <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
-
-<span class="t-kw">interface</span> <span class="t-ty">Clock</span> <span class="t-pn">{</span>
-  <span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Date</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">FixedClock</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/types"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Clock</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/types"</span><span class="t-pn">;</span>
 
 <span class="t-kw">class</span> <span class="t-ty">TaskStore</span> <span class="t-pn">{</span>
   <span class="t-kw">readonly</span> titles<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
@@ -298,7 +302,7 @@ true false</pre></div>
 
   <span class="t-fn">create</span><span class="t-pn">(</span>title<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-pn">{</span>
     <span class="t-kw">this</span><span class="t-pn">.</span><span class="t-prop">store</span><span class="t-pn">.</span><span class="t-prop">titles</span><span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span>title<span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">return</span> <span class="t-tpl">`#<span class="t-op">${</span><span class="t-prop">this.store.titles.length</span><span class="t-op">}</span> <span class="t-op">${</span><span class="t-prop">title</span><span class="t-op">}</span> at <span class="t-op">${</span><span class="t-prop">this.clock.now().toISOString()</span><span class="t-op">}</span>`</span><span class="t-pn">;</span>
+    <span class="t-kw">return</span> <span class="t-tpl">`#<span class="t-op">${</span><span class="t-prop">this.store.titles.length</span><span class="t-op">}</span> <span class="t-op">${</span><span class="t-prop">title</span><span class="t-op">}</span> at <span class="t-op">${</span><span class="t-prop">new Date(this.clock.now()).toISOString()</span><span class="t-op">}</span>`</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
 <span class="t-pn">}</span>
 
@@ -307,7 +311,7 @@ true false</pre></div>
 
 <span class="t-kw">const</span> container <span class="t-op">=</span> <span class="t-fn">createContainer</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 container<span class="t-pn">.</span><span class="t-fn">registerValue</span><span class="t-pn">(</span><span class="t-cn">START</span><span class="t-pn">,</span> <span class="t-str">"2026-09-23T09:00:00Z"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-container<span class="t-pn">.</span><span class="t-fn">registerFactory</span><span class="t-pn">(</span><span class="t-cn">CLOCK</span><span class="t-pn">,</span> <span class="t-pn">(</span>start<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-pn">{</span> now<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Date</span><span class="t-pn">(</span>start<span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-cn">START</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
+container<span class="t-pn">.</span><span class="t-fn">registerFactory</span><span class="t-pn">(</span><span class="t-cn">CLOCK</span><span class="t-pn">,</span> <span class="t-pn">(</span>start<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">FixedClock</span><span class="t-pn">(</span><span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span>start<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-cn">START</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
 container<span class="t-pn">.</span><span class="t-fn">registerClass</span><span class="t-pn">(</span><span class="t-ty">TaskStore</span><span class="t-pn">,</span> <span class="t-ty">TaskStore</span><span class="t-pn">)</span><span class="t-pn">;</span>
 container<span class="t-pn">.</span><span class="t-fn">registerClass</span><span class="t-pn">(</span><span class="t-ty">TaskService</span><span class="t-pn">,</span> <span class="t-ty">TaskService</span><span class="t-pn">,</span> <span class="t-pn">{</span> inject<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-ty">TaskStore</span><span class="t-pn">,</span> <span class="t-cn">CLOCK</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
@@ -315,10 +319,8 @@ container<span class="t-pn">.</span><span class="t-fn">registerClass</span><span
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>service<span class="t-pn">.</span><span class="t-fn">create</span><span class="t-pn">(</span><span class="t-str">"Buy milk"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createContainer, createToken } from "@zudojs/container";
-
-interface Clock {
-  now(): Date;
-}
+import { FixedClock } from "@zudojs/types";
+import type { Clock } from "@zudojs/types";
 
 class TaskStore {
   readonly titles: string[] = [];
@@ -329,7 +331,7 @@ class TaskService {
 
   create(title: string): string {
     this.store.titles.push(title);
-    return `#${this.store.titles.length} ${title} at ${this.clock.now().toISOString()}`;
+    return `#${this.store.titles.length} ${title} at ${new Date(this.clock.now()).toISOString()}`;
   }
 }
 
@@ -338,7 +340,7 @@ const START = createToken<string>("StartTime");
 
 const container = createContainer();
 container.registerValue(START, "2026-09-23T09:00:00Z");
-container.registerFactory(CLOCK, (start) => ({ now: () => new Date(start) }), [START]);
+container.registerFactory(CLOCK, (start) => new FixedClock(Date.parse(start)), [START]);
 container.registerClass(TaskStore, TaskStore);
 container.registerClass(TaskService, TaskService, { inject: [TaskStore, CLOCK] });
 
@@ -394,10 +396,7 @@ Cannot auto-register class "TaskService": its constructor declares 1 parameter a
 <figure class="lx-example" data-index="5" data-file="factory-check.ts">
 <figcaption class="lx-bar"><span class="lx-file">factory-check.ts</span><button type="button" class="lx-edit" data-index="5" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="5"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createContainer<span class="t-pn">,</span> createToken <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
-
-<span class="t-kw">interface</span> <span class="t-ty">Clock</span> <span class="t-pn">{</span>
-  <span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Date</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Clock</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/types"</span><span class="t-pn">;</span>
 
 <span class="t-kw">class</span> <span class="t-ty">TaskStore</span> <span class="t-pn">{</span>
   <span class="t-kw">readonly</span> titles<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
@@ -417,10 +416,7 @@ container<span class="t-pn">.</span><span class="t-fn">registerFactory</span><sp
 <span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createContainer, createToken } from "@zudojs/container";
-
-interface Clock {
-  now(): Date;
-}
+import type { Clock } from "@zudojs/types";
 
 class TaskStore {
   readonly titles: string[] = [];
@@ -438,17 +434,17 @@ container.registerFactory(
   (clock, store) => new TaskService(store, clock),
   [TaskStore, CLOCK],
 );</script>
-<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">factory-check.ts:20:37 - error TS2741: Property 'titles' is missing in type 'Clock' but required in type 'TaskStore'.
+<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">factory-check.ts:17:37 - error TS2741: Property 'titles' is missing in type 'Clock' but required in type 'TaskStore'.
 
-20   (clock, store) =&gt; new TaskService(store, clock),
+17   (clock, store) =&gt; new TaskService(store, clock),
                                        ~~~~~
 
-  factory-check.ts:8:12 - 'titles' is declared here.
-    8   readonly titles: string[] = [];
+  factory-check.ts:5:12 - 'titles' is declared here.
+    5   readonly titles: string[] = [];
                  ~~~~~~
 
 
-Found 1 error in factory-check.ts:20</pre></div>
+Found 1 error in factory-check.ts:17</pre></div>
 </figure>
 <p>The second token is <code>CLOCK</code>, so the second parameter is a <code>Clock</code>, even though it is called <code>store</code>. The constructor wants a <code>TaskStore</code> there, and a <code>Clock</code> has no <code>titles</code>. The names of the parameters do not matter; their order does.</p>
 <div class="callout callout-warning"><p class="lx-callout-label">THE CLASS INJECT LIST IS NOT TYPE-CHECKED</p>For <code>registerClass</code>, TypeScript still does not compare <code>inject: [TaskStore, CLOCK]</code> with the constructor. If you swap the two tokens there, the code compiles and fails when it runs. Keep the <code>inject</code> list next to the constructor and in the same order, and let a test resolve every service once, so a mistake shows up in the test run. When you want the compiler to check the wiring, register the class with a factory instead: <code>registerFactory(TaskService, (store, clock) =&gt; new TaskService(store, clock), [TaskStore, CLOCK])</code>.</div>
@@ -516,6 +512,12 @@ singleton inside a scope: true
 objects created: 5</pre></div>
 </figure>
 <p>Count the objects: one <code>TaskStore</code>, two <code>Report</code>s (one per <code>resolve</code>), and two <code>RequestInfo</code>s (one per scope). A singleton stays the same everywhere, even when resolved through a scope.</p>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Which lifetime for each?</h3><p>Before reading on, pick a lifetime for each of these, and say what would break with the wrong one: the <code>TaskStore</code>; an <code>AuditLog</code> that collects what one request did and writes it when the request ends; a small <code>TitleFormatter</code> with no fields at all; and a singleton <code>TaskService</code> that wants the current request's <code>AuditLog</code> in its constructor.</p><details class="lx-solution"><summary>Show the reasoning</summary><ul>
+<li><strong><code>TaskStore</code></strong>: singleton. Everyone must see the same tasks. As a transient, every service would get its own empty store, the "two task lists" bug.</li>
+<li><strong><code>AuditLog</code></strong>: scoped. Each request needs its own. As a singleton, every request would write into one shared log, mixing up users.</li>
+<li><strong><code>TitleFormatter</code></strong>: it holds no state, so any lifetime gives the same behaviour; transient (the default) or singleton are both fine.</li>
+<li><strong>The singleton <code>TaskService</code></strong> is built once, with the <code>AuditLog</code> of whichever request came first, and keeps it forever. Every later request would write into the first request's log. The service must not receive a scoped dependency in its constructor; the container refuses exactly that.</li>
+</ul></details></div>
 <p>The container also stops you from mixing lifetimes in a dangerous way:</p>
 <figure class="lx-example" data-index="7" data-file="lifetime-errors.ts">
 <figcaption class="lx-bar"><span class="lx-file">lifetime-errors.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="7"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
@@ -775,7 +777,7 @@ SMTP to ada@example.com: "Water the plants" is done</pre></div>
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
 <p>Open <code>src/container.ts</code>. The CLI calls it the <strong>composition root</strong>, and it is the hand-written kind from the start of this lesson: <code>createDependencies</code> builds the example resource itself, with <code>new ExamplesController(new ExamplesService(new InMemoryExamplesRepository()))</code>. For one small resource with no shared parts, that is fine.</p>
-<p>The Task API's pieces need more. The same <code>TaskStore</code> must reach the runtime's modules and the task service, and a test must be able to swap the clock. That is a job for the container that <code>src/app.ts</code> already creates with <code>createContainer()</code> and hands to the runtime. So far that container is empty. The <code>TaskStore</code> from the previous lesson does not change:</p>
+<p>The Task API's pieces need more. The same <code>TaskStore</code> must reach the runtime's modules and the task service, and a test must be able to swap the clock. That is a job for the container that <code>src/app.ts</code> already creates with <code>createContainer()</code> and hands to the runtime. So far that container is empty. The <code>TaskStore</code> from <a href="/learn/zudo-runtime#task-api">the runtime lesson</a> does not change:</p>
 <figure class="lx-example" data-index="11" data-file="src/repositories/tasks.store.ts" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/repositories/tasks.store.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">export</span> <span class="t-kw">type</span> <span class="t-ty">Priority</span> <span class="t-op">=</span> <span class="t-str">"low"</span> <span class="t-op">|</span> <span class="t-str">"normal"</span> <span class="t-op">|</span> <span class="t-str">"high"</span><span class="t-pn">;</span>
@@ -846,16 +848,13 @@ export const NewTaskSchema = schema.object({
 export type NewTask = Infer<typeof NewTaskSchema>;</script>
 </figure>
 <p>Add <code>as const</code> after the list of priorities, as shown. Without it, TypeScript widens the list to <code>string[]</code>, so the inferred <code>priority</code> type would be any string instead of exactly <code>"low" | "normal" | "high"</code>, and it would not fit the store's <code>Priority</code> type.</p>
-<p>The service is the one from that lesson, changed to receive its store and a clock instead of creating them. Create <code>src/services/tasks.service.ts</code>, next to the generated <code>examples.service.ts</code>:</p>
+<p>The service is the one from that lesson, changed to receive its store and a clock instead of creating them. The clock is the <code>Clock</code> from <code>@zudojs/types</code>, already a dependency of the project: <code>now()</code> returns milliseconds, and <code>new Date(…).toISOString()</code> turns them into the stored text. Create <code>src/services/tasks.service.ts</code>, next to the generated <code>examples.service.ts</code>:</p>
 <figure class="lx-example" data-index="13" data-file="src/services/tasks.service.ts" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/services/tasks.service.ts</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConflictError</span><span class="t-pn">,</span> <span class="t-ty">NotFoundError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Clock</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/types"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">NewTaskSchema</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"../dtos/tasks.dto.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">StoredTask</span><span class="t-pn">,</span> <span class="t-ty">TaskStore</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"../repositories/tasks.store.js"</span><span class="t-pn">;</span>
-
-<span class="t-kw">export</span> <span class="t-kw">interface</span> <span class="t-ty">Clock</span> <span class="t-pn">{</span>
-  <span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Date</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
 
 <span class="t-kw">export</span> <span class="t-kw">class</span> <span class="t-ty">TaskService</span> <span class="t-pn">{</span>
   <span class="t-kw">public</span> <span class="t-fn">constructor</span><span class="t-pn">(</span><span class="t-kw">private</span> <span class="t-kw">readonly</span> store<span class="t-op">:</span> <span class="t-ty">TaskStore</span><span class="t-pn">,</span> <span class="t-kw">private</span> <span class="t-kw">readonly</span> clock<span class="t-op">:</span> <span class="t-ty">Clock</span><span class="t-pn">)</span> <span class="t-pn">{</span><span class="t-pn">}</span>
@@ -866,7 +865,7 @@ export type NewTask = Infer<typeof NewTaskSchema>;</script>
     <span class="t-kw">if</span> <span class="t-pn">(</span>clash<span class="t-pn">)</span> <span class="t-pn">{</span>
       <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">ConflictError</span><span class="t-pn">(</span><span class="t-tpl">`A task called "<span class="t-op">${</span><span class="t-prop">data.title</span><span class="t-op">}</span>" already exists`</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-pn">}</span>
-    <span class="t-kw">const</span> task<span class="t-op">:</span> <span class="t-ty">StoredTask</span> <span class="t-op">=</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-kw">this</span><span class="t-pn">.</span><span class="t-prop">store</span><span class="t-pn">.</span><span class="t-fn">nextId</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">data</span><span class="t-pn">,</span> createdAt<span class="t-op">:</span> <span class="t-kw">this</span><span class="t-pn">.</span><span class="t-prop">clock</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">toISOString</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+    <span class="t-kw">const</span> task<span class="t-op">:</span> <span class="t-ty">StoredTask</span> <span class="t-op">=</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-kw">this</span><span class="t-pn">.</span><span class="t-prop">store</span><span class="t-pn">.</span><span class="t-fn">nextId</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">data</span><span class="t-pn">,</span> createdAt<span class="t-op">:</span> <span class="t-kw">new</span> <span class="t-ty">Date</span><span class="t-pn">(</span><span class="t-kw">this</span><span class="t-pn">.</span><span class="t-prop">clock</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">toISOString</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">;</span>
     <span class="t-kw">this</span><span class="t-pn">.</span><span class="t-prop">store</span><span class="t-pn">.</span><span class="t-prop">tasks</span><span class="t-pn">.</span><span class="t-kw">set</span><span class="t-pn">(</span>task<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">,</span> task<span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">return</span> task<span class="t-pn">;</span>
   <span class="t-pn">}</span>
@@ -885,12 +884,9 @@ export type NewTask = Infer<typeof NewTaskSchema>;</script>
 <span class="t-pn">}</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { Clock } from "@zudojs/types";
 import { NewTaskSchema } from "../dtos/tasks.dto.js";
 import type { StoredTask, TaskStore } from "../repositories/tasks.store.js";
-
-export interface Clock {
-  now(): Date;
-}
 
 export class TaskService {
   public constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
@@ -901,7 +897,7 @@ export class TaskService {
     if (clash) {
       throw new ConflictError(`A task called "${data.title}" already exists`);
     }
-    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: this.clock.now().toISOString() };
+    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: new Date(this.clock.now()).toISOString() };
     this.store.tasks.set(task.id, task);
     return task;
   }
@@ -924,11 +920,12 @@ export class TaskService {
 <figcaption class="lx-bar"><span class="lx-file">src/container.ts (part)</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ContainerScope</span><span class="t-pn">,</span> createToken <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Container</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> systemClock <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/types"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Clock</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/types"</span><span class="t-pn">;</span>
 
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">TaskStore</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./repositories/tasks.store.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HealthCheck</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./routes/health.routes.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">TaskService</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./services/tasks.service.js"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Clock</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./services/tasks.service.js"</span><span class="t-pn">;</span>
 <span class="t-cmt">// zudojs:container-imports:start</span>
 <span class="t-cmt">// (the generated imports stay here)</span>
 <span class="t-cmt">// zudojs:container-imports:end</span>
@@ -938,7 +935,7 @@ export class TaskService {
 
 <span class="t-cmt">/** Tells the runtime's container how to build the shared task services. */</span>
 <span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">registerServices</span><span class="t-pn">(</span>container<span class="t-op">:</span> <span class="t-ty">Container</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-kw">void</span> <span class="t-pn">{</span>
-  container<span class="t-pn">.</span><span class="t-fn">registerValue</span><span class="t-pn">(</span><span class="t-cn">CLOCK</span><span class="t-pn">,</span> <span class="t-pn">{</span> now<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Date</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  container<span class="t-pn">.</span><span class="t-fn">registerValue</span><span class="t-pn">(</span><span class="t-cn">CLOCK</span><span class="t-pn">,</span> systemClock<span class="t-pn">)</span><span class="t-pn">;</span>
   container<span class="t-pn">.</span><span class="t-fn">registerClass</span><span class="t-pn">(</span><span class="t-ty">TaskStore</span><span class="t-pn">,</span> <span class="t-ty">TaskStore</span><span class="t-pn">,</span> <span class="t-pn">{</span> scope<span class="t-op">:</span> <span class="t-ty">ContainerScope</span><span class="t-pn">.</span><span class="t-cn">SINGLETON</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
   container<span class="t-pn">.</span><span class="t-fn">registerClass</span><span class="t-pn">(</span><span class="t-ty">TaskService</span><span class="t-pn">,</span> <span class="t-ty">TaskService</span><span class="t-pn">,</span> <span class="t-pn">{</span>
     scope<span class="t-op">:</span> <span class="t-ty">ContainerScope</span><span class="t-pn">.</span><span class="t-cn">SINGLETON</span><span class="t-pn">,</span>
@@ -948,11 +945,12 @@ export class TaskService {
 </code></pre>
 <script type="text/plain" class="lx-src">import { ContainerScope, createToken } from "@zudojs/container";
 import type { Container } from "@zudojs/container";
+import { systemClock } from "@zudojs/types";
+import type { Clock } from "@zudojs/types";
 
 import { TaskStore } from "./repositories/tasks.store.js";
 import type { HealthCheck } from "./routes/health.routes.js";
 import { TaskService } from "./services/tasks.service.js";
-import type { Clock } from "./services/tasks.service.js";
 // zudojs:container-imports:start
 // (the generated imports stay here)
 // zudojs:container-imports:end
@@ -962,7 +960,7 @@ export const CLOCK = createToken<Clock>("Clock");
 
 /** Tells the runtime's container how to build the shared task services. */
 export function registerServices(container: Container): void {
-  container.registerValue(CLOCK, { now: () => new Date() });
+  container.registerValue(CLOCK, systemClock);
   container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
   container.registerClass(TaskService, TaskService, {
     scope: ContainerScope.SINGLETON,
@@ -970,7 +968,7 @@ export function registerServices(container: Container): void {
   });
 }</script>
 </figure>
-<p>In <code>src/app.ts</code>, fill the container right after it is created, and take the store from it instead of calling <code>new TaskStore()</code>. Then the modules and the service share one store. Add the import, and replace the <code>const store = new TaskStore();</code> line from the previous lesson:</p>
+<p>In <code>src/app.ts</code>, fill the container right after it is created, and take the store from it instead of calling <code>new TaskStore()</code>. Then the modules and the service share one store. Add the import, and replace the <code>const store = new TaskStore();</code> line from the runtime lesson:</p>
 <figure class="lx-example" data-index="15" data-file="src/app.ts (part)">
 <figcaption class="lx-bar"><span class="lx-file">src/app.ts (part)</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> registerServices <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./container.js"</span><span class="t-pn">;</span>
@@ -991,17 +989,18 @@ export function registerServices(container: Container): void {
   const store = container.resolve(TaskStore);
   const eventBus = createEventBus();</script>
 </figure>
-<p>The runtime keeps that container as <code>runtime.context.container</code>. Code that needs the service, such as the routes in the next lesson, asks it: <code>runtime.context.container.resolve(TaskService)</code>. This check script does the same with a container of its own, and swaps the clock for a fixed one, exactly as a test would. Save it as <code>src/check-container.ts</code>:</p>
+<p>The runtime keeps that container as <code>runtime.context.container</code>. Code that needs the service, such as the routes in <a href="/learn/zudo-http">Routes, requests and responses</a>, asks it: <code>runtime.context.container.resolve(TaskService)</code>. This check script does the same with a container of its own, and swaps the clock for a fixed one, exactly as a test would. Save it as <code>src/check-container.ts</code>:</p>
 <figure class="lx-example" data-index="16" data-file="src/check-container.ts">
 <figcaption class="lx-bar"><span class="lx-file">src/check-container.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createContainer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">FixedClock</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/types"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-cn">CLOCK</span><span class="t-pn">,</span> registerServices <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./container.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">TaskStore</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./repositories/tasks.store.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">TaskService</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./services/tasks.service.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> container <span class="t-op">=</span> <span class="t-fn">createContainer</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-fn">registerServices</span><span class="t-pn">(</span>container<span class="t-pn">)</span><span class="t-pn">;</span>
-container<span class="t-pn">.</span><span class="t-fn">replace</span><span class="t-pn">(</span><span class="t-cn">CLOCK</span><span class="t-pn">,</span> <span class="t-pn">{</span> useValue<span class="t-op">:</span> <span class="t-pn">{</span> now<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Date</span><span class="t-pn">(</span><span class="t-str">"2026-09-23T09:00:00Z"</span><span class="t-pn">)</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+container<span class="t-pn">.</span><span class="t-fn">replace</span><span class="t-pn">(</span><span class="t-cn">CLOCK</span><span class="t-pn">,</span> <span class="t-pn">{</span> useValue<span class="t-op">:</span> <span class="t-kw">new</span> <span class="t-ty">FixedClock</span><span class="t-pn">(</span><span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-str">"2026-09-23T09:00:00Z"</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> service <span class="t-op">=</span> container<span class="t-pn">.</span><span class="t-fn">resolve</span><span class="t-pn">(</span><span class="t-ty">TaskService</span><span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>service<span class="t-pn">.</span><span class="t-fn">create</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"  Buy milk "</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -1010,13 +1009,14 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
 <span class="t-kw">await</span> container<span class="t-pn">.</span><span class="t-fn">dispose</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createContainer } from "@zudojs/container";
+import { FixedClock } from "@zudojs/types";
 import { CLOCK, registerServices } from "./container.js";
 import { TaskStore } from "./repositories/tasks.store.js";
 import { TaskService } from "./services/tasks.service.js";
 
 const container = createContainer();
 registerServices(container);
-container.replace(CLOCK, { useValue: { now: () => new Date("2026-09-23T09:00:00Z") } });
+container.replace(CLOCK, { useValue: new FixedClock(Date.parse("2026-09-23T09:00:00Z")) });
 
 const service = container.resolve(TaskService);
 console.log(service.create({ title: "  Buy milk " }));
@@ -1145,7 +1145,7 @@ second req-2 req-2 false</pre></div>
 <li>Cycles fail with <code>CircularDependencyError</code>. <code>dispose()</code> cleans up singletons and scopes, newest first.</li>
 <li>For tests: <code>replace</code> a registration with a fake, then <code>restoreSnapshot</code>.</li>
 </ul>
-<p>The Task API now has a working <code>TaskService</code>, but nothing can reach it from the network yet. The next lesson gives it HTTP routes.</p>
+<p>The Task API now has a working <code>TaskService</code>, but its wiring lives in two files, and nothing can reach it from the network yet. Next, <a href="/learn/zudo-di-architecture">DI architecture with ZudoJS</a> decides where every object is built and checks the wiring at startup; the lesson after it adds HTTP routes.</p>
 </section>
       </div>
 

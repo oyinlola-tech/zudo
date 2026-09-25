@@ -1,10 +1,11 @@
 ---
 title: Sign in with OAuth
-description: Add "Sign in with Google" to the Task API with @zudojs/auth-oauth. Learn the OAuth 2 authorization code flow, state and PKCE, the provider presets, and the callback, all tested offline against a stand-in provider.
+description: Add Sign in with Google to the Task API with @zudojs/auth-oauth: the OAuth 2 code flow, state and PKCE, provider presets, tested offline.
 minutes: 50
 youNeed: The Authentication lesson
 youBuild: A "Sign in with Google" flow for the Task API that ends in your own session
 keywords: zudojs oauth, oauth 2, sign in with google, social login, authorization code flow, pkce, code verifier, code challenge, state, csrf, redirect uri, client secret, github login, microsoft login, apple login, discord login, createAuthorizationUrl, exchangeCodeForToken
+objectives: Build an authorization URL for a built-in provider preset such as Google | Defend the callback against login CSRF with a server-checked state value | Defend the code exchange against interception with a PKCE verifier and S256 challenge | Exchange a code for a token and fetch the user's profile from the provider | Find or create a local account by provider and provider id, and start your own session | Handle where providers differ: missing refresh tokens, no profile endpoint, optional email
 tier: advanced
 ---
 <section>
@@ -343,6 +344,13 @@ RFC 7636:  E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
 OAUTH_PKCE_INVALID - PKCE code verifier must be 43-128 characters from the unreserved alphabet.
 </output>
 <p>All three agree. A generated verifier is 64 random characters, and two verifiers never give the same challenge. The package only implements the <code>S256</code> method. The older <code>plain</code> method sends the verifier itself in the URL, which protects nothing, so you cannot turn it on.</p>
+<reason title="state already stops login CSRF. Why also carry PKCE, and could one replace the other?">
+<p><code>state</code> is a random value your server made up and checks on the way back; PKCE is a verifier and a hash of it. Both end up as extra values around the same authorization code. Before writing the callback handler: what attack does each one stop, and does dropping either one leave a real hole?</p>
+<answer>
+<p>They defend against different attackers at different points. <code>state</code> answers "is this callback for a login <em>my server</em> started?" — without it, an attacker can start their own login with Google, capture the resulting code, and trick a victim's browser into visiting your callback URL with that code, logging the victim into the attacker's account (login CSRF). PKCE answers a different question: "is whoever is exchanging this code the same server that requested it?" — it defends against the code itself leaking after a legitimate login already started, from browser history, a proxy log or a malicious extension on the user's machine.</p>
+<p>Dropping <code>state</code> leaves the CSRF hole open even though PKCE is present, because PKCE never checks that the flow belongs to this browser's session — it only checks that the exchanger holds the original verifier, which an attacker who started their own login also holds. Dropping PKCE leaves code interception open even though <code>state</code> is present, because <code>state</code> never travels with a secret the thief lacks. Neither substitutes for the other; a correct flow checks both, in the order this lesson does: <code>state</code> first, to know the callback is even yours, then the code exchange, which PKCE protects.</p>
+</answer>
+</reason>
 </section>
 
 <section>

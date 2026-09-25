@@ -12,11 +12,10 @@ objectives: Find the composition root of a generated ZudoJS project and explain 
 <p>A tester files a bug against the Task API: "I created <em>Buy milk</em> with <code>POST /tasks</code> and it appears in <code>GET /tasks</code>. But the store module's log, and the readiness check that counts tasks, never see it." Nobody changed the store. Here is a small copy of what happened. Two files each built the objects they needed:</p>
 <file name="domain.ts" project="di">
 import { createToken } from "@zudojs/container";
+import type { Clock } from "@zudojs/types";
 
-export interface Clock {
-  now(): Date;
-}
-export const systemClock: Clock = { now: () => new Date() };
+export type { Clock };
+export { systemClock } from "@zudojs/types";
 
 export interface Task {
   readonly id: number;
@@ -37,7 +36,7 @@ export class TaskService {
   constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
 
   create(title: string): Task {
-    const task = { id: this.store.nextId(), title, createdAt: this.clock.now().toISOString() };
+    const task = { id: this.store.nextId(), title, createdAt: new Date(this.clock.now()).toISOString() };
     this.store.tasks.set(task.id, task);
     return task;
   }
@@ -165,7 +164,7 @@ class ReportService {
   clock?: Clock;
 
   dueToday(tasks: Task[]): string {
-    const today = this.clock!.now().toISOString().slice(0, 10);
+    const today = new Date(this.clock!.now()).toISOString().slice(0, 10);
     return `${tasks.filter((t) => t.createdAt.startsWith(today)).length} task(s) created today`;
   }
 }
@@ -186,9 +185,10 @@ TypeError Cannot read properties of undefined (reading 'now')
 <example file="factory-registration.ts" project="di">
 import { ContainerScope, createContainer } from "@zudojs/container";
 import { CLOCK, TaskService, TaskStore } from "./domain.js";
+import { FixedClock } from "@zudojs/types";
 
 const container = createContainer();
-container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+container.registerValue(CLOCK, new FixedClock(Date.parse("2026-09-24T09:00:00Z")));
 container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
 container.registerFactory(TaskService, (store, clock) => new TaskService(store, clock), [TaskStore, CLOCK], {
   scope: ContainerScope.SINGLETON,
@@ -263,6 +263,7 @@ smtp
 import { createContainer, createToken } from "@zudojs/container";
 import { CLOCK } from "./domain.js";
 import type { Clock } from "./domain.js";
+import { FixedClock } from "@zudojs/types";
 
 class ImportReport {
   readonly lines: string[] = [];
@@ -271,7 +272,7 @@ class ImportReport {
     this.lines.push(line);
   }
   summary(): string {
-    return `${this.source}: ${this.lines.length} task(s) at ${this.clock.now().toISOString().slice(11, 16)}`;
+    return `${this.source}: ${this.lines.length} task(s) at ${new Date(this.clock.now()).toISOString().slice(11, 16)}`;
   }
 }
 
@@ -288,7 +289,7 @@ class TaskImporter {
 }
 
 const container = createContainer();
-container.registerValue(CLOCK, { now: () => new Date("2026-09-24T08:30:00Z") });
+container.registerValue(CLOCK, new FixedClock(Date.parse("2026-09-24T08:30:00Z")));
 container.registerFactory(REPORT_FACTORY, (clock) => (source: string) => new ImportReport(source, clock), [CLOCK]);
 container.registerFactory(TaskImporter, (newReport) => new TaskImporter(newReport), [REPORT_FACTORY]);
 
@@ -380,9 +381,10 @@ DependencyResolutionError Failed to resolve DueTodayReminder: No registration fo
 <example file="locator-replace.ts" project="di">
 import { ContainerScope, createContainer } from "@zudojs/container";
 import { CLOCK, TaskService, TaskStore } from "./domain.js";
+import { FixedClock } from "@zudojs/types";
 
 const container = createContainer();
-container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+container.registerValue(CLOCK, new FixedClock(Date.parse("2026-09-24T09:00:00Z")));
 container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
 
 class ListedService extends TaskService {}
@@ -399,7 +401,7 @@ container.registerFactory(
 
 container.resolve(ListedService);
 container.resolve(HiddenService);
-container.replace(CLOCK, { useValue: { now: () => new Date("2030-01-01T00:00:00Z") } });
+container.replace(CLOCK, { useValue: new FixedClock(Date.parse("2030-01-01T00:00:00Z")) });
 
 console.log("listed:", container.resolve(ListedService).create("Buy milk").createdAt);
 console.log("hidden:", container.resolve(HiddenService).create("Buy bread").createdAt);
@@ -445,13 +447,13 @@ export function registerTaskServices(container: Container): void {
 import { createContainer } from "@zudojs/container";
 import { CLOCK, MAILER, TaskNotifier, TaskService } from "./domain.js";
 import { registerTaskServices } from "./registrations.js";
+import { FixedClock } from "@zudojs/types";
 
 function testContainer(fakes: { now?: string; sent?: string[] } = {}) {
   const container = createContainer({ name: "test" });
   registerTaskServices(container);
   if (fakes.now !== undefined) {
-    const fixed = new Date(fakes.now);
-    container.replace(CLOCK, { useValue: { now: () => fixed } });
+    container.replace(CLOCK, { useValue: new FixedClock(Date.parse(fakes.now)) });
   }
   const sent = fakes.sent;
   if (sent) {
@@ -485,6 +487,7 @@ PASS tests do not share a store
 <example file="snapshot.ts" project="di">
 import { ContainerScope, createContainer } from "@zudojs/container";
 import { CLOCK, TaskService, TaskStore } from "./domain.js";
+import { FixedClock } from "@zudojs/types";
 
 class Reports {
   constructor(readonly tasks: TaskService) {}
@@ -494,7 +497,7 @@ class Reports {
 }
 
 const container = createContainer();
-container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+container.registerValue(CLOCK, new FixedClock(Date.parse("2026-09-24T09:00:00Z")));
 container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
 container.registerFactory(TaskService, (store, clock) => new TaskService(store, clock), [TaskStore, CLOCK], {
   scope: ContainerScope.SINGLETON,
@@ -505,7 +508,7 @@ const keptByHand = container.resolve(Reports);
 const saved = container.snapshot();
 
 console.log("replace the clock:");
-container.replace(CLOCK, { useValue: { now: () => new Date("2030-01-01T00:00:00Z") } });
+container.replace(CLOCK, { useValue: new FixedClock(Date.parse("2030-01-01T00:00:00Z")) });
 console.log("fresh resolve:", container.resolve(Reports).tasks.create("Buy milk").createdAt);
 console.log("kept by hand: ", keptByHand.tasks.create("Buy bread").createdAt);
 
@@ -607,6 +610,7 @@ Wiring is broken:
 import { createContainer } from "@zudojs/container";
 import { CLOCK, TaskService } from "./domain.js";
 import { registerTaskServices } from "./registrations.js";
+import { FixedClock } from "@zudojs/types";
 
 class ForgottenService {}
 
@@ -620,7 +624,7 @@ container.resolve(TaskService);
 console.log("started:", container.isStarted());
 
 for (const attempt of [
-  () => container.replace(CLOCK, { useValue: { now: () => new Date(0) } }),
+  () => container.replace(CLOCK, { useValue: new FixedClock(0) }),
   () => container.resolve(ForgottenService),
 ]) {
   try {
@@ -751,7 +755,7 @@ export const CLOCK = createToken<Clock>("Clock");
 
 /** Tells the runtime's container how to build the shared task services. */
 export function registerServices(container: Container): void {
-  container.registerValue(CLOCK, { now: () => new Date() });
+  container.registerValue(CLOCK, systemClock);
   container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
   container.registerFactory(TaskService, (store, clock) => new TaskService(store, clock), [TaskStore, CLOCK], {
     scope: ContainerScope.SINGLETON,
@@ -810,7 +814,7 @@ const runtime = createApp({ config: await loadConfig({}) });
 const production = runtime.context.container;
 console.log("production registrations:", await verifyContainer(production));
 try {
-  production.replace(CLOCK, { useValue: { now: () => new Date(0) } });
+  production.replace(CLOCK, { useValue: new FixedClock(0) });
 } catch (error) {
   console.log("production replace:", (error as Error).message);
 }
@@ -818,7 +822,7 @@ try {
 // A test: the same registrations, a fixed clock.
 const test = createContainer({ name: "test" });
 registerServices(test);
-test.replace(CLOCK, { useValue: { now: () => new Date("2026-09-24T09:00:00Z") } });
+test.replace(CLOCK, { useValue: new FixedClock(Date.parse("2026-09-24T09:00:00Z")) });
 console.log("test registrations:", await verifyContainer(test));
 console.log(test.resolve(TaskService).create({ title: "Buy milk" }).createdAt);
 </example>
@@ -842,7 +846,7 @@ test registrations: 3
 class InvoiceSender {
   constructor(private readonly container: Container) {}
   sendMonthly(customer: string): void {
-    const month = this.container.resolve(CLOCK).now().toISOString().slice(0, 7);
+    const month = new Date(this.container.resolve(CLOCK).now()).toISOString().slice(0, 7);
     this.container.resolve(MAILER).send(customer, `Your invoice for ${month}: ₦12,500`);
   }
 }
@@ -852,18 +856,19 @@ class InvoiceSender {
 import { createContainer } from "@zudojs/container";
 import { CLOCK, MAILER } from "./domain.js";
 import type { Clock, Mailer } from "./domain.js";
+import { FixedClock } from "@zudojs/types";
 
 class InvoiceSender {
   constructor(private readonly clock: Clock, private readonly mailer: Mailer) {}
   sendMonthly(customer: string): void {
-    const month = this.clock.now().toISOString().slice(0, 7);
+    const month = new Date(this.clock.now()).toISOString().slice(0, 7);
     this.mailer.send(customer, `Your invoice for ${month}: ₦12,500`);
   }
 }
 
 function compose(withClock: boolean) {
   const container = createContainer();
-  if (withClock) container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+  if (withClock) container.registerValue(CLOCK, new FixedClock(Date.parse("2026-09-24T09:00:00Z")));
   container.registerValue(MAILER, { send: (to, text) => console.log(`to ${to}: ${text}`) });
   container.registerFactory(InvoiceSender, (clock, mailer) => new InvoiceSender(clock, mailer), [CLOCK, MAILER]);
   return container;
@@ -892,6 +897,7 @@ import { CLOCK, MAILER, TaskService } from "./domain.js";
 import type { Clock, Mailer } from "./domain.js";
 import { registerTaskServices } from "./registrations.js";
 import { verifyContainer } from "./verify.js";
+import { FixedClock } from "@zudojs/types";
 
 interface Overrides {
   readonly clock?: Clock;
@@ -907,7 +913,7 @@ async function buildTestContainer(overrides: Overrides = {}) {
   return container;
 }
 
-const at = (iso: string): Clock => ({ now: () => new Date(iso) });
+const at = (iso: string): Clock => new FixedClock(Date.parse(iso));
 const monday = await buildTestContainer({ clock: at("2026-09-21T09:00:00Z") });
 const friday = await buildTestContainer({ clock: at("2026-09-25T17:00:00Z") });
 

@@ -132,26 +132,23 @@ export class Trie {
   get(text) { const node = this.#find(Trie.key(text)); return node?.end ? node.value : undefined; }
   countPrefix(prefix) { return this.#find(Trie.key(prefix))?.count ?? 0; }
 
-  *withPrefix(prefix) {
+  withPrefix(prefix, limit = Infinity) {
     const start = this.#find(Trie.key(prefix));
-    if (start === null) return;
+    if (start === null) return [];
+    const results = [];
     const stack = [start];
-    while (stack.length > 0) {
+    while (stack.length > 0 && results.length < limit) {
       const node = stack.pop();
       this.visits++;
-      if (node.end) yield node.value;
+      if (node.end) results.push(node.value);
       const keys = [...node.children.keys()].sort().reverse();
       for (const ch of keys) stack.push(node.children.get(ch));
     }
+    return results;
   }
 
   suggest(prefix, limit = 5) {
-    const results = [];
-    for (const value of this.withPrefix(prefix)) {
-      results.push(value);
-      if (results.length === limit) break;
-    }
-    return results;
+    return this.withPrefix(prefix, limit);
   }
 
   delete(text) {
@@ -189,8 +186,8 @@ export class Trie {
 <ul>
 <li><code>for (const ch of key)</code> walks the string by <strong>code point</strong> (a whole Unicode character), not by UTF-16 unit, so an emoji or a rare character stays one edge. <code>key[i]</code> or <code>key.split("")</code> would cut some characters in half.</li>
 <li><code>insert</code> first checks whether the word is already there. Without that, inserting "Samsung Phone 1" twice would increase every count on its path twice, and <code>size</code> would be wrong forever after.</li>
-<li><code>withPrefix</code> is a <strong>generator</strong>: it produces results one at a time, and the caller can stop whenever it likes. It walks the subtree depth-first with a stack, pushing children in reverse alphabetical order so they come off the stack alphabetically. The root's <code>count</code> is the number of words, so <code>size</code> needs no separate counter.</li>
-<li><code>suggest</code> stops after <code>limit</code> results. The customer sees five suggestions; collecting all 2,400 Samsung products first would waste most of the work.</li>
+<li><code>withPrefix</code> walks the subtree depth-first with a stack, pushing children in reverse alphabetical order so they come off the stack alphabetically. Its <code>limit</code> parameter stops the <code>while</code> loop as soon as enough results are collected, instead of building the whole list and throwing most of it away. The root's <code>count</code> is the number of words, so <code>size</code> needs no separate counter.</li>
+<li><code>suggest</code> just calls <code>withPrefix</code> with its <code>limit</code>. The customer sees five suggestions; collecting all 2,400 Samsung products first would waste most of the work.</li>
 <li><code>visits</code> counts how many nodes were touched, so you can compare costs with the naive search. <code>nodeCount</code> and <code>radixNodeCount</code> are there for the memory section.</li>
 </ul>
 <example file="basics.js" project="trie">

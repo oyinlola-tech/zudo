@@ -110,6 +110,7 @@ export function extractExamples(lesson) {
       runtime: a.runtime || "node",
       check: a.check || null,
       tscFlags: a.tsc || "",
+      timeout: a.timeout || null,
       code: dedent(m[3]),
       expected: m[4] ? dedent(m[6]) : null,
       outputKind: m[4] ? attrs(m[5]).kind || "run" : null,

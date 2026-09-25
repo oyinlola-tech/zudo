@@ -1,10 +1,11 @@
 ---
 title: Dependency injection with @zudojs/container
-description: Let a container build and share your services. Learn tokens, class, factory and value providers, the singleton, scoped and transient lifetimes, circular dependency detection, disposal, and swapping real services for fakes in tests.
+description: Let a container build and share your services: tokens, class, factory and value providers, lifetimes, cycle detection, disposal and swapping in test fakes.
 minutes: 40
-youNeed: The application runtime and lifecycle
+youNeed: "The application runtime and lifecycle" and "Types and constants: guards, ids and time"
 youBuild: A composition root for the Task API that builds the TaskService, its store and its clock
 keywords: dependency injection, zudojs container, createContainer, createToken, InjectionToken, registerClass, registerFactory, registerValue, inject, singleton, scoped, transient, createScope, CircularDependencyError, dispose, snapshot, replace, testing with fakes, composition root
+objectives: Explain dependency injection and what it makes possible in tests | Name dependencies with class tokens and createToken, and register value, class, factory and alias providers | Choose singleton, scoped or transient for a dependency, and explain why a singleton may not capture a scoped one | Read the container's circular-dependency and wiring errors, and dispose what it created | Replace a real service with a fake in a test and restore the original afterwards
 ---
 <section>
 <h2 id="why">The problem: who builds what?</h2>
@@ -36,9 +37,8 @@ true
 </ul>
 <p>The fix is called <strong>dependency injection</strong>: a class does not create what it needs, it <em>receives</em> it, usually as constructor parameters. The things it receives are its <strong>dependencies</strong>:</p>
 <example file="injected.ts">
-interface Clock {
-  now(): Date;
-}
+import { FixedClock } from "@zudojs/types";
+import type { Clock } from "@zudojs/types";
 
 class TaskStore {
   readonly tasks = new Map<number, string>();
@@ -49,11 +49,12 @@ class TaskService {
 
   create(title: string): string {
     this.store.tasks.set(this.store.tasks.size + 1, title);
-    return `${title} (created ${this.clock.now().toISOString().slice(0, 10)})`;
+    const day = new Date(this.clock.now()).toISOString().slice(0, 10);
+    return `${title} (created ${day})`;
   }
 }
 
-const fixedClock: Clock = { now: () => new Date("2026-09-23T09:00:00Z") };
+const fixedClock = new FixedClock(Date.parse("2026-09-23T09:00:00Z"));
 const store = new TaskStore();
 const service = new TaskService(store, fixedClock);
 
@@ -64,7 +65,7 @@ console.log("tasks in the shared store:", store.tasks.size);
 Buy milk (created 2026-09-23)
 tasks in the shared store: 1
 </output>
-<p>Now the caller decides. The test passed a clock that always says 23 September, so the output is predictable, and it can look inside the same store the service used.</p>
+<p>Now the caller decides. <code>Clock</code> and <code>FixedClock</code> are the ones from <a href="/learn/zudo-types-constants#clock">Types and constants</a>: <code>now()</code> returns milliseconds since 1970, and a <code>FixedClock</code> stands still. The test passed a clock that always says 23 September, so the output is predictable, and it can look inside the same store the service used.</p>
 <p>Someone still has to call all those constructors in the right order. In a small app you do it by hand in one place, called the <strong>composition root</strong>. With dozens of services, a <strong>container</strong> does it for you: you tell it how to build each thing once, and it builds, shares and cleans up. <code>@zudojs/container</code> is already a dependency of the Task API; <code>src/app.ts</code> creates one with <code>createContainer()</code> and gives it to the runtime.</p>
 </section>
 
@@ -73,20 +74,18 @@ tasks in the shared store: 1
 <p>A container stores <strong>registrations</strong>: "when someone asks for X, build it like this". The X is a <strong>token</strong>, a key that names the dependency. A token can be a class, or an <code>InjectionToken</code> made with <code>createToken</code>:</p>
 <example file="tokens.ts">
 import { createContainer, createToken } from "@zudojs/container";
-
-interface Clock {
-  now(): Date;
-}
+import { FixedClock } from "@zudojs/types";
+import type { Clock } from "@zudojs/types";
 
 const CLOCK = createToken<Clock>("Clock");
 const MAX_TASKS = createToken<number>("MaxTasks");
 
 const container = createContainer();
-container.registerValue(CLOCK, { now: () => new Date("2026-09-23T09:00:00Z") });
+container.registerValue(CLOCK, new FixedClock(Date.parse("2026-09-23T09:00:00Z")));
 container.registerValue(MAX_TASKS, 500);
 
 const clock = container.resolve(CLOCK);
-console.log(clock.now().toISOString(), container.resolve(MAX_TASKS));
+console.log(new Date(clock.now()).toISOString(), container.resolve(MAX_TASKS));
 console.log(container.has(CLOCK), container.has(createToken<Clock>("Clock")));
 </example>
 <output>
@@ -117,10 +116,8 @@ true false
 <p>Here is the Task API's <code>TaskService</code> built by the container. The service lists its dependencies in its constructor. The registration lists the matching tokens in <code>inject</code>, in the same order:</p>
 <example file="providers.ts">
 import { createContainer, createToken } from "@zudojs/container";
-
-interface Clock {
-  now(): Date;
-}
+import { FixedClock } from "@zudojs/types";
+import type { Clock } from "@zudojs/types";
 
 class TaskStore {
   readonly titles: string[] = [];
@@ -131,7 +128,7 @@ class TaskService {
 
   create(title: string): string {
     this.store.titles.push(title);
-    return `#${this.store.titles.length} ${title} at ${this.clock.now().toISOString()}`;
+    return `#${this.store.titles.length} ${title} at ${new Date(this.clock.now()).toISOString()}`;
   }
 }
 
@@ -140,7 +137,7 @@ const START = createToken<string>("StartTime");
 
 const container = createContainer();
 container.registerValue(START, "2026-09-23T09:00:00Z");
-container.registerFactory(CLOCK, (start) => ({ now: () => new Date(start) }), [START]);
+container.registerFactory(CLOCK, (start) => new FixedClock(Date.parse(start)), [START]);
 container.registerClass(TaskStore, TaskStore);
 container.registerClass(TaskService, TaskService, { inject: [TaskStore, CLOCK] });
 
@@ -180,10 +177,7 @@ Cannot auto-register class "TaskService": its constructor declares 1 parameter a
 <p>The factory's parameter <code>start</code> has no type annotation, yet TypeScript knows it is a <code>string</code>: a factory's parameters are typed from its <code>inject</code> list, in order (since <code>@zudojs/container</code> 1.2.0). So a factory whose parameters do not match its tokens does not compile. Here the two parameters are in the wrong order:</p>
 <example file="factory-check.ts" check="tsc-error">
 import { createContainer, createToken } from "@zudojs/container";
-
-interface Clock {
-  now(): Date;
-}
+import type { Clock } from "@zudojs/types";
 
 class TaskStore {
   readonly titles: string[] = [];
@@ -203,17 +197,17 @@ container.registerFactory(
 );
 </example>
 <output kind="tsc">
-factory-check.ts:20:37 - error TS2741: Property 'titles' is missing in type 'Clock' but required in type 'TaskStore'.
+factory-check.ts:17:37 - error TS2741: Property 'titles' is missing in type 'Clock' but required in type 'TaskStore'.
 
-20   (clock, store) => new TaskService(store, clock),
+17   (clock, store) => new TaskService(store, clock),
                                        ~~~~~
 
-  factory-check.ts:8:12 - 'titles' is declared here.
-    8   readonly titles: string[] = [];
+  factory-check.ts:5:12 - 'titles' is declared here.
+    5   readonly titles: string[] = [];
                  ~~~~~~
 
 
-Found 1 error in factory-check.ts:20
+Found 1 error in factory-check.ts:17
 </output>
 <p>The second token is <code>CLOCK</code>, so the second parameter is a <code>Clock</code>, even though it is called <code>store</code>. The constructor wants a <code>TaskStore</code> there, and a <code>Clock</code> has no <code>titles</code>. The names of the parameters do not matter; their order does.</p>
 <warn title="THE CLASS INJECT LIST IS NOT TYPE-CHECKED">For <code>registerClass</code>, TypeScript still does not compare <code>inject: [TaskStore, CLOCK]</code> with the constructor. If you swap the two tokens there, the code compiles and fails when it runs. Keep the <code>inject</code> list next to the constructor and in the same order, and let a test resolve every service once, so a mistake shows up in the test run. When you want the compiler to check the wiring, register the class with a factory instead: <code>registerFactory(TaskService, (store, clock) =&gt; new TaskService(store, clock), [TaskStore, CLOCK])</code>.</warn>
@@ -260,6 +254,17 @@ singleton inside a scope: true
 objects created: 5
 </output>
 <p>Count the objects: one <code>TaskStore</code>, two <code>Report</code>s (one per <code>resolve</code>), and two <code>RequestInfo</code>s (one per scope). A singleton stays the same everywhere, even when resolved through a scope.</p>
+<reason title="Which lifetime for each?">
+<p>Before reading on, pick a lifetime for each of these, and say what would break with the wrong one: the <code>TaskStore</code>; an <code>AuditLog</code> that collects what one request did and writes it when the request ends; a small <code>TitleFormatter</code> with no fields at all; and a singleton <code>TaskService</code> that wants the current request's <code>AuditLog</code> in its constructor.</p>
+<answer>
+<ul>
+<li><strong><code>TaskStore</code></strong>: singleton. Everyone must see the same tasks. As a transient, every service would get its own empty store, the "two task lists" bug.</li>
+<li><strong><code>AuditLog</code></strong>: scoped. Each request needs its own. As a singleton, every request would write into one shared log, mixing up users.</li>
+<li><strong><code>TitleFormatter</code></strong>: it holds no state, so any lifetime gives the same behaviour; transient (the default) or singleton are both fine.</li>
+<li><strong>The singleton <code>TaskService</code></strong> is built once, with the <code>AuditLog</code> of whichever request came first, and keeps it forever. Every later request would write into the first request's log. The service must not receive a scoped dependency in its constructor; the container refuses exactly that.</li>
+</ul>
+</answer>
+</reason>
 <p>The container also stops you from mixing lifetimes in a dangerous way:</p>
 <example file="lifetime-errors.ts">
 import { ContainerScope, createContainer } from "@zudojs/container";
@@ -419,7 +424,7 @@ SMTP to ada@example.com: "Water the plants" is done
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
 <p>Open <code>src/container.ts</code>. The CLI calls it the <strong>composition root</strong>, and it is the hand-written kind from the start of this lesson: <code>createDependencies</code> builds the example resource itself, with <code>new ExamplesController(new ExamplesService(new InMemoryExamplesRepository()))</code>. For one small resource with no shared parts, that is fine.</p>
-<p>The Task API's pieces need more. The same <code>TaskStore</code> must reach the runtime's modules and the task service, and a test must be able to swap the clock. That is a job for the container that <code>src/app.ts</code> already creates with <code>createContainer()</code> and hands to the runtime. So far that container is empty. The <code>TaskStore</code> from the previous lesson does not change:</p>
+<p>The Task API's pieces need more. The same <code>TaskStore</code> must reach the runtime's modules and the task service, and a test must be able to swap the clock. That is a job for the container that <code>src/app.ts</code> already creates with <code>createContainer()</code> and hands to the runtime. So far that container is empty. The <code>TaskStore</code> from <a href="/learn/zudo-runtime#task-api">the runtime lesson</a> does not change:</p>
 <file name="src/repositories/tasks.store.ts" project="task-api" browser="no">
 export type Priority = "low" | "normal" | "high";
 
@@ -456,15 +461,12 @@ export const NewTaskSchema = schema.object({
 export type NewTask = Infer<typeof NewTaskSchema>;
 </example>
 <p>Add <code>as const</code> after the list of priorities, as shown. Without it, TypeScript widens the list to <code>string[]</code>, so the inferred <code>priority</code> type would be any string instead of exactly <code>"low" | "normal" | "high"</code>, and it would not fit the store's <code>Priority</code> type.</p>
-<p>The service is the one from that lesson, changed to receive its store and a clock instead of creating them. Create <code>src/services/tasks.service.ts</code>, next to the generated <code>examples.service.ts</code>:</p>
+<p>The service is the one from that lesson, changed to receive its store and a clock instead of creating them. The clock is the <code>Clock</code> from <code>@zudojs/types</code>, already a dependency of the project: <code>now()</code> returns milliseconds, and <code>new Date(…).toISOString()</code> turns them into the stored text. Create <code>src/services/tasks.service.ts</code>, next to the generated <code>examples.service.ts</code>:</p>
 <example file="src/services/tasks.service.ts" project="task-api" browser="no">
 import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { Clock } from "@zudojs/types";
 import { NewTaskSchema } from "../dtos/tasks.dto.js";
 import type { StoredTask, TaskStore } from "../repositories/tasks.store.js";
-
-export interface Clock {
-  now(): Date;
-}
 
 export class TaskService {
   public constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
@@ -475,7 +477,7 @@ export class TaskService {
     if (clash) {
       throw new ConflictError(`A task called "${data.title}" already exists`);
     }
-    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: this.clock.now().toISOString() };
+    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: new Date(this.clock.now()).toISOString() };
     this.store.tasks.set(task.id, task);
     return task;
   }
@@ -497,11 +499,12 @@ export class TaskService {
 <example file="src/container.ts (part)" browser="no" check="skip">
 import { ContainerScope, createToken } from "@zudojs/container";
 import type { Container } from "@zudojs/container";
+import { systemClock } from "@zudojs/types";
+import type { Clock } from "@zudojs/types";
 
 import { TaskStore } from "./repositories/tasks.store.js";
 import type { HealthCheck } from "./routes/health.routes.js";
 import { TaskService } from "./services/tasks.service.js";
-import type { Clock } from "./services/tasks.service.js";
 // zudojs:container-imports:start
 // (the generated imports stay here)
 // zudojs:container-imports:end
@@ -511,7 +514,7 @@ export const CLOCK = createToken<Clock>("Clock");
 
 /** Tells the runtime's container how to build the shared task services. */
 export function registerServices(container: Container): void {
-  container.registerValue(CLOCK, { now: () => new Date() });
+  container.registerValue(CLOCK, systemClock);
   container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
   container.registerClass(TaskService, TaskService, {
     scope: ContainerScope.SINGLETON,
@@ -519,7 +522,7 @@ export function registerServices(container: Container): void {
   });
 }
 </example>
-<p>In <code>src/app.ts</code>, fill the container right after it is created, and take the store from it instead of calling <code>new TaskStore()</code>. Then the modules and the service share one store. Add the import, and replace the <code>const store = new TaskStore();</code> line from the previous lesson:</p>
+<p>In <code>src/app.ts</code>, fill the container right after it is created, and take the store from it instead of calling <code>new TaskStore()</code>. Then the modules and the service share one store. Add the import, and replace the <code>const store = new TaskStore();</code> line from the runtime lesson:</p>
 <example file="src/app.ts (part)" browser="no" check="skip">
 import { registerServices } from "./container.js";
 
@@ -530,16 +533,17 @@ import { registerServices } from "./container.js";
   const store = container.resolve(TaskStore);
   const eventBus = createEventBus();
 </example>
-<p>The runtime keeps that container as <code>runtime.context.container</code>. Code that needs the service, such as the routes in the next lesson, asks it: <code>runtime.context.container.resolve(TaskService)</code>. This check script does the same with a container of its own, and swaps the clock for a fixed one, exactly as a test would. Save it as <code>src/check-container.ts</code>:</p>
+<p>The runtime keeps that container as <code>runtime.context.container</code>. Code that needs the service, such as the routes in <a href="/learn/zudo-http">Routes, requests and responses</a>, asks it: <code>runtime.context.container.resolve(TaskService)</code>. This check script does the same with a container of its own, and swaps the clock for a fixed one, exactly as a test would. Save it as <code>src/check-container.ts</code>:</p>
 <example file="src/check-container.ts" browser="no" check="skip">
 import { createContainer } from "@zudojs/container";
+import { FixedClock } from "@zudojs/types";
 import { CLOCK, registerServices } from "./container.js";
 import { TaskStore } from "./repositories/tasks.store.js";
 import { TaskService } from "./services/tasks.service.js";
 
 const container = createContainer();
 registerServices(container);
-container.replace(CLOCK, { useValue: { now: () => new Date("2026-09-23T09:00:00Z") } });
+container.replace(CLOCK, { useValue: new FixedClock(Date.parse("2026-09-23T09:00:00Z")) });
 
 const service = container.resolve(TaskService);
 console.log(service.create({ title: "  Buy milk " }));
@@ -640,5 +644,5 @@ second req-2 req-2 false
 <li>Cycles fail with <code>CircularDependencyError</code>. <code>dispose()</code> cleans up singletons and scopes, newest first.</li>
 <li>For tests: <code>replace</code> a registration with a fake, then <code>restoreSnapshot</code>.</li>
 </ul>
-<p>The Task API now has a working <code>TaskService</code>, but nothing can reach it from the network yet. The next lesson gives it HTTP routes.</p>
+<p>The Task API now has a working <code>TaskService</code>, but its wiring lives in two files, and nothing can reach it from the network yet. Next, <a href="/learn/zudo-di-architecture">DI architecture with ZudoJS</a> decides where every object is built and checks the wiring at startup; the lesson after it adds HTTP routes.</p>
 </section>

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Authentication — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-auth.md" title="Markdown version">
-  <meta name="description" content="Let users log in to the Task API. Hash passwords, issue and check JWTs, keep server-side sessions with a real logout, protect routes in @zudojs/http, and stop password guessing with lockouts and rate limits, using @zudojs/auth and @zudojs/crypto.">
+  <meta name="description" content="Let users log in to the Task API: hash passwords, issue JWTs, keep sessions with real logout, protect routes, and stop guessing with lockouts and limits.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-auth">
@@ -97,7 +97,7 @@
         <div class="lx-hero-tag">LEVEL 13 · LESSON 7 OF 12</div>
         <p class="lx-hero-part">Security and identity <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>Authentication</h1>
-        <p class="lx-hero-lead">Let users log in to the Task API. Hash passwords, issue and check JWTs, keep server-side sessions with a real logout, protect routes in @zudojs/http, and stop password guessing with lockouts and rate limits, using @zudojs/auth and @zudojs/crypto.</p>
+        <p class="lx-hero-lead">Let users log in to the Task API: hash passwords, issue JWTs, keep sessions with real logout, protect routes, and stop guessing with lockouts and limits.</p>
         <ul class="lx-hero-meta">
           <li><strong>55 min</strong> to read and try</li>
           <li><strong>You need:</strong> The Task API project, and the lessons on routes and middleware</li>
@@ -109,6 +109,17 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Hash and verify passwords with hashPassword and verifyPassword, and upgrade a hash with needsRehash</li>
+          <li>Issue and verify JWT access tokens tied to a server-side session</li>
+          <li>End one session with logout and every session of a user with logoutAll</li>
+          <li>Rotate refresh tokens and revoke every session on a detected replay</li>
+          <li>Protect routes with a bearer-token middleware that never trusts the request body for ownership</li>
+          <li>Stop password guessing with per-account lockouts and a per-IP rate limit</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="who">Who is calling?</h2>
@@ -934,6 +945,8 @@ replay -&gt; 401 Refresh token has already been used
 new token -&gt; 401 Session is no longer active</pre></div>
 </figure>
 <p>The replay is refused with a <code>TokenRevokedError</code>: status 401 and code <code>ERR_TOKEN_REVOKED</code>, because the client has to log in again. Even the new, honest token died. That is on purpose: the server cannot tell whether the thief or the user made the first refresh, so it logs everyone out and the real user simply logs in again.</p>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>A stolen refresh token gets used once, by the thief, before the real user ever tries. What should happen next?</h3><p>Trace it: a thief copies Ada's refresh token from a badly stored cookie. The thief calls <code>auth.refresh</code> first and gets a fresh pair. An hour later Ada's own client, still holding the old refresh token, tries to refresh too. The service sees a token that has already been used. It cannot ask the token who used it. What are its choices, and why end every session instead of just rejecting the second call?</p><details class="lx-solution"><summary>Show the reasoning</summary><p>Rejecting only the second call and moving on would leave the thief's fresh session alive and Ada logged out — the attacker keeps access, the victim loses it, and nobody sees an alert. The service has exactly one reliable signal here: <em>this refresh token was already redeemed once</em>, which can only happen if two parties have had it. It cannot tell which of the two calls was legitimate, so treating the situation as a compromise and revoking every session tied to that user is the only response that cannot leave the attacker holding a valid session.</p>
+<p>The cost is real: Ada is logged out everywhere and has to log in again, even though her own client did nothing wrong. That is the trade a single-use, rotating refresh token makes on purpose — a false alarm costs one login; a token that could be silently reused by an attacker costs the account. It is also why the standalone <code>refreshAccessToken</code> below is dangerous for real users: without a revocation store, there is no way to detect the reuse in the first place.</p></details></div>
 <div class="callout callout-warning"><p class="lx-callout-label">COMMON MISTAKE</p>The package also exports a standalone <code>refreshAccessToken</code>. It only checks the signature and expiry: no rotation, no session, no revocation. A stolen refresh token then works for 7 days. For users, always use <code>auth.refresh</code>.</div>
 </section>
 
