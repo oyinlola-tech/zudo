@@ -1,14 +1,15 @@
 ---
 title: "BookStore API: HTTP and routing"
-description: Start a TypeScript backend with no framework at all. Set up the folder, read configuration from the environment, write a small typed router, JSON helpers and error responses, and serve books and authors over HTTP.
+description: Start a TypeScript backend with no framework: a project folder, checked configuration, a typed router, JSON helpers and error responses for books and authors.
 minutes: 45
-youNeed: The TypeScript lessons, plus "An HTTP server with no framework" and "Designing a REST API"
+youNeed: TypeScript on Node.js, HTTP in depth and Designing a REST API
 youBuild: A BookStore API on node:http and tsx that serves authors and books as JSON
 keywords: typescript backend without framework, node http typescript, tsx, typed router, route parameters, json body, error responses, project structure, environment variables, PORT
+objectives: Set up a TypeScript backend project with tsx, @types/node and a strict tsconfig | Load and check configuration from the environment once, and fail fast on a bad value | Write a typed router that tells 404 from 405 with a discriminated union | Read JSON bodies with a size limit and turn every failure into a status code and a JSON body | Keep node:http at the edge, so handlers take and return plain, testable objects
 ---
 <section>
 <h2 id="project">The project</h2>
-<p>For the next three lessons you build one backend from scratch: a <strong>BookStore API</strong>. It is written in TypeScript, and it uses no framework, only Node.js itself. In <a href="/learn/node-http">An HTTP server with no framework</a> you wrote a small server in plain JavaScript. This one is bigger, typed, and split into files the way a real project is.</p>
+<p>For the next three lessons you build one backend from scratch: a <strong>BookStore API</strong>. It is written in TypeScript, and it uses no framework, only Node.js itself. In <a href="/learn/node-http">An HTTP server with no framework</a> you wrote a small server in plain JavaScript, and in <a href="/learn/ts-node">TypeScript on Node.js</a> you learned what Node's types promise and how to narrow them. Here those pieces come together in a bigger server, split into files the way a real project is.</p>
 <p>The API has four <strong>resources</strong>, the "things" a REST API is about (you designed URLs like these in <a href="/learn/rest-design">Designing a REST API</a>):</p>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Resource</th><th>Routes</th><th>Built in</th></tr></thead>
@@ -19,7 +20,7 @@ keywords: typescript backend without framework, node http typescript, tsx, typed
 <tr><td>users</td><td><code>POST /users</code>, <code>POST /sessions</code> (log in)</td><td><a href="/learn/bookstore-auth">authentication and tests</a></td></tr>
 </tbody>
 </table></div>
-<p>Why no framework? Because you will write, by hand, every job a framework does for you. At the end of the third lesson you will look back at the code and list what hurt. That list is the reason frameworks, and ZudoJS, exist.</p>
+<p>Why no framework? Because you will write, by hand, every job a framework does for you. At the end of the third lesson you will look back at the code and list what hurts. <a href="/learn/ts-api-layers">Type-safe API layers</a> then refactors the BookStore into typed layers, which fixes part of that list. The rest of the list is the reason frameworks, and ZudoJS, exist.</p>
 </section>
 
 <section>
@@ -32,7 +33,7 @@ $ npm init -y
 Wrote to ~/bookstore/package.json:
 …
 $ npm pkg set type=module
-$ npm install -D typescript tsx @types/node
+$ npm install -D typescript tsx @types/node@24
 
 added 7 packages, and audited 8 packages in 7s
 
@@ -42,7 +43,7 @@ npm warn install-scripts   esbuild@0.28.2 (postinstall: node install.js)
 npm warn install-scripts
 npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
 </shell>
-<p><code>npm pkg set type=module</code> tells Node.js that the <code>.js</code> files are ES modules, so <code>import</code> works. The esbuild warning is harmless; you saw it in <a href="/learn/npm-packages">npm and packages</a>. Now open <code>package.json</code> and give it three scripts. Your version numbers may be higher:</p>
+<p><code>npm pkg set type=module</code> tells Node.js that the <code>.js</code> files are ES modules, so <code>import</code> works. The esbuild warning is harmless; you saw it in <a href="/learn/npm-packages">npm and packages</a>. <code>@types/node@24</code> pins Node's types to the Node.js version you run, as <a href="/learn/ts-node#types-node">TypeScript on Node.js</a> recommended. Now open <code>package.json</code> and give it three scripts. Your version numbers may be higher:</p>
 <file name="package.json" project="store">
 {
   "name": "bookstore",
@@ -55,7 +56,7 @@ npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/node": "^26.6.2",
+    "@types/node": "^24.13.6",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }
@@ -99,8 +100,8 @@ npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install
 
 <section>
 <h2 id="config">Configuration from the environment</h2>
-<p><strong>Configuration</strong> is every value that can change between your laptop and a server: the port, the database, secrets. You never write those into the code. They come from <strong>environment variables</strong>, which Node.js gives you in <code>process.env</code> (you met it in <a href="/learn/node-runtime">What Node.js is</a>).</p>
-<p>Environment variables are always strings, or missing. So one module reads them, checks them once at startup, and turns them into a typed object. Everything else uses that object:</p>
+<p><strong>Configuration</strong> is every value that can change between your laptop and a server: the port, the database, secrets. You never write those into the code. They come from <strong>environment variables</strong>, which Node.js gives you in <code>process.env</code>.</p>
+<p>Environment variables are always strings, or missing. So, as in <a href="/learn/ts-node#env">TypeScript on Node.js</a>, one module reads them, checks them once at startup, and turns them into a typed object. Everything else uses that object. The BookStore needs only a port for now:</p>
 <example file="src/config.ts" project="store">
 export interface Config {
   readonly port: number;
@@ -111,7 +112,7 @@ type Env = Readonly<Record<string, string | undefined>>;
 export function loadConfig(env: Env): Config {
   const raw = env["PORT"] ?? "3000";
   const port = Number(raw);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  if (!/^\d{1,5}$/.test(raw) || port > 65535) {
     throw new Error(`PORT must be a whole number from 0 to 65535, got "${raw}"`);
   }
   return { port };
@@ -135,7 +136,7 @@ try {
 { port: 8080 }
 PORT must be a whole number from 0 to 65535, got "eighty"
 </output>
-<p>No <code>PORT</code> means the default, 3000. A bad value stops the program with a clear message. This is called <strong>failing fast</strong>: better to refuse to start than to start with a broken setting and fail later in a confusing way.</p>
+<p>No <code>PORT</code> means the default, 3000. A bad value stops the program with a clear message. The pattern <code>/^\d{1,5}$/</code> accepts only digits, because <code>Number()</code> alone would also accept <code>""</code>, <code>" 80"</code> and <code>"8e3"</code>. This is called <strong>failing fast</strong>: better to refuse to start than to start with a broken setting and fail later in a confusing way.</p>
 </section>
 
 <section>
@@ -258,6 +259,20 @@ GET /authors not found
 
 <section>
 <h2 id="errors">Errors and JSON</h2>
+<reason title="Which errors may the client see?">
+<p>A request can fail in very different ways. For each one, decide what the client should receive, and what only the server's log should see:</p>
+<ul>
+<li>The client asks for <code>/books/99</code>, and there is no book 99.</li>
+<li>The client sends <code>{"name": 42}</code> to <code>POST /authors</code>.</li>
+<li>A handler has a bug and reads a property of <code>undefined</code>.</li>
+<li>Later, the database refuses a query, and its error message contains the table name and part of the SQL.</li>
+</ul>
+<answer>
+<p>The first two are <strong>expected</strong> failures: your code detected them on purpose. The client caused them and can fix them, so it gets a specific status (404, 400) and a message written for it.</p>
+<p>The last two are <strong>unexpected</strong>: bugs or broken infrastructure. The client cannot fix them, and the details (a stack trace, a table name, a piece of SQL) tell an attacker how your code is built. The client gets a plain 500 with a generic message; the full error goes to the server's log, where you can read it.</p>
+<p>So the code needs a way to tell the two apart. Errors you throw on purpose get their own class; anything else is treated as a bug.</p>
+</answer>
+</reason>
 <p>Every answer, even a failure, is a status code and a JSON body. An <code>HttpError</code> carries both, so any code can <code>throw</code> one and one function turns it into a response:</p>
 <example file="src/http/errors.ts" project="store" browser="no">
 import type { ApiResponse } from "./types.js";
@@ -296,9 +311,10 @@ export async function readJson(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
-    size += (chunk as Buffer).length;
+    if (!Buffer.isBuffer(chunk)) throw new TypeError("expected the body as bytes");
+    size += chunk.length;
     if (size > MAX_BODY_BYTES) throw new HttpError(413, "body_too_large", "The body is too large");
-    chunks.push(chunk as Buffer);
+    chunks.push(chunk);
   }
   if (size === 0) return undefined;
   if (!request.headers["content-type"]?.startsWith("application/json")) {
@@ -326,7 +342,7 @@ export function sendJson(response: ServerResponse, result: ApiResponse): void {
 <li><strong>415 Unsupported Media Type</strong>: a body that is not labelled as JSON is refused.</li>
 <li><strong>400 Bad Request</strong>: <code>JSON.parse</code> throws on broken JSON, and that becomes a clear error instead of a crash.</li>
 </ul>
-<p>A request stream gives <code>Buffer</code> chunks, but its type says <code>any</code>, so <code>chunk as Buffer</code> tells TypeScript what they are.</p>
+<p>A request stream gives <code>Buffer</code> chunks, but its type says <code>any</code>. <code>Buffer.isBuffer</code> proves it instead of claiming it with <code>as</code>, exactly as <code>readBody</code> did in <a href="/learn/ts-node#http">TypeScript on Node.js</a>. If it ever fails, that is a bug in the server, so it throws a plain <code>TypeError</code>, which becomes a 500.</p>
 </section>
 
 <section>
@@ -497,17 +513,18 @@ server.listen(config.port, () => {
   console.log(`BookStore API on http://localhost:${config.port}`);
 });
 </example>
-<p>To check the whole thing, this script starts the app on <strong>port 0</strong>, which means "any free port, you choose". Then it sends real requests with <code>fetch</code>, prints the answers, and closes the server:</p>
+<p>To check the whole thing, this script starts the app on <strong>port 0</strong>, which means "any free port, you choose". Then it sends real requests with <code>fetch</code>, prints the answers, and closes the server. <code>server.address()</code> can return <code>null</code> or a string as well as a port (<a href="/learn/ts-node#http">TypeScript on Node.js</a>), so the script checks before it reads <code>port</code>:</p>
 <example file="try-server.ts" project="store" browser="no">
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
 
 import { createApp } from "./src/app.js";
 import { createRouter } from "./src/routes/index.js";
 
 const server = createApp(createRouter()).listen(0);
 await once(server, "listening");
-const { port } = server.address() as AddressInfo;
+const address = server.address();
+if (address === null || typeof address === "string") throw new Error("expected a TCP address");
+const { port } = address;
 
 async function call(method: string, path: string, body?: unknown): Promise<void> {
   const response = await fetch(`http://localhost:${port}${path}`, {
@@ -576,7 +593,6 @@ $ curl -X POST http://localhost:3000/authors -d 'name=Octavia'
 <p>Add this route inside <code>addAuthorRoutes</code>, and import <code>toId</code> from <code>../http/params.js</code>. Here it is in its own file so you can run it:</p>
 <example file="try-author-by-id.ts" project="store" browser="no">
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
 
 import { createApp } from "./src/app.js";
 import { HttpError } from "./src/http/errors.js";
@@ -592,7 +608,9 @@ const router = createRouter().add("GET", "/authors/:id", (request) => {
 
 const server = createApp(router).listen(0);
 await once(server, "listening");
-const { port } = server.address() as AddressInfo;
+const address = server.address();
+if (address === null || typeof address === "string") throw new Error("expected a TCP address");
+const { port } = address;
 for (const path of ["/authors/2", "/authors/9", "/authors/abc"]) {
   const response = await fetch(`http://localhost:${port}${path}`);
   console.log(path, response.status, await response.text());
@@ -639,5 +657,5 @@ Node.js v24.19.0
 <li>The router matches method and path patterns like <code>/books/:id</code>, and tells 404 apart from 405.</li>
 <li>Every failure is a status code and a JSON body. Bodies are size-limited and must be JSON. Unknown errors become a generic 500.</li>
 </ul>
-<p>Next, the data moves into PostgreSQL, and every request body gets checked properly.</p>
+<p>Next: <a href="/learn/bookstore-data">BookStore API: validation and PostgreSQL</a>, where the data moves into PostgreSQL and every request body gets checked properly.</p>
 </section>
