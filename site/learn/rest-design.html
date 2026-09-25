@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Designing a REST API — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/rest-design.md" title="Markdown version">
-  <meta name="description" content="Turn the Task API into a well-designed REST API: resources and URLs, a written contract, filtering, sorting, offset and cursor pagination, versioning and one consistent error format.">
+  <meta name="description" content="Design the Task API as a REST API: resource URLs, a written contract, filtering and sorting, offset and cursor pages, versions and one error format.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/rest-design">
@@ -102,7 +102,7 @@
         <div class="lx-hero-tag">LEVEL 7 · LESSON 2 OF 15</div>
         <p class="lx-hero-part">HTTP and REST <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>Designing a REST API</h1>
-        <p class="lx-hero-lead">Turn the Task API into a well-designed REST API: resources and URLs, a written contract, filtering, sorting, offset and cursor pagination, versioning and one consistent error format.</p>
+        <p class="lx-hero-lead">Design the Task API as a REST API: resource URLs, a written contract, filtering and sorting, offset and cursor pages, versions and one error format.</p>
         <ul class="lx-hero-meta">
           <li><strong>40 min</strong> to read and try</li>
           <li><strong>You need:</strong> The HTTP in depth lesson</li>
@@ -114,6 +114,17 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Name resources with plural-noun URLs and map CRUD onto HTTP methods</li>
+          <li>Write an API contract before the code</li>
+          <li>Validate query parameters and sort only by allow-listed fields</li>
+          <li>Choose between offset and cursor pagination for a given screen or job</li>
+          <li>Send every error as RFC 9457 problem details</li>
+          <li>Tell additive changes from breaking ones and version an API in its path</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="rest">Resources, not actions</h2>
@@ -154,12 +165,22 @@
 </tbody>
 </table></div>
 <p>A task looks like <code>{"id": 7, "title": "Buy milk", "done": false, "createdAt": "2026-09-07"}</code>. A list comes wrapped in an object, <code>{"data": [...], "meta": {...}}</code>, rather than as a bare array. That leaves room to add information such as the total count later without breaking anyone. Every error has the same shape, which you will build in the <a href="#errors">errors section</a>.</p>
-<div class="callout callout-tip"><p class="lx-callout-label">TIP</p>Later in the course you will describe this contract in a machine-readable format called OpenAPI, and generate it from your code in the <a href="/learn/zudo-openapi">OpenAPI lesson</a>.</div>
+<div class="callout callout-tip"><p class="lx-callout-label">TIP</p>Later you will write this contract in a machine-readable format called OpenAPI (<a href="/learn/api-contracts">API contracts</a>), and generate it from your ZudoJS code (<a href="/learn/zudo-openapi">OpenAPI documents</a>).</div>
 </section>
 
 <section>
 <h2 id="query">Filtering and sorting with query parameters</h2>
 <p>A list endpoint gets its options from the <strong>query string</strong>, the part of the URL after <code>?</code>. <code>URLSearchParams</code> reads it for you. Every value arrives as a string (or <code>null</code> when missing), and every value comes from outside, so check each one.</p>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>What can a query string contain?</h3><p>The list endpoint will accept <code>?done=false&amp;q=milk&amp;sort=-createdAt&amp;limit=20&amp;offset=40</code>. Before writing the parser, list what a client (or an attacker) could send instead, and what the server should do with each:</p>
+<ul>
+<li><code>limit=0</code>, <code>limit=500</code>, <code>limit=-1</code>, <code>limit=abc</code>, <code>limit=2.5</code></li>
+<li><code>done=yes</code></li>
+<li><code>sort=password</code> or <code>sort=title; drop table tasks</code></li>
+<li>Two problems in one request</li>
+<li>No parameters at all</li>
+</ul><details class="lx-solution"><summary>Show the reasoning</summary><p>Every value arrives as text, so each one is converted and checked. <code>limit</code> must be a whole number in a range: zero pages are useless, and <code>limit=500</code> (or a million) lets one request make the server read and send the whole table, so there is a maximum. <code>done</code> accepts exactly <code>true</code> or <code>false</code>; guessing that <code>yes</code> means true invites clients to depend on your guesses.</p>
+<p><code>sort</code> is the dangerous one. It names a <em>field</em>, and a field name will end up in code or in SQL, where a placeholder cannot protect it. So it is checked against an <strong>allow-list</strong> of sortable fields, and anything else is refused. Refusing is better than silently ignoring: a client that misspelt <code>createdAt</code> learns it at once.</p>
+<p>When there are several problems, report all of them in one answer, so the client does not fix one, retry and hit the next. And with no parameters at all, every option has a sensible default: the first 20 tasks, in id order.</p></details></div>
 <p>Sorting needs special care: never sort by whatever field name the client sends. Keep an <strong>allow-list</strong> of fields that may be sorted. A leading minus sign, <code>sort=-createdAt</code>, is the usual way to ask for descending order.</p>
 <p>This module is the core of the list endpoint. It has no Node APIs in it, so you can run it in the browser:</p>
 <figure class="lx-example" data-index="0" data-file="tasks.js" data-project="api">
@@ -417,6 +438,7 @@ page 3: { data: [ 1 ], nextCursor: null }</pre></div>
 <tr><td>Good for</td><td>Admin tables with page numbers</td><td>Feeds, infinite scroll, syncing</td></tr>
 </tbody>
 </table></div>
+<p>A cursor on a sort column other than the id (newest first, cheapest first) must also carry the id, to break ties. <a href="/learn/api-pagination-versioning">Pagination and versioning in depth</a>, in the API engineering course, builds that cursor and measures what large offsets really cost.</p>
 </section>
 
 <section>
@@ -457,7 +479,7 @@ export function sendProblem(res, body) {
 <h2 id="versioning">Versioning</h2>
 <p>A <strong>breaking change</strong> is one that can make a working client fail: removing or renaming a field, changing a field's type, adding a required input, or changing what a status code means. When you must make one, publish a new <strong>version</strong> of the API and keep the old one running until clients have moved.</p>
 <p>The most common way is a version in the path: <code>/v1/tasks</code>, later <code>/v2/tasks</code>. It is visible in every log line and easy to route. Some APIs use a header instead, such as <code>Accept-Version: 2</code>.</p>
-<p><strong>Additive</strong> changes do not need a new version: a new endpoint, a new optional query parameter, or a new field in a response. That only works if clients ignore fields they do not know, which is another reason to wrap lists in <code>{"data": ...}</code> and to write your own clients that way.</p>
+<p><strong>Additive</strong> changes do not need a new version: a new endpoint, a new optional query parameter, or a new field in a response. That only works if clients ignore fields they do not know, which is another reason to wrap lists in <code>{"data": ...}</code> and to write your own clients that way. How to run two versions from one codebase, and how to retire an old one, is part of <a href="/learn/api-pagination-versioning#breaking">Pagination and versioning in depth</a>.</p>
 </section>
 
 <section>
@@ -647,6 +669,7 @@ since=yesterday [ { param: 'since', message: 'must be a date like 2026-09-05' } 
 <li>Send every error as RFC 9457 problem details (<code>application/problem+json</code>) and never leak internals.</li>
 <li>Put the version in the path (<code>/v1</code>). Additive changes need no new version; breaking changes do.</li>
 </ul>
+<p>Next: <a href="/learn/databases">How databases work</a>, where the tasks leave the array and move into PostgreSQL.</p>
 </section>
       </div>
 

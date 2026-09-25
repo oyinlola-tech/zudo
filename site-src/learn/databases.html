@@ -1,10 +1,11 @@
 ---
 title: How databases work
-description: Why a backend keeps its data in a database, how relational databases organise it into tables and relationships, and what keys, constraints, indexes, transactions and migrations do, with real PostgreSQL running inside Node.js.
+description: Why a backend needs a database, and how tables, keys, relationships, constraints, indexes, transactions and migrations work, on real PostgreSQL in Node.js.
 minutes: 45
 youNeed: The Designing a REST API lesson
 youBuild: A PostgreSQL schema for users, tasks and tags, with a tiny migration runner
 keywords: what is a database, sql vs nosql, relational database, postgresql, pglite, primary key, foreign key, one-to-many, many-to-many, join table, index, constraint, transaction, acid, migration
+objectives: Explain what a database gives a backend that a JSON file cannot | Create tables with typed columns, primary keys and foreign keys in PostgreSQL | Model one-to-one, one-to-many and many-to-many relationships | Let constraints and indexes protect and speed up your data | Group statements into an all-or-nothing transaction | Change a schema safely with numbered migrations
 ---
 <section>
 <h2 id="why">Why a database?</h2>
@@ -143,7 +144,7 @@ export const schema = `
 <li>In <code>profiles</code>, <code>user_id</code> is both the primary key and the foreign key, so each user has at most one profile: one-to-one.</li>
 <li><code>task_tags</code> is the join table. Its primary key is the <em>pair</em> <code>(task_id, tag_id)</code>, so the same tag cannot be added to the same task twice.</li>
 </ul>
-<p>Fill it with data and ask for Ada's tasks with their tags. The query uses a <strong>join</strong>, which combines rows from several tables. <a href="/learn/sql-advanced">The joins lesson</a> explains it properly; for now, read <code>join ... on</code> as "match rows where these columns are equal":</p>
+<p>Fill it with data and ask for Ada's tasks with their tags. The query uses a <strong>join</strong>, which combines rows from several tables. <a href="/learn/sql-advanced">Joins, grouping and transactions</a> explains it properly; for now, read <code>join ... on</code> as "match rows where these columns are equal":</p>
 <example file="relations.js" project="rel" browser="no">
 import { PGlite } from "@electric-sql/pglite";
 import { schema } from "./schema.js";
@@ -193,8 +194,21 @@ insert or update on table "tasks" violates foreign key constraint "tasks_user_id
 <ol>
 <li>The join followed the links from tasks through <code>task_tags</code> to <code>tags</code>. "Write report" appears twice because it has two tags.</li>
 <li>A task for user 99, who does not exist, was refused. Without the foreign key, that orphan row would sit in your data forever.</li>
-<li>Deleting Ada deleted her profile, her two tasks and their tag links, thanks to <code>on delete cascade</code>. Only Alan's task is left. (<code>count(*)::int</code> converts the count to a normal number; <code>::</code> is how PostgreSQL changes a value's type.)</li>
+<li>Deleting Ada deleted her profile, her two tasks and their tag links, thanks to <code>on delete cascade</code>. Only Alan's task is left. (<code>count(*)::int</code> converts the count to a normal <code>integer</code>; <code>::</code> is how PostgreSQL changes a value's type. <code>count</code> itself returns a 64-bit <code>bigint</code>, which <a href="/learn/sql-advanced#node-postgres">Joins, grouping and transactions</a> explains.)</li>
 </ol>
+<reason title="What should happen to the tasks?">
+<p><code>on delete cascade</code> is one choice. A foreign key can also <strong>refuse</strong> the delete (the default, <code>on delete no action</code>; <code>on delete restrict</code> is nearly the same), or <strong>set null</strong> in the rows that pointed at the deleted one. For each case, pick one and say why:</p>
+<ul>
+<li>A user closes their account. What happens to their tasks?</li>
+<li>A project is deleted. Its tasks should survive.</li>
+<li>A tag is deleted. What happens to the rows in <code>task_tags</code>?</li>
+<li>A shop customer is deleted, but the law says their invoices must be kept for six years.</li>
+</ul>
+<answer>
+<p><strong>User's tasks:</strong> <code>cascade</code>. The tasks mean nothing without their owner, and keeping them would keep personal data the user asked you to remove. <strong>Project's tasks:</strong> <code>set null</code>, on a nullable <code>project_id</code>: the tasks stay and simply belong to no project. (The first exercise builds this.) <strong>Tag links:</strong> <code>cascade</code>. A row in a join table only says "this tag is on this task"; with the tag gone, the link is meaningless.</p>
+<p><strong>Customer with invoices:</strong> the default, refuse. The delete fails with a foreign key error, and that is the point: the database will not let a bug or a hasty admin destroy records you are required to keep. The application must do something deliberate instead, such as anonymising the customer's name and e-mail while keeping the invoices. Choose the rule when you create the table: it decides what the database does on the day someone deletes by mistake.</p>
+</answer>
+</reason>
 </section>
 
 <section>
@@ -253,6 +267,7 @@ await db.exec(`
   );
   insert into tasks (user_id, title)
     select n % 1000, 'Task ' || n from generate_series(1, 50000) as n;
+  set default_statistics_target = 500;
   analyze tasks;
 `);
 
@@ -276,7 +291,7 @@ Bitmap Heap Scan on tasks
   ->  Bitmap Index Scan on tasks_user_id_idx
         Index Cond: (user_id = 42)
 </output>
-<p><code>generate_series</code> produced 50,000 rows to make the difference visible. Before the index, PostgreSQL planned a <code>Seq Scan</code>: read all 50,000 rows. After it, a <code>Bitmap Index Scan</code> finds the 50 matching rows in the index first, and the heap scan fetches just those. <a href="/learn/sql-advanced">The joins lesson</a> measures the real time difference.</p>
+<p><code>generate_series</code> produced 50,000 rows to make the difference visible. <code>analyze</code> collects statistics about the data, which the planner uses to choose a plan; <code>default_statistics_target = 500</code> makes it read every row here instead of a random sample, so the plan is the same on every run. Before the index, PostgreSQL planned a <code>Seq Scan</code>: read all 50,000 rows. After it, a <code>Bitmap Index Scan</code> finds the 50 matching rows in the index first, and the heap scan fetches just those. <a href="/learn/sql-advanced#performance">Joins, grouping and transactions</a> measures the real time difference, and <a href="/learn/db-indexes">Indexes and query plans</a>, in the Database engineering course, goes much deeper.</p>
 <p>Indexes are not free: each one takes disk space and makes every insert and update a little slower, because the index must be updated too. Add them for the columns you actually search, filter, join and sort by.</p>
 </section>
 
@@ -326,6 +341,7 @@ failed: new row for relation "activity" violates check constraint "activity_mess
 </output>
 <p>The first call updated the owner, then the log insert broke the <code>check</code> constraint. Because both statements ran in one transaction, the owner change was undone too: the task still belongs to Ada. The second call succeeded, and both changes were saved together.</p>
 <p>Look at the log row's id: 2, not 1. The failed attempt used up number 1, and generated numbers are never handed back, even on rollback. Ids can have gaps, so never use them to count rows.</p>
+<p>The "I" in ACID has levels, and two transactions that read and write the same rows at the same moment can still get in each other's way. <a href="/learn/db-transactions">Transactions, isolation and locks</a> shows those cases and how to prevent them.</p>
 </section>
 
 <section>
@@ -371,7 +387,7 @@ second run:
 [ 'id', 'title', 'done', 'due_date' ]
 </output>
 <p>The second run did nothing, because all three ids were already in <code>schema_migrations</code>. Each migration runs inside a transaction, so a failing one leaves no half-changed table behind. <code>information_schema</code> is a set of built-in tables that describe your own database.</p>
-<p>Two rules keep migrations safe. Never edit a migration that has already run somewhere: write a new one. And keep them in version control with your code, which is the <a href="/learn/git">Git lesson</a>. Real projects use a migration tool instead of writing the runner themselves; ZudoJS has one, shown in <a href="/learn/zudo-database">the ZudoJS database lesson</a>.</p>
+<p>Two rules keep migrations safe. Never edit a migration that has already run somewhere: write a new one. And keep them in version control with your code (<a href="/learn/git">Git and GitHub</a>). Real projects use a migration tool instead of writing the runner themselves; ZudoJS has one, shown in <a href="/learn/zudo-database">Databases with @zudojs/database</a>. Changing a big production table without taking the site down is its own skill: <a href="/learn/db-operations#migrations">Operating databases</a> covers it.</p>
 </section>
 
 <section>
@@ -435,4 +451,5 @@ await db.close();
 <li>Indexes make lookups fast and writes a little slower. Index the columns you filter and join by, including foreign keys.</li>
 <li>A transaction is all or nothing (ACID). Migrations change the schema in small, numbered steps that each run once.</li>
 </ul>
+<p>Next: <a href="/learn/sql-basics">SQL with PostgreSQL</a>, where you install a real PostgreSQL server and learn the SQL you will write every day.</p>
 </section>

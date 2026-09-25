@@ -553,34 +553,42 @@ plugin: @mycompany/zudo-plugin-fx-rates | status: 500 | cause: rates API returne
 <section>
 <h2 id="timeouts">A plugin that never answers</h2>
 <p>A failing plugin is the easy case. Worse is a plugin whose <code>start</code> waits for a service that never answers, such as a rates API behind a firewall that drops packets. Without a limit, the whole application waits with it. <code>hookTimeout</code> is meant to fail any hook that takes longer, and the failure should roll back like any other. Try it the way many hosts start: plugins first, before the HTTP server listens.</p>
-<example file="hang.ts" project="plugin" browser="no">
-import { PluginManager } from "@zudojs/plugins";
-import { createHost, createMemoryTransport } from "./src/host/host.js";
-import { createMailerPlugin } from "./src/mailer/mailer.plugin.js";
+<file name="hang.mjs" project="plugin">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
 
-const { context } = createHost();
 const manager = new PluginManager({ hookTimeout: 200 });
-manager.register(createMailerPlugin(createMemoryTransport().transport));
 manager.register({
-  metadata: { name: "@mycompany/zudo-plugin-fx-rates", version: "1.0.0" },
-  dependencies: [{ name: "@mycompany/zudo-plugin-mailer" }],
-  start: () => new Promise<void>(() => {}),
+  metadata: { name: "mailer" },
+  start: (context) => context.onDispose(() => console.log("mailer: connection closed")),
+});
+manager.register({
+  metadata: { name: "fx-rates" },
+  dependencies: [{ name: "mailer" }],
+  start: () => new Promise(() => {}),
 });
 
 try {
-  await manager.start(context);
+  await manager.start(createPluginContext({ name: "shopflow" }));
 } catch (error) {
-  console.log("caught:", (error as Error).name);
+  console.log("caught:", error.name);
 }
-console.log("this line never runs");
+console.log("start-up finished");
+</file>
+<p>Run it the way production runs compiled code, with plain <code>node</code>, and look at everything the process reports:</p>
+<example file="run-hang.ts" project="plugin" browser="no">
+import { spawnSync } from "node:child_process";
+
+const run = spawnSync(process.execPath, ["hang.mjs"], { encoding: "utf8" });
+console.log("exit code:", run.status);
+console.log("stdout:", JSON.stringify(run.stdout.trim()));
+console.log("stderr:", run.stderr.trim().split("\n")[0]);
 </example>
 <output>
-smtp: connected
-Warning: Detected unsettled top-level await at /home/you/project/hang.ts:15
-  await manager.start(context);
-  ^
+exit code: 13
+stdout: ""
+stderr: Warning: Detected unsettled top-level await at /home/you/project/hang.mjs:15
 </output>
-<p>No <code>PluginTimeoutError</code>, no rollback, no "connection closed": Node simply exited (with exit code 13) while <code>start</code> was still waiting. The reason is in the manager's <code>dist</code> code: the timeout timer is created with <code>timer.unref()</code>, which tells Node "do not stay alive just for this timer". The hanging promise holds nothing either, so Node saw no more work and quit. In a server that is already listening, the open socket keeps the process alive and the timeout fires. During start-up, before anything listens, nothing does.</p>
+<p>No <code>PluginTimeoutError</code>, no rollback, no "connection closed", not even "start-up finished": Node simply exited with code 13 while <code>start</code> was still waiting. The reason is in the manager's <code>dist</code> code: the timeout timer is created with <code>timer.unref()</code>, which tells Node "do not stay alive just for this timer". The hanging promise holds nothing either, so Node saw no more work and quit. In a server that is already listening, the open socket keeps the process alive and the timeout fires. During start-up, before anything listens, nothing does.</p>
 <p>So the host keeps the process alive itself while plugins start. One interval, cleared in <code>finally</code>, is enough:</p>
 <example file="hang-guarded.ts" project="plugin" browser="no">
 import { PluginManager } from "@zudojs/plugins";
