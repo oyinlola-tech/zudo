@@ -1,10 +1,11 @@
 ---
 title: Joins, grouping and transactions
-description: Combine tables with joins, summarise data with group by and aggregates, filter groups with having, nest queries, control transactions yourself, measure queries with explain analyze, and connect Node.js to a real PostgreSQL server.
+description: Join tables, summarise them with group by and having, nest queries, run transactions by hand, measure with explain analyze, and connect Node.js to PostgreSQL.
 minutes: 45
 youNeed: The SQL with PostgreSQL lesson
 youBuild: A task report with joins and aggregates, a measured index, and a Node.js script talking to your PostgreSQL server
 keywords: sql join, inner join, left join, group by, count sum avg, having, subquery, exists, begin commit rollback, explain analyze, query performance, index, node-postgres, pg package, DATABASE_URL
+objectives: Combine tables with inner and left joins, and keep a left join from turning into an inner join | Summarise rows with group by, aggregates, filter and having | Answer questions with scalar, list and correlated subqueries | Control a transaction with begin, commit and rollback, and keep it on one connection | Measure a query with explain analyze and add the index it needs | Connect to PostgreSQL with pg and DATABASE_URL, and know which types arrive as strings
 ---
 <section>
 <h2 id="data">The data for this lesson</h2>
@@ -186,10 +187,23 @@ await db.close();
 [ { name: 'Grace' } ]
 </output>
 <p>The first subquery computes one value, the average estimate (60), and the outer query keeps tasks above it. The second is <strong>correlated</strong>: it refers to <code>u.id</code> from the outer query, so it runs for each user and asks "does this user have any open task?". <code>not exists</code> keeps the users for whom the answer is no. Grace has no tasks at all, so she has no open tasks either.</p>
+<p>A subquery can also be given a name and used like a table, with <code>with name as (select …)</code>. This is called a <strong>common table expression</strong> (CTE). You will use one in <a href="/learn/bookstore-data#repositories">BookStore API: validation and PostgreSQL</a> to take stock and write an order in a single statement, and a <em>recursive</em> one, which walks a tree such as product categories, in <a href="/learn/db-modeling#recursive">Modelling data for a shop</a>.</p>
 </section>
 
 <section>
 <h2 id="transactions">Transactions with begin, commit and rollback</h2>
+<reason title="The transfer that stopped halfway">
+<p>A wallet app moves ₦5,000 from Ada to Alan with two statements: subtract from Ada's balance, add to Alan's. Think through what can go wrong before reading on:</p>
+<ul>
+<li>The server crashes after the first statement. Where is the money?</li>
+<li>The second statement fails a <code>check (balance &gt;= 0)</code> constraint, or Alan's account does not exist. What should happen to the first?</li>
+<li>Ada starts two ₦5,000 transfers at the same moment, from two phones, with ₦8,000 in her account. Can both succeed?</li>
+</ul>
+<answer>
+<p>Without a transaction, a crash between the two statements destroys ₦5,000: it left Ada and never reached Alan. If the second statement fails, the first has already happened, and your code would have to undo it by hand, which can also fail. Put both statements in <strong>one transaction</strong> and the database guarantees all or nothing: a crash or an error before <code>commit</code> undoes everything.</p>
+<p>The third question is harder. Both transfers may read ₦8,000 before either writes, and both may decide there is enough. A transaction alone does not prevent that. What does is letting the database check and write in one step (<code>update … set balance = balance - $1 where id = $2 and balance &gt;= $1</code>, then look at how many rows changed), or locking the row first. <a href="/learn/db-transactions">Transactions, isolation and locks</a> works through these cases on a real server.</p>
+</answer>
+</reason>
 <p>In <a href="/learn/databases">How databases work</a> you used <code>db.transaction</code>. Underneath, it sends three SQL commands, and you can send them yourself:</p>
 <ul>
 <li><code>begin</code> starts a transaction.</li>
@@ -224,7 +238,7 @@ after rollback: 5
 open tasks: 3
 </output>
 <p>The delete really happened inside the transaction: the count dropped to 2. <code>rollback</code> brought all three of Ada's tasks back. In the second part, the function decided the result was not acceptable and called <code>tx.rollback()</code> itself, so Alan's tasks are still open.</p>
-<warn title="One connection per transaction">A transaction belongs to one database connection. PGlite has only one, so the <code>begin</code> above is safe. A real server app uses a <strong>pool</strong> of connections, and two <code>pool.query</code> calls may go out on two different connections. With the <code>pg</code> package below, take one client with <code>pool.connect()</code>, run <code>begin</code>, your queries and <code>commit</code> on that client, and <code>release()</code> it at the end. ZudoJS does this for you in <a href="/learn/zudo-transactions">the transactions lesson</a>.</warn>
+<warn title="One connection per transaction">A transaction belongs to one database connection. PGlite has only one, so the <code>begin</code> above is safe. A real server app uses a <strong>pool</strong> of connections, and two <code>pool.query</code> calls may go out on two different connections. With the <code>pg</code> package below, take one client with <code>pool.connect()</code>, run <code>begin</code>, your queries and <code>commit</code> on that client, and <code>release()</code> it at the end. ZudoJS does this for you (<a href="/learn/zudo-transactions">Transactions</a>, in the ZudoJS course).</warn>
 </section>
 
 <section>
@@ -237,6 +251,7 @@ const db = new PGlite();
 await db.exec(`
   create table tasks (id integer primary key, user_id integer not null, done boolean not null, title text not null);
   insert into tasks select n, n % 2000, n % 3 = 0, 'Task ' || n from generate_series(1, 200000) as n;
+  set default_statistics_target = 1000;
   analyze tasks;
 `);
 
@@ -276,6 +291,7 @@ Execution Time: 0.402 ms
 <li><code>Execution Time</code> is the real time the query took. Your numbers will differ from the ones shown, but the index version is many times faster, and the gap grows with the table.</li>
 </ul>
 <p>The index covers two columns, <code>(user_id, done)</code>, in the same order the query filters by. A <strong>composite index</strong> like this can serve queries on <code>user_id</code> alone too, but not queries on <code>done</code> alone. We turned off per-step timing and cost estimates (<code>timing off, costs off</code>) only to keep the output short; plain <code>explain analyze</code> shows them.</p>
+<p>One more line in the setup needs explaining. <code>analyze</code> collects statistics about the data, and the planner chooses a plan from them. Normally it reads a random sample of rows (30,000 at the default setting), so on a big table the statistics, and sometimes the plan, can differ a little between two runs. <code>default_statistics_target = 1000</code> raises the sample to 300,000 rows, more than this table has, so every row is read and the plan is the same every time. You would not normally change it; it is here so the example is repeatable. <a href="/learn/db-indexes">Indexes and query plans</a> explains statistics and plans in depth.</p>
 <tip>When an endpoint is slow, copy its SQL, put <code>explain analyze</code> in front of it in psql, and look for a <code>Seq Scan</code> on a big table with a large <code>Rows Removed by Filter</code>. That is usually the missing index.</tip>
 </section>
 
@@ -331,7 +347,8 @@ $ node tasks.js done
 []
 { n: '2' }
 </shell>
-<p>These are the two rows you inserted with psql. Look at the count: <code>'2'</code>, a string. <code>count</code> returns a 64-bit integer (<code>bigint</code>), which can be larger than JavaScript numbers can hold exactly, so <code>pg</code> returns it as text. Write <code>count(*)::int</code> when you know the number is small, or convert it with <code>Number(...)</code>. PGlite converts it for you, which is why the examples above printed plain numbers.</p>
+<p>These are the two rows you inserted with psql. Look at the count: <code>'2'</code>, a string. <code>count</code> returns a 64-bit integer (<code>bigint</code>), which can be larger than JavaScript numbers can hold exactly, so <code>pg</code> returns it as text. Write <code>count(*)::int</code> when you know the number is small, or convert it with <code>Number(...)</code>.</p>
+<p>The two drivers disagree here, so learn both rules. <code>pg</code> returns every <code>bigint</code> as a string. PGlite returns a JavaScript <code>number</code> when the value fits safely (up to 2<sup>53</sup> − 1, <code>Number.MAX_SAFE_INTEGER</code>), which is why the counts above printed as plain numbers, and a JavaScript <code>bigint</code> such as <code>9007199254740993n</code> when it does not. Both return <code>numeric</code> as a string. So a <code>bigint</code> column is a <code>string</code> with <code>pg</code> and a <code>number | bigint</code> with PGlite; <a href="/learn/db-typescript#driver-types">Typing database code</a> shows how to give such columns one honest type.</p>
 <p>Use port 5432 in the URL if that is where your server listens. A wrong password fails with <code>password authentication failed for user "postgres"</code>.</p>
 <p>When you are finished with the Docker server, stop and delete it (its data goes with it):</p>
 <shell>
@@ -412,6 +429,7 @@ await db.close();
 <li>Subqueries produce a value, a list or an exists-test; correlated ones refer to the outer row.</li>
 <li><code>begin</code>, <code>commit</code>, <code>rollback</code> control a transaction, and a transaction lives on one connection.</li>
 <li><code>explain analyze</code> runs a query and shows its real plan and time. A <code>Seq Scan</code> that removes most rows asks for an index.</li>
-<li>Connect with <code>pg</code> and a <code>Pool</code>, read <code>DATABASE_URL</code> from the environment, and remember that <code>bigint</code> and <code>numeric</code> arrive as strings.</li>
+<li>Connect with <code>pg</code> and a <code>Pool</code>, and read <code>DATABASE_URL</code> from the environment. <code>numeric</code> arrives as a string from both drivers; <code>bigint</code> arrives as a string from <code>pg</code>, and as a number (or a JavaScript <code>bigint</code> beyond 2<sup>53</sup>) from PGlite.</li>
 </ul>
+<p>Next: <a href="/learn/testing-basics">Testing fundamentals</a>, where you check a task store against a real database automatically, on every change.</p>
 </section>

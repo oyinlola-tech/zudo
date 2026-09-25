@@ -1,10 +1,11 @@
 ---
 title: Classes in TypeScript
-description: Declare typed class properties, use parameter properties and access modifiers, compare private with #private, write abstract classes and classes that implement interfaces, and wire classes together with constructor injection.
+description: Type class properties, use access modifiers and #private, write abstract classes and classes that implement interfaces, and wire them with constructor injection.
 minutes: 40
-youNeed: Generics, and the JavaScript classes lesson
+youNeed: Generics, Advanced and utility types, and this, prototypes and classes
 youBuild: A TaskService that depends on interfaces, wired by hand in main.ts and tested with a fake repository and a fixed clock
 keywords: typescript classes, class properties, parameter properties, public private protected, private vs #private, readonly, abstract class, implements interface, dependency injection, constructor injection, fake in tests
+objectives: Declare class properties with types and satisfy strictPropertyInitialization | Use parameter properties, and know why Node's type stripping refuses them | Choose between private and #private, knowing which one survives JSON.stringify | Write abstract classes and classes that implement interfaces | Inject dependencies through the constructor and swap in fakes for tests
 ---
 <section>
 <h2 id="properties">Properties and constructors</h2>
@@ -91,7 +92,7 @@ console.log(task);
 Task { id: 1, title: 'Buy oat milk', done: false }
 </output>
 <p>Three properties, declared and filled in far fewer lines. <code>public done = false</code> also shows that a parameter property can have a default value. <code>readonly</code> means the id is set once in the constructor and can never change; <code>task.id = 2</code> would be error TS2540.</p>
-<note title="NOT ERASABLE">Parameter properties generate code (the <code>this.id = id</code> lines), so Node's built-in type stripping, from <a href="/learn/ts-setup#run">Why TypeScript exists</a>, refuses them. <code>tsx</code>, <code>tsc</code> and the browser terminal all handle them. ZudoJS itself uses them, so this course runs code with <code>tsx</code>.</note>
+<note title="NOT ERASABLE">Parameter properties generate code (the <code>this.id = id</code> lines), so Node's built-in type stripping, from <a href="/learn/ts-setup#run">Why TypeScript exists</a>, refuses them, and <code>erasableSyntaxOnly</code> reports them (<a href="/learn/ts-compiler#not-erased">What the TypeScript compiler does</a>). <code>tsx</code>, <code>tsc</code> and the browser terminal all handle them. ZudoJS itself uses them, so this course runs code with <code>tsx</code>.</note>
 </section>
 
 <section>
@@ -299,6 +300,23 @@ Found 1 error in broken-repository.ts:3
 <section>
 <h2 id="injection">Dependency injection by hand</h2>
 <p>Now the service with the business rules. It needs somewhere to store tasks and a way to know the current time. It could create them itself: <code>new MemoryTaskRepository()</code> and <code>new Date()</code>. But then it is stuck with them forever: no database later, and no way to test "is this task overdue?" without waiting for a real day to pass.</p>
+<reason title="What should the service create itself?">
+<p><code>TaskService</code> adds tasks with a due date and lists the overdue ones. It needs somewhere to store tasks and a way to know the current time. Before reading on, decide:</p>
+<ol>
+<li>If the service calls <code>new MemoryTaskRepository()</code> itself, what has to change on the day you move to PostgreSQL?</li>
+<li>If it calls <code>new Date()</code> itself, how would a test check that a task becomes overdue three days later?</li>
+<li>What is the smallest thing the service needs from each dependency: a class, or just a few methods?</li>
+<li>Where in the program should the real repository and clock be created?</li>
+</ol>
+<answer>
+<ol>
+<li>The service itself, and every test of it. A class that creates its own dependencies is welded to them.</li>
+<li>It could not without really waiting three days, or tricking the system clock. The current time is a dependency like any other.</li>
+<li>Just the methods it calls: <code>save</code> and <code>findAll</code> from storage, <code>now()</code> from the clock. Those become two small interfaces, so any object with those methods fits.</li>
+<li>In one place at the start of the program (the entry file), which passes them into the service. Tests pass fakes instead, and the service cannot tell the difference.</li>
+</ol>
+</answer>
+</reason>
 <p>Instead, the service <strong>asks for</strong> what it needs, in its constructor, typed as the interfaces. Whoever creates the service <strong>passes them in</strong>. This is called <strong>dependency injection</strong>, and passing them to the constructor is <strong>constructor injection</strong>:</p>
 <example file="task-service.ts" project="di">
 import type { Clock, Task, TaskRepository } from "./contracts.js";
@@ -393,7 +411,7 @@ saved: [ '2026-03-03T09:00:00.000Z' ]
 day 0: []
 day 3: [ 'File taxes' ]
 </output>
-<p>Three days pass in a microsecond, and every run prints the same thing. <code>TaskService</code> did not change at all: it cannot tell a fake from the real thing, because it only knows the interfaces. With the Vitest setup from <a href="/learn/testing-basics">the testing lesson</a>, the same idea becomes a test file:</p>
+<p>Three days pass in a microsecond, and every run prints the same thing. <code>TaskService</code> did not change at all: it cannot tell a fake from the real thing, because it only knows the interfaces. With Vitest, the test runner that <a href="/learn/testing-basics">Testing fundamentals</a> sets up in the backend course, the same idea becomes a test file:</p>
 <file name="task-service.test.ts" project="di">
 import { describe, expect, it } from "vitest";
 
@@ -461,7 +479,7 @@ console.log(counter.hit("ada@example.com"));
 </solution>
 </exercise>
 <exercise title="Inject the notifier">
-<p>Give <code>TaskService</code> a third dependency: a <code>Notifier</code> interface with <code>send(text: string): Promise&lt;void&gt;</code>. Add a method <code>remindOverdue()</code> that sends one message per overdue task. Test it with a fake notifier that stores the messages in an array.</p>
+<p>Write a <code>ReminderService</code> with a method <code>remindOverdue()</code> that sends one message per overdue task and returns how many it sent. It takes two dependencies through its constructor: a function that returns the overdue titles (in the app, <code>() =&gt; service.overdue()</code>), and a <code>Notifier</code> interface with <code>send(text: string): Promise&lt;void&gt;</code>. Test it with a fake notifier that stores the messages in an array.</p>
 <solution>
 <example file="remind.ts" project="ex-remind">
 interface Notifier {
@@ -495,7 +513,7 @@ console.log(await reminders.remindOverdue(), fake.sent);
 <output>
 2 [ '"File taxes" is overdue', '"Call Ada" is overdue' ]
 </output>
-<p>This solution goes one step further: instead of the whole <code>TaskService</code>, the reminder service depends only on a function that returns overdue titles. Depending on the smallest thing you need makes testing even easier. A dependency can be a function type, not just an interface.</p>
+<p>The reminder service does not depend on the whole <code>TaskService</code>, only on a function that returns overdue titles. Depending on the smallest thing you need makes testing even easier: the test passes an inline <code>async</code> function instead of building a service. A dependency can be a function type, not just an interface.</p>
 </solution>
 </exercise>
 </section>
@@ -509,4 +527,5 @@ console.log(await reminders.remindOverdue(), fake.sent);
 <li>An abstract class shares code and forces subclasses to fill in abstract methods. <code>implements</code> checks a class against an interface.</li>
 <li>Constructor injection: depend on interfaces, create the real objects in one place, and swap in fakes for tests.</li>
 </ul>
+<p>Next: <a href="/learn/ts-modules">Modules in TypeScript</a>, where a project is split into files that import types and values from each other.</p>
 </section>

@@ -377,18 +377,21 @@ const logFullBody: HttpMiddleware = async (_context, next) => {
   return response;
 };
 
-async function msPerRequest(middlewares: HttpMiddleware[]): Promise<number> {
-  const pipeline = new HttpMiddlewarePipeline({ middlewares });
-  const request = createRequestContext({ method: "GET", url: "http://localhost/tasks" });
-  for (let i = 0; i < 20; i++) await pipeline.execute(request, createResponseContext());
+const request = createRequestContext({ method: "GET", url: "http://localhost/tasks" });
+async function msFor50(pipeline: HttpMiddlewarePipeline): Promise<number> {
   const start = performance.now();
-  for (let i = 0; i < 200; i++) await pipeline.execute(request, createResponseContext());
-  return (performance.now() - start) / 200;
+  for (let i = 0; i < 50; i++) await pipeline.execute(request, createResponseContext());
+  return performance.now() - start;
 }
 
-const plain = await msPerRequest([handler]);
-const withLogging = await msPerRequest([logFullBody, handler]);
-console.log("logging the full body at least 1.5x the cost of the request:", withLogging > 1.5 * plain);
+const plain = new HttpMiddlewarePipeline({ middlewares: [handler] });
+const withLogging = new HttpMiddlewarePipeline({ middlewares: [logFullBody, handler] });
+const best = { plain: Infinity, withLogging: Infinity };
+for (let round = 0; round < 6; round++) {
+  best.plain = Math.min(best.plain, await msFor50(plain));
+  best.withLogging = Math.min(best.withLogging, await msFor50(withLogging));
+}
+console.log("logging the full body at least 1.5x the cost of the request:", best.withLogging > 1.5 * best.plain);
 </example>
 <output>
 logging the full body at least 1.5x the cost of the request: true

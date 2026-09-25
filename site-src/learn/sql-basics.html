@@ -1,10 +1,11 @@
 ---
 title: SQL with PostgreSQL
-description: Install PostgreSQL with an installer or with Docker, talk to it with psql, and learn the SQL every backend uses: create, insert, select, update and delete, with filters, sorting and paging, and parameterized queries that stop SQL injection.
+description: Run PostgreSQL with an installer or Docker, use psql, and write the SQL every backend needs: insert, select, update, delete, and placeholders that stop injection.
 minutes: 45
 youNeed: The How databases work lesson
 youBuild: A running PostgreSQL server and a task store with safe, parameterized queries
 keywords: install postgresql, postgresql docker, psql, create database, create table, insert, select, where, order by, limit, offset, update, delete, returning, sql injection, parameterized queries
+objectives: Install and start PostgreSQL with an installer or with Docker, keeping the password out of your commands | Create a database and inspect tables with psql | Write insert, select, update and delete statements with where, order by, limit, offset and returning | Scope every query to the current user and turn "no row changed" into a 404 | Explain SQL injection and prevent it with placeholders for values and allow-lists for names
 ---
 <section>
 <h2 id="install">Install PostgreSQL</h2>
@@ -176,7 +177,7 @@ await db.close();
 <ul>
 <li><code>where</code> keeps only rows that match a condition. Combine conditions with <code>and</code>, <code>or</code> and <code>not</code>.</li>
 <li><code>order by</code> sorts, <code>asc</code> (the default) or <code>desc</code>. Without it, the order is <strong>not guaranteed</strong>.</li>
-<li><code>limit</code> takes at most that many rows, and <code>offset</code> skips rows first: the offset pagination from <a href="/learn/rest-design">the REST lesson</a>.</li>
+<li><code>limit</code> takes at most that many rows, and <code>offset</code> skips rows first: the offset pagination from <a href="/learn/rest-design#pagination">Designing a REST API</a>.</li>
 </ul>
 <example file="select.js" project="crud" browser="no">
 import { openDb } from "./db.js";
@@ -209,7 +210,7 @@ await db.close();
 [ { id: 3, title: 'Call Ada' }, { id: 4, title: 'Fix bike' } ]
 </output>
 <ul>
-<li>The first query is "user 1's open tasks, most important first". The <code>id</code> after <code>priority</code> is the tie-breaker the REST lesson recommended.</li>
+<li>The first query is "user 1's open tasks, most important first". The <code>id</code> after <code>priority</code> is the tie-breaker that <a href="/learn/rest-design#query">Designing a REST API</a> recommended.</li>
 <li><code>ilike</code> compares text, ignoring upper and lower case. In the pattern, <code>%</code> means "any characters". <code>like</code> is the case-sensitive version.</li>
 <li><code>limit 2 offset 2</code> is page 2 with two tasks per page.</li>
 </ul>
@@ -259,7 +260,18 @@ deleted: [
 2 tasks left
 </output>
 <p>The deleted rows came back as 1, 5, 2, not sorted by id: row 2 had just been updated, and PostgreSQL returns rows in whatever order it finds them. Only <code>order by</code> promises an order.</p>
-<p>Every query in a real API includes <code>user_id</code> in its <code>where</code>. Without it, user 2 could change user 1's task just by guessing its id. When <code>affectedRows</code> is 0, the task does not exist <em>for this user</em>, and your handler answers 404.</p>
+<reason title="Whose task is it?">
+<p>The API gets <code>PATCH /tasks/2</code> with <code>{"done": true}</code> from a logged-in user. Before writing the SQL, answer:</p>
+<ul>
+<li>Which values come from the client, and which from the server's own knowledge?</li>
+<li>User 2 sends it, but task 2 belongs to user 1. What must happen?</li>
+<li>The <code>update</code> changed 0 rows. Should the answer be 404 Not Found or 403 Forbidden?</li>
+</ul>
+<answer>
+<p>The task id in the URL and the body come from the client. The user id comes from the login session, which the server checked; it never comes from the body or the URL. So every query includes the session's user id in its <code>where</code>: <code>where id = $1 and user_id = $2</code>. Without it, user 2 could change user 1's task just by guessing its id, one of the most common security bugs in real APIs.</p>
+<p>With the user in the <code>where</code>, "no such task" and "someone else's task" look the same to the database: 0 rows changed. Answer <strong>404</strong> in both cases. A 403 would confirm to user 2 that task 2 exists, which leaks information; a 404 says only "there is no such task <em>for you</em>". This also costs one query instead of two.</p>
+</answer>
+</reason>
 <warn title="Always write the where first">An <code>update</code> or <code>delete</code> without <code>where</code> changes <strong>every row in the table</strong>. <code>delete from tasks;</code> is a valid statement. In psql, a good habit is to run the same <code>where</code> as a <code>select</code> first and look at what it matches.</warn>
 </section>
 
@@ -314,7 +326,8 @@ await db.close();
 []
 </output>
 <p>Now the attack is just a strange title that no task has, and the answer is an empty list.</p>
-<p>Placeholders work for <strong>values</strong>. They cannot stand for a column name or <code>asc</code>/<code>desc</code>. When those come from the client, as with <code>sort</code> in <a href="/learn/rest-design">the REST lesson</a>, pick them from an allow-list in your code and never paste the client's text.</p>
+<p>SQL is not the only place where outside text can turn into commands: shell commands, file paths and outgoing URLs have the same problem. <a href="/learn/sec-injection">Writing injection-safe code</a>, in the Security course, covers them all.</p>
+<p>Placeholders work for <strong>values</strong>. They cannot stand for a column name or <code>asc</code>/<code>desc</code>. When those come from the client, as with <code>sort</code> in <a href="/learn/rest-design#query">Designing a REST API</a>, pick them from an allow-list in your code and never paste the client's text.</p>
 </section>
 
 <section>
@@ -376,4 +389,5 @@ user 1 tries: { id: 6, title: 'Plan trip', done: true }
 <li>Put the user's id in every <code>where</code>, so one user can never touch another's rows.</li>
 <li>Never paste input into SQL text. Use <code>$1</code> placeholders for values and allow-lists for names.</li>
 </ul>
+<p>Next: <a href="/learn/sql-advanced">Joins, grouping and transactions</a>, where you combine tables, summarise them, and connect Node.js to your server.</p>
 </section>

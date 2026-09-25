@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>SQL with PostgreSQL — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/sql-basics.md" title="Markdown version">
-  <meta name="description" content="Install PostgreSQL with an installer or with Docker, talk to it with psql, and learn the SQL every backend uses: create, insert, select, update and delete, with filters, sorting and paging, and parameterized queries that stop SQL injection.">
+  <meta name="description" content="Run PostgreSQL with an installer or Docker, use psql, and write the SQL every backend needs: insert, select, update, delete, and placeholders that stop injection.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/sql-basics">
@@ -102,7 +102,7 @@
         <div class="lx-hero-tag">LEVEL 7 · LESSON 4 OF 15</div>
         <p class="lx-hero-part">Databases and SQL <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>SQL with PostgreSQL</h1>
-        <p class="lx-hero-lead">Install PostgreSQL with an installer or with Docker, talk to it with psql, and learn the SQL every backend uses: create, insert, select, update and delete, with filters, sorting and paging, and parameterized queries that stop SQL injection.</p>
+        <p class="lx-hero-lead">Run PostgreSQL with an installer or Docker, use psql, and write the SQL every backend needs: insert, select, update, delete, and placeholders that stop injection.</p>
         <ul class="lx-hero-meta">
           <li><strong>45 min</strong> to read and try</li>
           <li><strong>You need:</strong> The How databases work lesson</li>
@@ -114,6 +114,16 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Install and start PostgreSQL with an installer or with Docker, keeping the password out of your commands</li>
+          <li>Create a database and inspect tables with psql</li>
+          <li>Write insert, select, update and delete statements with where, order by, limit, offset and returning</li>
+          <li>Scope every query to the current user and turn "no row changed" into a 404</li>
+          <li>Explain SQL injection and prevent it with placeholders for values and allow-lists for names</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="install">Install PostgreSQL</h2>
@@ -318,7 +328,7 @@ await db.close();</script>
 <ul>
 <li><code>where</code> keeps only rows that match a condition. Combine conditions with <code>and</code>, <code>or</code> and <code>not</code>.</li>
 <li><code>order by</code> sorts, <code>asc</code> (the default) or <code>desc</code>. Without it, the order is <strong>not guaranteed</strong>.</li>
-<li><code>limit</code> takes at most that many rows, and <code>offset</code> skips rows first: the offset pagination from <a href="/learn/rest-design">the REST lesson</a>.</li>
+<li><code>limit</code> takes at most that many rows, and <code>offset</code> skips rows first: the offset pagination from <a href="/learn/rest-design#pagination">Designing a REST API</a>.</li>
 </ul>
 <figure class="lx-example" data-index="2" data-file="select.js" data-project="crud">
 <figcaption class="lx-bar"><span class="lx-file">select.js</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -367,7 +377,7 @@ await db.close();</script>
 [ { id: 3, title: 'Call Ada' }, { id: 4, title: 'Fix bike' } ]</pre></div>
 </figure>
 <ul>
-<li>The first query is "user 1's open tasks, most important first". The <code>id</code> after <code>priority</code> is the tie-breaker the REST lesson recommended.</li>
+<li>The first query is "user 1's open tasks, most important first". The <code>id</code> after <code>priority</code> is the tie-breaker that <a href="/learn/rest-design#query">Designing a REST API</a> recommended.</li>
 <li><code>ilike</code> compares text, ignoring upper and lower case. In the pattern, <code>%</code> means "any characters". <code>like</code> is the case-sensitive version.</li>
 <li><code>limit 2 offset 2</code> is page 2 with two tasks per page.</li>
 </ul>
@@ -436,7 +446,13 @@ deleted: [
 2 tasks left</pre></div>
 </figure>
 <p>The deleted rows came back as 1, 5, 2, not sorted by id: row 2 had just been updated, and PostgreSQL returns rows in whatever order it finds them. Only <code>order by</code> promises an order.</p>
-<p>Every query in a real API includes <code>user_id</code> in its <code>where</code>. Without it, user 2 could change user 1's task just by guessing its id. When <code>affectedRows</code> is 0, the task does not exist <em>for this user</em>, and your handler answers 404.</p>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Whose task is it?</h3><p>The API gets <code>PATCH /tasks/2</code> with <code>{"done": true}</code> from a logged-in user. Before writing the SQL, answer:</p>
+<ul>
+<li>Which values come from the client, and which from the server's own knowledge?</li>
+<li>User 2 sends it, but task 2 belongs to user 1. What must happen?</li>
+<li>The <code>update</code> changed 0 rows. Should the answer be 404 Not Found or 403 Forbidden?</li>
+</ul><details class="lx-solution"><summary>Show the reasoning</summary><p>The task id in the URL and the body come from the client. The user id comes from the login session, which the server checked; it never comes from the body or the URL. So every query includes the session's user id in its <code>where</code>: <code>where id = $1 and user_id = $2</code>. Without it, user 2 could change user 1's task just by guessing its id, one of the most common security bugs in real APIs.</p>
+<p>With the user in the <code>where</code>, "no such task" and "someone else's task" look the same to the database: 0 rows changed. Answer <strong>404</strong> in both cases. A 403 would confirm to user 2 that task 2 exists, which leaks information; a 404 says only "there is no such task <em>for you</em>". This also costs one query instead of two.</p></details></div>
 <div class="callout callout-warning"><p class="lx-callout-label">Always write the where first</p>An <code>update</code> or <code>delete</code> without <code>where</code> changes <strong>every row in the table</strong>. <code>delete from tasks;</code> is a valid statement. In psql, a good habit is to run the same <code>where</code> as a <code>select</code> first and look at what it matches.</div>
 </section>
 
@@ -516,7 +532,8 @@ await db.close();</script>
 []</pre></div>
 </figure>
 <p>Now the attack is just a strange title that no task has, and the answer is an empty list.</p>
-<p>Placeholders work for <strong>values</strong>. They cannot stand for a column name or <code>asc</code>/<code>desc</code>. When those come from the client, as with <code>sort</code> in <a href="/learn/rest-design">the REST lesson</a>, pick them from an allow-list in your code and never paste the client's text.</p>
+<p>Query builders, ORMs and stored procedures, and the other places injection hides, are covered in <a href="/learn/sec-injection">Writing injection-safe code</a>, in the Security course.</p>
+<p>Placeholders work for <strong>values</strong>. They cannot stand for a column name or <code>asc</code>/<code>desc</code>. When those come from the client, as with <code>sort</code> in <a href="/learn/rest-design#query">Designing a REST API</a>, pick them from an allow-list in your code and never paste the client's text.</p>
 </section>
 
 <section>
@@ -591,6 +608,7 @@ user 1 tries: { id: 6, title: 'Plan trip', done: true }</pre></div>
 <li>Put the user's id in every <code>where</code>, so one user can never touch another's rows.</li>
 <li>Never paste input into SQL text. Use <code>$1</code> placeholders for values and allow-lists for names.</li>
 </ul>
+<p>Next: <a href="/learn/sql-advanced">Joins, grouping and transactions</a>, where you combine tables, summarise them, and connect Node.js to your server.</p>
 </section>
       </div>
 
