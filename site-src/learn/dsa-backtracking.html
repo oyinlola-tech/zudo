@@ -1,10 +1,10 @@
 ---
 title: Backtracking
-description: Search every valid discount combination, gift bundle and delivery route by choosing, exploring and undoing, then prune dead branches to solve puzzles like N-queens and sudoku fast.
+description: Find every valid coupon combination, gift bundle and delivery route by choosing, exploring and undoing, then prune dead branches to solve N-queens and sudoku.
 minutes: 55
 youNeed: Recursion, Greedy algorithms, and Big O and complexity
 youBuild: A coupon combiner that lists and ranks every valid discount combination, a gift-bundle finder, a shortest delivery route search with branch and bound, and an N-queens and sudoku solver
-keywords: backtracking, recursion tree, decision tree, subsets, combinations, permutations, pruning, branch and bound, n queens, sudoku solver, constraint satisfaction, combination sum, travelling salesman, javascript generator
+keywords: backtracking, recursion tree, decision tree, subsets, combinations, permutations, pruning, branch and bound, n queens, sudoku solver, constraint satisfaction, combination sum, travelling salesman, early exit
 objectives: Describe a search as states, choices and constraints, and write it with the choose, explore, undo template | Generate subsets, combinations and permutations without duplicates, and predict how many there are | Prune branches that cannot lead to a valid or better answer, and measure the nodes saved | Solve constraint puzzles such as N-queens and sudoku, and pick the most constrained choice first | Avoid the classic backtracking bugs: shared arrays, missing undo, duplicate results and unbounded searches
 ---
 <section>
@@ -109,7 +109,7 @@ LESS500
 <ul>
 <li><strong>Every rule here only gets worse as coupons are added.</strong> Four coupons stay more than three, two percentage coupons stay two, FLASH3000 and FREESHIP stay together, and the discount only grows. Rules like this are called <strong>monotone</strong>. For monotone rules, once a partial combination is invalid, every extension of it is invalid, so the search can stop exploring that branch at once. That is <strong>pruning</strong>.</li>
 <li><strong>"At least two coupons" is not monotone</strong>: a single coupon breaks it, but adding one fixes it. Such a rule may only be checked at the leaves (on complete candidates), never used to prune. Pruning on a non-monotone rule silently loses valid answers.</li>
-<li><strong>Worst case</strong>: without pruning, 2<sup>n</sup> leaves. With 30 coupons that is a billion, on every page load. The "at most three coupons" rule is what saves you: it caps the depth of any valid branch, and pruning turns 2<sup>30</sup> into roughly the number of combinations of at most three coupons, about 4,500. Know which rule keeps your search small, and put a hard limit on the input size anyway.</li>
+<li><strong>Worst case</strong>: without pruning, 2<sup>n</sup> leaves. With 30 coupons that is a billion, on every page load. The "at most three coupons" rule is what saves you: no valid combination has more than three coupons, so there are at most 4,526 valid answers (the combinations of zero to three of 30 coupons), and pruning cuts the search from about two billion nodes to about 64,000. Know which rule keeps your search small, and put a hard limit on the input size anyway.</li>
 </ul>
 </answer>
 </reason>
@@ -327,8 +327,8 @@ prune on length          34 blocks, 6491 nodes
 + return-to-depot bound  34 blocks, 2293 nodes
 + start from greedy      34 blocks, 1998 nodes
 </output>
-<p>The greedy "go to the nearest customer next" route from the previous lesson is 4 blocks longer than the best. The exhaustive search finds the best by visiting every node of the permutation tree. Each pruning idea cuts the tree further, and the answer never changes, because pruning only discards branches that cannot win. Starting from the greedy route's length (plus one, so that a route of the same length can still be found and recorded) gives the search a good bound before it has found anything itself: a fast heuristic and an exact search working together.</p>
-<p>Even so, pruning does not change the worst case: some inputs defeat any bound, and the search is still O(n!) in theory. Route planners for real fleets with dozens of stops use heuristics and dedicated solvers. <a href="/learn/dsa-dynamic-programming">Dynamic programming</a> can solve this exactly in O(2<sup>n</sup> × n²), which is far better than n! but still exponential.</p>
+<p>The greedy "go to the nearest customer next" route, the kind of fast heuristic <a href="/learn/dsa-greedy#production">Greedy algorithms</a> described for delivery routes, is 4 blocks longer than the best. The exhaustive search finds the best by visiting every node of the permutation tree. Each pruning idea cuts the tree further, and the answer never changes, because pruning only discards branches that cannot win. Starting from the greedy route's length (plus one, so that a route of the same length can still be found and recorded) gives the search a good bound before it has found anything itself: a fast heuristic and an exact search working together.</p>
+<p>Even so, pruning does not change the worst case: some inputs defeat any bound, and the search is still O(n!) in theory. Route planners for real fleets with dozens of stops use heuristics and dedicated solvers. A dynamic programming method (the Held-Karp algorithm, built on the ideas of the next lesson) solves it exactly in O(2<sup>n</sup> × n²), which is far better than n! but still exponential.</p>
 </section>
 
 <section>
@@ -539,39 +539,44 @@ without undo: A>B>C
 </output>
 <p>Without <code>used.delete(s)</code>, a stop stays "used" after the branch that chose it has finished, so later branches cannot pick it. The search silently returns one route instead of six. Every change made in the "choose" step needs a matching change in the "undo" step; with several pieces of state (<code>route</code> <em>and</em> <code>used</code>, or three constraint sets), it is easy to forget one.</p>
 <h3>Duplicate inputs, duplicate results</h3>
-<p>If the same product appears twice in the list (two jars of honey from different suppliers at the same price), the bundle search produces the same bundle twice, once with each jar. When duplicates matter, sort the input and skip an item that equals the previous one at the same depth: <code>if (i &gt; start &amp;&amp; items[i].naira === items[i - 1].naira) continue;</code>. The test below checks for duplicates explicitly.</p>
+<p>If the same product appears twice in the list (two jars of honey from different suppliers at the same price), the bundle search produces the same bundle twice, once with each jar. When duplicates matter, sort the input so equal items sit next to each other (by price, then name), and skip an item that equals the previous one at the same depth: <code>if (i &gt; start &amp;&amp; items[i].name === items[i - 1].name &amp;&amp; items[i].naira === items[i - 1].naira) continue;</code>. The branch that took the first jar already covers every bundle with one jar, so starting another branch with the second jar would only repeat it. Compare the whole item, not just the price: two different products that happen to cost the same are not duplicates. The test below checks for duplicates explicitly.</p>
 <h3>Unbounded searches</h3>
 <p>Backtracking is exponential in the worst case, and the worst case can arrive with the next change to the data. A coupon search that is instant with 7 coupons may hang the checkout with 40. Cap the input size, count nodes and stop past a budget, or run the search off the request path.</p>
 </section>
 
 <section>
-<h2 id="lazy">Producing results lazily with a generator</h2>
-<p>Support often only needs the first few valid combinations, not all of them. A generator function (<code>function*</code>) can <code>yield</code> each result as it is found, and the caller can stop the search whenever it has enough, without the search building a huge array.</p>
-<example file="generator.js">
-function* orders(stops, route = [], used = new Set(), counter = { nodes: 0 }) {
-  counter.nodes++;
-  if (route.length === stops.length) {
-    yield route.join(" > ");
-    return;
+<h2 id="lazy">Stopping early: the first few results</h2>
+<p>Support often only needs the first few valid routes or combinations, not all of them. Building the full list and then taking three wastes almost all the work. Instead, hand each result to a callback as soon as it is found, and let the callback say "stop" by returning <code>true</code>. Every level of the search then checks the answer of the level below and returns at once:</p>
+<example file="first-few.js">
+function orders(stops, onRoute) {
+  const route = [];
+  const used = new Set();
+  let nodes = 0;
+  function explore() {
+    nodes++;
+    if (route.length === stops.length) return onRoute(route.join(" > "));
+    for (const s of stops) {
+      if (used.has(s)) continue;
+      used.add(s);
+      route.push(s);
+      const stop = explore();
+      route.pop();
+      used.delete(s);
+      if (stop) return true;
+    }
+    return false;
   }
-  for (const s of stops) {
-    if (used.has(s)) continue;
-    used.add(s);
-    route.push(s);
-    yield* orders(stops, route, used, counter);
-    route.pop();
-    used.delete(s);
-  }
+  explore();
+  return nodes;
 }
 
-const counter = { nodes: 0 };
 const first = [];
-for (const route of orders(["Ikeja", "Yaba", "Lekki", "Ajah", "Epe", "Ikorodu"], [], new Set(), counter)) {
+const nodes = orders(["Ikeja", "Yaba", "Lekki", "Ajah", "Epe", "Ikorodu"], (route) => {
   first.push(route);
-  if (first.length === 3) break;
-}
+  return first.length === 3;
+});
 console.log(first.join("\n"));
-console.log(`${counter.nodes} nodes visited to get 3 of the 720 routes`);
+console.log(`${nodes} nodes visited to get 3 of the 720 routes`);
 </example>
 <output>
 Ikeja > Yaba > Lekki > Ajah > Epe > Ikorodu
@@ -579,7 +584,7 @@ Ikeja > Yaba > Lekki > Ajah > Ikorodu > Epe
 Ikeja > Yaba > Lekki > Epe > Ajah > Ikorodu
 12 nodes visited to get 3 of the 720 routes
 </output>
-<p><code>yield*</code> passes on every value from the recursive call. When the <code>for...of</code> loop breaks, the generator is closed and the rest of the tree is never explored. The same pattern suits "find any solution" questions: take the first value and stop.</p>
+<p>The undo still runs before the early return, so the shared state is clean if the caller searches again. The same pattern answers "find any solution" questions: return <code>true</code> from the first result. The sudoku solver above does exactly this with <code>if (fill()) return true</code>. In Advanced JavaScript, <a href="/learn/js-generators">Generators</a> show another way to produce results one at a time, where the caller simply stops asking for more.</p>
 </section>
 
 <section>
@@ -719,7 +724,7 @@ console.log(`${count} valid seatings of 720, ${nodes} nodes explored`);
 first: Ada, Chidi, Bola, Dayo, Emeka, Funmi
 152 valid seatings of 720, 553 nodes explored
 </output>
-<p>The check only looks at the newly seated guest and their left neighbour, because every earlier pair was already checked when it was formed. Checking just the new part of the state at each step, instead of re-validating everything, is what keeps each node O(1).</p>
+<p>The check only looks at the newly seated guest and their left neighbour, because every earlier pair was already checked when it was formed. Checking just the new part of the state at each step, instead of re-validating the whole row, keeps each check O(1).</p>
 </solution>
 </exercise>
 

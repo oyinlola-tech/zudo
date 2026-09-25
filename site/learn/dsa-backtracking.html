@@ -6,10 +6,10 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Backtracking — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/dsa-backtracking.md" title="Markdown version">
-  <meta name="description" content="Search every valid discount combination, gift bundle and delivery route by choosing, exploring and undoing, then prune dead branches to solve puzzles like N-queens and sudoku fast.">
+  <meta name="description" content="Find every valid coupon combination, gift bundle and delivery route by choosing, exploring and undoing, then prune dead branches to solve N-queens and sudoku.">
   <!-- seo:start -->
   <!-- seo:end -->
-  <meta name="keywords" content="backtracking, recursion tree, decision tree, subsets, combinations, permutations, pruning, branch and bound, n queens, sudoku solver, constraint satisfaction, combination sum, travelling salesman, javascript generator">
+  <meta name="keywords" content="backtracking, recursion tree, decision tree, subsets, combinations, permutations, pruning, branch and bound, n queens, sudoku solver, constraint satisfaction, combination sum, travelling salesman, early exit">
   <meta name="author" content="Oluwayemi Oyinlola Michael">
 
   <link rel="icon" type="image/svg+xml" href="/assets/zudo-favicon.svg">
@@ -93,7 +93,7 @@
         <div class="lx-hero-tag">LEVEL 3 · LESSON 15 OF 21</div>
         <p class="lx-hero-part">Algorithms <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>Backtracking</h1>
-        <p class="lx-hero-lead">Search every valid discount combination, gift bundle and delivery route by choosing, exploring and undoing, then prune dead branches to solve puzzles like N-queens and sudoku fast.</p>
+        <p class="lx-hero-lead">Find every valid coupon combination, gift bundle and delivery route by choosing, exploring and undoing, then prune dead branches to solve N-queens and sudoku.</p>
         <ul class="lx-hero-meta">
           <li><strong>55 min</strong> to read and try</li>
           <li><strong>You need:</strong> Recursion, Greedy algorithms, and Big O and complexity</li>
@@ -236,7 +236,7 @@ LESS500
 <div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Before you add the rules</h3><p>Before writing the coupon search, think about the rules. The search builds a combination one coupon at a time. If a partial combination already breaks a rule, can adding more coupons ever make it valid again? Is that true for every rule on the list? What would it mean for the search if one rule were "at least two coupons"? Also: the checkout calls this on every page load. What is the worst case, and what happens when marketing adds its 30th coupon?</p><details class="lx-solution"><summary>Show the reasoning</summary><ul>
 <li><strong>Every rule here only gets worse as coupons are added.</strong> Four coupons stay more than three, two percentage coupons stay two, FLASH3000 and FREESHIP stay together, and the discount only grows. Rules like this are called <strong>monotone</strong>. For monotone rules, once a partial combination is invalid, every extension of it is invalid, so the search can stop exploring that branch at once. That is <strong>pruning</strong>.</li>
 <li><strong>"At least two coupons" is not monotone</strong>: a single coupon breaks it, but adding one fixes it. Such a rule may only be checked at the leaves (on complete candidates), never used to prune. Pruning on a non-monotone rule silently loses valid answers.</li>
-<li><strong>Worst case</strong>: without pruning, 2<sup>n</sup> leaves. With 30 coupons that is a billion, on every page load. The "at most three coupons" rule is what saves you: it caps the depth of any valid branch, and pruning turns 2<sup>30</sup> into roughly the number of combinations of at most three coupons, about 4,500. Know which rule keeps your search small, and put a hard limit on the input size anyway.</li>
+<li><strong>Worst case</strong>: without pruning, 2<sup>n</sup> leaves. With 30 coupons that is a billion, on every page load. The "at most three coupons" rule is what saves you: no valid combination has more than three coupons, so there are at most 4,526 valid answers (the combinations of zero to three of 30 coupons), and pruning cuts the search from about two billion nodes to about 64,000. Know which rule keeps your search small, and put a hard limit on the input size anyway.</li>
 </ul></details></div>
 
 <figure class="lx-example" data-index="1" data-file="coupons.js" data-project="coupons">
@@ -617,8 +617,8 @@ prune on length          34 blocks, 6491 nodes
 + return-to-depot bound  34 blocks, 2293 nodes
 + start from greedy      34 blocks, 1998 nodes</pre></div>
 </figure>
-<p>The greedy "go to the nearest customer next" route from the previous lesson is 4 blocks longer than the best. The exhaustive search finds the best by visiting every node of the permutation tree. Each pruning idea cuts the tree further, and the answer never changes, because pruning only discards branches that cannot win. Starting from the greedy route's length (plus one, so that a route of the same length can still be found and recorded) gives the search a good bound before it has found anything itself: a fast heuristic and an exact search working together.</p>
-<p>Even so, pruning does not change the worst case: some inputs defeat any bound, and the search is still O(n!) in theory. Route planners for real fleets with dozens of stops use heuristics and dedicated solvers. <a href="/learn/dsa-dynamic-programming">Dynamic programming</a> can solve this exactly in O(2<sup>n</sup> × n²), which is far better than n! but still exponential.</p>
+<p>The greedy "go to the nearest customer next" route, the kind of fast heuristic <a href="/learn/dsa-greedy#production">Greedy algorithms</a> described for delivery routes, is 4 blocks longer than the best. The exhaustive search finds the best by visiting every node of the permutation tree. Each pruning idea cuts the tree further, and the answer never changes, because pruning only discards branches that cannot win. Starting from the greedy route's length (plus one, so that a route of the same length can still be found and recorded) gives the search a good bound before it has found anything itself: a fast heuristic and an exact search working together.</p>
+<p>Even so, pruning does not change the worst case: some inputs defeat any bound, and the search is still O(n!) in theory. Route planners for real fleets with dozens of stops use heuristics and dedicated solvers. A dynamic programming method (the Held-Karp algorithm, built on the ideas of the next lesson) solves it exactly in O(2<sup>n</sup> × n²), which is far better than n! but still exponential.</p>
 </section>
 
 <section>
@@ -972,71 +972,81 @@ without undo: A&gt;B&gt;C</pre></div>
 </figure>
 <p>Without <code>used.delete(s)</code>, a stop stays "used" after the branch that chose it has finished, so later branches cannot pick it. The search silently returns one route instead of six. Every change made in the "choose" step needs a matching change in the "undo" step; with several pieces of state (<code>route</code> <em>and</em> <code>used</code>, or three constraint sets), it is easy to forget one.</p>
 <h3>Duplicate inputs, duplicate results</h3>
-<p>If the same product appears twice in the list (two jars of honey from different suppliers at the same price), the bundle search produces the same bundle twice, once with each jar. When duplicates matter, sort the input and skip an item that equals the previous one at the same depth: <code>if (i &gt; start &amp;&amp; items[i].naira === items[i - 1].naira) continue;</code>. The test below checks for duplicates explicitly.</p>
+<p>If the same product appears twice in the list (two jars of honey from different suppliers at the same price), the bundle search produces the same bundle twice, once with each jar. When duplicates matter, sort the input so equal items sit next to each other (by price, then name), and skip an item that equals the previous one at the same depth: <code>if (i &gt; start &amp;&amp; items[i].name === items[i - 1].name &amp;&amp; items[i].naira === items[i - 1].naira) continue;</code>. The branch that took the first jar already covers every bundle with one jar, so starting another branch with the second jar would only repeat it. Compare the whole item, not just the price: two different products that happen to cost the same are not duplicates. The test below checks for duplicates explicitly.</p>
 <h3>Unbounded searches</h3>
 <p>Backtracking is exponential in the worst case, and the worst case can arrive with the next change to the data. A coupon search that is instant with 7 coupons may hang the checkout with 40. Cap the input size, count nodes and stop past a budget, or run the search off the request path.</p>
 </section>
 
 <section>
-<h2 id="lazy">Producing results lazily with a generator</h2>
-<p>Support often only needs the first few valid combinations, not all of them. A generator function (<code>function*</code>) can <code>yield</code> each result as it is found, and the caller can stop the search whenever it has enough, without the search building a huge array.</p>
-<figure class="lx-example" data-index="11" data-file="generator.js">
-<figcaption class="lx-bar"><span class="lx-file">generator.js</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
-<pre class="lx-code"><code><span class="t-kw">function</span><span class="t-op">*</span> <span class="t-fn">orders</span><span class="t-pn">(</span>stops<span class="t-pn">,</span> route <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">,</span> used <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Set</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> counter <span class="t-op">=</span> <span class="t-pn">{</span> nodes<span class="t-op">:</span> <span class="t-num">0</span> <span class="t-pn">}</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-  counter<span class="t-pn">.</span><span class="t-prop">nodes</span><span class="t-op">++</span><span class="t-pn">;</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span>route<span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">===</span> stops<span class="t-pn">.</span><span class="t-prop">length</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-    <span class="t-kw">yield</span> route<span class="t-pn">.</span><span class="t-fn">join</span><span class="t-pn">(</span><span class="t-str">" &gt; "</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">return</span><span class="t-pn">;</span>
+<h2 id="lazy">Stopping early: the first few results</h2>
+<p>Support often only needs the first few valid routes or combinations, not all of them. Building the full list and then taking three wastes almost all the work. Instead, hand each result to a callback as soon as it is found, and let the callback say "stop" by returning <code>true</code>. Every level of the search then checks the answer of the level below and returns at once:</p>
+<figure class="lx-example" data-index="11" data-file="first-few.js">
+<figcaption class="lx-bar"><span class="lx-file">first-few.js</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<pre class="lx-code"><code><span class="t-kw">function</span> <span class="t-fn">orders</span><span class="t-pn">(</span>stops<span class="t-pn">,</span> onRoute<span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> route <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> used <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Set</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">let</span> nodes <span class="t-op">=</span> <span class="t-num">0</span><span class="t-pn">;</span>
+  <span class="t-kw">function</span> <span class="t-fn">explore</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+    nodes<span class="t-op">++</span><span class="t-pn">;</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span>route<span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">===</span> stops<span class="t-pn">.</span><span class="t-prop">length</span><span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-fn">onRoute</span><span class="t-pn">(</span>route<span class="t-pn">.</span><span class="t-fn">join</span><span class="t-pn">(</span><span class="t-str">" &gt; "</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> s <span class="t-kw">of</span> stops<span class="t-pn">)</span> <span class="t-pn">{</span>
+      <span class="t-kw">if</span> <span class="t-pn">(</span>used<span class="t-pn">.</span><span class="t-fn">has</span><span class="t-pn">(</span>s<span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-kw">continue</span><span class="t-pn">;</span>
+      used<span class="t-pn">.</span><span class="t-fn">add</span><span class="t-pn">(</span>s<span class="t-pn">)</span><span class="t-pn">;</span>
+      route<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span>s<span class="t-pn">)</span><span class="t-pn">;</span>
+      <span class="t-kw">const</span> stop <span class="t-op">=</span> <span class="t-fn">explore</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+      route<span class="t-pn">.</span><span class="t-fn">pop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+      used<span class="t-pn">.</span><span class="t-kw">delete</span><span class="t-pn">(</span>s<span class="t-pn">)</span><span class="t-pn">;</span>
+      <span class="t-kw">if</span> <span class="t-pn">(</span>stop<span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-cn">true</span><span class="t-pn">;</span>
+    <span class="t-pn">}</span>
+    <span class="t-kw">return</span> <span class="t-cn">false</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
-  <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> s <span class="t-kw">of</span> stops<span class="t-pn">)</span> <span class="t-pn">{</span>
-    <span class="t-kw">if</span> <span class="t-pn">(</span>used<span class="t-pn">.</span><span class="t-fn">has</span><span class="t-pn">(</span>s<span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-kw">continue</span><span class="t-pn">;</span>
-    used<span class="t-pn">.</span><span class="t-fn">add</span><span class="t-pn">(</span>s<span class="t-pn">)</span><span class="t-pn">;</span>
-    route<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span>s<span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">yield</span><span class="t-op">*</span> <span class="t-fn">orders</span><span class="t-pn">(</span>stops<span class="t-pn">,</span> route<span class="t-pn">,</span> used<span class="t-pn">,</span> counter<span class="t-pn">)</span><span class="t-pn">;</span>
-    route<span class="t-pn">.</span><span class="t-fn">pop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    used<span class="t-pn">.</span><span class="t-kw">delete</span><span class="t-pn">(</span>s<span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-pn">}</span>
+  <span class="t-fn">explore</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">return</span> nodes<span class="t-pn">;</span>
 <span class="t-pn">}</span>
 
-<span class="t-kw">const</span> counter <span class="t-op">=</span> <span class="t-pn">{</span> nodes<span class="t-op">:</span> <span class="t-num">0</span> <span class="t-pn">}</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> first <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
-<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> route <span class="t-kw">of</span> <span class="t-fn">orders</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-str">"Ikeja"</span><span class="t-pn">,</span> <span class="t-str">"Yaba"</span><span class="t-pn">,</span> <span class="t-str">"Lekki"</span><span class="t-pn">,</span> <span class="t-str">"Ajah"</span><span class="t-pn">,</span> <span class="t-str">"Epe"</span><span class="t-pn">,</span> <span class="t-str">"Ikorodu"</span><span class="t-pn">]</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">,</span> <span class="t-kw">new</span> <span class="t-ty">Set</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> counter<span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+<span class="t-kw">const</span> nodes <span class="t-op">=</span> <span class="t-fn">orders</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-str">"Ikeja"</span><span class="t-pn">,</span> <span class="t-str">"Yaba"</span><span class="t-pn">,</span> <span class="t-str">"Lekki"</span><span class="t-pn">,</span> <span class="t-str">"Ajah"</span><span class="t-pn">,</span> <span class="t-str">"Epe"</span><span class="t-pn">,</span> <span class="t-str">"Ikorodu"</span><span class="t-pn">]</span><span class="t-pn">,</span> <span class="t-pn">(</span>route<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
   first<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span>route<span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span>first<span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">===</span> <span class="t-num">3</span><span class="t-pn">)</span> <span class="t-kw">break</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
+  <span class="t-kw">return</span> first<span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">===</span> <span class="t-num">3</span><span class="t-pn">;</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>first<span class="t-pn">.</span><span class="t-fn">join</span><span class="t-pn">(</span><span class="t-str">"\n"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">counter.nodes</span><span class="t-op">}</span> nodes visited to get 3 of the 720 routes`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">nodes</span><span class="t-op">}</span> nodes visited to get 3 of the 720 routes`</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
-<script type="text/plain" class="lx-src">function* orders(stops, route = [], used = new Set(), counter = { nodes: 0 }) {
-  counter.nodes++;
-  if (route.length === stops.length) {
-    yield route.join(" > ");
-    return;
+<script type="text/plain" class="lx-src">function orders(stops, onRoute) {
+  const route = [];
+  const used = new Set();
+  let nodes = 0;
+  function explore() {
+    nodes++;
+    if (route.length === stops.length) return onRoute(route.join(" > "));
+    for (const s of stops) {
+      if (used.has(s)) continue;
+      used.add(s);
+      route.push(s);
+      const stop = explore();
+      route.pop();
+      used.delete(s);
+      if (stop) return true;
+    }
+    return false;
   }
-  for (const s of stops) {
-    if (used.has(s)) continue;
-    used.add(s);
-    route.push(s);
-    yield* orders(stops, route, used, counter);
-    route.pop();
-    used.delete(s);
-  }
+  explore();
+  return nodes;
 }
 
-const counter = { nodes: 0 };
 const first = [];
-for (const route of orders(["Ikeja", "Yaba", "Lekki", "Ajah", "Epe", "Ikorodu"], [], new Set(), counter)) {
+const nodes = orders(["Ikeja", "Yaba", "Lekki", "Ajah", "Epe", "Ikorodu"], (route) => {
   first.push(route);
-  if (first.length === 3) break;
-}
+  return first.length === 3;
+});
 console.log(first.join("\n"));
-console.log(`${counter.nodes} nodes visited to get 3 of the 720 routes`);</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>node generator.js</code> and of the browser terminal</div><pre class="lx-no-copy">Ikeja &gt; Yaba &gt; Lekki &gt; Ajah &gt; Epe &gt; Ikorodu
+console.log(`${nodes} nodes visited to get 3 of the 720 routes`);</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>node first-few.js</code> and of the browser terminal</div><pre class="lx-no-copy">Ikeja &gt; Yaba &gt; Lekki &gt; Ajah &gt; Epe &gt; Ikorodu
 Ikeja &gt; Yaba &gt; Lekki &gt; Ajah &gt; Ikorodu &gt; Epe
 Ikeja &gt; Yaba &gt; Lekki &gt; Epe &gt; Ajah &gt; Ikorodu
 12 nodes visited to get 3 of the 720 routes</pre></div>
 </figure>
-<p><code>yield*</code> passes on every value from the recursive call. When the <code>for...of</code> loop breaks, the generator is closed and the rest of the tree is never explored. The same pattern suits "find any solution" questions: take the first value and stop.</p>
+<p>The undo still runs before the early return, so the shared state is clean if the caller searches again. The same pattern answers "find any solution" questions: return <code>true</code> from the first result. The sudoku solver above does exactly this with <code>if (fill()) return true</code>. In Advanced JavaScript, <a href="/learn/js-generators">Generators</a> show another way to produce results one at a time, where the caller simply stops asking for more.</p>
 </section>
 
 <section>
@@ -1246,7 +1256,7 @@ console.log(`${count} valid seatings of 720, ${nodes} nodes explored`);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>node seating.js</code> and of the browser terminal</div><pre class="lx-no-copy">first: Ada, Chidi, Bola, Dayo, Emeka, Funmi
 152 valid seatings of 720, 553 nodes explored</pre></div>
 </figure>
-<p>The check only looks at the newly seated guest and their left neighbour, because every earlier pair was already checked when it was formed. Checking just the new part of the state at each step, instead of re-validating everything, is what keeps each node O(1).</p></details></div>
+<p>The check only looks at the newly seated guest and their left neighbour, because every earlier pair was already checked when it was formed. Checking just the new part of the state at each step, instead of re-validating the whole row, keeps each check O(1).</p></details></div>
 
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Every sudoku solution</h3><p>A well-formed sudoku has exactly one solution. Modify the idea of the solver to <em>count</em> solutions, stopping at 2 (all you need to know is "unique or not"). Test it on the lesson's puzzle and on the same puzzle with its first two given digits removed.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="15" data-file="unique.js">
 <figcaption class="lx-bar"><span class="lx-file">unique.js</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="15"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
@@ -1367,7 +1377,7 @@ two clues removed: not unique</pre></div>
       <a href="#queens" class="toc-link">N-queens: pruning with constraint sets</a>
       <a href="#sudoku" class="toc-link">Sudoku: choose the most constrained cell</a>
       <a href="#bugs" class="toc-link">The classic backtracking bugs</a>
-      <a href="#lazy" class="toc-link">Producing results lazily with a generator</a>
+      <a href="#lazy" class="toc-link">Stopping early: the first few results</a>
       <a href="#testing" class="toc-link">Testing a backtracking search</a>
       <a href="#production" class="toc-link">Backtracking in production</a>
       <a href="#practice" class="toc-link">Practice</a>

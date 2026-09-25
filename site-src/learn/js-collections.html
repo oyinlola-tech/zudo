@@ -1,8 +1,8 @@
 ---
 title: Collections in depth
-description: Choose between Map, Set, WeakMap, WeakSet and WeakRef by how they compare keys, keep order and hold memory, and build a bounded cache and object-keyed memoisation.
+description: Choose between Map, Set, WeakMap, WeakSet and WeakRef by how they compare keys, keep order and hold memory; build a bounded cache and object-keyed memos.
 minutes: 50
-youNeed: Hash maps, Sets, Beyond primitives, and Numbers in depth
+youNeed: Hash maps and sets, Sets, Types in depth, and Numbers in depth
 youBuild: A bounded LRU price cache on top of Map, memoisation keyed by cart objects with WeakMap, and de-duplication of orders by id, all with tests
 keywords: javascript map, set, weakmap, weakset, weakref, finalizationregistry, samevaluezero, insertion order, lru cache, memoization, cache keyed by object, Map.groupBy, set methods, set-like, garbage collection, memory leak, private data
 objectives: Predict how Map and Set compare keys and in what order they iterate, including while they are being changed | Build a bounded LRU cache with Map and explain why an unbounded cache is a memory leak | Use WeakMap and WeakSet to attach data to objects without keeping them alive | Explain what WeakRef and FinalizationRegistry promise and what they do not | Group, de-duplicate and combine data with Map.groupBy and the set methods | Choose the right collection for a cache, an index, a registry or private data
@@ -39,7 +39,7 @@ computed: 10000
 entries kept: 10000
 </output>
 <p>The cache works: each cart is priced once instead of three times. But after 10,000 requests it still holds 10,000 carts. Every request's cart finished long ago, yet the <code>Map</code> refers to each one, so none of them can ever be freed. In production that is a <strong>memory leak</strong>: the process grows until it slows down and is killed.</p>
-<p>A collection is more than "a place to put things". Every one answers three questions differently: <em>how are keys compared</em>, <em>in what order do entries come out</em>, and <em>does holding an entry keep its key alive</em>. <a href="/learn/dsa-hash-maps#map-vs-object">Hash maps</a> compared <code>Map</code> with plain objects and <a href="/learn/logic-sets">Sets</a> covered set operations. This lesson answers the three questions precisely, fixes this cache twice (with a size limit and with a weak key), and ends with a guide to picking the right collection.</p>
+<p>A collection is more than "a place to put things". Every one answers three questions differently: <em>how are keys compared</em>, <em>in what order do entries come out</em>, and <em>does holding an entry keep its key alive</em>. <a href="/learn/dsa-hash-maps#map-vs-object">Hash maps and sets</a> compared <code>Map</code> with plain objects and <a href="/learn/logic-sets">Sets</a> covered set operations. This lesson answers the three questions precisely, fixes this cache twice (with a size limit and with a weak key), and ends with a guide to picking the right collection.</p>
 </section>
 
 <section>
@@ -126,7 +126,7 @@ console.log(recent.keys().next().value);
 [ 'OIL', 'SALT', 'RICE' ]
 OIL
 </output>
-<p>"Delete and re-add moves to the end" plus "the first key is the oldest" is all you need for a least-recently-used cache, which you will build shortly. <code>map.keys()</code> returns an <strong>iterator</strong>: an object that produces values one at a time when you call <code>next()</code> (<a href="/learn/js-iterators">Iterators</a> explains the protocol). Asking for just the first one is O(1).</p>
+<p>"Delete and re-add moves to the end" plus "the first key is the oldest" is all you need for a least-recently-used cache, which you will build shortly. <code>map.keys()</code> returns an <strong>iterator</strong>: an object that produces values one at a time when you call <code>next()</code> (<a href="/learn/js-iterators">Iterables and iterators</a> explains the protocol). Asking for just the first one is O(1).</p>
 <h3>Changing a Map during a loop</h3>
 <p>Unlike some languages, JavaScript allows adding and deleting while you iterate a <code>Map</code> or <code>Set</code>, with clear rules: an entry deleted before the loop reaches it is skipped, and an entry added during the loop is visited later in the same loop.</p>
 <example file="mutate-while-iterating.js">
@@ -412,7 +412,7 @@ console.log("after:", probe.deref());
 before: CART-1 true
 after: undefined
 </output>
-<p>Once the only strong reference, <code>cart</code>, is gone, the collector frees the cart together with its cache entry. The <code>setTimeout</code> is needed because a <code>WeakRef</code> keeps its target alive until the current piece of synchronous work finishes. <a href="/learn/js-memory">Memory</a> goes deeper into reachability and leaks.</p>
+<p>Once the only strong reference, <code>cart</code>, is gone, the collector frees the cart together with its cache entry. The <code>setTimeout</code> is needed because a <code>WeakRef</code> keeps its target alive until the current piece of synchronous work finishes. <a href="/learn/js-memory">Memory and garbage collection</a> goes deeper into reachability and leaks.</p>
 
 <h3>Which fix?</h3>
 <p>The two fixes solve different problems. The WeakMap cache is right when the <em>key object</em> defines the lifetime: one cart, one request, one DOM node. The LRU cache is right when keys are primitives such as product codes that never "die", or when you want entries to outlive the objects that created them. Many systems use both.</p>
@@ -481,32 +481,8 @@ console.log(JSON.stringify(toPlain({ billing: sharedAddress, shipping: sharedAdd
 
 <section>
 <h2 id="weakref">WeakRef and FinalizationRegistry, briefly</h2>
-<p>A <strong>WeakRef</strong> holds a single object weakly. <code>ref.deref()</code> returns the object if it still exists, or <code>undefined</code> if it has been collected. A <strong>FinalizationRegistry</strong> lets you register a callback that <em>may</em> run some time after an object has been collected. Together they allow a cache of large, re-creatable values, such as rendered reports, that the engine can reclaim under memory pressure:</p>
-<example file="weakref-cache.js">
-const reports = new Map();
-let builds = 0;
-
-function buildReport(month) {
-  builds += 1;
-  return { month, rows: new Array(1000).fill(0) };
-}
-
-function getReport(month) {
-  const cached = reports.get(month)?.deref();
-  if (cached) return cached;
-  const report = buildReport(month);
-  reports.set(month, new WeakRef(report));
-  return report;
-}
-
-const first = getReport("2026-08");
-const again = getReport("2026-08");
-console.log(first === again, builds);
-</example>
-<output>
-true 1
-</output>
-<p>Treat both as optimisations only. The specification deliberately promises very little: an object may be collected late or never, different engines behave differently, and a finalization callback may not run at all, for example when the process exits. Never use them for program logic such as releasing a lock, closing a file or saving data; use explicit <code>close()</code> methods and <code>try...finally</code> for that. Notice also that the <code>reports</code> map itself still grows by one small entry per month; a registry callback could delete it, which is what <code>FinalizationRegistry</code> is for.</p>
+<p>Two more weak tools exist. A <strong>WeakRef</strong> holds a single object weakly: <code>ref.deref()</code> returns the object if it still exists, or <code>undefined</code> once it has been collected (the <code>probe</code> above used one). A <strong>FinalizationRegistry</strong> lets you register a callback that <em>may</em> run some time after an object has been collected. Together they allow a cache of large values that are cheap to rebuild, such as rendered monthly reports, which the engine may reclaim when memory is short.</p>
+<p>Treat both as optimisations only. The specification deliberately promises very little: an object may be collected late or never, different engines behave differently, and a finalization callback may not run at all, for example when the process exits. Never use them for program logic such as releasing a lock, closing a file or saving data; use explicit <code>close()</code> methods and <code>try...finally</code> for that. <a href="/learn/js-memory#weak">Memory and garbage collection</a> builds the report cache with both and shows where it can surprise you.</p>
 </section>
 
 <section>
@@ -540,7 +516,7 @@ true 1
 <li>It returns the old price: the key is the same object, so the cache cannot tell the cart changed. Either make carts immutable (every change creates a new cart object, so a changed cart is a new key) or clear the entry in the only method allowed to change lines. The build freezes carts and creates a new one on every change.</li>
 <li>Strings are primitives and are never collected, so a WeakMap refuses them. A size limit (LRU) bounds memory; a time-to-live bounds staleness, and deleting the entry when a price is edited makes it fresh at once.</li>
 <li>Truthiness checks treat <code>0</code> as a miss and recompute free gifts forever. Use <code>has(key)</code> to decide hit or miss.</li>
-<li>Both miss and both load. For a price that is harmless. For expensive loads, cache the <em>promise</em> of the value instead of the value, so the second request waits for the first load: <a href="/learn/js-promises">Promises in depth</a> returns to that idea.</li>
+<li>Both miss and both load. For a price that is harmless. For expensive loads, cache the <em>promise</em> of the value instead of the value, so the second request waits for the first load: <a href="/learn/js-concurrency#races">Concurrency and cancellation</a> builds exactly that.</li>
 </ul>
 </answer>
 </reason>
@@ -634,7 +610,7 @@ export function addLine(cart, sku, qty) {
   return createCart([...cart.lines, { sku, qty }]);
 }
 </example>
-<p><code>addLine</code> never changes a cart; it returns a new frozen one, so a changed cart is automatically a new cache key. The same idea of immutable values runs through <a href="/learn/js-functional">Functional techniques</a>. Now a request's worth of calls:</p>
+<p><code>addLine</code> never changes a cart; it returns a new frozen one, so a changed cart is automatically a new cache key. The same idea of immutable values runs through <a href="/learn/js-functional">Functional JavaScript</a>. Now a request's worth of calls:</p>
 <example file="checkout-demo.js" project="cache">
 import { addLine, createCart, createPricing } from "./pricing.js";
 
@@ -765,7 +741,7 @@ Map(5) {
 }
 [ [ 'RICE', 3 ], [ 'OIL', 3 ], [ 'SALT', 2 ] ]
 </output>
-<p><code>counts.get(sku) ?? 0</code> starts new keys at 0; setting an existing key keeps its position, so the map is in order of first appearance. <code>toSorted</code> is stable (<a href="/learn/dsa-sorting">Sorting</a>), which is why ties keep that order.</p>
+<p><code>counts.get(sku) ?? 0</code> starts new keys at 0; setting an existing key keeps its position, so the map is in order of first appearance. <code>toSorted</code> is stable (<a href="/learn/dsa-sorting">Sorting algorithms</a>), which is why ties keep that order.</p>
 </solution>
 </exercise>
 

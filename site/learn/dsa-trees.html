@@ -96,7 +96,7 @@
         <p class="lx-hero-lead">Turn flat category rows into a tree, walk it four ways, then build, test and balance a binary search tree of orders, with the cost of every operation.</p>
         <ul class="lx-hero-meta">
           <li><strong>55 min</strong> to read and try</li>
-          <li><strong>You need:</strong> Recursion, Classes, Hash maps, and Stacks and queues</li>
+          <li><strong>You need:</strong> Recursion, this, prototypes and classes, Hash maps and sets, and Stacks and queues</li>
           <li><strong>You build:</strong> A category tree builder with safe loading, and a tested binary search tree of orders</li>
         </ul>
         <div class="lx-hero-actions">
@@ -345,14 +345,14 @@ height: 3
 leaves: Android, iPhone, Gaming laptops, Sneakers
 edges: 9</pre></div>
 </figure>
-<p><code>height</code> starts <code>tallest</code> at −1 so that a leaf, which has no children, gets −1 + 1 = 0. Each function visits every node once: O(n) time. The extra memory is the call stack, one frame per level, so O(h) where <em>h</em> is the height. Remember that O(h): it is the reason deep trees can crash recursive code, which you will see shortly.</p>
+<p><code>flatMap</code> calls <code>leaves</code> on every child and joins the arrays it returns into one array. <code>height</code> starts <code>tallest</code> at −1 so that a leaf, which has no children, gets −1 + 1 = 0. Each function visits every node once: O(n) time. The extra memory is the call stack, one frame per level, so O(h) where <em>h</em> is the height. Remember that O(h): it is the reason deep trees can crash recursive code, which you will see shortly.</p>
 
 <div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>What can be wrong with the rows?</h3><p>The rows come from a database that admins edit through a form. <code>buildTree</code> trusts them completely. Before reading on, list what could be wrong with the data, and what <code>buildTree</code> would do in each case. Think about: a <code>parentId</code> that points nowhere, a category that is its own parent, two categories that are each other's parent, and two rows with the same id.</p><details class="lx-solution"><summary>Show the reasoning</summary><ul>
 <li><strong>Missing parent</strong> (an <em>orphan</em>: its parent was deleted). <code>byId.get(row.parentId)</code> returns <code>undefined</code>, and <code>undefined.children</code> throws a <code>TypeError</code>. One bad row takes the whole menu down.</li>
 <li><strong>A category that is its own parent</strong>, or <strong>a loop</strong> such as A inside B and B inside A. Nothing crashes while building, but these nodes are never reachable from the root, so they silently vanish from the menu. Worse, any code that walks <em>up</em> through parents from one of them (a breadcrumb) loops forever.</li>
-<li><strong>Duplicate ids.</strong> The second <code>byId.set</code> overwrites the first node, and the first category's children end up under the wrong node.</li>
+<li><strong>Duplicate ids.</strong> The second <code>byId.set</code> overwrites the first node, so the first category vanishes, the second is linked twice (once for each row), and every child of that id hangs under it. If the second row's parent sits <em>below</em> the first one, those links form a loop that <em>is</em> reachable from the root, and any walk of the menu never ends.</li>
 </ul>
-<p>The general lesson: a tree built from outside data is only a tree if you check the three rules. A safe builder validates ids, reports orphans, and counts how many nodes it can reach from the root. Any node it cannot reach is in a loop.</p></details></div>
+<p>The general lesson: a tree built from outside data is only a tree if you check the three rules. A safe builder skips duplicate ids, reports orphans, and counts how many nodes it can reach from the root (or from an orphan, whose subtree is intact). Any node it cannot reach is in a loop or hangs below one.</p></details></div>
 
 <p>Here is a builder that checks all of that and reports problems instead of crashing or hiding data:</p>
 <figure class="lx-example" data-index="3" data-file="safe-build.js">
@@ -361,30 +361,41 @@ edges: 9</pre></div>
   <span class="t-kw">const</span> root <span class="t-op">=</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-cn">null</span><span class="t-pn">,</span> name<span class="t-op">:</span> <span class="t-str">"All categories"</span><span class="t-pn">,</span> children<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">;</span>
   <span class="t-kw">const</span> byId <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Map</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-pn">[</span><span class="t-cn">null</span><span class="t-pn">,</span> root<span class="t-pn">]</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-kw">const</span> problems <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> accepted <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
   <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> row <span class="t-kw">of</span> rows<span class="t-pn">)</span> <span class="t-pn">{</span>
-    <span class="t-kw">if</span> <span class="t-pn">(</span>byId<span class="t-pn">.</span><span class="t-fn">has</span><span class="t-pn">(</span>row<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">)</span><span class="t-pn">)</span> problems<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span><span class="t-tpl">`duplicate id <span class="t-op">${</span><span class="t-prop">row.id</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">else</span> byId<span class="t-pn">.</span><span class="t-kw">set</span><span class="t-pn">(</span>row<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">,</span> <span class="t-pn">{</span> <span class="t-op">...</span><span class="t-prop">row</span><span class="t-pn">,</span> children<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span>byId<span class="t-pn">.</span><span class="t-fn">has</span><span class="t-pn">(</span>row<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+      problems<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span><span class="t-tpl">`duplicate id <span class="t-op">${</span><span class="t-prop">row.id</span><span class="t-op">}</span> ("<span class="t-op">${</span><span class="t-prop">row.name</span><span class="t-op">}</span>" skipped)`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+      <span class="t-kw">continue</span><span class="t-pn">;</span>
+    <span class="t-pn">}</span>
+    byId<span class="t-pn">.</span><span class="t-kw">set</span><span class="t-pn">(</span>row<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">,</span> <span class="t-pn">{</span> <span class="t-op">...</span><span class="t-prop">row</span><span class="t-pn">,</span> children<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    accepted<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span>row<span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
-  <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> row <span class="t-kw">of</span> rows<span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> orphans <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
+  <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> row <span class="t-kw">of</span> accepted<span class="t-pn">)</span> <span class="t-pn">{</span>
     <span class="t-kw">const</span> parent <span class="t-op">=</span> byId<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>row<span class="t-pn">.</span><span class="t-prop">parentId</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>parent<span class="t-pn">)</span> problems<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span><span class="t-tpl">`"<span class="t-op">${</span><span class="t-prop">row.name</span><span class="t-op">}</span>" has missing parent <span class="t-op">${</span><span class="t-prop">row.parentId</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">else</span> parent<span class="t-pn">.</span><span class="t-prop">children</span><span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span>byId<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>row<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span>parent<span class="t-pn">)</span> <span class="t-pn">{</span>
+      parent<span class="t-pn">.</span><span class="t-prop">children</span><span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span>byId<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>row<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-pn">}</span> <span class="t-kw">else</span> <span class="t-pn">{</span>
+      problems<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span><span class="t-tpl">`"<span class="t-op">${</span><span class="t-prop">row.name</span><span class="t-op">}</span>" has missing parent <span class="t-op">${</span><span class="t-prop">row.parentId</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+      orphans<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span>byId<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>row<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-pn">}</span>
   <span class="t-pn">}</span>
   <span class="t-kw">let</span> reached <span class="t-op">=</span> <span class="t-num">0</span><span class="t-pn">;</span>
-  <span class="t-kw">const</span> stack <span class="t-op">=</span> <span class="t-pn">[</span>root<span class="t-pn">]</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> stack <span class="t-op">=</span> <span class="t-pn">[</span>root<span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">orphans</span><span class="t-pn">]</span><span class="t-pn">;</span>
   <span class="t-kw">while</span> <span class="t-pn">(</span>stack<span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">&gt;</span> <span class="t-num">0</span><span class="t-pn">)</span> <span class="t-pn">{</span>
     <span class="t-kw">const</span> node <span class="t-op">=</span> stack<span class="t-pn">.</span><span class="t-fn">pop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
     reached<span class="t-op">++</span><span class="t-pn">;</span>
     <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> child <span class="t-kw">of</span> node<span class="t-pn">.</span><span class="t-prop">children</span><span class="t-pn">)</span> stack<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span>child<span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
-  <span class="t-kw">const</span> unreachable <span class="t-op">=</span> byId<span class="t-pn">.</span><span class="t-prop">size</span> <span class="t-op">-</span> reached<span class="t-pn">;</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span>unreachable <span class="t-op">&gt;</span> <span class="t-num">0</span><span class="t-pn">)</span> problems<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span><span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">unreachable</span><span class="t-op">}</span> categories are in a loop`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> stuck <span class="t-op">=</span> byId<span class="t-pn">.</span><span class="t-prop">size</span> <span class="t-op">-</span> reached<span class="t-pn">;</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span>stuck <span class="t-op">&gt;</span> <span class="t-num">0</span><span class="t-pn">)</span> problems<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span><span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">stuck</span><span class="t-op">}</span> categories are in a loop or below one`</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-kw">return</span> <span class="t-pn">{</span> root<span class="t-pn">,</span> problems <span class="t-pn">}</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
 
 <span class="t-kw">const</span> broken <span class="t-op">=</span> <span class="t-pn">[</span>
   <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">1</span><span class="t-pn">,</span> name<span class="t-op">:</span> <span class="t-str">"Electronics"</span><span class="t-pn">,</span> parentId<span class="t-op">:</span> <span class="t-cn">null</span> <span class="t-pn">}</span><span class="t-pn">,</span>
   <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">2</span><span class="t-pn">,</span> name<span class="t-op">:</span> <span class="t-str">"Phones"</span><span class="t-pn">,</span> parentId<span class="t-op">:</span> <span class="t-num">1</span> <span class="t-pn">}</span><span class="t-pn">,</span>
+  <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">2</span><span class="t-pn">,</span> name<span class="t-op">:</span> <span class="t-str">"Mobile phones"</span><span class="t-pn">,</span> parentId<span class="t-op">:</span> <span class="t-num">4</span> <span class="t-pn">}</span><span class="t-pn">,</span>
   <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">3</span><span class="t-pn">,</span> name<span class="t-op">:</span> <span class="t-str">"Toys"</span><span class="t-pn">,</span> parentId<span class="t-op">:</span> <span class="t-num">42</span> <span class="t-pn">}</span><span class="t-pn">,</span>
   <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">4</span><span class="t-pn">,</span> name<span class="t-op">:</span> <span class="t-str">"Gadgets"</span><span class="t-pn">,</span> parentId<span class="t-op">:</span> <span class="t-num">5</span> <span class="t-pn">}</span><span class="t-pn">,</span>
   <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">5</span><span class="t-pn">,</span> name<span class="t-op">:</span> <span class="t-str">"Accessories"</span><span class="t-pn">,</span> parentId<span class="t-op">:</span> <span class="t-num">4</span> <span class="t-pn">}</span><span class="t-pn">,</span>
@@ -397,30 +408,41 @@ edges: 9</pre></div>
   const root = { id: null, name: "All categories", children: [] };
   const byId = new Map([[null, root]]);
   const problems = [];
+  const accepted = [];
   for (const row of rows) {
-    if (byId.has(row.id)) problems.push(`duplicate id ${row.id}`);
-    else byId.set(row.id, { ...row, children: [] });
+    if (byId.has(row.id)) {
+      problems.push(`duplicate id ${row.id} ("${row.name}" skipped)`);
+      continue;
+    }
+    byId.set(row.id, { ...row, children: [] });
+    accepted.push(row);
   }
-  for (const row of rows) {
+  const orphans = [];
+  for (const row of accepted) {
     const parent = byId.get(row.parentId);
-    if (!parent) problems.push(`"${row.name}" has missing parent ${row.parentId}`);
-    else parent.children.push(byId.get(row.id));
+    if (parent) {
+      parent.children.push(byId.get(row.id));
+    } else {
+      problems.push(`"${row.name}" has missing parent ${row.parentId}`);
+      orphans.push(byId.get(row.id));
+    }
   }
   let reached = 0;
-  const stack = [root];
+  const stack = [root, ...orphans];
   while (stack.length > 0) {
     const node = stack.pop();
     reached++;
     for (const child of node.children) stack.push(child);
   }
-  const unreachable = byId.size - reached;
-  if (unreachable > 0) problems.push(`${unreachable} categories are in a loop`);
+  const stuck = byId.size - reached;
+  if (stuck > 0) problems.push(`${stuck} categories are in a loop or below one`);
   return { root, problems };
 }
 
 const broken = [
   { id: 1, name: "Electronics", parentId: null },
   { id: 2, name: "Phones", parentId: 1 },
+  { id: 2, name: "Mobile phones", parentId: 4 },
   { id: 3, name: "Toys", parentId: 42 },
   { id: 4, name: "Gadgets", parentId: 5 },
   { id: 5, name: "Accessories", parentId: 4 },
@@ -428,10 +450,11 @@ const broken = [
 
 const { problems } = buildTreeSafely(broken);
 for (const problem of problems) console.log("problem:", problem);</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>node safe-build.js</code> and of the browser terminal</div><pre class="lx-no-copy">problem: "Toys" has missing parent 42
-problem: 3 categories are in a loop</pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>node safe-build.js</code> and of the browser terminal</div><pre class="lx-no-copy">problem: duplicate id 2 ("Mobile phones" skipped)
+problem: "Toys" has missing parent 42
+problem: 2 categories are in a loop or below one</pre></div>
 </figure>
-<p>The loop check uses an explicit stack instead of recursion, for a reason you will meet in <a href="#deep">Deep trees and the call stack</a>. It cannot loop forever itself: it only follows <code>children</code> links, and a node inside a loop is never added to the children of a node that the root can reach.</p>
+<p>Skipping the duplicate row matters: linking it as well would give node 2 a second parent, and here that second parent sits in the Gadgets loop. The loop check uses an explicit stack instead of recursion, for a reason you will meet in <a href="#deep">Deep trees and the call stack</a>. It cannot loop forever itself: every accepted row is linked under at most one parent, so a node in a loop can only be reached from inside that loop, never from the root or an orphan. Toys is reported as an orphan but still counted as reachable, so only the two looping categories are counted as stuck.</p>
 </section>
 
 <section>
@@ -549,7 +572,7 @@ shop/ 64500</pre></div>
 <p>Every line is printed <em>after</em> its children's lines, and the root comes last. That is exactly what the <code>du</code> command on Linux and macOS does, for the same reason.</p>
 
 <h3>Level order with a queue</h3>
-<p>To visit level by level you need to remember the nodes you have seen but not yet expanded, and take them in the order you found them: first in, first out. That is a queue (see <a href="/learn/dsa-stacks-queues">Stacks and queues</a>). Here the queue is an array with a <code>head</code> index, because <code>shift()</code> moves every remaining element and would make the walk O(n²):</p>
+<p>To visit level by level you need to remember the nodes you have seen but not yet expanded, and take them in the order you found them: first in, first out. That is a queue (see <a href="/learn/dsa-stacks-queues">Stacks and queues</a>). Here the queue is an array with a <code>head</code> index, because <code>shift()</code> can move every remaining element on each call (O(n) on large arrays), which would make the walk O(n²):</p>
 <figure class="lx-example" data-index="6" data-file="levels.js" data-project="catalog">
 <figcaption class="lx-bar"><span class="lx-file">levels.js</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="6"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> rows<span class="t-pn">,</span> buildTree <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./categories.js"</span><span class="t-pn">;</span>
@@ -728,7 +751,7 @@ Gaming laptops
   Reviews
     Fast and quiet</pre></div>
 </figure>
-<p>Pre-order matters here: headings come out in the order a reader meets them. A post-order walk would put "Gaming laptops" last.</p>
+<p>Pre-order is <strong>document order</strong>: every element comes before the elements inside it, exactly as the tags appear in the HTML, which is the order a reader meets them. (These headings contain no other elements, so a post-order walk would happen to list them in the same order; but it would list each <code>&lt;section&gt;</code> after its heading and <code>&lt;body&gt;</code> last, which is useless for anything that must see a container before its contents.)</p>
 </section>
 
 <section>
@@ -1014,7 +1037,8 @@ value:      9000</pre></div>
     <span class="t-kw">return</span> current<span class="t-op">?</span><span class="t-pn">.</span><span class="t-prop">key</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
 
-  <span class="t-op">*</span><span class="t-fn">keys</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-fn">keys</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">const</span> out <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
     <span class="t-kw">const</span> stack <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
     <span class="t-kw">let</span> current <span class="t-op">=</span> <span class="t-kw">this</span><span class="t-pn">.</span>#root<span class="t-pn">;</span>
     <span class="t-kw">while</span> <span class="t-pn">(</span>current <span class="t-op">!==</span> <span class="t-cn">null</span> <span class="t-op">||</span> stack<span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">&gt;</span> <span class="t-num">0</span><span class="t-pn">)</span> <span class="t-pn">{</span>
@@ -1023,9 +1047,10 @@ value:      9000</pre></div>
         current <span class="t-op">=</span> current<span class="t-pn">.</span><span class="t-prop">left</span><span class="t-pn">;</span>
       <span class="t-pn">}</span>
       current <span class="t-op">=</span> stack<span class="t-pn">.</span><span class="t-fn">pop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-      <span class="t-kw">yield</span> current<span class="t-pn">.</span><span class="t-prop">key</span><span class="t-pn">;</span>
+      out<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span>current<span class="t-pn">.</span><span class="t-prop">key</span><span class="t-pn">)</span><span class="t-pn">;</span>
       current <span class="t-op">=</span> current<span class="t-pn">.</span><span class="t-prop">right</span><span class="t-pn">;</span>
     <span class="t-pn">}</span>
+    <span class="t-kw">return</span> out<span class="t-pn">;</span>
   <span class="t-pn">}</span>
 
   <span class="t-kw">delete</span><span class="t-pn">(</span>key<span class="t-pn">)</span> <span class="t-pn">{</span>
@@ -1115,7 +1140,8 @@ value:      9000</pre></div>
     return current?.key;
   }
 
-  *keys() {
+  keys() {
+    const out = [];
     const stack = [];
     let current = this.#root;
     while (current !== null || stack.length > 0) {
@@ -1124,9 +1150,10 @@ value:      9000</pre></div>
         current = current.left;
       }
       current = stack.pop();
-      yield current.key;
+      out.push(current.key);
       current = current.right;
     }
+    return out;
   }
 
   delete(key) {
@@ -1166,7 +1193,7 @@ value:      9000</pre></div>
 <ul>
 <li><code>insert</code> walks down exactly as a search would, and hangs the new node in the empty slot where the search fell off the tree. Inserting an existing key updates its value instead of adding a duplicate. That is a design choice; a BST that allows duplicates must pick a side for equal keys and stick to it.</li>
 <li><code>min</code> is the leftmost node and <code>max</code> the rightmost. The <code>?.</code> handles the empty tree, where both return <code>undefined</code>.</li>
-<li><code>keys()</code> is an in-order walk written with an explicit stack (and as a generator, so callers can stop early). It pushes the path down the left side, takes the smallest waiting node, then moves into its right subtree.</li>
+<li><code>keys()</code> is an in-order walk written with an explicit stack, so a deep tree cannot overflow the call stack. It pushes the path down the left side, takes the smallest waiting node, then moves into its right subtree. It returns the keys as an array.</li>
 <li><code>#remove</code> returns the new root of the subtree it was given, and the caller stores it. That one pattern handles all three delete cases, which the next reasoning box works through.</li>
 </ul>
 <figure class="lx-example" data-index="14" data-file="orders.js" data-project="bst">
@@ -1181,7 +1208,7 @@ value:      9000</pre></div>
   orders<span class="t-pn">.</span><span class="t-fn">insert</span><span class="t-pn">(</span>id<span class="t-pn">,</span> customer<span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
 
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"in order:"</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-op">...</span><span class="t-prop">orders</span><span class="t-pn">.</span><span class="t-fn">keys</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">.</span><span class="t-fn">join</span><span class="t-pn">(</span><span class="t-str">" "</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"in order:"</span><span class="t-pn">,</span> orders<span class="t-pn">.</span><span class="t-fn">keys</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">join</span><span class="t-pn">(</span><span class="t-str">" "</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"size:"</span><span class="t-pn">,</span> orders<span class="t-pn">.</span><span class="t-prop">size</span><span class="t-pn">,</span> <span class="t-str">"height:"</span><span class="t-pn">,</span> orders<span class="t-pn">.</span><span class="t-fn">height</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"min:"</span><span class="t-pn">,</span> orders<span class="t-pn">.</span><span class="t-fn">min</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-str">"max:"</span><span class="t-pn">,</span> orders<span class="t-pn">.</span><span class="t-fn">max</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
@@ -1200,7 +1227,7 @@ for (const [id, customer] of [
   orders.insert(id, customer);
 }
 
-console.log("in order:", [...orders.keys()].join(" "));
+console.log("in order:", orders.keys().join(" "));
 console.log("size:", orders.size, "height:", orders.height());
 console.log("min:", orders.min(), "max:", orders.max());
 
@@ -1239,7 +1266,7 @@ order 6500: undefined (3 comparisons)</pre></div>
 <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> id <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-num">5040</span><span class="t-pn">,</span> <span class="t-num">3020</span><span class="t-pn">,</span> <span class="t-num">7011</span><span class="t-pn">,</span> <span class="t-num">2005</span><span class="t-pn">,</span> <span class="t-num">4100</span><span class="t-pn">,</span> <span class="t-num">6010</span><span class="t-pn">,</span> <span class="t-num">8800</span><span class="t-pn">,</span> <span class="t-num">6500</span><span class="t-pn">]</span><span class="t-pn">)</span> orders<span class="t-pn">.</span><span class="t-fn">insert</span><span class="t-pn">(</span>id<span class="t-pn">,</span> <span class="t-tpl">`order <span class="t-op">${</span><span class="t-prop">id</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">function</span> <span class="t-fn">show</span><span class="t-pn">(</span>label<span class="t-pn">)</span> <span class="t-pn">{</span>
-  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">label.padEnd(24)</span><span class="t-op">}</span> <span class="t-op">${</span><span class="t-prop">[...orders.keys()].join(" ")</span><span class="t-op">}</span> | root <span class="t-op">${</span><span class="t-prop">orders.root.key</span><span class="t-op">}</span> | valid <span class="t-op">${</span><span class="t-prop">isValidBST(orders.root)</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">label.padEnd(24)</span><span class="t-op">}</span> <span class="t-op">${</span><span class="t-prop">orders.keys().join(" ")</span><span class="t-op">}</span> | root <span class="t-op">${</span><span class="t-prop">orders.root.key</span><span class="t-op">}</span> | valid <span class="t-op">${</span><span class="t-prop">isValidBST(orders.root)</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
 
 <span class="t-fn">show</span><span class="t-pn">(</span><span class="t-str">"start"</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -1263,7 +1290,7 @@ const orders = new BST();
 for (const id of [5040, 3020, 7011, 2005, 4100, 6010, 8800, 6500]) orders.insert(id, `order ${id}`);
 
 function show(label) {
-  console.log(`${label.padEnd(24)} ${[...orders.keys()].join(" ")} | root ${orders.root.key} | valid ${isValidBST(orders.root)}`);
+  console.log(`${label.padEnd(24)} ${orders.keys().join(" ")} | root ${orders.root.key} | valid ${isValidBST(orders.root)}`);
 }
 
 show("start");
@@ -1496,7 +1523,7 @@ one<span class="t-pn">.</span><span class="t-fn">insert</span><span class="t-pn"
     <span class="t-kw">if</span> <span class="t-pn">(</span>model<span class="t-pn">.</span><span class="t-fn">includes</span><span class="t-pn">(</span>key<span class="t-pn">)</span><span class="t-pn">)</span> model<span class="t-pn">.</span><span class="t-fn">splice</span><span class="t-pn">(</span>model<span class="t-pn">.</span><span class="t-fn">indexOf</span><span class="t-pn">(</span>key<span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-num">1</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
   model<span class="t-pn">.</span><span class="t-fn">sort</span><span class="t-pn">(</span><span class="t-pn">(</span>a<span class="t-pn">,</span> b<span class="t-pn">)</span> <span class="t-op">=&gt;</span> a <span class="t-op">-</span> b<span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">const</span> same <span class="t-op">=</span> tree<span class="t-pn">.</span><span class="t-prop">size</span> <span class="t-op">===</span> model<span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">&amp;&amp;</span> <span class="t-pn">[</span><span class="t-op">...</span><span class="t-prop">tree</span><span class="t-pn">.</span><span class="t-fn">keys</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">.</span><span class="t-fn">join</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">===</span> model<span class="t-pn">.</span><span class="t-fn">join</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> same <span class="t-op">=</span> tree<span class="t-pn">.</span><span class="t-prop">size</span> <span class="t-op">===</span> model<span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">&amp;&amp;</span> tree<span class="t-pn">.</span><span class="t-fn">keys</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">join</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">===</span> model<span class="t-pn">.</span><span class="t-fn">join</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>same <span class="t-op">||</span> <span class="t-op">!</span><span class="t-fn">isValidBST</span><span class="t-pn">(</span>tree<span class="t-pn">.</span><span class="t-prop">root</span><span class="t-pn">)</span><span class="t-pn">)</span> failures<span class="t-op">++</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
 <span class="t-fn">check</span><span class="t-pn">(</span><span class="t-str">"2000 random operations match the model"</span><span class="t-pn">,</span> failures<span class="t-pn">,</span> <span class="t-num">0</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -1541,7 +1568,7 @@ for (let step = 0; step < 2000; step++) {
     if (model.includes(key)) model.splice(model.indexOf(key), 1);
   }
   model.sort((a, b) => a - b);
-  const same = tree.size === model.length && [...tree.keys()].join() === model.join();
+  const same = tree.size === model.length && tree.keys().join() === model.join();
   if (!same || !isValidBST(tree.root)) failures++;
 }
 check("2000 random operations match the model", failures, 0);

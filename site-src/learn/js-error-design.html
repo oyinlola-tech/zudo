@@ -316,7 +316,7 @@ AggregateError - 3 cart lines are invalid
 </output>
 <p>The customer sees every problem at once, and each item in <code>.errors</code> keeps its own type and fields (the <code>sku</code>), so an API can return a structured list.</p>
 <h3>Partial failure in a batch</h3>
-<p>Paying fifty vendors at the end of the day is fifty independent operations. One failure must not stop the other forty-nine, and must not be lost either. <code>Promise.allSettled</code> (<a href="/learn/js-async#combinators">Asynchronous JavaScript</a>) waits for all of them; the failures are then gathered into one <code>AggregateError</code> for the caller:</p>
+<p>Paying fifty vendors at the end of the day is fifty independent operations. One failure must not stop the other forty-nine, and must not be lost either. <code>Promise.allSettled</code> (<a href="/learn/js-promise-combinators#allsettled">Combining promises</a>) waits for all of them; the failures are then gathered into one <code>AggregateError</code> for the caller:</p>
 <example file="payouts.js">
 async function payVendor(vendor) {
   await null;
@@ -358,7 +358,7 @@ failed: [
   'Kano Grains: above the single-transfer limit'
 ]
 </output>
-<p>The caller learns both halves: which vendors were paid (so they are not paid twice when the batch is retried) and why each failure happened. <code>Promise.any</code>, which succeeds when any promise succeeds, uses <code>AggregateError</code> the same way when <em>all</em> of them fail.</p>
+<p>The caller learns both halves: which vendors were paid (so they are not paid twice when the batch is retried) and why each failure happened. <code>Promise.any</code>, which succeeds when any promise succeeds, uses <code>AggregateError</code> the same way when <em>all</em> of them fail (<a href="/learn/js-promise-combinators#any">Combining promises</a>).</p>
 <warn>Do not use <code>AggregateError</code> just to throw two errors "to be safe". It is for genuinely independent failures that the caller needs to see together. For one failure with a history, use a <code>cause</code> chain.</warn>
 </section>
 
@@ -465,7 +465,7 @@ fire-and-forget .catch(() => {}): undefined
 <ul>
 <li><strong>Empty <code>catch {}</code></strong>: the error is gone. If ignoring a failure really is correct (a best-effort cache write), say so in a comment and at least count it in a metric.</li>
 <li><strong><code>return</code> in <code>finally</code></strong>: a <code>return</code> (or <code>throw</code>) in <code>finally</code> replaces whatever the <code>try</code> was doing, including a thrown error. Use <code>finally</code> only for cleanup.</li>
-<li><strong><code>return promise</code> without <code>await</code> inside <code>try</code></strong>: the function returns the promise before it rejects, so the rejection happens outside the <code>try</code>. <code>return await</code> keeps it inside. Here the error still reached the caller, but the function's own <code>catch</code>, which might have translated it, never ran.</li>
+<li><strong><code>return promise</code> without <code>await</code> inside <code>try</code></strong>: the function hands the promise back without waiting for it, so its rejection only takes effect after the function has left the <code>try</code>. <code>return await</code> keeps it inside. Here the error still reached the caller, but the function's own <code>catch</code>, which might have translated it, never ran.</li>
 <li><strong><code>.catch(() =&gt; {})</code></strong> turns a rejection into <code>undefined</code>, the promise version of an empty <code>catch</code>.</li>
 <li><strong>Returning <code>null</code> or <code>false</code> for failure</strong>, as <code>chargeCard</code> did at the start: callers who forget to check carry on with a value that means "failed" as if it meant "succeeded".</li>
 </ul>
@@ -529,7 +529,7 @@ job 4: receipt for ORD-9 sent
 </output>
 <p>Job 2 hit a bug and job 3 hit a configuration gap, yet jobs 1 and 4 were done. Without a boundary per job, the first failure would have stopped the loop, and every job after it would have waited for a restart. <code>@zudojs/queue</code> and <code>@zudojs/http</code> put these boundaries in for you; knowing why they exist tells you not to add a second, swallowing layer of your own inside them.</p>
 <h3>The process boundary in Node</h3>
-<p>An error that escapes everything, such as a rejected promise nobody awaited, reaches the process. Node's default for an unhandled rejection is to print it and exit with a non-zero code, which is the right behaviour: the process is in an unknown state. You can hook in to log it properly first, but not to "keep going":</p>
+<p>An error that escapes everything, such as a rejected promise nobody awaited, reaches the process. Node's default for an unhandled rejection is to print it and exit with code 1, which is the right behaviour: the process is in an unknown state (<a href="/learn/js-promises#unhandled">Promises in depth</a> showed when a rejection counts as unhandled). You can hook in to log it properly first, but not to "keep going". Installing an <code>unhandledRejection</code> listener <em>replaces</em> the default crash, so the listener itself must make the process end with a failure:</p>
 <example file="process-boundary.js" browser="no">
 process.on("unhandledRejection", (reason) => {
   console.log(`fatal: unhandled rejection: ${reason.message}`);
@@ -547,7 +547,7 @@ console.log("main code finished");
 main code finished
 fatal: unhandled rejection: report query timed out
 </output>
-<p>A real service would also stop accepting requests, finish the ones in flight, close connections and exit, which is the job of a lifecycle manager (<a href="/learn/zudo-runtime">the ZudoJS runtime</a> handles shutdown signals this way). The process boundary is a safety net for bugs, not a place to handle errors that belong to a request or a job.</p>
+<p>This short script has nothing left to run, so setting <code>process.exitCode</code> is enough: Node exits with code 1 once the loop is empty. A server always has something left to run (its listening socket), so its listener must start a shutdown: stop accepting requests, finish the ones in flight, close connections and exit, which is the job of a lifecycle manager (<a href="/learn/zudo-runtime">the ZudoJS runtime</a> handles shutdown signals this way). The process boundary is a safety net for bugs, not a place to handle errors that belong to a request or a job.</p>
 </section>
 
 <section>
@@ -834,11 +834,11 @@ PASS wrapped error keeps its cause -> "root"
 </output>
 <h3>In production</h3>
 <ul>
-<li><strong>One failure, one log entry, the whole chain.</strong> Log at the boundary, with the cause chain and a request or job id, as structured data (<a href="/learn/zudo-logging">Logging in ZudoJS</a>). Alert on bug-class errors and on environment errors that persist; expected outcomes are metrics, not alarms.</li>
+<li><strong>One failure, one log entry, the whole chain.</strong> Log at the boundary, with the cause chain and a request or job id, as structured data (<a href="/learn/zudo-logging">Structured logging</a>). Alert on bug-class errors and on environment errors that persist; expected outcomes are metrics, not alarms.</li>
 <li><strong>Messages to users are designed, not forwarded.</strong> Only errors you created for users (declined, validation, not found) carry messages that reach the client. Everything else becomes a generic message; the details stay in the logs.</li>
 <li><strong>Unknown outcomes need reconciliation.</strong> If the last attempt timed out, the charge may or may not exist, and no error class can tell you which. Record the idempotency key with the failed order, and let a background job ask the gateway later whether that key was charged, then refund it or complete the order.</li>
 <li><strong>Retry budgets, backoff and idempotency go together.</strong> Retries without backoff hammer a struggling provider (<a href="/learn/js-generators#lazy">backoff in Generators</a>); retries without idempotency keys charge twice.</li>
-<li><strong>Use the framework's classes.</strong> In a ZudoJS app, <code>@zudojs/errors</code> provides the error hierarchy with status codes and the HTTP layer provides the boundary, so your code mostly throws the right class and lets it pass (<a href="/learn/zudo-errors">Errors in ZudoJS</a>).</li>
+<li><strong>Use the framework's classes.</strong> In a ZudoJS app, <code>@zudojs/errors</code> provides the error hierarchy with status codes and the HTTP layer provides the boundary, so your code mostly throws the right class and lets it pass (<a href="/learn/zudo-errors">The ZudoJS error system</a>).</li>
 </ul>
 </section>
 

@@ -2,7 +2,7 @@
 title: Trees and binary search trees
 description: Turn flat category rows into a tree, walk it four ways, then build, test and balance a binary search tree of orders, with the cost of every operation.
 minutes: 55
-youNeed: Recursion, Classes, Hash maps, and Stacks and queues
+youNeed: Recursion, this, prototypes and classes, Hash maps and sets, and Stacks and queues
 youBuild: A category tree builder with safe loading, and a tested binary search tree of orders
 keywords: tree data structure, binary tree, binary search tree, bst delete, tree traversal, preorder inorder postorder, level order, breadth first, tree height, balanced tree, dom tree, javascript tree
 objectives: Name the parts of a tree and compute size, depth and height | Build a tree from flat parent-id rows in O(n) and reject broken data | Traverse a tree in pre-order, in-order, post-order and level order, recursively and with an explicit stack | Implement a binary search tree with insert, search and delete, and test its invariant | Explain why an unbalanced tree is O(n) and how balancing brings it back to O(log n)
@@ -157,7 +157,7 @@ height: 3
 leaves: Android, iPhone, Gaming laptops, Sneakers
 edges: 9
 </output>
-<p><code>height</code> starts <code>tallest</code> at −1 so that a leaf, which has no children, gets −1 + 1 = 0. Each function visits every node once: O(n) time. The extra memory is the call stack, one frame per level, so O(h) where <em>h</em> is the height. Remember that O(h): it is the reason deep trees can crash recursive code, which you will see shortly.</p>
+<p><code>flatMap</code> calls <code>leaves</code> on every child and joins the arrays it returns into one array. <code>height</code> starts <code>tallest</code> at −1 so that a leaf, which has no children, gets −1 + 1 = 0. Each function visits every node once: O(n) time. The extra memory is the call stack, one frame per level, so O(h) where <em>h</em> is the height. Remember that O(h): it is the reason deep trees can crash recursive code, which you will see shortly.</p>
 
 <reason title="What can be wrong with the rows?">
 <p>The rows come from a database that admins edit through a form. <code>buildTree</code> trusts them completely. Before reading on, list what could be wrong with the data, and what <code>buildTree</code> would do in each case. Think about: a <code>parentId</code> that points nowhere, a category that is its own parent, two categories that are each other's parent, and two rows with the same id.</p>
@@ -165,9 +165,9 @@ edges: 9
 <ul>
 <li><strong>Missing parent</strong> (an <em>orphan</em>: its parent was deleted). <code>byId.get(row.parentId)</code> returns <code>undefined</code>, and <code>undefined.children</code> throws a <code>TypeError</code>. One bad row takes the whole menu down.</li>
 <li><strong>A category that is its own parent</strong>, or <strong>a loop</strong> such as A inside B and B inside A. Nothing crashes while building, but these nodes are never reachable from the root, so they silently vanish from the menu. Worse, any code that walks <em>up</em> through parents from one of them (a breadcrumb) loops forever.</li>
-<li><strong>Duplicate ids.</strong> The second <code>byId.set</code> overwrites the first node, and the first category's children end up under the wrong node.</li>
+<li><strong>Duplicate ids.</strong> The second <code>byId.set</code> overwrites the first node, so the first category vanishes, the second is linked twice (once for each row), and every child of that id hangs under it. If the second row's parent sits <em>below</em> the first one, those links form a loop that <em>is</em> reachable from the root, and any walk of the menu never ends.</li>
 </ul>
-<p>The general lesson: a tree built from outside data is only a tree if you check the three rules. A safe builder validates ids, reports orphans, and counts how many nodes it can reach from the root. Any node it cannot reach is in a loop.</p>
+<p>The general lesson: a tree built from outside data is only a tree if you check the three rules. A safe builder skips duplicate ids, reports orphans, and counts how many nodes it can reach from the root (or from an orphan, whose subtree is intact). Any node it cannot reach is in a loop or hangs below one.</p>
 </answer>
 </reason>
 
@@ -177,30 +177,41 @@ function buildTreeSafely(rows) {
   const root = { id: null, name: "All categories", children: [] };
   const byId = new Map([[null, root]]);
   const problems = [];
+  const accepted = [];
   for (const row of rows) {
-    if (byId.has(row.id)) problems.push(`duplicate id ${row.id}`);
-    else byId.set(row.id, { ...row, children: [] });
+    if (byId.has(row.id)) {
+      problems.push(`duplicate id ${row.id} ("${row.name}" skipped)`);
+      continue;
+    }
+    byId.set(row.id, { ...row, children: [] });
+    accepted.push(row);
   }
-  for (const row of rows) {
+  const orphans = [];
+  for (const row of accepted) {
     const parent = byId.get(row.parentId);
-    if (!parent) problems.push(`"${row.name}" has missing parent ${row.parentId}`);
-    else parent.children.push(byId.get(row.id));
+    if (parent) {
+      parent.children.push(byId.get(row.id));
+    } else {
+      problems.push(`"${row.name}" has missing parent ${row.parentId}`);
+      orphans.push(byId.get(row.id));
+    }
   }
   let reached = 0;
-  const stack = [root];
+  const stack = [root, ...orphans];
   while (stack.length > 0) {
     const node = stack.pop();
     reached++;
     for (const child of node.children) stack.push(child);
   }
-  const unreachable = byId.size - reached;
-  if (unreachable > 0) problems.push(`${unreachable} categories are in a loop`);
+  const stuck = byId.size - reached;
+  if (stuck > 0) problems.push(`${stuck} categories are in a loop or below one`);
   return { root, problems };
 }
 
 const broken = [
   { id: 1, name: "Electronics", parentId: null },
   { id: 2, name: "Phones", parentId: 1 },
+  { id: 2, name: "Mobile phones", parentId: 4 },
   { id: 3, name: "Toys", parentId: 42 },
   { id: 4, name: "Gadgets", parentId: 5 },
   { id: 5, name: "Accessories", parentId: 4 },
@@ -210,10 +221,11 @@ const { problems } = buildTreeSafely(broken);
 for (const problem of problems) console.log("problem:", problem);
 </example>
 <output>
+problem: duplicate id 2 ("Mobile phones" skipped)
 problem: "Toys" has missing parent 42
-problem: 3 categories are in a loop
+problem: 2 categories are in a loop or below one
 </output>
-<p>The loop check uses an explicit stack instead of recursion, for a reason you will meet in <a href="#deep">Deep trees and the call stack</a>. It cannot loop forever itself: it only follows <code>children</code> links, and a node inside a loop is never added to the children of a node that the root can reach.</p>
+<p>Skipping the duplicate row matters: linking it as well would give node 2 a second parent, and here that second parent sits in the Gadgets loop. The loop check uses an explicit stack instead of recursion, for a reason you will meet in <a href="#deep">Deep trees and the call stack</a>. It cannot loop forever itself: every accepted row is linked under at most one parent, so a node in a loop can only be reached from inside that loop, never from the root or an orphan. Toys is reported as an orphan but still counted as reachable, so only the two looping categories are counted as stuck.</p>
 </section>
 
 <section>
@@ -297,7 +309,7 @@ shop/ 64500
 <p>Every line is printed <em>after</em> its children's lines, and the root comes last. That is exactly what the <code>du</code> command on Linux and macOS does, for the same reason.</p>
 
 <h3>Level order with a queue</h3>
-<p>To visit level by level you need to remember the nodes you have seen but not yet expanded, and take them in the order you found them: first in, first out. That is a queue (see <a href="/learn/dsa-stacks-queues">Stacks and queues</a>). Here the queue is an array with a <code>head</code> index, because <code>shift()</code> moves every remaining element and would make the walk O(n²):</p>
+<p>To visit level by level you need to remember the nodes you have seen but not yet expanded, and take them in the order you found them: first in, first out. That is a queue (see <a href="/learn/dsa-stacks-queues">Stacks and queues</a>). Here the queue is an array with a <code>head</code> index, because <code>shift()</code> can move every remaining element on each call (O(n) on large arrays), which would make the walk O(n²):</p>
 <example file="levels.js" project="catalog">
 import { rows, buildTree } from "./categories.js";
 
@@ -405,7 +417,7 @@ Gaming laptops
   Reviews
     Fast and quiet
 </output>
-<p>Pre-order matters here: headings come out in the order a reader meets them. A post-order walk would put "Gaming laptops" last.</p>
+<p>Pre-order is <strong>document order</strong>: every element comes before the elements inside it, exactly as the tags appear in the HTML, which is the order a reader meets them. (These headings contain no other elements, so a post-order walk would happen to list them in the same order; but it would list each <code>&lt;section&gt;</code> after its heading and <code>&lt;body&gt;</code> last, which is useless for anything that must see a container before its contents.)</p>
 </section>
 
 <section>
@@ -610,7 +622,8 @@ export class BST {
     return current?.key;
   }
 
-  *keys() {
+  keys() {
+    const out = [];
     const stack = [];
     let current = this.#root;
     while (current !== null || stack.length > 0) {
@@ -619,9 +632,10 @@ export class BST {
         current = current.left;
       }
       current = stack.pop();
-      yield current.key;
+      out.push(current.key);
       current = current.right;
     }
+    return out;
   }
 
   delete(key) {
@@ -661,7 +675,7 @@ export class BST {
 <ul>
 <li><code>insert</code> walks down exactly as a search would, and hangs the new node in the empty slot where the search fell off the tree. Inserting an existing key updates its value instead of adding a duplicate. That is a design choice; a BST that allows duplicates must pick a side for equal keys and stick to it.</li>
 <li><code>min</code> is the leftmost node and <code>max</code> the rightmost. The <code>?.</code> handles the empty tree, where both return <code>undefined</code>.</li>
-<li><code>keys()</code> is an in-order walk written with an explicit stack (and as a generator, so callers can stop early). It pushes the path down the left side, takes the smallest waiting node, then moves into its right subtree.</li>
+<li><code>keys()</code> is an in-order walk written with an explicit stack, so a deep tree cannot overflow the call stack. It pushes the path down the left side, takes the smallest waiting node, then moves into its right subtree. It returns the keys as an array.</li>
 <li><code>#remove</code> returns the new root of the subtree it was given, and the caller stores it. That one pattern handles all three delete cases, which the next reasoning box works through.</li>
 </ul>
 <example file="orders.js" project="bst">
@@ -675,7 +689,7 @@ for (const [id, customer] of [
   orders.insert(id, customer);
 }
 
-console.log("in order:", [...orders.keys()].join(" "));
+console.log("in order:", orders.keys().join(" "));
 console.log("size:", orders.size, "height:", orders.height());
 console.log("min:", orders.min(), "max:", orders.max());
 
@@ -720,7 +734,7 @@ const orders = new BST();
 for (const id of [5040, 3020, 7011, 2005, 4100, 6010, 8800, 6500]) orders.insert(id, `order ${id}`);
 
 function show(label) {
-  console.log(`${label.padEnd(24)} ${[...orders.keys()].join(" ")} | root ${orders.root.key} | valid ${isValidBST(orders.root)}`);
+  console.log(`${label.padEnd(24)} ${orders.keys().join(" ")} | root ${orders.root.key} | valid ${isValidBST(orders.root)}`);
 }
 
 show("start");
@@ -896,7 +910,7 @@ for (let step = 0; step < 2000; step++) {
     if (model.includes(key)) model.splice(model.indexOf(key), 1);
   }
   model.sort((a, b) => a - b);
-  const same = tree.size === model.length && [...tree.keys()].join() === model.join();
+  const same = tree.size === model.length && tree.keys().join() === model.join();
   if (!same || !isValidBST(tree.root)) failures++;
 }
 check("2000 random operations match the model", failures, 0);

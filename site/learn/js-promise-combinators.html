@@ -202,7 +202,7 @@ took at least 80 + 60 + 70 + 50 = 260 ms: true</pre></div>
   refunds<span class="t-op">:</span> <span class="t-kw">await</span> refundsP<span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>dashboard<span class="t-pn">.</span><span class="t-prop">customers</span><span class="t-pn">,</span> <span class="t-str">"new customers"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"took about as long as the slowest (80 ms):"</span><span class="t-pn">,</span> <span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">-</span> start <span class="t-op">&lt;</span> <span class="t-num">200</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"finished well before the waterfall's 260 ms:"</span><span class="t-pn">,</span> <span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">-</span> start <span class="t-op">&lt;</span> <span class="t-num">260</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { services } from "./services.js";
 
@@ -220,11 +220,11 @@ const dashboard = {
   refunds: await refundsP,
 };
 console.log(dashboard.customers, "new customers");
-console.log("took about as long as the slowest (80 ms):", Date.now() - start < 200);</script>
+console.log("finished well before the waterfall's 260 ms:", Date.now() - start < 260);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>node start-first.js</code> and of the browser terminal</div><pre class="lx-no-copy">5 new customers
-took about as long as the slowest (80 ms): true</pre></div>
+finished well before the waterfall's 260 ms: true</pre></div>
 </figure>
-<p>That works while everything succeeds. But it has a trap. Suppose two services fail. You <code>await</code> the first promise; while you wait, the second one rejects, and nobody is listening to it yet. From <a href="/learn/js-promises#unhandled">Promises in depth</a> you know what that is: an unhandled rejection, which crashes Node.js.</p>
+<p>All four ran at the same time, so the page now takes about as long as the slowest service, 80 ms, instead of the sum. That works while everything succeeds. But it has a trap. Suppose two services fail. You <code>await</code> the first promise; while you wait, the second one rejects, and nobody is listening to it yet. From <a href="/learn/js-promises#unhandled">Promises in depth</a> you know what that is: an unhandled rejection, which crashes Node.js.</p>
 <figure class="lx-example" data-index="3" data-file="start-first-trap.js">
 <figcaption class="lx-bar"><span class="lx-file">start-first-trap.js</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code>process<span class="t-pn">.</span><span class="t-fn">on</span><span class="t-pn">(</span><span class="t-str">"unhandledRejection"</span><span class="t-pn">,</span> <span class="t-pn">(</span>reason<span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"UNHANDLED:"</span><span class="t-pn">,</span> reason<span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -461,7 +461,7 @@ refunds   unavailable (refunds database timeout)</pre></div>
 <li><strong>The loser keeps running.</strong> A timeout stops <em>waiting</em>; it does not stop the payment. The provider may still charge the card a second later. So after a payment timeout the true status is <em>unknown</em>, not "failed": never charge again blindly. Ask the provider for the payment's status later, using an <strong>idempotency key</strong> (a unique id you send with the request, so the provider can recognise a repeat of the same payment and not charge twice).</li>
 <li><strong>Clear the timer.</strong> A timer that keeps running holds resources and, in Node.js, keeps the process alive until it fires. Clear it in <code>finally</code>, whichever side won.</li>
 <li><strong>Use a distinct error.</strong> Reject with an error whose <code>name</code> is <code>"TimeoutError"</code> (and a message that says what timed out), so callers can treat it differently from a real decline.</li>
-<li><strong>Bad limits</strong>: <code>setTimeout</code> treats 0 or a negative number as 0, so the timer would fire almost at once. Reject such values up front, loudly, rather than failing every payment in production.</li>
+<li><strong>Bad limits</strong>: <code>setTimeout</code> turns 0, a negative number or <code>NaN</code> into the shortest possible delay (1 ms in Node.js, 0 in browsers), so the timer would fire almost at once. Reject such values up front, loudly, rather than failing every payment in production.</li>
 </ul></details></div>
 <figure class="lx-example" data-index="8" data-file="with-timeout.js" data-project="kit">
 <figcaption class="lx-bar"><span class="lx-file">with-timeout.js</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
@@ -693,7 +693,7 @@ await new Promise((resolve) => setTimeout(resolve, 30));</script>
 still waiting: 0
 webhook for order 9: nobody waiting</pre></div>
 </figure>
-<p>Order 9's webhook arrived when nobody was waiting for it, so it was only logged. The <code>finally</code> removes the entry once the promise settles, so the map does not grow forever (an unbounded map is a memory leak, the subject of <a href="/learn/js-memory">Memory</a>). A real version would also wrap <code>waitForConfirmation</code> in <code>withTimeout</code>: a webhook may never arrive.</p>
+<p>Order 9's webhook arrived when nobody was waiting for it, so it was only logged. The <code>finally</code> removes the entry once the promise settles, so the map does not grow forever (an unbounded map is a memory leak, the subject of <a href="/learn/js-memory">Memory and garbage collection</a>). A real version would also wrap <code>waitForConfirmation</code> in <code>withTimeout</code>: a webhook may never arrive.</p>
 <h3>Promise.try</h3>
 <p>A related newer helper, <code>Promise.try(fn)</code> (ES2025), calls <code>fn</code> straight away and always gives you a promise: a returned value fulfils it, a returned promise is adopted, and a <em>synchronous</em> throw becomes a rejection. It is handy when you call a function that might be synchronous or asynchronous and want one way of handling its errors:</p>
 <figure class="lx-example" data-index="12" data-file="promise-try.js">
@@ -776,7 +776,7 @@ console.log("after for...of:", balance);</script>
 after forEach: 12500 (should be 14500)
 after for...of: 14500</pre></div>
 </figure>
-<p><code>forEach</code> started all three posts at the same time. Each one read the balance before any had written it back, so the last write won and two entries were lost. This is a <strong>race condition</strong>: the result depends on the timing of operations that overlap. The <code>for...of</code> loop awaited each post before starting the next and got the right answer. The same bug appears with <code>map</code>, <code>filter</code> and <code>reduce</code> given async callbacks: they are not async-aware.</p>
+<p><code>forEach</code> started all three posts at the same time. Each one read the balance before any had written it back, so the last write won and two entries were lost. This is a <strong>race condition</strong>: the result depends on the timing of operations that overlap. The <code>for...of</code> loop awaited each post before starting the next and got the right answer. Array methods are not async-aware: <code>filter</code> and <code>reduce</code> given async callbacks break the same way (<code>filter</code> receives a promise, which is always truthy, so it keeps every item), and <code>map</code> only works because it hands you an array of promises that you then pass to <code>Promise.all</code>, as in the next section.</p>
 <h3>Parallel: when items are independent</h3>
 <p><code>await Promise.all(items.map(fn))</code> runs every job at once. It is the fastest, and right for a handful of items. It is wrong for a <em>large</em> list: sending 10,000 emails this way opens 10,000 connections to the mail server at once, which will refuse most of them or rate-limit your account.</p>
 <h3>Batched: a limit on how many run at once</h3>
@@ -1029,13 +1029,13 @@ PASS a broken widget is reported: widgets sales,refunds; missing lowStock: HTTP 
 PASS a slow widget does not hold the page: missing sales: sales timed out after 100 ms; finished long before the 2-second service: true
 PASS a failed account fails the page: account service down</pre></div>
 </figure>
-<p>The slow-widget test is the one that matters most in production, and it passed in about 100 ms although the fake sales service takes 2 seconds. One thing to notice: the program still ends properly. <code>withTimeout</code> cleared its own timers, but the fake 2-second <code>sales</code> timer kept running until it fired. That is the "loser keeps running" rule again. For a read-only widget it is harmless; for something that writes, you need real cancellation.</p>
+<p>The slow-widget test is the one that matters most in production, and it passed in about 100 ms although the fake sales service takes 2 seconds. One thing to notice: the program still ends properly. <code>withTimeout</code> cleared its own timers, but the fake 2-second <code>sales</code> timer kept running until it fired. That is the "loser keeps running" rule again. For a read-only widget it is harmless; for something that writes, you need real cancellation, which <a href="/learn/js-concurrency#abort">Concurrency and cancellation</a> adds with <code>AbortController</code> and <code>AbortSignal.timeout</code>.</p>
 </section>
 
 <section>
 <h2 id="production">Combining promises in production</h2>
 <ul>
-<li><strong>Look for waterfalls.</strong> Two <code>await</code>s in a row whose second call does not use the first result are a free speed-up. Tracing tools (see <a href="/learn/zudo-observability">observability</a>) show waterfalls as a staircase of spans.</li>
+<li><strong>Look for waterfalls.</strong> Two <code>await</code>s in a row whose second call does not use the first result are a free speed-up. Tracing tools (see <a href="/learn/zudo-observability">Observability</a>) show waterfalls as a staircase of spans.</li>
 <li><strong>Never leave a started promise without a handler</strong> while you await something else. Prefer a combinator, which handles all of them at once.</li>
 <li><strong>Put a time limit on every call that leaves the process.</strong> Treat a timeout on a write (a payment, a transfer) as "status unknown", check the real status, and use idempotency keys so a retry cannot charge twice.</li>
 <li><strong>Clear your timers.</strong> A <code>race</code> timeout without <code>clearTimeout</code> keeps a timer alive for every request: in a busy server that is thousands of pending timers, and a process that will not exit cleanly.</li>
@@ -1144,11 +1144,11 @@ console.log(customer.name, quote.kobo, "| most requests in flight at once:", pea
 
 <span class="t-kw">const</span> start <span class="t-op">=</span> <span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> reports <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">allWithin</span><span class="t-pn">(</span>
-  <span class="t-pn">[</span><span class="t-fn">wait</span><span class="t-pn">(</span><span class="t-num">10</span><span class="t-pn">,</span> <span class="t-str">"sales"</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-fn">wait</span><span class="t-pn">(</span><span class="t-num">10</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">then</span><span class="t-pn">(</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">Error</span><span class="t-pn">(</span><span class="t-str">"503"</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-fn">wait</span><span class="t-pn">(</span><span class="t-num">300</span><span class="t-pn">,</span> <span class="t-str">"refunds"</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">,</span>
+  <span class="t-pn">[</span><span class="t-fn">wait</span><span class="t-pn">(</span><span class="t-num">10</span><span class="t-pn">,</span> <span class="t-str">"sales"</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-fn">wait</span><span class="t-pn">(</span><span class="t-num">10</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">then</span><span class="t-pn">(</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">Error</span><span class="t-pn">(</span><span class="t-str">"503"</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-fn">wait</span><span class="t-pn">(</span><span class="t-num">1_000</span><span class="t-pn">,</span> <span class="t-str">"refunds"</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">,</span>
   <span class="t-num">50</span><span class="t-pn">,</span>
 <span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>reports<span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"finished long before the 300 ms promise:"</span><span class="t-pn">,</span> <span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">-</span> start <span class="t-op">&lt;</span> <span class="t-num">250</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"finished long before the 1-second promise:"</span><span class="t-pn">,</span> <span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">-</span> start <span class="t-op">&lt;</span> <span class="t-num">500</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
 
@@ -1172,17 +1172,17 @@ function allWithin(promises, ms) {
 
 const start = Date.now();
 const reports = await allWithin(
-  [wait(10, "sales"), wait(10).then(() => { throw new Error("503"); }), wait(300, "refunds")],
+  [wait(10, "sales"), wait(10).then(() => { throw new Error("503"); }), wait(1_000, "refunds")],
   50,
 );
 console.log(reports);
-console.log("finished long before the 300 ms promise:", Date.now() - start < 250);</script>
+console.log("finished long before the 1-second promise:", Date.now() - start < 500);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>node all-within.js</code> and of the browser terminal</div><pre class="lx-no-copy">[
   { status: 'fulfilled', value: 'sales' },
   { status: 'rejected', reason: '503' },
   { status: 'timeout' }
 ]
-finished long before the 300 ms promise: true</pre></div>
+finished long before the 1-second promise: true</pre></div>
 </figure>
 <p>One shared deadline promise is raced against each input, so all of them time out at the same moment. Each input is first turned into a report that never rejects, which is why <code>Promise.all</code> is safe here. The symbol <code>TIMEOUT</code> cannot be confused with any real value (<a href="/learn/js-symbols">Symbols</a>).</p></details></div>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>First working mirror, with a time limit each</h3><p>Product images are stored on three mirrors. Using <code>Promise.any</code> and <code>withTimeout</code> from the kit, get the first image URL from a mirror that answers within 40 ms. Print the winner, and for a second call where no mirror answers in time, print each reason.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="20" data-file="mirrors.js" data-project="kit">

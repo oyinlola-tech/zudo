@@ -2,7 +2,7 @@
 title: Memory and garbage collection
 description: Learn how the garbage collector decides what to free, cause and fix the classic leaks, and measure memory with process.memoryUsage and heap snapshots.
 minutes: 55
-youNeed: How JavaScript runs, Concurrency and cancellation, and Closures
+youNeed: How JavaScript runs, Concurrency and cancellation, Collections in depth, and Closures in depth
 youBuild: A leak hunt in a price-alert service: measure the leak, find the leaked objects in a heap snapshot, and fix the listener, timer and cache leaks
 keywords: javascript memory, stack vs heap, garbage collection, reachability, mark and sweep, generational gc, memory leak, event listener leak, timer leak, unbounded cache, LRU cache, closure memory, WeakMap, WeakRef, FinalizationRegistry, process.memoryUsage, heap snapshot, writeHeapSnapshot, MaxListenersExceededWarning
 objectives: Explain garbage collection in terms of roots and reachability, and why cycles are not a problem | Recognise the classic leaks: growing module-level collections, forgotten listeners, uncleared timers, closures and unbounded caches | Fix leaks by removing listeners (including with an AbortSignal), clearing timers and bounding caches | Choose between Map, WeakMap and WeakRef, and know what FinalizationRegistry can and cannot promise | Measure memory growth with process.memoryUsage and find leaked objects in a heap snapshot
@@ -146,7 +146,7 @@ after the last outside reference is gone: undefined
 <p>A module-level <code>Map</code>, <code>Set</code> or array is reachable for as long as the module is loaded, which on a server means forever. Anything added and never removed is leaked. The first example was this leak. It often hides behind good intentions: a cache, a list of "recent" items, a registry of connections, the map of waiting promises from <a href="/learn/js-promise-combinators#with-resolvers">Combining promises</a>. The rule: <strong>every collection that grows needs a rule for shrinking</strong>, such as a maximum size, an expiry time, or removal when the thing it describes ends.</p>
 <p>(Old-style "accidental globals" belong here too: in non-strict scripts, assigning to an undeclared variable, <code>total = 5</code>, creates a property on the global object that lives forever. ES modules and classes are always strict, where that line throws a <code>ReferenceError</code> instead. One more reason to use modules.)</p>
 <h3>2. Event listeners that are never removed</h3>
-<p>An event emitter (from <a href="/learn/zudo-events">events</a>, the DOM, or Node's <code>EventEmitter</code>) holds a reference to every listener registered on it, and each listener is a closure that holds whatever it uses. If a long-lived emitter gets a new listener per request and nobody removes it, every request's data stays reachable from the emitter:</p>
+<p>An event emitter (the DOM's <code>EventTarget</code>, Node's <code>EventTarget</code> and <code>EventEmitter</code>, or the event bus from <a href="/learn/zudo-events">Events</a> later in the academy) holds a reference to every listener registered on it, and each listener is a closure that holds whatever it uses. If a long-lived emitter gets a new listener per request and nobody removes it, every request's data stays reachable from the emitter:</p>
 <example file="listener-leak.js">
 const priceFeed = new EventTarget();              // lives as long as the server
 let listeners = 0;
@@ -259,7 +259,7 @@ fixed:  heartbeats kept running after close: false
 </output>
 <p>In the leaky version, closing the connection did nothing to the interval: it kept firing, and its closure kept <code>session</code> alive. In a server, that is one more running timer per connection ever opened. The demo keeps every timer in <code>everyTimerForTheDemo</code> only so that it can stop them at the end and exit; a real leak has no such list, and once the reference is lost the timer can never be cleared. The rule: <strong>every <code>setInterval</code> has a matching <code>clearInterval</code>, in the code that ends its owner's life</strong>. In Node.js, <code>timer.unref()</code> additionally lets the process exit even if the timer is pending, which is right for background housekeeping timers.</p>
 <h3>4. Closures that capture more than you think</h3>
-<p>A closure keeps alive the variables it uses from its outer scope (<a href="/learn/js-closures">Closures</a>). Engines optimise this: V8 keeps only variables that some closure actually uses. But all closures created in the same scope share one context object, so if <em>any</em> of them uses a big variable, <em>all</em> of them keep it:</p>
+<p>A closure keeps alive the variables it uses from its outer scope (<a href="/learn/js-closures">Closures in depth</a>). Engines optimise this: V8 keeps only variables that some closure actually uses. But all closures created in the same scope share one context object, so if <em>any</em> of them uses a big variable, <em>all</em> of them keep it:</p>
 <example file="closure-capture.js" browser="no">
 import v8 from "node:v8";
 import vm from "node:vm";
@@ -280,85 +280,26 @@ const summaries = ["2026-07", "2026-08", "2026-09"].map(loadReport);
 const after = heapUsed();
 
 console.log(summaries[2]());
-console.log("the summaries keep the rows alive (more than 10 MB):", after - before > 10 * 1024 * 1024);
+console.log("the summaries keep the rows alive (more than 5 MB):", after - before > 5 * 1024 * 1024);
 </example>
 <output>
 2026-09: ₦50999500
-the summaries keep the rows alive (more than 10 MB): true
+the summaries keep the rows alive (more than 5 MB): true
 </output>
 <p>The returned function only needs <code>month</code> and <code>total</code>, but <code>debugDump</code>, created in the same call, uses <code>rows</code>, so the shared context keeps all 100,000 rows of each month alive. Delete <code>debugDump</code> (or compute what you need in a separate function) and the rows are freed as soon as <code>loadReport</code> returns. When a closure is long-lived (stored in a cache, registered as a listener, kept in a timer), check what its scope holds.</p>
 <h3>5. Caches without limits</h3>
-<p>A cache is a collection that grows by design, so it is leak number 1 with a better excuse. A cache needs a <strong>size limit</strong>, an <strong>expiry</strong> (a time to live, or TTL), or both. The simplest size limit is an <strong>LRU</strong> cache ("least recently used"): when it is full, drop the entry that was used longest ago. A <code>Map</code> remembers insertion order, which makes an LRU a few lines: on every read, move the entry to the end; when full, delete the first key:</p>
-<example file="lru.js">
-function createLru(maxEntries) {
-  const map = new Map();
-  return {
-    get(key) {
-      if (!map.has(key)) return undefined;
-      const value = map.get(key);
-      map.delete(key);          // move to the end: most recently used
-      map.set(key, value);
-      return value;
-    },
-    set(key, value) {
-      map.delete(key);
-      map.set(key, value);
-      if (map.size > maxEntries) map.delete(map.keys().next().value);   // the oldest
-    },
-    keys: () => [...map.keys()],
-  };
-}
-
-const prices = createLru(3);
-prices.set("rice-5kg", 950_000);
-prices.set("oil-1l", 320_000);
-prices.set("beans-2kg", 480_000);
-prices.get("rice-5kg");                   // rice is used again
-prices.set("sugar-1kg", 150_000);         // full: drops the least recently used (oil)
-console.log(prices.keys());
-
-for (let i = 0; i < 10_000; i++) prices.set(`sku-${i}`, i);
-console.log("size after 10,000 inserts:", prices.keys().length);
-</example>
-<output>
-[ 'beans-2kg', 'rice-5kg', 'sugar-1kg' ]
-size after 10,000 inserts: 3
-</output>
-<p>However many keys arrive, the cache never holds more than three. Production caches add expiry, statistics and stampede protection; <a href="/learn/zudo-cache">@zudojs/cache</a> provides them.</p>
+<p>A cache is a collection that grows by design, so it is leak number 1 with a better excuse. The first example was exactly this: a "cache" keyed by request id that could never hit and never shrank. A cache needs a <strong>size limit</strong>, an <strong>expiry</strong> (a time to live, or TTL), or both. <a href="/learn/js-collections#lru">Collections in depth</a> built both on top of a <code>Map</code>: an <strong>LRU</strong> cache ("least recently used") that moves each entry to the end when it is read and deletes the first key when it is full, and a TTL version with an injected clock. Two questions to ask of every cache you find in a leaking service:</p>
+<ul>
+<li><strong>Can it ever hit?</strong> A key that is unique per request (a request id, a timestamp, a fresh object used as a <code>Map</code> key) makes a cache that only ever misses and only ever grows.</li>
+<li><strong>What removes entries?</strong> If the answer is "nothing", it is a leak, however small each entry is. If the key is an object whose life should end the entry, a <code>WeakMap</code> (next section) removes it for you.</li>
+</ul>
+<p>Production caches add expiry, statistics and stampede protection; <a href="/learn/zudo-cache">@zudojs/cache</a> provides them.</p>
 </section>
 
 <section>
 <h2 id="weak">Weak references: WeakMap, WeakSet, WeakRef</h2>
-<p>Sometimes you want to attach data to an object <em>without</em> keeping the object alive. A normal <code>Map</code> keyed by objects holds a strong reference to every key, so the keys can never be collected. A <strong><code>WeakMap</code></strong> holds its keys <strong>weakly</strong>: an entry does not keep its key reachable, and when the key object is collected, the entry disappears with it. (<a href="/learn/js-collections">Collections</a> introduced these types; here is why they matter for memory.)</p>
-<p>A typical use: caching a value computed from an object, such as an order's total, for exactly as long as the order exists:</p>
-<example file="weakmap.js">
-const totals = new WeakMap();
-let computed = 0;
-
-function orderTotal(order) {
-  if (!totals.has(order)) {
-    computed += 1;
-    totals.set(order, order.lines.reduce((sum, line) => sum + line.kobo * line.qty, 0));
-  }
-  return totals.get(order);
-}
-
-const order = { id: 7, lines: [{ kobo: 950_000, qty: 2 }, { kobo: 320_000, qty: 1 }] };
-console.log(orderTotal(order), orderTotal(order), "computed:", computed);
-
-try {
-  totals.set("order-7", 1);
-} catch (error) {
-  console.log(error.name, "- keys must be objects");
-}
-console.log("can be iterated:", typeof totals[Symbol.iterator] === "function", "| has size:", "size" in totals);
-</example>
-<output>
-2220000 2220000 computed: 1
-TypeError - keys must be objects
-can be iterated: false | has size: false
-</output>
-<p>The rules follow from "weak": keys must be objects (or non-registered symbols), because a primitive like <code>"order-7"</code> can be recreated at any time and so never becomes unreachable. And a <code>WeakMap</code> cannot be iterated and has no <code>size</code>, because its contents change whenever the collector runs. <code>WeakSet</code> is the same idea for membership ("have I already processed this object?").</p>
+<p>Sometimes you want to attach data to an object <em>without</em> keeping the object alive. A normal <code>Map</code> keyed by objects holds a strong reference to every key, so the keys can never be collected. A <strong><code>WeakMap</code></strong> holds its keys <strong>weakly</strong>: an entry does not keep its key reachable, and when the key object is collected, the entry disappears with it.</p>
+<p><a href="/learn/js-collections#weakmap">Collections in depth</a> used one to cache cart totals and to attach metadata to frozen requests, and showed the rules that follow from "weak": keys must be objects (or symbols not created with <code>Symbol.for</code>), because a primitive such as <code>"order-7"</code> can be recreated at any time and so never becomes unreachable; and a <code>WeakMap</code> has no <code>size</code> and cannot be iterated, because its contents change whenever the collector runs. <code>WeakSet</code> is the same idea for membership.</p>
 <p>Here is the difference in memory, measured: the same 20,000 order objects, cached once in a <code>Map</code> and once in a <code>WeakMap</code>, after the orders themselves are dropped:</p>
 <example file="weakmap-memory.js" browser="no">
 import v8 from "node:v8";
@@ -477,13 +418,13 @@ for (const leak of [false, true]) {
     readings.push(heapMb());
   }
   const growth = readings.at(-1) - readings[0];
-  const steady = readings.every((mb, i) => i === 0 || mb > readings[i - 1]);
-  console.log(`${leak ? "leaky" : "clean"}: grew by more than 5 MB over 3 rounds: ${growth > 5}, rose every round: ${steady}`);
+  const steady = readings.every((mb, i) => i === 0 || mb - readings[i - 1] > 1);
+  console.log(`${leak ? "leaky" : "clean"}: grew by more than 5 MB over 3 rounds: ${growth > 5}, rose by over 1 MB every round: ${steady}`);
 }
 </example>
 <output>
-clean: grew by more than 5 MB over 3 rounds: false, rose every round: false
-leaky: grew by more than 5 MB over 3 rounds: true, rose every round: true
+clean: grew by more than 5 MB over 3 rounds: false, rose by over 1 MB every round: false
+leaky: grew by more than 5 MB over 3 rounds: true, rose by over 1 MB every round: true
 </output>
 <p>The clean handler does the same work and allocates just as much, but its baseline stays flat because everything it allocates becomes garbage. The leaky one rises with every round of requests. In production, record <code>heapUsed</code> and <code>rss</code> as metrics every few seconds and look at the graph over hours: a sawtooth with a flat baseline is healthy; a sawtooth whose baseline climbs is a leak.</p>
 <h3>Heap snapshots</h3>
@@ -640,56 +581,67 @@ FIXED { listeners: 0, timers: 0, quotes: 100 }
 <li><strong>Restarting is not a fix.</strong> It hides the leak until traffic grows. Reproduce it with a load test, snapshot, compare, fix.</li>
 <li><strong>Give every growing thing an end:</strong> caches get a size and a TTL, listeners get removed (prefer the <code>signal</code> option), intervals get cleared, maps of pending work get entries deleted in <code>finally</code>.</li>
 <li><strong>Read <code>MaxListenersExceededWarning</code> as a bug report.</strong></li>
-<li><strong>Stream large data</strong> instead of loading it whole (<a href="/learn/node-streams">Streams</a>): a 2 GB export read into one string needs 2 GB of heap at once, which is not a leak but kills the process just the same.</li>
+<li><strong>Stream large data</strong> instead of loading it whole (<a href="/learn/node-streams">Streams and buffers</a>): a 2 GB export read into one string needs 2 GB of heap at once, which is not a leak but kills the process just the same.</li>
 </ul>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
-<exercise title="A cache with a size limit and expiry">
-<p>Extend the LRU idea: <code>createCache({ maxEntries, ttlMs })</code> where <code>get</code> returns <code>undefined</code> for entries older than <code>ttlMs</code> (and deletes them). Test the size limit and the expiry.</p>
-<solution>
-<example file="ttl-cache.js">
-function createCache({ maxEntries, ttlMs, now = () => Date.now() }) {
-  const map = new Map();
-  return {
-    get(key) {
-      const entry = map.get(key);
-      if (!entry) return undefined;
-      if (now() - entry.at > ttlMs) {
-        map.delete(key);
-        return undefined;
-      }
-      map.delete(key);
-      map.set(key, entry);
-      return entry.value;
-    },
-    set(key, value) {
-      map.delete(key);
-      map.set(key, { value, at: now() });
-      if (map.size > maxEntries) map.delete(map.keys().next().value);
-    },
-    get size() {
-      return map.size;
-    },
-  };
+<exercise title="The map of pending payments">
+<p>A payment service keeps every payment it is waiting for in a module-level <code>Map</code>, so that a webhook can find it. Payments that fail never reach the line that deletes them. Run it, count what is left, then fix it so that the entry is removed however the payment ends.</p>
+<example file="pending-leak.js">
+const pending = new Map();
+
+async function charge(id, kobo) {
+  pending.set(id, { id, kobo, startedAt: 0 });
+  if (kobo > 5_000_000) throw new Error(`limit exceeded for ${id}`);
+  await Promise.resolve();                     // the provider answers
+  pending.delete(id);
+  return "paid";
 }
 
-let clock = 0;
-const rates = createCache({ maxEntries: 2, ttlMs: 60_000, now: () => clock });
-rates.set("USD", 1540);
-rates.set("GBP", 1680);
-rates.set("EUR", 1610);                      // evicts USD, the least recently used
-console.log(rates.get("USD"), rates.get("GBP"), rates.size);
-
-clock += 61_000;                             // one minute and one second later
-console.log(rates.get("GBP"), rates.size);
+const results = await Promise.allSettled([
+  charge("PAY-1", 250_000),
+  charge("PAY-2", 9_000_000),
+  charge("PAY-3", 120_000),
+  charge("PAY-4", 7_500_000),
+]);
+console.log(results.map((r) => r.status).join(" "));
+console.log("still pending:", [...pending.keys()]);
 </example>
 <output>
-undefined 1680 2
-undefined 1
+fulfilled rejected fulfilled rejected
+still pending: [ 'PAY-2', 'PAY-4' ]
 </output>
-<p>Passing <code>now</code> as an option lets the test move the clock without waiting a minute, the same idea as fake timers. Expired entries are only removed when read; a production cache also sweeps them periodically, with an <code>unref</code>ed timer.</p>
+<solution>
+<example file="pending-fixed.js">
+const pending = new Map();
+
+async function charge(id, kobo) {
+  pending.set(id, { id, kobo, startedAt: 0 });
+  try {
+    if (kobo > 5_000_000) throw new Error(`limit exceeded for ${id}`);
+    await Promise.resolve();                   // the provider answers
+    return "paid";
+  } finally {
+    pending.delete(id);                        // runs on success, on error and on return
+  }
+}
+
+const results = await Promise.allSettled([
+  charge("PAY-1", 250_000),
+  charge("PAY-2", 9_000_000),
+  charge("PAY-3", 120_000),
+  charge("PAY-4", 7_500_000),
+]);
+console.log(results.map((r) => r.status).join(" "));
+console.log("still pending:", [...pending.keys()]);
+</example>
+<output>
+fulfilled rejected fulfilled rejected
+still pending: []
+</output>
+<p>Every failed payment left its entry behind: a leak that grows with the error rate, so it appears exactly when things already go wrong. Moving the <code>delete</code> into <code>finally</code> ties the entry's life to the call, whichever way it ends. The same rule applies to every "map of work in progress": waiting requests, open connections, locks.</p>
 </solution>
 </exercise>
 <exercise title="Fix a listener leak with one signal">
