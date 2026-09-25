@@ -1341,7 +1341,7 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
   <span class="t-str">"select id, last_error from deliveries where status = 'dead' order by id"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">rows</span><span class="t-pn">)</span> <span class="t-pn">{</span>
   console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`dead: delivery <span class="t-op">${</span><span class="t-prop">row.id</span><span class="t-op">}</span>: <span class="t-op">${</span><span class="t-prop">row.last_error</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"most e-mails at the provider at once:"</span><span class="t-pn">,</span> provider<span class="t-pn">.</span><span class="t-fn">mostAtOnce</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"never more than 5 at the provider at once:"</span><span class="t-pn">,</span> provider<span class="t-pn">.</span><span class="t-fn">mostAtOnce</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">&lt;=</span> <span class="t-num">5</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> stats <span class="t-op">=</span> <span class="t-kw">await</span> worker<span class="t-pn">.</span><span class="t-prop">queue</span><span class="t-pn">.</span><span class="t-fn">getStats</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"queue:"</span><span class="t-pn">,</span> <span class="t-pn">{</span> succeeded<span class="t-op">:</span> stats<span class="t-pn">.</span><span class="t-prop">succeeded</span><span class="t-pn">,</span> retried<span class="t-op">:</span> stats<span class="t-pn">.</span><span class="t-prop">retried</span><span class="t-pn">,</span> deadLettered<span class="t-op">:</span> stats<span class="t-pn">.</span><span class="t-prop">deadLettered</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> series <span class="t-kw">of</span> obs<span class="t-pn">.</span><span class="t-prop">metrics</span><span class="t-pn">.</span><span class="t-fn">getAll</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
@@ -1388,7 +1388,7 @@ for (const row of (await db.query<{ id: number; last_error: string }>(
   "select id, last_error from deliveries where status = 'dead' order by id")).rows) {
   console.log(`dead: delivery ${row.id}: ${row.last_error}`);
 }
-console.log("most e-mails at the provider at once:", provider.mostAtOnce());
+console.log("never more than 5 at the provider at once:", provider.mostAtOnce() <= 5);
 const stats = await worker.queue.getStats();
 console.log("queue:", { succeeded: stats.succeeded, retried: stats.retried, deadLettered: stats.deadLettered });
 for (const series of obs.metrics.getAll()) {
@@ -1403,7 +1403,7 @@ await db.close();</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx poison.ts</code></div><pre class="lx-no-copy">[ { status: 'dead', n: 2 }, { status: 'sent', n: 12 } ]
 dead: delivery 3: HTTP request failed with status 422.
 dead: delivery 4: Cannot read properties of null (reading 'toLocaleString') (after 4 attempts)
-most e-mails at the provider at once: 5
+never more than 5 at the provider at once: true
 queue: { succeeded: 13, retried: 3, deadLettered: 1 }
 metric deliveries.sent {"kind":"invoice"} 12
 metric deliveries.duration_ms {} count=12
@@ -1414,7 +1414,7 @@ metric deliveries.dead {"reason":"retries-exhausted"} 1</pre></div>
 <li><strong>Twelve sent, two dead</strong>, and the dead rows say why in words a person can act on.</li>
 <li><strong>Delivery 3</strong> was refused with a 422. <code>isPermanent</code> recognised it, so it was marked dead after one attempt, with no retries.</li>
 <li><strong>Delivery 4</strong> threw a <code>TypeError</code> in our own rendering code on every attempt. The queue cannot know that a bug is not temporary, so it used all 4 attempts (the 3 retries in the stats), then dead-lettered it, and the event handler wrote the reason to the ledger. The other twelve were delivered while it was failing: with 5 slots, one bad job only occupies one of them.</li>
-<li><strong>At most 5 at once</strong> at the provider, the worker's <code>concurrency</code>.</li>
+<li><strong>Never more than 5 at once</strong> at the provider: the worker's <code>concurrency</code>. (How close it gets to 5 depends on timing, so the demo checks the limit, not an exact count.)</li>
 <li>The <strong>metrics</strong> come from <a href="/learn/zudo-observability#metrics">the observability lesson</a>: a counter per outcome with a small, fixed set of labels, and a histogram of delivery durations. The number to alert on is <code>deliveries.dead</code>; a dead-letter queue that nobody watches is just a slower way to lose data.</li>
 </ul>
 </section>
@@ -1633,7 +1633,7 @@ export async function runTests(...files: string[]): Promise<void> {
     <span class="t-kw">await</span> system<span class="t-pn">.</span><span class="t-fn">startDispatching</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">await</span> <span class="t-fn">waitFor</span><span class="t-pn">(</span>system<span class="t-pn">.</span><span class="t-prop">settled</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-fn">expect</span><span class="t-pn">(</span><span class="t-kw">await</span> <span class="t-ty">Promise</span><span class="t-pn">.</span><span class="t-fn">all</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-num">1</span><span class="t-pn">,</span> <span class="t-num">2</span><span class="t-pn">,</span> <span class="t-num">3</span><span class="t-pn">,</span> <span class="t-num">4</span><span class="t-pn">]</span><span class="t-pn">.</span><span class="t-fn">map</span><span class="t-pn">(</span>statusOfInvoice<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">toEqual</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-str">"sent"</span><span class="t-pn">,</span> <span class="t-str">"sent"</span><span class="t-pn">,</span> <span class="t-str">"dead"</span><span class="t-pn">,</span> <span class="t-str">"dead"</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-fn">expect</span><span class="t-pn">(</span>system<span class="t-pn">.</span><span class="t-prop">provider</span><span class="t-pn">.</span><span class="t-fn">inbox</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">map</span><span class="t-pn">(</span><span class="t-pn">(</span>mail<span class="t-pn">)</span> <span class="t-op">=&gt;</span> mail<span class="t-pn">.</span><span class="t-prop">subject</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">toEqual</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-str">"Invoice INV-0001"</span><span class="t-pn">,</span> <span class="t-str">"Invoice INV-0002"</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-fn">expect</span><span class="t-pn">(</span>system<span class="t-pn">.</span><span class="t-prop">provider</span><span class="t-pn">.</span><span class="t-fn">inbox</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">map</span><span class="t-pn">(</span><span class="t-pn">(</span>mail<span class="t-pn">)</span> <span class="t-op">=&gt;</span> mail<span class="t-pn">.</span><span class="t-prop">subject</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">sort</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">toEqual</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-str">"Invoice INV-0001"</span><span class="t-pn">,</span> <span class="t-str">"Invoice INV-0002"</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
   <span class="t-fn">it</span><span class="t-pn">(</span><span class="t-str">"gives up on a delivery that crashes every worker that claims it"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
@@ -1712,7 +1712,7 @@ describe("invoice delivery", () => {
     await system.startDispatching();
     await waitFor(system.settled);
     expect(await Promise.all([1, 2, 3, 4].map(statusOfInvoice))).toEqual(["sent", "sent", "dead", "dead"]);
-    expect(system.provider.inbox().map((mail) => mail.subject)).toEqual(["Invoice INV-0001", "Invoice INV-0002"]);
+    expect(system.provider.inbox().map((mail) => mail.subject).sort()).toEqual(["Invoice INV-0001", "Invoice INV-0002"]);
   });
 
   it("gives up on a delivery that crashes every worker that claims it", async () => {

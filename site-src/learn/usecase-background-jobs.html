@@ -731,7 +731,7 @@ for (const row of (await db.query<{ id: number; last_error: string }>(
   "select id, last_error from deliveries where status = 'dead' order by id")).rows) {
   console.log(`dead: delivery ${row.id}: ${row.last_error}`);
 }
-console.log("most e-mails at the provider at once:", provider.mostAtOnce());
+console.log("never more than 5 at the provider at once:", provider.mostAtOnce() <= 5);
 const stats = await worker.queue.getStats();
 console.log("queue:", { succeeded: stats.succeeded, retried: stats.retried, deadLettered: stats.deadLettered });
 for (const series of obs.metrics.getAll()) {
@@ -748,7 +748,7 @@ await db.close();
 [ { status: 'dead', n: 2 }, { status: 'sent', n: 12 } ]
 dead: delivery 3: HTTP request failed with status 422.
 dead: delivery 4: Cannot read properties of null (reading 'toLocaleString') (after 4 attempts)
-most e-mails at the provider at once: 5
+never more than 5 at the provider at once: true
 queue: { succeeded: 13, retried: 3, deadLettered: 1 }
 metric deliveries.sent {"kind":"invoice"} 12
 metric deliveries.duration_ms {} count=12
@@ -759,7 +759,7 @@ metric deliveries.dead {"reason":"retries-exhausted"} 1
 <li><strong>Twelve sent, two dead</strong>, and the dead rows say why in words a person can act on.</li>
 <li><strong>Delivery 3</strong> was refused with a 422. <code>isPermanent</code> recognised it, so it was marked dead after one attempt, with no retries.</li>
 <li><strong>Delivery 4</strong> threw a <code>TypeError</code> in our own rendering code on every attempt. The queue cannot know that a bug is not temporary, so it used all 4 attempts (the 3 retries in the stats), then dead-lettered it, and the event handler wrote the reason to the ledger. The other twelve were delivered while it was failing: with 5 slots, one bad job only occupies one of them.</li>
-<li><strong>At most 5 at once</strong> at the provider, the worker's <code>concurrency</code>.</li>
+<li><strong>Never more than 5 at once</strong> at the provider: the worker's <code>concurrency</code>. (How close it gets to 5 depends on timing, so the demo checks the limit, not an exact count.)</li>
 <li>The <strong>metrics</strong> come from <a href="/learn/zudo-observability#metrics">the observability lesson</a>: a counter per outcome with a small, fixed set of labels, and a histogram of delivery durations. The number to alert on is <code>deliveries.dead</code>; a dead-letter queue that nobody watches is just a slower way to lose data.</li>
 </ul>
 </section>
@@ -911,7 +911,7 @@ describe("invoice delivery", () => {
     await system.startDispatching();
     await waitFor(system.settled);
     expect(await Promise.all([1, 2, 3, 4].map(statusOfInvoice))).toEqual(["sent", "sent", "dead", "dead"]);
-    expect(system.provider.inbox().map((mail) => mail.subject)).toEqual(["Invoice INV-0001", "Invoice INV-0002"]);
+    expect(system.provider.inbox().map((mail) => mail.subject).sort()).toEqual(["Invoice INV-0001", "Invoice INV-0002"]);
   });
 
   it("gives up on a delivery that crashes every worker that claims it", async () => {

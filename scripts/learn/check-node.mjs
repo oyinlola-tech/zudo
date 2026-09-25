@@ -267,6 +267,11 @@ export function checkNode(lessons, { log = console.log, only = null, root = null
     };
 
     examples.forEach((ex, i) => {
+      /* node_modules is a symlink to the shared dependency cache: never write into it. */
+      if (/(^|\/)node_modules(\/|$)|(^|\/)\.\.(\/|$)|^\//.test(ex.file)) {
+        results.push({ label: `${lesson.slug} #${i} ${ex.file}`, ok: false, detail: "file names may not start with /, contain .. or point into node_modules" });
+        return;
+      }
       const dir = projectDir(ex, i);
       const target = join(dir, ex.file);
       mkdirSync(dirname(target), { recursive: true });
