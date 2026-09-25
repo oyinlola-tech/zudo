@@ -18,13 +18,18 @@
  *     <explain>…</explain>
  *   </question>
  *
- *   <question id="…" type="code" file="sum.js">    write code in the terminal
+ *   <question id="…" type="code" file="sum.js" [starter="invalid"]>   write code in the terminal
+ *                                                  (the starter must parse, unless it is a syntax
+ *                                                  error on purpose: then say starter="invalid")
  *     <q>…</q>
  *     <starter>code the learner starts from</starter>
  *     <solution>a working answer</solution>          the checker runs it in Node and
  *     <expected>what a correct answer prints</expected>   in the browser terminal
  *     <explain>…</explain>
  *   </question>
+ *
+ * Option text is compared with the real output after tags are stripped, so a literal
+ * tag in an option must be written as &lt;b&gt;.
  *
  * Code questions always run in the browser terminal, so they may only use
  * plain JavaScript/TypeScript and the @zudojs packages bundled for it.
@@ -96,6 +101,8 @@ export function parseQuiz(source, slug) {
     }
     if (a.type === "code") {
       question.file = a.file || "answer.js";
+      /* starter="invalid": the starter is a syntax error on purpose ("fix the syntax error" questions). */
+      question.starterInvalid = a.starter === "invalid";
       question.starter = dedent((one(body, "starter") || { text: "" }).text);
       question.solution = dedent((one(body, "solution") || { text: "" }).text);
       question.expected = dedent((one(body, "expected") || { text: "" }).text);

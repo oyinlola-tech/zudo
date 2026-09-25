@@ -34,6 +34,11 @@ import { headings, loadHighlighter, readCourse, renderBody } from "./learn/sourc
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "site", "learn");
 const args = process.argv.slice(2);
+if (args.includes("--help") || args.includes("-h")) {
+  const doc = readFileSync(fileURLToPath(import.meta.url), "utf8").match(/\/\*\*([\s\S]*?)\*\//)[1];
+  console.log(doc.replace(/^ ?\* ?/gm, "").trim());
+  process.exit(0);
+}
 /* --only slug[,slug…] limits the checks (the build always covers every lesson). */
 const only = args.includes("--only") ? args[args.indexOf("--only") + 1].split(",") : null;
 const wantAll = args.includes("--check");
@@ -170,8 +175,9 @@ function report(name, results) {
 
 /*
  * --fill: run the examples of the --only lessons in Node and write the real output
- * into every <output> that is still empty. Outputs already written are never touched,
- * and DOM examples (browser only) are not filled.
+ * into every <output> that is still empty, and tsc's code into every empty
+ * <file check="emit">. Written ones are never touched, and DOM examples (browser
+ * only) are not filled.
  */
 if (args.includes("--fill")) {
   if (!only) throw new Error("--fill needs --only <slug>[,<slug>…]");
@@ -185,7 +191,10 @@ if (args.includes("--fill")) {
     const src = readFileSync(file, "utf8").replace(EXAMPLE_RE, (m, tag, a, out) => {
       n++;
       const f = mine.find((x) => x.index === n);
-      if (!f || out === undefined) return m;
+      if (!f) return m;
+      /* An empty <file check="emit"> gets tsc's emitted code as its body. */
+      if (f.body) return m.replace(/^(<file\b[^>]*>)\s*(<\/file>)/, (all, open, close) => `${open}\n${f.text}\n${close}`);
+      if (out === undefined) return m;
       return m.replace(/(<output\b[^>]*>)\s*(<\/output>)$/, (all, open, close) => `${open}\n${f.text}\n${close}`);
     });
     writeFileSync(file, src);

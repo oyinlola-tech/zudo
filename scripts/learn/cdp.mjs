@@ -96,6 +96,8 @@ export async function launchBrowser({ width = 1280, height = 900 } = {}) {
 
   await send("Page.enable");
   await send("Runtime.enable");
+  /* Fixed, non-UTC zone: see CHECK_TZ in check-node.mjs. */
+  await send("Emulation.setTimezoneOverride", { timezoneId: "Africa/Lagos" });
 
   return {
     consoleErrors,

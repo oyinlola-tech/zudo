@@ -19,6 +19,13 @@ import { extractExamples } from "./source.mjs";
 
 /* What `npm install -D typescript tsx @types/node` gives a learner today. */
 const TOOLING = { typescript: "latest", tsx: "latest", "@types/node": "latest" };
+/*
+ * Node examples run in UTC and the browser checker (cdp.mjs) in Africa/Lagos (UTC+1), whatever
+ * the machine's zone is. An output that depends on the local time zone then can't
+ * match in both, so it fails instead of showing learners elsewhere the wrong thing.
+ */
+export const CHECK_TZ = "UTC";
+
 export const DEFAULT_TSCONFIG = {
   compilerOptions: {
     target: "ES2024",
@@ -66,15 +73,29 @@ export function applyMasks(text, mask) {
   return out;
 }
 
+function dedentText(text) {
+  const lines = text.split("\n");
+  const indents = lines.filter((l) => l.trim()).map((l) => l.match(/^ */)[0].length);
+  const cut = indents.length ? Math.min(...indents) : 0;
+  return cut ? lines.map((l) => l.slice(cut)).join("\n") : text;
+}
+
 export function normalize(text) {
   return text
     .replace(ANSI, "")
+    /* Paths into the shared dependency cache read as the learner's own node_modules. */
+    .replace(/(?:(?:\.\.\/)+|\/\S*?\/)zudo-learn-deps-[0-9a-f]+\/node_modules\//g, "node_modules/")
+    /* The checker's temporary project folder reads as a learner's project folder. */
+    .replace(/(?:file:\/\/)?\/\S*?zudo-learn-run-\w+\/[\w.-]+\/[\w.-]+\//g, "/home/you/project/")
     .replace(/\r/g, "")
     .split("\n")
     .map((l) => l.replace(/\s+$/, ""))
     .join("\n")
     .replace(/\n+$/, "")
-    .replace(/^\n+/, "");
+    .replace(/^\n+/, "")
+    /* Lesson <output>s are dedented when read, so compare both sides dedented. */
+    .replace(/^/, "\u0000")
+    .replace(/[\s\S]*/, (t) => dedentText(t.slice(1)));
 }
 
 function zudoImports(lessons) {
@@ -168,7 +189,7 @@ function checkEmit(ex, dir, bin, label) {
     if (!existsSync(emitted)) return { label, ok: false, detail: `tsc did not emit ${rel} (the path after "${root}/" must match the source file)` };
     const want = normalize(ex.code);
     const got = normalize(readFileSync(emitted, "utf8"));
-    return { label, ok: want === got, detail: want === got ? "" : diff(want, got) };
+    return { label, ok: want === got, detail: want === got ? "" : diff(want, got), emitted: got };
   } finally {
     rmSync(out, { recursive: true, force: true });
   }
@@ -199,7 +220,7 @@ function runMerged(command, cwd) {
     cwd,
     encoding: "utf8",
     timeout: 60000,
-    env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", NODE_NO_WARNINGS: "1" },
+    env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", NODE_NO_WARNINGS: "1", TZ: CHECK_TZ },
   });
   return { status: r.status, text: r.stdout || "" };
 }
@@ -249,30 +270,39 @@ export function checkNode(lessons, { log = console.log, only = null, root = null
       const dir = projectDir(ex, i);
       const target = join(dir, ex.file);
       mkdirSync(dirname(target), { recursive: true });
+      /* A tsc-error example may reuse the name of an earlier file: put that file back afterwards. */
+      const before = ex.check === "tsc-error" && existsSync(target) ? readFileSync(target, "utf8") : null;
       writeFileSync(target, ex.code + "\n");
       if (ex.tag === "file" && ex.check === "emit") {
-        results.push(checkEmit(ex, dir, bin, `${lesson.slug} #${i} ${ex.file} (emit)`));
+        const r = checkEmit(ex, dir, bin, `${lesson.slug} #${i} ${ex.file} (emit)`);
+        if (fill && !ex.code.trim() && r.emitted !== undefined) fill.push({ slug: lesson.slug, index: i, text: r.emitted, body: true });
+        results.push(r);
         return;
       }
       if (ex.tag === "file" || ex.check === "skip" || ex.runtime === "dom") return;
-      const isTs = /\.(ts|mts)$/.test(ex.file);
+      const isTs = /\.(ts|mts|cts)$/.test(ex.file);
       const label = `${lesson.slug} #${i} ${ex.file}`;
 
       if (ex.check === "tsc-error") {
         const r = runMerged(`${join(bin, "tsc")} --noEmit --pretty`, dir);
-        if (fill && ex.expected === "" && r.status !== 0) fill.push({ slug: lesson.slug, index: i, text: normalize(r.text) });
+        if (fill && ex.expected === "") {
+          if (r.status !== 0) fill.push({ slug: lesson.slug, index: i, text: normalize(r.text) });
+          else log(`--fill: ${lesson.slug} #${i} ${ex.file} is check="tsc-error" but tsc passes, so there is nothing to fill`);
+        }
         const got = applyMasks(normalize(r.text), ex.mask);
         /* No <output> at all: only "tsc fails" is checked. An empty <output> is compared like any other. */
         const want = ex.expected !== null ? applyMasks(normalize(ex.expected), ex.mask) : null;
         const ok = r.status !== 0 && (want === null || want === got);
         results.push({ label, ok, detail: ok ? "" : r.status === 0 ? "expected a type error, tsc passed" : diff(want, got) });
-        rmSync(target);
+        if (before !== null) writeFileSync(target, before);
+        else rmSync(target);
         return;
       }
 
       if (isTs) {
         const t = runMerged(`${join(bin, "tsc")} --noEmit --pretty`, dir);
         if (t.status !== 0) {
+          if (fill && ex.expected === "") log(`--fill: ${label} not filled, the project does not type-check:\n${normalize(t.text)}`);
           results.push({ label: label + " (tsc)", ok: false, detail: normalize(t.text) });
           return;
         }
@@ -281,7 +311,10 @@ export function checkNode(lessons, { log = console.log, only = null, root = null
       if (ex.expected === null) return;
       const cmd = isTs ? `${join(bin, "tsx")} ${ex.file}` : `node ${ex.file}`;
       const r = runMerged(cmd, dir);
-      if (fill && ex.expected === "") fill.push({ slug: lesson.slug, index: i, text: normalize(r.text) });
+      if (fill && ex.expected === "") {
+        fill.push({ slug: lesson.slug, index: i, text: normalize(r.text) });
+        if (r.status !== 0) log(`--fill: ${label} exited with code ${r.status}; its output (filled in anyway) is:\n${normalize(r.text).split("\n").slice(0, 6).join("\n")}`);
+      }
       const got = applyMasks(normalize(r.text), ex.mask);
       const want = applyMasks(normalize(ex.expected), ex.mask);
       const ok = got === want;

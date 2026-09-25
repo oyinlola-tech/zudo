@@ -9,12 +9,13 @@
  *  - every .ts file in a test passes `tsc --noEmit`.
  */
 
+import { createRequire } from "node:module";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { DEFAULT_TSCONFIG, ensureDeps, normalize } from "./check-node.mjs";
+import { CHECK_TZ, DEFAULT_TSCONFIG, ensureDeps, normalize } from "./check-node.mjs";
 import { plainText, validateQuiz } from "./quiz.mjs";
 
 const CONCURRENCY = 6;
@@ -23,7 +24,7 @@ function runAsync(cmd, args, cwd, timeoutMs = 60000) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, {
       cwd,
-      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", NODE_NO_WARNINGS: "1" },
+      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", NODE_NO_WARNINGS: "1", TZ: CHECK_TZ },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let text = "";
@@ -45,6 +46,15 @@ async function pool(items, worker) {
   await Promise.all(lanes);
 }
 
+
+function parseError(esbuild, src, isTs) {
+  try {
+    esbuild.transformSync(src, { loader: isTs ? "ts" : "js", format: "esm" });
+    return null;
+  } catch (e) {
+    return (e.errors && e.errors[0] && e.errors[0].text) || e.message;
+  }
+}
 /* Everything a test runs: [{ slug, q, role: "code"|"solution"|"starter", file, src, want }] */
 function jobs(quiz) {
   const out = [];
@@ -68,6 +78,7 @@ export async function checkQuizNode(quizzes, { lessons, root, log = console.log 
   }
   const deps = ensureDeps(lessons, log, root);
   const bin = join(deps, "node_modules", ".bin");
+  const esbuild = createRequire(join(deps, "node_modules", "x.js"))("esbuild");
   const work = mkdtempSync(join(tmpdir(), "zudo-quiz-run-"));
   const all = [];
 
@@ -105,6 +116,10 @@ export async function checkQuizNode(quizzes, { lessons, root, log = console.log 
     const want = normalize(job.want);
     const label = `${job.slug} test ${job.q.id} (${job.role})`;
     if (job.role === "starter") {
+      /* A starter is unfinished on purpose, but it must still parse, or the learner starts from a syntax error. */
+      const syntax = parseError(esbuild, job.src, isTs);
+      if (syntax && !job.q.starterInvalid) results.push({ label: label + " (parse)", ok: false, detail: "the starter does not parse: " + syntax + ' (if that is on purpose, add starter="invalid" to the question)' });
+      if (!syntax && job.q.starterInvalid) results.push({ label: label + " (parse)", ok: false, detail: 'starter="invalid" but the starter parses' });
       results.push({ label, ok: got !== want, detail: "the starter code already prints the expected output" });
     } else {
       results.push({ label, ok: got === want, detail: got === want ? "" : `  want:\n${want}\n  got:\n${got}` });

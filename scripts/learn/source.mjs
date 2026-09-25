@@ -10,7 +10,9 @@
  *   <output [kind="tsc"] [mask="ms,iso"]>what it prints</output>  (right after an example;
  *                                                            mask: parts that differ per run,
  *                                                            see MASKS in check-node.mjs)
- *   <file name="package.json" project="p">contents</file>  (shown, not run)
+ *   <file name="package.json" project="p">contents</file>  (shown, not run; a
+ *                                                            <file name="tsconfig.json"> replaces the
+ *                                                            checker's default tsconfig for that project)
  *   <file name="dist/a.js" project="p" check="emit" tsc="--target ES2019">  (what tsc emits for the
  *                                                            project's .ts files so far; the checker
  *                                                            runs tsc and compares; .d.ts turns on
@@ -165,11 +167,19 @@ function decodeEntities(s) {
 function renderShell(a, raw) {
   const text = decodeEntities(dedent(raw));
   const commands = [];
+  /* A command line ending in a backslash continues on the next line. */
+  let continuing = false;
   const body = text
     .split("\n")
     .map((line) => {
+      if (continuing) {
+        commands[commands.length - 1] += "\n" + line;
+        continuing = /\\$/.test(line);
+        return `<span class="lx-cmd">${escapeHtml(line)}</span>`;
+      }
       if (line.startsWith("$ ")) {
         commands.push(line.slice(2));
+        continuing = /\\$/.test(line);
         return `<span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>${escapeHtml(line.slice(2))}</span>`;
       }
       if (line.startsWith("# ")) return `<span class="lx-cmt">${escapeHtml(line)}</span>`;
