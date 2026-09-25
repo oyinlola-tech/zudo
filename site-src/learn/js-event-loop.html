@@ -2,7 +2,7 @@
 title: The event loop
 description: Build an exact model of the call stack, task queue and microtask queue, solve ordering puzzles with it, and keep long jobs from starving timers and requests.
 minutes: 50
-youNeed: Promises in depth, Combining promises and What Node.js is
+youNeed: Asynchronous JavaScript, Promises in depth, Combining promises and Scope and how code runs
 youBuild: An order-export job that processes rows in time slices so health checks keep answering, and an event-loop lag monitor
 keywords: javascript event loop, call stack, task queue, macrotask, microtask queue, queueMicrotask, setTimeout 0, run to completion, process.nextTick, setImmediate, event loop phases, starving the event loop, event loop lag, time slicing, promise job order
 objectives: Describe the event loop as an algorithm: one task, then every microtask, then the next task | Sort any callback into the task queue or the microtask queue | Predict the output of ordering puzzles that mix sync code, await, then, queueMicrotask and timers | Explain process.nextTick and setImmediate and where they run in Node's loop | Recognise both kinds of starvation, a long task and an endless microtask chain, and fix them by yielding | Measure event-loop lag
@@ -39,12 +39,12 @@ export finished, took more than 20 ms: true
 health checks answered during the export: 0
 health checks answered 50 ms after the export: true
 </output>
-<p>While the export ran, the health check answered <em>zero</em> times, even though its timer was due many times over. As soon as the export finished, the checks started again. To fix this for real, you need an exact picture of how JavaScript decides what runs next: the <strong>event loop</strong>. <a href="/learn/node-runtime#event-loop">What Node.js is</a> introduced it, and <a href="/learn/js-scope#call-stack">Scope and the call stack</a> showed the call stack. This lesson puts them together into a model precise enough to predict any ordering, and to fix the export at the end.</p>
+<p>While the export ran, the health check answered <em>zero</em> times, even though its timer was due many times over. As soon as the export finished, the checks started again. To fix this for real, you need an exact picture of how JavaScript decides what runs next: the <strong>event loop</strong>. <a href="/learn/js-async">Asynchronous JavaScript</a> introduced it, and <a href="/learn/js-scope#call-stack">Scope and how code runs</a> showed the call stack. This lesson puts them together into a model precise enough to predict any ordering, and to fix the export at the end.</p>
 </section>
 
 <section>
 <h2 id="model">The model: one stack, two queues, one rule</h2>
-<p>JavaScript runs your code on a single <strong>call stack</strong>: the list of function calls in progress, from <a href="/learn/js-scope#call-stack">Scope and the call stack</a>. Only the function on top runs. The language itself has no timers, no network and no files. Those come from the <strong>host</strong>: the program that embeds the JavaScript engine, which is the browser or Node.js. The host keeps the waiting work in queues:</p>
+<p>JavaScript runs your code on a single <strong>call stack</strong>: the list of function calls in progress, from <a href="/learn/js-scope#call-stack">Scope and how code runs</a>. Only the function on top runs. The language itself has no timers, no network and no files. Those come from the <strong>host</strong>: the program that embeds the JavaScript engine, which is the browser or Node.js. The host keeps the waiting work in queues:</p>
 <ul>
 <li>The <strong>task queue</strong> (also called the <strong>macrotask</strong> queue) holds callbacks for things that happened in the outside world: a timer is due, a file has been read, a request arrived, a user clicked. Each of these callbacks is a <strong>task</strong>. (Hosts really keep several task queues, for timers, I/O and so on, but you can picture one.)</li>
 <li>The <strong>microtask queue</strong> holds small follow-up jobs that JavaScript code itself scheduled: promise reactions (the handlers of <code>then</code>, <code>catch</code> and <code>finally</code>), the rest of an <code>async</code> function after an <code>await</code>, and callbacks given to <code>queueMicrotask</code>. Each is a <strong>microtask</strong>.</li>
@@ -337,7 +337,7 @@ inside a timer callback (the timers phase)
 4. setImmediate: this round, check phase
 5. setTimeout 0: next loop round, timers phase
 </output>
-<p><code>setImmediate</code> beat <code>setTimeout(…, 0)</code> here because the loop was in the timers phase: it goes on to poll and check (running the immediate) before it comes back round to timers. At the very top of a script the order of those two is not fixed, as <a href="/learn/node-runtime#event-loop">What Node.js is</a> showed; inside callbacks it is.</p>
+<p><code>setImmediate</code> beat <code>setTimeout(…, 0)</code> here because the loop was in the timers phase: it goes on to poll and check (running the immediate) before it comes back round to timers. At the very top of a script the order of those two is not fixed: it depends on how long the process took to start, so the 1 ms timer may or may not be due when the loop first reaches the timers phase. Inside a timer or I/O callback it is fixed. <a href="/learn/node-runtime#event-loop">What Node.js is</a>, in the next course, runs both cases.</p>
 <h3>Which one to use</h3>
 <ul>
 <li><code>process.nextTick(fn)</code>: runs before anything else once the current callback ends. Node's own code uses it so that an API can call your callback asynchronously but "straight away", for example to emit an error event after the caller has had a chance to attach a listener. In application code, <code>queueMicrotask</code> is almost always the clearer choice.</li>
@@ -487,15 +487,15 @@ const calmLag = calm.stop();
 
 const busy = monitorLag();
 await wait(15);
-busyWait(120);
+busyWait(200);
 await wait(30);
 const busyLag = busy.stop();
 
-console.log("after a 120 ms task, worst lag over 80 ms:", busyLag > 80);
+console.log("after a 200 ms task, worst lag over 100 ms:", busyLag > 100);
 console.log("much worse than the calm loop:", busyLag > calmLag + 50);
 </example>
 <output>
-after a 120 ms task, worst lag over 80 ms: true
+after a 200 ms task, worst lag over 100 ms: true
 much worse than the calm loop: true
 </output>
 <p>Node.js has a precise built-in version, <code>monitorEventLoopDelay</code> from <code>node:perf_hooks</code>, which samples the loop in the background and reports a histogram (in nanoseconds):</p>
@@ -507,8 +507,8 @@ const histogram = monitorEventLoopDelay({ resolution: 10 });
 histogram.enable();
 
 await sleep(20);
-const end = Date.now() + 150;
-while (Date.now() < end);          // a 150 ms task
+const end = Date.now() + 250;
+while (Date.now() < end);          // a 250 ms task
 await sleep(20);
 
 histogram.disable();
