@@ -1,10 +1,11 @@
 ---
 title: Configuration
-description: Keep settings out of the code with @zudojs/config. Layer defaults, a config file and environment variables by priority, validate the result with a schema, keep secrets out of logs, and make the Task API's generated configuration stricter in production than in development.
+description: Keep settings out of code with @zudojs/config: layered sources, validation at startup, secrets kept out of logs, and a Task API stricter in production.
 minutes: 45
-youNeed: Middleware, CORS, security headers and graceful shutdown
+youNeed: "Middleware pipelines with @zudojs/middleware", and the write limit from "Middleware, CORS, security headers and graceful shutdown"
 youBuild: A stricter Task API configuration that listens only on your own computer in development, checks every CORS origin, allows only https origins in production, and stops with one clear line when a setting is wrong
 keywords: zudojs config, configuration, createConfigManager, createDefaultsConfigSource, createEnvironmentConfigSource, createCustomConfigSource, environment variables, process.env, config file, priority, precedence, secrets, redaction, toSafeObject, NODE_ENV, resolveEnvironment, .env file, --env-file, twelve-factor, fail fast
+objectives: Explain which values belong in configuration and why secrets come only from the environment | Merge defaults, a file and environment variables by priority with @zudojs/config | Convert and validate settings at startup so a typo stops the app with one clear message | Keep secrets out of logs, and explain why redaction by key name is only a safety net | Make production stricter than development without changing code
 ---
 <section>
 <h2 id="why">Why configuration lives outside the code</h2>
@@ -292,7 +293,17 @@ logger.info("configuration loaded", { port: 8080, jwtSecret: "n8VqT2xLm4pR7sKd9w
 <section>
 <h2 id="environments">Development and production</h2>
 <p><code>NODE_ENV</code> is the environment variable every Node.js tool uses to tell development from production. <code>resolveEnvironment()</code> from <code>@zudojs/constants</code> (already used in the generated <code>src/app.ts</code>) reads it and returns <code>"development"</code>, <code>"test"</code> or <code>"production"</code>. When it is not set, you get <code>"development"</code>.</p>
-<p>Production gets stricter rules. Development defaults are allowed to be convenient; production must be told everything explicitly. For the Task API, by the end of this lesson:</p>
+<reason title="What may have a default?">
+<p>Before reading the table below, sort these Task API settings into three groups: safe to default everywhere, safe to default only in development, and never defaulted. <code>PORT</code>, <code>HOST</code>, <code>CORS_ORIGINS</code>, <code>RATE_LIMIT_MAX</code>, <code>DATABASE_URL</code> with a password in it, and the secret that will sign login tokens. For each default you allow, ask: what happens if someone deploys to production and forgets to set it?</p>
+<answer>
+<ul>
+<li><strong>Safe everywhere</strong>: <code>PORT</code> (3000) and <code>RATE_LIMIT_MAX</code> (300). A forgotten value gives a working, reasonably safe app.</li>
+<li><strong>Development only</strong>: <code>HOST</code> and <code>CORS_ORIGINS</code>. On a laptop, <code>127.0.0.1</code> and <code>http://localhost:5173</code> are convenient and safe. In production the host must be reachable and the origins must be your real <code>https://</code> sites, so their values differ by environment, and a development value that leaks into production is refused.</li>
+<li><strong>Never defaulted</strong>: the database password and the signing secret. A default secret is written in the code, so it is public: anyone could sign their own login tokens. Missing means "refuse to start".</li>
+</ul>
+</answer>
+</reason>
+<p>Production gets stricter rules. Development defaults are allowed to be convenient; production must be told everything explicitly. For the Task API, the first two rows hold by the end of this lesson; the third arrives with login in the authentication lesson:</p>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Setting</th><th>Development</th><th>Production</th></tr></thead>
 <tbody>
@@ -347,7 +358,7 @@ export type AppConfig = Awaited<ReturnType<typeof loadConfig>>;
 <li><strong>Easy to test.</strong> <code>loadConfig</code> takes the environment as a parameter. Given a plain object, it does not touch <code>.env</code> or <code>process.env</code> at all.</li>
 <li>The <code>// zudojs:config</code> markers are where <code>zudojs add</code> puts the settings of a feature.</li>
 </ul>
-<p>Four things from this lesson are still missing: production is not stricter than development, the server listens on every network interface even on your laptop, <code>CORS_ORIGINS</code> accepts anything, and the write limit from the previous lesson is written in the code. Here is the whole file with all four added. The new parts are the two imports, <code>OriginSchema</code>, the <code>origins</code> helper, the <code>production</code> constant, and the <code>production</code>, <code>host</code>, <code>corsOrigins</code> and <code>writeMax</code> lines in <code>loadConfig</code>:</p>
+<p>Four things from this lesson are still missing: production is not stricter than development, the server listens on every network interface even on your laptop, <code>CORS_ORIGINS</code> accepts anything, and the write limit from <a href="/learn/zudo-middleware#task-api">the middleware lesson</a> is written in the code. Here is the whole file with all four added. The new parts are the two imports, <code>OriginSchema</code>, the <code>origins</code> helper, the <code>production</code> constant, and the <code>production</code>, <code>host</code>, <code>corsOrigins</code> and <code>writeMax</code> lines in <code>loadConfig</code>:</p>
 <example file="src/configs/index.ts" project="task-api" browser="no">
 import { ConfigurationError } from "@zudojs/errors";
 import {
@@ -489,6 +500,7 @@ production  -> ConfigurationError: CORS_ORIGINS must use https in production, go
 production  -> 0.0.0.0 3000 [ 'https://tasks.example.com' ] 5
 </output>
 <p>Development starts with its safe defaults. A wrong port, a malformed origin and a plain-HTTP origin in production each stop with a <code>ConfigurationError</code> that says exactly what to fix. None of these settings is a secret, so the messages may show the value. For a secret, name the setting and never print its value.</p>
+<p>The import token from <a href="/learn/zudo-middleware-pipelines#task-api">the pipelines lesson</a>, <code>TASKS_IMPORT_TOKEN</code>, is such a secret. It can stay where it is, read once in <code>registerServices</code>, or move here as an optional setting with no default: without it, the list of operators is empty and every import is refused, which is the safe answer.</p>
 <p>Now <code>src/server.ts</code>. It calls <code>loadConfig()</code> first, before anything else starts. If that throws, Node.js prints a long stack trace, which says less than the message. Catch it, print the message, and exit with code 1. While you are in the file, give the write limit its new setting:</p>
 <example file="src/server.ts (part)" browser="no" check="skip">
 import { loadConfig, type AppConfig } from "./configs/index.js";
@@ -594,5 +606,5 @@ for (const value of ["500", "5000"]) {
 <li>Secrets only come from the environment, have no defaults, and never reach logs: use <code>toSafeObject()</code>, and the logger redacts secret-looking keys too.</li>
 <li><code>NODE_ENV=production</code> switches on stricter rules. A <code>.env</code> file, loaded by the generated <code>loadConfig</code> (or with <code>--env-file</code>) and never committed, is for development.</li>
 </ul>
-<p>You have now used schemas for request bodies and for configuration. The next lesson looks at schemas in depth: coercion, transformations, refinements, and validating what goes <em>out</em> as well as what comes in.</p>
+<p>You have now used schemas for request bodies and for configuration. Next, <a href="/learn/zudo-validation">Schemas and validation in depth</a> covers coercion, transformations, refinements, and validating what goes <em>out</em> as well as what comes in.</p>
 </section>

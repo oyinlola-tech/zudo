@@ -1,10 +1,11 @@
 ---
 title: Schemas and validation in depth
-description: Validate everything that crosses the Task API's boundary with @zudojs/schema. Read issues, coerce query strings, transform and refine values, block unknown fields, validate requests in routes and responses on the way out, and guard against hostile JSON with @zudojs/validation.
+description: Validate everything crossing the Task API's boundary with @zudojs/schema: issues, coercion, transforms, refinements, unknown fields, responses and hostile JSON.
 minutes: 50
-youNeed: Configuration, and Your first Zudo code
+youNeed: "Configuration", and "Your first Zudo code"
 youBuild: A Task API that validates route parameters, query strings and bodies, supports filtered lists and partial updates, and never sends a field it did not mean to
 keywords: zudojs schema, validation, parse vs safeParse, SchemaIssue, coercion, schema.coerce, query string validation, transform, refine, partial, strict, unknown keys, mass assignment, request validation, response validation, allow-list, SchemaError issues, zudojs validation, assertDepthWithinLimit, assertSizeWithinLimit
+objectives: Turn schema issues into per-field messages a client can act on | Coerce text inputs such as query strings, and explain why JSON bodies must not be coerced | Transform and refine values, including rules that compare two fields | Accept partial updates without inventing defaults, and refuse fields a client must not set | Filter what leaves the server with a response schema, and stop hostile JSON before a schema walks it
 ---
 <section>
 <h2 id="boundary">Validate at the boundary</h2>
@@ -193,6 +194,17 @@ true
 
 <section>
 <h2 id="updates">Partial updates and unknown fields</h2>
+<reason title="What may a PATCH change?">
+<p>The Task API gets <code>PATCH /tasks/:id</code>. Before reading on, decide: a stored task has <code>id</code>, <code>title</code>, <code>done</code>, <code>priority</code> and <code>createdAt</code>. Which fields may a client change? What should happen to a field the client does not mention? What if the body contains <code>"id": 99</code> or <code>"createdAt"</code>? And what about an empty body, <code>{}</code>?</p>
+<answer>
+<ul>
+<li>Only <code>title</code>, <code>done</code> and <code>priority</code> may change. <code>id</code> and <code>createdAt</code> belong to the server.</li>
+<li>A field that is not mentioned must keep its stored value. In particular, a default such as <code>priority: "normal"</code> must not be filled in, or every update would quietly reset a <code>high</code> priority.</li>
+<li>An <code>id</code> or <code>createdAt</code> in the body is either a client bug or an attack. Dropping it silently is safe; refusing it with 400 also tells an honest client about its mistake.</li>
+<li>An empty body changes nothing, which almost always means the client forgot something. Refuse it too.</li>
+</ul>
+</answer>
+</reason>
 <p>A <code>PATCH /tasks/:id</code> request changes only the fields it sends. <code>NewTaskSchema.partial()</code> makes every field optional. Look at what it does with a field that has a <strong>default</strong>:</p>
 <example file="partial.ts">
 import { schema } from "@zudojs/schema";
@@ -345,7 +357,7 @@ console.log(broken.success ? "ok" : broken.issues[0]);
   message: 'Required field missing: priority'
 }
 </output>
-<p>The three internal fields were dropped. And a stored task with a missing priority, a bug somewhere in your own code, was caught instead of sent. That is a server error, not a client error, so in a route let it become a 500 and fix the bug.</p>
+<p>The three internal fields were dropped. And a stored task with a missing priority, a bug somewhere in your own code, was caught instead of sent. That is a server error, not a client error, so in a route it must become a 500, and you fix the bug. Be careful here: <code>parse</code> throws a <code>SchemaError</code>, which is an exposed 400, so on its own it would answer a bug in <em>your</em> data as the client's mistake. The Task API below still has that flaw; the next lesson fixes it.</p>
 <p>Validating every response costs a little time. Many teams validate responses in development and tests, and only apply the allow-list (by parsing) in production. For small objects like tasks, simply always parsing is fine.</p>
 </section>
 
@@ -378,9 +390,9 @@ normal -> passed
 too deep -> SerializationDepthError 400 Maximum serialization depth exceeded: 11 > 10
 too big -> SerializationPayloadTooLargeError 413 Serialized payload too large: 100013 bytes (max: 16384)
 </output>
-<p>Both hostile bodies were stopped. The size check is an estimate: it counts two bytes per character, so it is deliberately on the high side.</p>
+<p>Both hostile bodies were stopped. The size check is an estimate, not a byte count: it counts two bytes per UTF-16 code unit. That is double the real size for plain ASCII text such as the <code>x</code>s here, but <em>less</em> than the real UTF-8 size for characters such as <code>₦</code>, which take three bytes. <a href="/learn/zudo-validation-rules#guards">Validation rules</a> measures the difference. Treat the guard as a cheap check on the parsed value, and keep the server's own body limit as the limit on real bytes.</p>
 <p>Look at the status codes. The size error is a <strong>413 Payload Too Large</strong>, and the depth error a <strong>400 Bad Request</strong>: both are the client's mistake, so thrown from a route they become the right 4xx answer by themselves.</p>
-<note><code>@zudojs/validation</code> also offers a complete schema system based on the Zod library (<code>validate</code>, <code>z.object(...)</code>). It does not share schemas with <code>@zudojs/schema</code>. Pick one per project; this course uses <code>@zudojs/schema</code> and only borrows the guards.</note>
+<note><code>@zudojs/validation</code> also offers a complete schema system based on the Zod library (<code>validate</code>, <code>z.object(...)</code>), plus rules, normalizers and composers. It does not share schemas with <code>@zudojs/schema</code>. This course describes every DTO with <code>@zudojs/schema</code>; <a href="/learn/zudo-validation-rules">the next lesson</a> shows what <code>@zudojs/validation</code> adds on top.</note>
 </section>
 
 <section>
@@ -646,7 +658,7 @@ export function securityHeaders(): HttpMiddleware {
 }
 </file>
 </details>
-<p>The routes validate every input and send every task through <code>TaskResponse</code>:</p>
+<p>The routes validate every input and send every task through <code>TaskResponse</code>. <code>send</code> uses <code>parse</code> for now, with the flaw described in <a href="#response">Validating responses</a>: a broken stored task would be answered with a 400. The next lesson replaces this one line:</p>
 <example file="src/routes/tasks.routes.ts" project="task-api" browser="no">
 import type { HttpRouter } from "@zudojs/http";
 import { ListTasksQuery, TaskIdParams, TaskResponse, UpdateTaskSchema } from "../dtos/tasks.dto.js";
@@ -714,7 +726,7 @@ GET /tasks?done=false&limit=1&page=2 200 [{"id":3,"title":"Water the plants","do
 GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
 PATCH /tasks/2 413 {"error":"Serialized payload too large: 80013 bytes (max: 65536)","code":"ERR_PAYLOAD_TOO_LARGE"}
 </output>
-<p>The unknown <code>id</code> was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and a huge body never reached a schema: it got a 413 that names the size and the limit, and nothing from the body itself. You do not map this error yourself: the guard marks it as safe to show, so the router's default answer here, and the generated <code>errorResponse</code> in the running server, both send it as it is. The 400 bodies still only say "Validation failed". The next lesson fixes that for every route at once. Run the same script in your project:</p>
+<p>The unknown <code>id</code> was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and a huge body never reached a schema: it got a 413 that names the size and the limit, and nothing from the body itself. You do not map this error yourself: the guard marks it as safe to show, so the router's default answer here, and the generated <code>errorResponse</code> in the running server, both send it as it is. The 400 bodies still only say "Validation failed"; <a href="/learn/zudo-errors">The ZudoJS error system</a> adds the list of issues for every route at once. Run the same script in your project:</p>
 <shell title="Terminal on your computer">
 $ npx tsc --noEmit
 $ npx tsx src/check-validation.ts
@@ -809,5 +821,5 @@ SchemaError Validation failed
 <li>A response schema is an allow-list for what leaves the server.</li>
 <li><code>@zudojs/validation</code>'s depth and size guards stop hostile JSON before a schema walks it.</li>
 </ul>
-<p>Validation errors are still answered with a bare "Validation failed". The next lesson builds one error handler that gives every error the right status and a helpful, safe body.</p>
+<p>Two things are still open: a broken stored task is answered with a 400, and titles that differ only in spacing or capitals count as different tasks. Next, <a href="/learn/zudo-validation-rules">Validation rules with @zudojs/validation</a> fixes both.</p>
 </section>

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Routes, requests and responses — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-http.md" title="Markdown version">
-  <meta name="description" content="Serve the Task API over HTTP with @zudojs/http. Start a server, add routes with parameters, read query strings, headers, cookies and JSON bodies safely, and answer with the right status codes.">
+  <meta name="description" content="Serve the Task API with @zudojs/http: a server, routes with parameters, query strings, headers, cookies and JSON bodies read safely, and the right status codes.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-http">
@@ -105,10 +105,10 @@
         <div class="lx-hero-tag">LEVEL 12 · LESSON 12 OF 19</div>
         <p class="lx-hero-part">HTTP <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>Routes, requests and responses</h1>
-        <p class="lx-hero-lead">Serve the Task API over HTTP with @zudojs/http. Start a server, add routes with parameters, read query strings, headers, cookies and JSON bodies safely, and answer with the right status codes.</p>
+        <p class="lx-hero-lead">Serve the Task API with @zudojs/http: a server, routes with parameters, query strings, headers, cookies and JSON bodies read safely, and the right status codes.</p>
         <ul class="lx-hero-meta">
           <li><strong>50 min</strong> to read and try</li>
-          <li><strong>You need:</strong> Dependency injection with @zudojs/container, and HTTP in depth</li>
+          <li><strong>You need:</strong> "DI architecture with ZudoJS", and "HTTP in depth" from the Backend course</li>
           <li><strong>You build:</strong> GET, POST and DELETE routes for /tasks, served by the Task API and tested with fetch and curl</li>
         </ul>
         <div class="lx-hero-actions">
@@ -117,6 +117,16 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Start an HTTP server with @zudojs/http and send it requests from a script</li>
+          <li>Register routes with parameters and read query strings, which are always strings or arrays of strings</li>
+          <li>Read a JSON body safely, answering 415 and 400 for the client's mistakes instead of 500</li>
+          <li>Answer with the right status code, headers and cookies for each outcome</li>
+          <li>Connect the Task API's service to real routes through the composition root</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="server">A server in a few lines</h2>
@@ -428,7 +438,15 @@ await withServer(router, async (base) => {
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx raw-body.ts</code></div><pre class="lx-no-copy">body is a Uint8Array: true
 POST /echo -&gt; 200 {"bytes":20,"text":"{\"title\":\"Buy milk\"}"}</pre></div>
 </figure>
-<p><code>TextDecoder</code> turns bytes into text, assuming UTF-8. The next step, <code>JSON.parse</code>, throws on bad input. An uncaught error is a bug, so the server would answer 500. But broken JSON is the <em>client's</em> mistake and deserves a 400. A small helper handles every case once:</p>
+<p><code>TextDecoder</code> turns bytes into text, assuming UTF-8. The next step is <code>JSON.parse</code>.</p>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>What can go wrong with a body?</h3><p>Before reading the helper below, list what a client can send to <code>POST /tasks</code> instead of a good JSON body, and which status each deserves. Think about the <code>Content-Type</code> header, the bytes themselves, and what <code>JSON.parse</code> does with them. Which of these are the client's mistake, and which would be yours?</p><details class="lx-solution"><summary>Show the reasoning</summary><ul>
+<li><strong>Not JSON at all</strong>: a form (<code>title=Buy+milk</code>) or plain text, announced by its <code>Content-Type</code>. The server cannot use it: <strong>415 Unsupported Media Type</strong>, before any parsing.</li>
+<li><strong>Broken JSON</strong>: <code>{"title": </code>. <code>JSON.parse</code> throws a <code>SyntaxError</code>. Uncaught, it would reach the server as an unknown error and become a 500, blaming your code for the client's mistake. Catch it and answer <strong>400</strong>.</li>
+<li><strong>Valid JSON of the wrong shape</strong>: <code>{"title": 42}</code> or <code>[]</code>. Parsing succeeds; the schema must refuse it, with a 400.</li>
+<li><strong>A huge body</strong>: the server itself refuses bodies over its limit with 413 before your route runs.</li>
+<li>Every one of these is the client's mistake, so every one gets a 4xx. A 500 should only ever mean a bug on your side.</li>
+</ul></details></div>
+<p>An uncaught error is a bug, so the server would answer 500 for broken JSON. But broken JSON is the <em>client's</em> mistake and deserves a 400. A small helper handles every case once:</p>
 <figure class="lx-example" data-index="6" data-file="read-json.ts" data-project="http">
 <figcaption class="lx-bar"><span class="lx-file">read-json.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> badRequest<span class="t-pn">,</span> <span class="t-ty">HttpError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
@@ -468,7 +486,7 @@ export function readJson(request: HttpRequestContext): unknown {
 <li><code>badRequest(...)</code> and <code>new HttpError(status, message)</code> come from <code>@zudojs/http</code>. Thrown from a route, they become a response with that status. <code>HttpError</code> picks its <code>code</code> from the status: 415 becomes <code>UNSUPPORTED_MEDIA_TYPE</code>. You can pass your own as a third argument, <code>{ code: "..." }</code>.</li>
 <li>It returns <code>unknown</code>, not <code>any</code>: the data is not trusted until a schema has checked it.</li>
 </ul>
-<p>Now a <code>POST /tasks</code> route that reads, validates and creates. The schema is the <code>NewTaskSchema</code> from the <a href="/learn/zudo-container#task-api">previous lesson</a>. A successful create answers <strong>201 Created</strong> with a <code>Location</code> header that says where the new task lives:</p>
+<p>Now a <code>POST /tasks</code> route that reads, validates and creates. The schema is the <code>NewTaskSchema</code> from <a href="/learn/zudo-container#task-api">the container lesson</a>. A successful create answers <strong>201 Created</strong> with a <code>Location</code> header that says where the new task lives:</p>
 <figure class="lx-example" data-index="7" data-file="create.ts" data-project="http">
 <figcaption class="lx-bar"><span class="lx-file">create.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
@@ -687,7 +705,7 @@ GET /crash -&gt; 500 {"error":"Internal Server Error"}</pre></div>
 
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
-<p>Now connect the <code>TaskService</code> from the previous lesson to real routes. These files from that lesson do not change:</p>
+<p>Now connect the <code>TaskService</code> that <a href="/learn/zudo-container#task-api">the container lesson</a> built, and <a href="/learn/zudo-di-architecture#task-api">DI architecture</a> registered and checked, to real routes. These files do not change:</p>
 <details class="lx-solution"><summary>Show the unchanged files</summary>
 <figure class="lx-example" data-index="10" data-file="src/repositories/tasks.store.ts" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/repositories/tasks.store.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
@@ -1306,6 +1324,27 @@ export function registerRoutes(router: HttpRouter, deps: AppDependencies): void 
   }),
 );</script>
 </figure>
+<p>If you added the smoke test from <a href="/learn/zudo-project-anatomy#tests">Anatomy of a ZudoJS project</a>, it now needs a container too, and it can check the new route. Build one with the same <code>registerServices</code> the app uses:</p>
+<figure class="lx-example" data-index="20" data-file="tests/smoke.test.ts (part)">
+<figcaption class="lx-bar"><span class="lx-file">tests/smoke.test.ts (part)</span><button type="button" class="lx-edit" data-index="20" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createContainer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createDependencies<span class="t-pn">,</span> registerServices <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"../src/container.js"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> expected <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-str">"/health"</span><span class="t-pn">,</span> <span class="t-str">"/tasks"</span><span class="t-pn">,</span> <span class="t-str">"/api/v1/examples"</span><span class="t-pn">]</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> container <span class="t-op">=</span> <span class="t-fn">createContainer</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-fn">registerServices</span><span class="t-pn">(</span>container<span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-fn">register</span><span class="t-pn">(</span>router<span class="t-pn">,</span> <span class="t-fn">createDependencies</span><span class="t-pn">(</span><span class="t-pn">{</span> container <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { createContainer } from "@zudojs/container";
+import { createDependencies, registerServices } from "../src/container.js";
+
+const expected = ["/health", "/tasks", "/api/v1/examples"];
+
+const container = createContainer();
+registerServices(container);
+register(router, createDependencies({ container }));</script>
+</figure>
 <p>Errors need no wiring. A thrown <code>NotFoundError</code> or <code>badRequest</code> reaches the <code>dispatch</code> step further down in <code>src/server.ts</code>, which answers with the generated <code>errorResponse</code> helper: <code>{"error": message, "code": code}</code> and the error's status. Any other error becomes a plain 500. Start the server with <code>npm run dev</code>, and try the API from a second terminal:</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Second terminal</span></figcaption>
 <pre class="lx-shell-body" data-copy="curl -i -X POST http://localhost:3000/tasks -H &quot;content-type: application/json&quot; -d '{&quot;title&quot;:&quot;Buy milk&quot;}'
@@ -1331,14 +1370,14 @@ curl -X POST http://localhost:3000/tasks -d 'title=Buy milk'"><span class="lx-cm
 <span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>curl -X POST http://localhost:3000/tasks -d 'title=Buy milk'</span>
 <span class="lx-res">{"error":"Send JSON with Content-Type: application/json","code":"UNSUPPORTED_MEDIA_TYPE"}</span></pre></figure>
 <div class="callout callout-tip"><p class="lx-callout-label">TIP</p>On Windows PowerShell, type <code>curl.exe</code>, and put the JSON in double quotes with the inner quotes escaped: <code>-d "{\"title\":\"Buy milk\"}"</code>.</div>
-<p>The new task got id 2, and the list shows it next to the one the <code>tasks</code> module added at startup. Both live in the one <code>TaskStore</code> singleton, shared by the modules and the service through the container. The <code>…</code> stands for the other security headers, which the next lesson explains. The last request sent a form instead of JSON (<code>-d</code> without a <code>content-type</code> header does that), and got the 415 from your new check.</p>
+<p>The new task got id 2, and the list shows it next to the one the <code>tasks</code> module added at startup. Both live in the one <code>TaskStore</code> singleton, shared by the modules and the service through the container. The <code>…</code> stands for the other security headers, which <a href="/learn/zudo-middleware#headers">the middleware lesson</a> explains. The last request sent a form instead of JSON (<code>-d</code> without a <code>content-type</code> header does that), and got the 415 from your new check.</p>
 <div class="callout callout-tip"><p class="lx-callout-label">TIP</p>The router can also document your API. You ran <code>zudojs add openapi</code> in <a href="/learn/zudo-create-project#add">Create the Task API project</a>, so <code>src/server.ts</code> already calls <code>mountOpenAPI(router, …)</code>, which serves <code>/openapi.json</code> and a docs page at <code>/docs</code>. Only routes with an <code>openapi</code> option are listed, so the task routes are not in it yet; <code>examples.routes.ts</code> shows what the option looks like. <a href="/learn/zudo-openapi">OpenAPI documents</a> covers it. A related helper, <code>mountFetchHandler(router, path, handler)</code>, serves a web-standard <code>(request: Request) =&gt; Response</code> handler under a path of your router.</div>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Mark a task as done</h3><p>Add a <code>PATCH /tasks/:id/done</code> route to the small in-memory router from the <a href="#router">routes section</a>. It sets <code>done</code> to <code>true</code> and answers 200 with the task, or 404 if there is no such task.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="20" data-file="patch.ts" data-project="http">
-<figcaption class="lx-bar"><span class="lx-file">patch.ts</span><button type="button" class="lx-edit" data-index="20" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Mark a task as done</h3><p>Add a <code>PATCH /tasks/:id/done</code> route to the small in-memory router from the <a href="#router">routes section</a>. It sets <code>done</code> to <code>true</code> and answers 200 with the task, or 404 if there is no such task.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="21" data-file="patch.ts" data-project="http">
+<figcaption class="lx-bar"><span class="lx-file">patch.ts</span><button type="button" class="lx-edit" data-index="21" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">NotFoundError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> show<span class="t-pn">,</span> withServer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./serve.js"</span><span class="t-pn">;</span>
@@ -1383,8 +1422,8 @@ await withServer(router, async (base) => {
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx patch.ts</code></div><pre class="lx-no-copy">PATCH /tasks/1/done -&gt; 200 {"id":1,"title":"Buy milk","done":true}
 PATCH /tasks/5/done -&gt; 404 {"error":"Task 5 not found","code":"ERR_RESOURCE_NOT_FOUND"}</pre></div>
 </figure></details></div>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A limit on the list</h3><p>Change the <code>GET /tasks</code> route of <a href="#query">the filter example</a> so it also accepts <code>?limit=N</code>. It must be a whole number from 1 to 50; anything else is a 400. Remember: the value arrives as a string, maybe as an array.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="21" data-file="limit.ts" data-project="http">
-<figcaption class="lx-bar"><span class="lx-file">limit.ts</span><button type="button" class="lx-edit" data-index="21" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A limit on the list</h3><p>Change the <code>GET /tasks</code> route of <a href="#query">the filter example</a> so it also accepts <code>?limit=N</code>. It must be a whole number from 1 to 50; anything else is a 400. Remember: the value arrives as a string, maybe as an array.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="22" data-file="limit.ts" data-project="http">
+<figcaption class="lx-bar"><span class="lx-file">limit.ts</span><button type="button" class="lx-edit" data-index="22" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> badRequest<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> show<span class="t-pn">,</span> withServer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./serve.js"</span><span class="t-pn">;</span>
 
@@ -1430,7 +1469,7 @@ await withServer(router, async (base) => {
 limit=0 -&gt; 400 {"error":"limit must be a whole number from 1 to 50","code":"BAD_REQUEST"}
 limit=1&amp;limit=2 -&gt; 400 {"error":"limit must be a whole number from 1 to 50","code":"BAD_REQUEST"}</pre></div>
 </figure>
-<p>The regular expression <code>^\d+$</code> accepts digits only, so <code>"1.5"</code>, <code>"-1"</code> and <code>" 2"</code> are refused. A repeated key is an array, not a string, so it is refused too. The next lessons replace this hand-written code with a schema.</p></details></div>
+<p>The regular expression <code>^\d+$</code> accepts digits only, so <code>"1.5"</code>, <code>"-1"</code> and <code>" 2"</code> are refused. A repeated key is an array, not a string, so it is refused too. <a href="/learn/zudo-validation#coercion">Schemas and validation in depth</a> replaces this hand-written code with a schema.</p></details></div>
 </section>
 
 <section>
@@ -1443,7 +1482,7 @@ limit=1&amp;limit=2 -&gt; 400 {"error":"limit must be a whole number from 1 to 5
 <li>Throwing <code>NotFoundError</code>, <code>ConflictError</code>, <code>badRequest()</code> or a <code>SchemaError</code> becomes the matching 4xx. Any other error becomes a generic 500.</li>
 <li>Cookies set with <code>response.cookie()</code> are <code>HttpOnly</code>, <code>Secure</code> and <code>SameSite=Lax</code> by default.</li>
 </ul>
-<p>Next, the <strong>middleware</strong> around every route: security headers, CORS, rate limits and a graceful shutdown. The CLI wrote most of it for you; the next lesson shows how it works and what to add.</p>
+<p>The Task API has three routes. Before it gets more, learn exactly how the router picks one: next, <a href="/learn/zudo-routing">Routing in depth</a>.</p>
 </section>
       </div>
 

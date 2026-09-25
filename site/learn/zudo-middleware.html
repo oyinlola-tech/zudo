@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Middleware, CORS, security headers and graceful shutdown — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-middleware.md" title="Markdown version">
-  <meta name="description" content="Wrap every Task API route in middleware. Learn how a middleware pipeline runs, then add security headers, a CORS allow-list, rate limits with @zudojs/security, and a graceful shutdown that lets requests in progress finish.">
+  <meta name="description" content="Wrap every Task API route in middleware: how a pipeline runs, security headers, a CORS allow-list, rate limits, and a shutdown that lets running requests finish.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-middleware">
@@ -105,10 +105,10 @@
         <div class="lx-hero-tag">LEVEL 12 · LESSON 14 OF 19</div>
         <p class="lx-hero-part">HTTP <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>Middleware, CORS, security headers and graceful shutdown</h1>
-        <p class="lx-hero-lead">Wrap every Task API route in middleware. Learn how a middleware pipeline runs, then add security headers, a CORS allow-list, rate limits with @zudojs/security, and a graceful shutdown that lets requests in progress finish.</p>
+        <p class="lx-hero-lead">Wrap every Task API route in middleware: how a pipeline runs, security headers, a CORS allow-list, rate limits, and a shutdown that lets running requests finish.</p>
         <ul class="lx-hero-meta">
           <li><strong>50 min</strong> to read and try</li>
-          <li><strong>You need:</strong> Routes, requests and responses</li>
+          <li><strong>You need:</strong> "Routing in depth"</li>
           <li><strong>You build:</strong> A Task API that sends safe headers, allows only its own web app, limits how fast clients can write, and shuts down without cutting off requests</li>
         </ul>
         <div class="lx-hero-actions">
@@ -117,6 +117,16 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Predict the order in which middleware runs, and write middleware that works before next(), after it, or instead of it</li>
+          <li>Explain what each default security header protects against</li>
+          <li>Allow exactly the web apps you trust with a CORS allow-list, and explain what CORS does not protect</li>
+          <li>Rate-limit clients, with a stricter limit for writes, and explain the limits of counting per process</li>
+          <li>Shut the server down so requests in progress finish before the runtime closes what they use</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="what">What middleware is</h2>
@@ -185,6 +195,13 @@ security: after
 200 {"ok":true}</pre></div>
 </figure>
 <p>The calls nest like layers of an onion: <code>security</code> starts first and finishes last. It was registered second but runs first because its <code>priority</code> is lower. Lower numbers run earlier, the default is 0, and equal priorities keep the order you added them in. The last function never calls <code>next</code>; it plays the role of the route.</p>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Where does each middleware go?</h3><p>Before reading on, put these four in order for the Task API, and say what would go wrong if you swapped a neighbouring pair: security headers, CORS, a rate limit, and the step that hands the request to the router. Think about a CORS preflight, a request refused with 429, and a response that a route builds.</p><details class="lx-solution"><summary>Show the reasoning</summary><ul>
+<li><strong>Security headers first</strong>. Their work happens after <code>next()</code>, so the outermost layer sees <em>every</em> response, including a 429 and a preflight answer. Placed later, the answers of everything before it would go out without the headers.</li>
+<li><strong>CORS before the rate limit</strong>. CORS answers a browser's <code>OPTIONS</code> preflight itself; after the limiter, every preflight would use up the client's allowance, and a 429 without CORS headers would be hidden from the web app.</li>
+<li><strong>The rate limit before the router</strong>, so a flood never reaches your routes.</li>
+<li><strong>Dispatch last</strong>: it is the end of the chain and never calls <code>next</code>.</li>
+</ul>
+<p>That is exactly the order the generated <code>src/server.ts</code> uses, as you will see at the end of this lesson.</p></details></div>
 </section>
 
 <section>
@@ -453,7 +470,7 @@ try {
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx cors-wildcard.ts</code></div><pre class="lx-no-copy">ConfigurationError
 CORS: credentials cannot be combined with a wildcard origin ("*"). Enumerate the allowed origins, or supply a function or RegExp.</pre></div>
 </figure>
-<p>Keep the allow-list in configuration, not in the code, so development can allow <code>http://localhost:5173</code> and production only your real domain. The <a href="/learn/zudo-config">next lesson</a> does exactly that.</p>
+<p>Keep the allow-list in configuration, not in the code, so development can allow <code>http://localhost:5173</code> and production only your real domain. <a href="/learn/zudo-config">Configuration</a> does exactly that.</p>
 </section>
 
 <section>
@@ -548,68 +565,14 @@ GET 200 retry-after: null {"ok":true}</pre></div>
 
 <section>
 <h2 id="generic">Middleware outside HTTP: @zudojs/middleware</h2>
-<p>The same idea helps with work that is not a request, such as a background job that sends task reminders. <code>@zudojs/middleware</code> is a general pipeline for any kind of context. It is already installed with the other ZudoJS packages. Each middleware is given with a <code>name</code>, and the result tells you whether the run succeeded:</p>
-<figure class="lx-example" data-index="9" data-file="job-pipeline.ts">
-<figcaption class="lx-bar"><span class="lx-file">job-pipeline.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createPipeline<span class="t-pn">,</span> timeoutMiddleware <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/middleware"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Middleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/middleware"</span><span class="t-pn">;</span>
-
-<span class="t-kw">interface</span> <span class="t-ty">Job</span> <span class="t-pn">{</span>
-  <span class="t-kw">readonly</span> name<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
-
-<span class="t-kw">const</span> announce<span class="t-op">:</span> <span class="t-ty">Middleware</span><span class="t-op">&lt;</span><span class="t-ty">Job</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-op">&gt;</span> <span class="t-op">=</span> <span class="t-kw">async</span> <span class="t-pn">(</span>job<span class="t-pn">,</span> next<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`start <span class="t-op">${</span><span class="t-prop">job.name</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">const</span> result <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">next</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`done  <span class="t-op">${</span><span class="t-prop">job.name</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">return</span> result<span class="t-pn">;</span>
-<span class="t-pn">}</span><span class="t-pn">;</span>
-
-<span class="t-kw">const</span> run <span class="t-op">=</span> createPipeline<span class="t-op">&lt;</span><span class="t-ty">Job</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-op">&gt;</span><span class="t-pn">(</span>
-  <span class="t-pn">[</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"announce"</span><span class="t-pn">,</span> handler<span class="t-op">:</span> announce <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-fn">timeoutMiddleware</span><span class="t-pn">(</span><span class="t-num">1_000</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">,</span>
-  <span class="t-kw">async</span> <span class="t-pn">(</span>job<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-tpl">`sent reminders for <span class="t-op">${</span><span class="t-prop">job.name</span><span class="t-op">}</span>`</span><span class="t-pn">,</span>
-<span class="t-pn">)</span><span class="t-pn">;</span>
-
-<span class="t-kw">const</span> outcome <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">run</span><span class="t-pn">(</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"due-today"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">if</span> <span class="t-pn">(</span>outcome<span class="t-pn">.</span><span class="t-prop">success</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>outcome<span class="t-pn">.</span><span class="t-prop">result</span><span class="t-pn">,</span> outcome<span class="t-pn">.</span><span class="t-prop">executedMiddleware</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
-</code></pre>
-<script type="text/plain" class="lx-src">import { createPipeline, timeoutMiddleware } from "@zudojs/middleware";
-import type { Middleware } from "@zudojs/middleware";
-
-interface Job {
-  readonly name: string;
-}
-
-const announce: Middleware<Job, string> = async (job, next) => {
-  console.log(`start ${job.name}`);
-  const result = await next();
-  console.log(`done  ${job.name}`);
-  return result;
-};
-
-const run = createPipeline<Job, string>(
-  [{ name: "announce", handler: announce }, timeoutMiddleware(1_000)],
-  async (job) => `sent reminders for ${job.name}`,
-);
-
-const outcome = await run({ name: "due-today" });
-if (outcome.success) {
-  console.log(outcome.result, outcome.executedMiddleware);
-}</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx job-pipeline.ts</code></div><pre class="lx-no-copy">start due-today
-done  due-today
-sent reminders for due-today [ 'announce', 'timeout' ]</pre></div>
-</figure>
-<p>For HTTP, stay with <code>HttpMiddlewarePipeline</code> from <code>@zudojs/http</code>: it knows about requests and responses. The <a href="/learn/zudo-queue">queue lesson</a> uses job pipelines like this one.</p>
+<p>The same idea helps with work that is not a request, such as a background job that sends task reminders, or checks that an HTTP route, a command-line tool and a queue job must all share. <code>@zudojs/middleware</code> is a general pipeline for any kind of context. <code>@zudojs/http</code> uses it internally, so it is already in <code>node_modules</code>, but only as a dependency of a dependency: it is not in the Task API's <code>package.json</code>. Before your own code imports it, install it with <code>npm install @zudojs/middleware</code>, or a stricter package manager such as pnpm will refuse the import. For HTTP, stay with <code>HttpMiddlewarePipeline</code> from <code>@zudojs/http</code>: it knows about requests and responses. The next lesson, <a href="/learn/zudo-middleware-pipelines">Middleware pipelines with @zudojs/middleware</a>, builds such a pipeline step by step.</p>
 </section>
 
 <section>
 <h2 id="shutdown">Graceful shutdown of the server</h2>
 <p>In <a href="/learn/zudo-runtime#signals">the runtime lesson</a> you saw why <code>src/server.ts</code> handles <code>SIGTERM</code> itself: it stops the HTTP server <em>before</em> the runtime. Here is what <code>server.stop()</code> does. It closes the door to new connections at once, but waits for requests that are already running, up to <code>gracefulShutdownTimeout</code> (30 seconds by default):</p>
-<figure class="lx-example" data-index="10" data-file="graceful.ts">
-<figcaption class="lx-bar"><span class="lx-file">graceful.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="9" data-file="graceful.ts">
+<figcaption class="lx-bar"><span class="lx-file">graceful.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 
 <span class="t-kw">let</span> reportStarted<span class="t-op">!:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">void</span><span class="t-pn">;</span>
@@ -693,8 +656,8 @@ server: stopped</pre></div>
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
 <p>Open <code>src/server.ts</code> and find the pipeline. The CLI already built most of this lesson into it:</p>
-<figure class="lx-example" data-index="11" data-file="src/server.ts (part)">
-<figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="10" data-file="src/server.ts (part)">
+<figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">const</span> pipeline <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">(</span><span class="t-pn">{</span>
   middlewares<span class="t-op">:</span> <span class="t-pn">[</span>
     <span class="t-fn">securityHeaders</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span>
@@ -725,8 +688,8 @@ server: stopped</pre></div>
 <li><code>dispatch</code> is last: it hands the request to the router.</li>
 </ul>
 <p>Here is the helper, so you can see there is no magic in it:</p>
-<figure class="lx-example" data-index="12" data-file="src/utils/http.ts (part)">
-<figcaption class="lx-bar"><span class="lx-file">src/utils/http.ts (part)</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="11" data-file="src/utils/http.ts (part)">
+<figcaption class="lx-bar"><span class="lx-file">src/utils/http.ts (part)</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">securityHeaders</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">HttpMiddleware</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> defaults <span class="t-op">=</span> <span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">entries</span><span class="t-pn">(</span><span class="t-fn">generateSecurityHeaders</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-kw">return</span> <span class="t-kw">async</span> <span class="t-pn">(</span>_context<span class="t-pn">,</span> next<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
@@ -753,8 +716,8 @@ server: stopped</pre></div>
 </figure>
 <p>All work happens <em>after</em> <code>next()</code>, like <code>responseTime</code> earlier in this lesson. The <code>// zudojs:server-middleware</code> markers are where <code>zudojs add</code> puts the middleware of a feature it adds, and where <code>zudojs generate middleware</code> registers a new one.</p>
 <p>One thing from this lesson is missing: a stricter limit for writes. Creating tasks costs more than reading them. Put it in the empty <code>src/middlewares/</code> folder. The file name follows the CLI's naming for middleware:</p>
-<figure class="lx-example" data-index="13" data-file="src/middlewares/write-limit.middleware.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/middlewares/write-limit.middleware.ts</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="12" data-file="src/middlewares/write-limit.middleware.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/middlewares/write-limit.middleware.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createRateLimitMiddleware <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 
@@ -778,16 +741,16 @@ export function writeLimitMiddleware(options: { readonly windowMs: number; reado
 }</script>
 </figure>
 <p>Export it from <code>src/middlewares/index.ts</code>:</p>
-<figure class="lx-example" data-index="14" data-file="src/middlewares/index.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/middlewares/index.ts</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="13" data-file="src/middlewares/index.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/middlewares/index.ts</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">export</span> <span class="t-pn">{</span> writeLimitMiddleware <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./write-limit.middleware.js"</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">export { writeLimitMiddleware } from "./write-limit.middleware.js";</script>
 </figure>
 <div class="callout callout-tip"><p class="lx-callout-label">TIP</p><code>zudojs generate middleware write-limit</code> writes <code>src/middlewares/write-limit.middleware.ts</code> with an empty <code>writeLimitMiddleware()</code> that only passes the request on, exports it from <code>index.ts</code>, and adds it to the pipeline in <code>src/server.ts</code> between the markers. Here you write it by hand, so the limit is yours from the first line.</div>
-<p>In <code>src/server.ts</code>, import it with <code>import { writeLimitMiddleware } from "./middlewares/index.js";</code> and add it after the general rate limit, below the markers. The limit of 20 writes a minute is written in the code for one more lesson; <a href="/learn/zudo-config">Configuration</a> moves it into a setting:</p>
-<figure class="lx-example" data-index="15" data-file="src/server.ts (part)">
-<figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<p>In <code>src/server.ts</code>, import it with <code>import { writeLimitMiddleware } from "./middlewares/index.js";</code> and add it after the general rate limit, below the markers. The limit of 20 writes a minute is written in the code until <a href="/learn/zudo-config">Configuration</a> moves it into a setting:</p>
+<figure class="lx-example" data-index="14" data-file="src/server.ts (part)">
+<figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-fn">createRateLimitMiddleware</span><span class="t-pn">(</span><span class="t-pn">{</span> windowMs<span class="t-op">:</span> config<span class="t-pn">.</span><span class="t-prop">rateLimit</span><span class="t-pn">.</span><span class="t-prop">windowMs</span><span class="t-pn">,</span> max<span class="t-op">:</span> config<span class="t-pn">.</span><span class="t-prop">rateLimit</span><span class="t-pn">.</span><span class="t-prop">max</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
 <span class="t-cmt">// zudojs:server-middleware:start</span>
 <span class="t-cmt">// zudojs:server-middleware:end</span>
@@ -802,8 +765,8 @@ dispatch,</script>
 </figure>
 <p>A check script builds the same order with a stand-in route and a limit of 2 writes, and runs it without a server:</p>
 <details class="lx-solution"><summary>Show src/utils/http.ts, which the script imports</summary>
-<figure class="lx-example" data-index="16" data-file="src/utils/http.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/utils/http.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<figure class="lx-example" data-index="15" data-file="src/utils/http.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/utils/http.ts</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span>
   <span class="t-ty">HttpError</span><span class="t-pn">,</span>
   badRequest<span class="t-pn">,</span>
@@ -1017,8 +980,8 @@ export function securityHeaders(): HttpMiddleware {
 }</script>
 </figure>
 </details>
-<figure class="lx-example" data-index="17" data-file="src/check-middleware.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/check-middleware.ts</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="16" data-file="src/check-middleware.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/check-middleware.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createCorsMiddleware<span class="t-pn">,</span> createRequestContext<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> <span class="t-ty">HttpMiddlewarePipeline</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> writeLimitMiddleware <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./middlewares/write-limit.middleware.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> securityHeaders <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./utils/http.js"</span><span class="t-pn">;</span>
@@ -1068,8 +1031,8 @@ GET 200 retry-after: undefined cors: http://localhost:5173 frame: DENY</pre></di
 <li>In <code>src/app.ts</code>, add <code>disposeContainerOnStop: true</code> to the options of <code>createRuntime</code>, next to <code>handleSignals: false</code>. <code>runtime.stop()</code> then disposes the container after every module has stopped.</li>
 </ul>
 <p>The signal loop itself needs no change. It listens with <code>process.on</code>, so it hears every <code>SIGINT</code> and <code>SIGTERM</code>, not only the first. The first one prints <code>Received SIGINT: shutting down.</code>, sets <code>stopping</code> and starts the shutdown. A second one, for example an impatient second <kbd>Ctrl</kbd> + <kbd>C</kbd> or a platform that repeats <code>SIGTERM</code>, only prints <code>already shutting down</code> and returns. With <code>process.once</code>, a second signal would find no listener, and Node.js would end the process in the middle of the shutdown. The <code>Listening</code> line comes last, after the handlers are registered, so the app never claims to be ready before it can shut down cleanly.</p>
-<figure class="lx-example" data-index="18" data-file="src/server.ts (part)">
-<figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="17" data-file="src/server.ts (part)">
+<figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
   adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> server<span class="t-op">:</span> httpServer<span class="t-pn">,</span> host<span class="t-op">:</span> config<span class="t-pn">.</span><span class="t-prop">host</span><span class="t-pn">,</span> port<span class="t-op">:</span> config<span class="t-pn">.</span><span class="t-prop">port</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
   handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
@@ -1191,8 +1154,8 @@ curl -i -X POST http://localhost:3000/tasks -H &quot;content-type: application/j
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A request id on every response</h3><p>Write a middleware that puts an <code>x-request-id</code> header on every response, using <code>context.request.id</code>: the unique id <code>@zudojs/http</code> gives every request. Test it with two requests made by <code>createRequestContext</code>, and check that they get different ids.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="19" data-file="request-id.ts">
-<figcaption class="lx-bar"><span class="lx-file">request-id.ts</span><button type="button" class="lx-edit" data-index="19" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A request id on every response</h3><p>Write a middleware that puts an <code>x-request-id</code> header on every response, using <code>context.request.id</code>: the unique id <code>@zudojs/http</code> gives every request. Test it with two requests made by <code>createRequestContext</code>, and check that they get different ids.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="18" data-file="request-id.ts">
+<figcaption class="lx-bar"><span class="lx-file">request-id.ts</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createRequestContext<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> <span class="t-ty">HttpMiddlewarePipeline</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 
@@ -1240,8 +1203,8 @@ different ids: true
 </figure>
 <p>The id is a random <strong>UUID</strong>, different on every run. When a user reports an error, they can send you the id from the response, and you can find that exact request in your logs. The <a href="/learn/zudo-logging">logging lesson</a> builds on this.</p>
 <div class="callout callout-note"><p class="lx-callout-label">NOTE</p>When a real request arrives with an <code>X-Request-Id</code> header of 1 to 128 letters, digits, dots, dashes, underscores or colons, <code>request.id</code> reuses it. That way an id set by a proxy or another service in front of yours follows the request through your logs. The adapter refuses a malformed one with 400. Treat the id as a label, never as proof of anything, because any client can choose it. <code>createNodeHttpAdapter({ trustRequestId: false })</code> always generates a new one.</div></details></div>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Allow a second origin</h3><p>The Task API also gets a mobile web app at <code>https://m.tasks.example.com</code>. Change the CORS example so it is allowed too, and show that <code>https://tasks.example.com.evil.example</code>, which merely <em>starts</em> with an allowed origin, is still refused.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="20" data-file="cors-two.ts" data-project="mw">
-<figcaption class="lx-bar"><span class="lx-file">cors-two.ts</span><button type="button" class="lx-edit" data-index="20" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Allow a second origin</h3><p>The Task API also gets a mobile web app at <code>https://m.tasks.example.com</code>. Change the CORS example so it is allowed too, and show that <code>https://tasks.example.com.evil.example</code>, which merely <em>starts</em> with an allowed origin, is still refused.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="19" data-file="cors-two.ts" data-project="mw">
+<figcaption class="lx-bar"><span class="lx-file">cors-two.ts</span><button type="button" class="lx-edit" data-index="19" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createCorsMiddleware<span class="t-pn">,</span> <span class="t-ty">HttpMiddlewarePipeline</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> withServer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./serve.js"</span><span class="t-pn">;</span>
 
@@ -1284,7 +1247,7 @@ https://tasks.example.com.evil.example -&gt; null</pre></div>
 <li><code>createRateLimiter</code> from <code>@zudojs/security</code> counts requests per client in a sliding window; <code>createRateLimitMiddleware</code> answers 429 with <code>Retry-After</code>.</li>
 <li><code>server.stop()</code> refuses new connections and waits for requests in progress. Stop the server, then the runtime, then dispose the container.</li>
 </ul>
-<p>The CLI already reads the allowed origins, the general rate limit and the port from settings; only your write limit is still written in the code. The next lesson explains how that <strong>configuration</strong> works, moves the write limit into it, and makes production stricter than development.</p>
+<p>The CLI already reads the allowed origins, the general rate limit and the port from settings; only your write limit is still written in the code, and <a href="/learn/zudo-config">Configuration</a> moves it there. First, the checks that must run in more places than HTTP: next, <a href="/learn/zudo-middleware-pipelines">Middleware pipelines with @zudojs/middleware</a>.</p>
 </section>
       </div>
 
