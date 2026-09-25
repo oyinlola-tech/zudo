@@ -700,9 +700,15 @@
     return loadBabel().then(function (Babel) {
       var out = Babel.transform(wrapped, {
         filename: 'playground.ts',
-        plugins: [paramPropsFirst],
+        /* Standard (2023-11) decorators: TypeScript 5+ semantics, what tsx runs. Legacy
+           experimentalDecorators behave differently and are not supported here. */
+        plugins: [paramPropsFirst, ['proposal-decorators', { version: '2023-11' }]],
         presets: [['typescript', { allExtensions: true, isTSX: false, onlyRemoveTypeImports: true, allowDeclareFields: true }]],
-        sourceType: 'script',
+        /* Node 24 and current browsers run `using` natively: parse it, leave it as is. */
+        parserOpts: { plugins: ['explicitResourceManagement'] },
+        /* Module mode: TypeScript namespaces may export members. The code has no
+           import/export left at module level (rewriteModules turned them into calls). */
+        sourceType: 'module',
         retainLines: true,
       });
       return out.code;
@@ -749,7 +755,81 @@
   }
 
   /* importer: the file doing the importing, so "./x.js" resolves from its folder. */
+  /* Template literals and block comments can hold text that looks like an import or
+     export at the start of a line. Swap them for placeholders (keeping their line
+     breaks, so line numbers stay right) while the module rewrite runs. */
+  function protectText(src) {
+    var saved = [];
+    var out = '';
+    var i = 0;
+    var n = src.length;
+    function keep(start, end) {
+      var text = src.slice(start, end);
+      var breaks = (text.match(/\n/g) || []).length;
+      out += '\u0001' + saved.length + new Array(breaks + 1).join('\n') + '\u0002';
+      saved.push(text);
+    }
+    while (i < n) {
+      var c = src[i];
+      var next = src[i + 1];
+      if (c === '/' && next === '/') {
+        var eol = src.indexOf('\n', i);
+        if (eol === -1) eol = n;
+        out += src.slice(i, eol);
+        i = eol;
+      } else if (c === '/' && next === '*') {
+        var close = src.indexOf('*/', i + 2);
+        close = close === -1 ? n : close + 2;
+        keep(i, close);
+        i = close;
+      } else if (c === '"' || c === "'") {
+        var j = i + 1;
+        while (j < n && src[j] !== c && src[j] !== '\n') j += src[j] === '\\' ? 2 : 1;
+        out += src.slice(i, j + 1);
+        i = j + 1;
+      } else if (c === '`') {
+        /* Scan to the matching backtick, stepping over ${ … } expressions (which may nest templates). */
+        var k = i + 1;
+        var depth = [];
+        while (k < n) {
+          var d = src[k];
+          if (d === '\\') { k += 2; continue; }
+          if (depth.length && depth[depth.length - 1] > 0) {
+            if (d === '{') depth[depth.length - 1]++;
+            else if (d === '}') { depth[depth.length - 1]--; if (depth[depth.length - 1] === 0) depth.pop(); }
+            else if (d === '`') depth.push(-1);
+            k++;
+            continue;
+          }
+          if (d === '`') {
+            if (depth.length && depth[depth.length - 1] === -1) { depth.pop(); k++; continue; }
+            break;
+          }
+          if (d === '$' && src[k + 1] === '{') { depth.push(1); k += 2; continue; }
+          k++;
+        }
+        keep(i, Math.min(k + 1, n));
+        i = k + 1;
+      } else {
+        out += c;
+        i++;
+      }
+    }
+    return {
+      code: out,
+      restore: function (text) {
+        return text.replace(/\u0001(\d+)\n*\u0002/g, function (m, idx) { return saved[Number(idx)]; });
+      },
+    };
+  }
+
   function rewriteModules(src, exportsList, importer) {
+    var protectedSrc = protectText(src);
+    var out = rewriteModuleLines(protectedSrc.code, exportsList, importer);
+    return protectedSrc.restore(out);
+  }
+
+  function rewriteModuleLines(src, exportsList, importer) {
     var from = JSON.stringify(importer || '');
     var reN = 0;
     var out = src
@@ -802,7 +882,9 @@
       }
       return keepLines(m, '');
     });
-    out = out.replace(/^([ \t]*)export\s+(?:declare\s+)?((?:async\s+)?function\*?|abstract\s+class|class|const|let|var|enum|interface|type)\s+([A-Za-z_$][\w$]*)/gm,
+    /* Only module-level (unindented) declarations: an indented `export const` is a
+       member of a TypeScript namespace and must stay. */
+    out = out.replace(/^()export\s+(?:declare\s+)?((?:async\s+)?function\*?|abstract\s+class|class|const|let|var|enum|interface|type)\s+([A-Za-z_$][\w$]*)/gm,
       function (m, indent, kind, name) {
         if (exportsList && !/^(interface|type)$/.test(kind)) exportsList.push(name);
         return indent + kind + ' ' + name;
@@ -1405,6 +1487,8 @@
       currentTimers = timers;
       var onRejection = function (ev) { ev.preventDefault(); timers.fail(ev.reason); };
       window.addEventListener('unhandledrejection', onRejection);
+      /* Babel raises Error.stackTraceLimit when it loads; programs must see Node's default. */
+      Error.stackTraceLimit = 10;
       var start = performance.now();
       var finish = function () { window.removeEventListener('unhandledrejection', onRejection); currentTimers = null; };
       return Promise.resolve().then(function () { return fn.apply(null, timerArgs(timers).concat(runGlobals ? runGlobals.values : [])); }).then(function (result) {

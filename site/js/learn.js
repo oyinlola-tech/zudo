@@ -55,7 +55,9 @@
     'HTMLFormElement', 'HTMLButtonElement', 'HTMLTemplateElement', 'HTMLAnchorElement', 'Text', 'Comment',
     'DocumentFragment', 'NodeList', 'HTMLCollection', 'Event', 'CustomEvent', 'MouseEvent', 'KeyboardEvent',
     'InputEvent', 'FocusEvent', 'SubmitEvent', 'EventTarget', 'FormData', 'DOMParser', 'MutationObserver',
-    'IntersectionObserver', 'ResizeObserver', 'customElements', 'URL', 'URLSearchParams', 'AbortController'];
+    'IntersectionObserver', 'ResizeObserver', 'customElements', 'URL', 'URLSearchParams', 'AbortController',
+    'AbortSignal', 'DOMException', 'PopStateEvent', 'HashChangeEvent', 'StorageEvent', 'MessageEvent',
+    'PointerEvent', 'ProgressEvent', 'ErrorEvent', 'Blob', 'File', 'FileReader'];
 
   /* A DOM example runs against a frame built from its project's .html and .css files. */
   function domFrame(fig) {

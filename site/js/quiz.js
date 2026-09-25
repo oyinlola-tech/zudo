@@ -36,10 +36,15 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
-  /* Same rules as the checker: no \r, no trailing spaces, no blank lines at either end. */
+  /* Same rules as the checker: no \r, no trailing spaces, no blank lines at either end,
+     common indentation removed. */
   function normalize(text) {
-    return String(text).replace(/\r/g, '').split('\n').map(function (l) { return l.replace(/\s+$/, ''); })
-      .join('\n').replace(/\n+$/, '').replace(/^\n+/, '');
+    var lines = String(text).replace(/\r/g, '').split('\n').map(function (l) { return l.replace(/\s+$/, ''); })
+      .join('\n').replace(/\n+$/, '').replace(/^\n+/, '').split('\n');
+    var cut = Infinity;
+    lines.forEach(function (l) { if (l.trim()) cut = Math.min(cut, l.match(/^ */)[0].length); });
+    if (!isFinite(cut)) cut = 0;
+    return lines.map(function (l) { return l.slice(cut); }).join('\n');
   }
 
   function shuffle(list) {
