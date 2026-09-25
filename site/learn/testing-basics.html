@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Testing fundamentals — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/testing-basics.md" title="Markdown version">
-  <meta name="description" content="Why automated tests matter, the difference between unit, integration and end-to-end tests, and how to write them with node:assert and Node's built-in test runner, including mocks, spies, isolated tests and a fresh test database. Then the same tests in Vitest.">
+  <meta name="description" content="Test a backend with Node's built-in runner: unit, integration and end-to-end tests, assertions, mocks and spies, isolated tests and a fresh test database.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/testing-basics">
@@ -102,10 +102,10 @@
         <div class="lx-hero-tag">LEVEL 7 · LESSON 6 OF 15</div>
         <p class="lx-hero-part">Testing <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>Testing fundamentals</h1>
-        <p class="lx-hero-lead">Why automated tests matter, the difference between unit, integration and end-to-end tests, and how to write them with node:assert and Node's built-in test runner, including mocks, spies, isolated tests and a fresh test database. Then the same tests in Vitest.</p>
+        <p class="lx-hero-lead">Test a backend with Node's built-in runner: unit, integration and end-to-end tests, assertions, mocks and spies, isolated tests and a fresh test database.</p>
         <ul class="lx-hero-meta">
           <li><strong>45 min</strong> to read and try</li>
-          <li><strong>You need:</strong> The Git and GitHub lesson</li>
+          <li><strong>You need:</strong> Joins, grouping and transactions, HTTP in depth, and Testing TypeScript</li>
           <li><strong>You build:</strong> A test suite for a task list, a task store on a real test database, and an HTTP endpoint</li>
         </ul>
         <div class="lx-hero-actions">
@@ -114,10 +114,22 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Tell unit, integration and end-to-end tests apart, and pick the level for a check</li>
+          <li>Write tests with node:assert/strict and node:test, and run them with npm test</li>
+          <li>Replace an e-mail sender or another edge with mock.fn and mock.method, and restore it</li>
+          <li>Keep tests isolated with beforeEach and a fresh PGlite database per test</li>
+          <li>Test an HTTP endpoint end to end on a free port</li>
+          <li>Translate node:test tests to Vitest and back</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="why">Why test?</h2>
-<p>So far you checked your code by running it and reading the output. That works once. But every change can break something that used to work, and nobody re-checks forty endpoints by hand after each commit. An <strong>automated test</strong> is a small program that runs your code with known input and checks the result. You write it once, and it runs again in seconds, as often as you like: before every commit, and on every pull request, as the <a href="/learn/git">Git lesson</a> mentioned.</p>
+<p>In <a href="/learn/ts-testing">Testing TypeScript</a> you tested pure functions and types with Vitest. A backend is harder to test. Its code talks to a database, sends e-mail, and answers HTTP requests, and every change can break something that used to work. Nobody re-checks forty endpoints by hand after each commit. An <strong>automated test</strong> is a small program that runs your code with known input and checks the result. You write it once, and it runs again in seconds, as often as you like: before every commit, and on every pull request, where CI runs it for you (<a href="/learn/git-collaboration#pull-requests">Professional Git</a>).</p>
+<p>This lesson tests a small task list, a task store on a real database, and an HTTP endpoint. It uses the test runner built into Node.js, <code>node:test</code>, which needs nothing installed; the rest of this course uses it too. Everything carries over to Vitest, and the <a href="#vitest">last section</a> shows how the names map.</p>
 <p>Tests come in three sizes:</p>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Kind</th><th>Tests</th><th>Speed</th><th>Example</th></tr></thead>
@@ -627,6 +639,13 @@ describe("TaskList ids", () => {
 
 <section>
 <h2 id="database">Integration tests with a test database</h2>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Mock the database, or use a real one?</h3><p>You want to test <code>createTask(db, userId, title)</code>, which runs an <code>insert</code>. You could pass a fake <code>db</code> whose <code>query</code> just records the SQL it was given, or a real PostgreSQL. Before choosing, answer:</p>
+<ul>
+<li>Which bugs would a test with a fake <code>db</code> catch? Which would it miss?</li>
+<li>What does the real database cost you in speed and setup?</li>
+<li>Test A inserts "Buy milk". Test B checks that the table is empty. What happens if they share one database?</li>
+</ul><details class="lx-solution"><summary>Show the reasoning</summary><p>A fake <code>db</code> can only check that your function sent <em>some</em> text. A typo in a column name, a missing <code>returning</code>, a <code>check</code> constraint the data breaks, a wrong placeholder number: the fake accepts them all, and the test passes while the code is broken. For code whose whole job is SQL, only a real database tests anything. (Mocks are right at the edges you do not control, such as the e-mail sender above.)</p>
+<p>The cost is time: starting PostgreSQL takes a moment, even in-process with PGlite. And shared state: if tests A and B use one database, B passes or fails depending on whether A ran first. So each test gets its own clean copy, made cheaply, as below.</p></details></div>
 <p>A task store that runs SQL is best tested against a <strong>real</strong> database: a mock would not notice a typo in the SQL or a broken constraint. The same isolation rule applies, so each test needs its own clean database. PGlite from <a href="/learn/databases">How databases work</a> makes that easy. Creating a database takes a few seconds, so the file builds one <strong>template</strong> with the schema in <code>before</code>, and <code>beforeEach</code> gives every test its own copy with <code>clone()</code>, which is much faster:</p>
 <figure class="lx-example" data-index="7" data-file="store.test.js" data-project="t">
 <figcaption class="lx-bar"><span class="lx-file">store.test.js</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -846,28 +865,23 @@ describe("POST /tasks", () => {
 </section>
 
 <section>
-<h2 id="vitest">Vitest</h2>
-<p><code>node:test</code> needs nothing installed, which makes it perfect for learning. Many projects use <strong>Vitest</strong> instead, a test runner from npm with a watch mode, nicer output, and TypeScript support without setup. ZudoJS projects use Vitest. The ideas are identical; the names differ a little: <code>expect(value).toBe(...)</code> instead of <code>assert.equal</code>, <code>toEqual</code> for deep comparison, and <code>vi.fn()</code> instead of <code>mock.fn()</code>.</p>
-<p>A project uses one test runner: each runner would also try to run the other's test files. So try Vitest in a new folder, <code>tasks-vitest</code>, with a copy of <code>tasks.js</code>. Install it as a development dependency (<code>-D</code>) and write a test:</p>
-<figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
-<pre class="lx-shell-body" data-copy="mkdir tasks-vitest
-cd tasks-vitest
-npm init -y
-npm pkg set type=module
-npm install -D vitest"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>mkdir tasks-vitest</span>
-<span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>cd tasks-vitest</span>
-<span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npm init -y</span>
-<span class="lx-res">Wrote to ~/tasks-vitest/package.json:</span>
-<span class="lx-res">…</span>
-<span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npm pkg set type=module</span>
-<span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npm install -D vitest</span>
-<span class="lx-res"></span>
-<span class="lx-res">added 37 packages, and audited 38 packages in 22s</span>
-<span class="lx-res"></span>
-<span class="lx-res">12 packages are looking for funding</span>
-<span class="lx-res">  run `npm fund` for details</span>
-<span class="lx-res"></span>
-<span class="lx-res">found 0 vulnerabilities</span></pre></figure>
+<h2 id="vitest">The same tests in Vitest</h2>
+<p>You set up <strong>Vitest</strong> in <a href="/learn/ts-testing#setup">Testing TypeScript</a>. It is the runner ZudoJS projects use: it has a watch mode, nicer output, and runs TypeScript without setup. <code>node:test</code> needs nothing installed, which is why this course's backend lessons use it. The ideas are identical; only the names differ:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>node:test and node:assert</th><th>Vitest</th></tr></thead>
+<tbody>
+<tr><td><code>import { describe, it } from "node:test"</code></td><td><code>import { describe, it, expect, vi } from "vitest"</code></td></tr>
+<tr><td><code>assert.equal(actual, expected)</code></td><td><code>expect(actual).toBe(expected)</code></td></tr>
+<tr><td><code>assert.deepEqual(actual, expected)</code></td><td><code>expect(actual).toEqual(expected)</code></td></tr>
+<tr><td><code>assert.throws(fn, RangeError)</code></td><td><code>expect(fn).toThrow(RangeError)</code></td></tr>
+<tr><td><code>await assert.rejects(promise, /db down/)</code></td><td><code>await expect(promise).rejects.toThrow(/db down/)</code></td></tr>
+<tr><td><code>mock.fn()</code>, <code>fn.mock.callCount()</code></td><td><code>vi.fn()</code>, <code>expect(fn).toHaveBeenCalledTimes(n)</code></td></tr>
+<tr><td><code>mock.method(object, "name")</code>, <code>mock.restoreAll()</code></td><td><code>vi.spyOn(object, "name")</code>, <code>vi.restoreAllMocks()</code></td></tr>
+<tr><td><code>before</code>, <code>beforeEach</code>, <code>afterEach</code>, <code>after</code></td><td><code>beforeAll</code>, <code>beforeEach</code>, <code>afterEach</code>, <code>afterAll</code></td></tr>
+<tr><td><code>node --test</code></td><td><code>vitest run</code> (plain <code>vitest</code> starts watch mode)</td></tr>
+</tbody>
+</table></div>
+<p>Here is part of this lesson's suite, translated:</p>
 <figure class="lx-example" data-index="9" data-file="tasks.test.js" data-project="v">
 <figcaption class="lx-bar"><span class="lx-file">tasks.test.js</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> describe<span class="t-pn">,</span> expect<span class="t-pn">,</span> it<span class="t-pn">,</span> vi <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"vitest"</span><span class="t-pn">;</span>
@@ -914,37 +928,7 @@ describe("TaskList", () => {
   });
 });</script>
 </figure>
-<p>Run it once with <code>vitest run</code>. <code>--reporter=verbose</code> lists every test; without it, Vitest prints only the summary when everything passes:</p>
-<figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
-<pre class="lx-shell-body" data-copy="npx vitest run --reporter=verbose
-npm pkg set scripts.test=&quot;vitest run&quot;
-npm test"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npx vitest run --reporter=verbose</span>
-<span class="lx-res"></span>
-<span class="lx-res"> RUN  v5.0.1 ~/tasks-vitest</span>
-<span class="lx-res"></span>
-<span class="lx-res"> ✓ tasks.test.js &gt; validateTitle &gt; trims spaces 4ms</span>
-<span class="lx-res"> ✓ tasks.test.js &gt; validateTitle &gt; rejects titles that are too short 1ms</span>
-<span class="lx-res"> ✓ tasks.test.js &gt; TaskList &gt; notifies once per added task 4ms</span>
-<span class="lx-res"></span>
-<span class="lx-res"> Test Files  1 passed (1)</span>
-<span class="lx-res">      Tests  3 passed (3)</span>
-<span class="lx-res">   Start at  15:07:41</span>
-<span class="lx-res">   Duration  573ms (transform 44%, import 34%, tests 12%, worker 9%)</span>
-<span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npm pkg set scripts.test="vitest run"</span>
-<span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npm test</span>
-<span class="lx-res"></span>
-<span class="lx-res">&gt; tasks-vitest@1.0.0 test</span>
-<span class="lx-res">&gt; vitest run</span>
-<span class="lx-res"></span>
-<span class="lx-res"></span>
-<span class="lx-res"> RUN  v5.0.1 ~/tasks-vitest</span>
-<span class="lx-res"></span>
-<span class="lx-res"></span>
-<span class="lx-res"> Test Files  1 passed (1)</span>
-<span class="lx-res">      Tests  3 passed (3)</span>
-<span class="lx-res">   Start at  15:07:43</span>
-<span class="lx-res">   Duration  394ms (transform 46%, import 28%, tests 15%, worker 10%)</span></pre></figure>
-<p>Plain <code>npx vitest</code>, without <code>run</code>, starts <strong>watch mode</strong>: it stays open and reruns the affected tests every time you save a file. <a href="/learn/zudo-testing">Testing a ZudoJS application</a> builds on this.</p>
+<p>A project uses one test runner: each would also try to run the other's test files. <a href="/learn/zudo-testing">Testing a ZudoJS app</a> builds on Vitest.</p>
 </section>
 
 <section>
@@ -1016,6 +1000,7 @@ describe("TaskList.complete", () => {
 <li>Every test gets a fresh start with <code>beforeEach</code>, including a fresh database: a PGlite template and a <code>clone()</code> per test.</li>
 <li>Vitest works the same way with <code>expect</code> and <code>vi.fn()</code>, and ZudoJS projects use it.</li>
 </ul>
+<p>Next: <a href="/learn/ts-node">TypeScript on Node.js</a>, where the backend code becomes typed, starting with environment variables, files, requests and streams.</p>
 </section>
       </div>
 
@@ -1043,7 +1028,7 @@ describe("TaskList.complete", () => {
       <a href="#isolation" class="toc-link">Test isolation</a>
       <a href="#database" class="toc-link">Integration tests with a test database</a>
       <a href="#e2e" class="toc-link">Testing over HTTP</a>
-      <a href="#vitest" class="toc-link">Vitest</a>
+      <a href="#vitest" class="toc-link">The same tests in Vitest</a>
       <a href="#practice" class="toc-link">Practice</a>
       <a href="#recap" class="toc-link">Recap</a>
       <a href="#test" class="toc-link">Test yourself</a>

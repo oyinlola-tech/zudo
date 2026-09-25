@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>TypeScript and JavaScript together — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/ts-runtime.md" title="Markdown version">
-  <meta name="description" content="See exactly what TypeScript becomes when it runs, why types cannot check outside data, and how to close that gap by hand with type guards, assertion functions and a validator that returns a Result.">
+  <meta name="description" content="See why types cannot check data that arrives while the program runs, and close the gap by hand with guards, assertion functions and a validator.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/ts-runtime">
@@ -110,10 +110,10 @@
         <div class="lx-hero-tag">LEVEL 5 · LESSON 20 OF 23</div>
         <p class="lx-hero-part">Types meet the runtime <span class="lx-tier lx-tier-foundation" title="Foundation: Must understand before moving on.">Foundation</span></p>
         <h1>TypeScript and JavaScript together</h1>
-        <p class="lx-hero-lead">See exactly what TypeScript becomes when it runs, why types cannot check outside data, and how to close that gap by hand with type guards, assertion functions and a validator that returns a Result.</p>
+        <p class="lx-hero-lead">See why types cannot check data that arrives while the program runs, and close the gap by hand with guards, assertion functions and a validator.</p>
         <ul class="lx-hero-meta">
           <li><strong>45 min</strong> to read and try</li>
-          <li><strong>You need:</strong> Modules in TypeScript</li>
+          <li><strong>You need:</strong> Narrowing, Type assertions and tsconfig in depth</li>
           <li><strong>You build:</strong> A type-safe create-task handler that turns untrusted JSON into a checked NewTask, or a list of problems</li>
         </ul>
         <div class="lx-hero-actions">
@@ -122,6 +122,16 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Explain which parts of a program exist only at compile time and which exist at runtime</li>
+          <li>Show why an annotation on JSON.parse checks nothing, and type outside data as unknown</li>
+          <li>Check outside data with type guards and assertion functions at the boundary</li>
+          <li>Build a validator that collects every issue, applies defaults and copies only allowed fields</li>
+          <li>Apply the rules of type-safe API design to a request handler</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="pipeline">From TypeScript to a running program</h2>
@@ -132,53 +142,7 @@
 <li><strong>Node.js</strong>: runs the JavaScript. It has never heard of your types.</li>
 <li><strong>Your application</strong>: receives requests, reads files and databases, and talks to other services, all while running.</li>
 </ol>
-<p>Here is a small file. It has an interface, a type alias, annotations, a default parameter and a type assertion (<code>as</code>):</p>
-<figure class="lx-example" data-index="0" data-file="erase.ts" data-project="erase">
-<figcaption class="lx-bar"><span class="lx-file">erase.ts</span><button type="button" class="lx-edit" data-index="0" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="0"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
-<pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">Task</span> <span class="t-pn">{</span>
-  id<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">;</span>
-  title<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
-
-<span class="t-kw">type</span> <span class="t-ty">Status</span> <span class="t-op">=</span> <span class="t-str">"todo"</span> <span class="t-op">|</span> <span class="t-str">"done"</span><span class="t-pn">;</span>
-
-<span class="t-kw">function</span> <span class="t-fn">label</span><span class="t-pn">(</span>task<span class="t-op">:</span> <span class="t-ty">Task</span><span class="t-pn">,</span> status<span class="t-op">:</span> <span class="t-ty">Status</span> <span class="t-op">=</span> <span class="t-str">"todo"</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-pn">{</span>
-  <span class="t-kw">return</span> <span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">task.title</span><span class="t-op">}</span> (<span class="t-op">${</span><span class="t-prop">status</span><span class="t-op">}</span>)`</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
-
-<span class="t-kw">const</span> raw<span class="t-op">:</span> <span class="t-ty">unknown</span> <span class="t-op">=</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">1</span><span class="t-pn">,</span> title<span class="t-op">:</span> <span class="t-str">"Buy milk"</span> <span class="t-pn">}</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> task <span class="t-op">=</span> raw <span class="t-kw">as</span> <span class="t-ty">Task</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-fn">label</span><span class="t-pn">(</span>task<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-</code></pre>
-<script type="text/plain" class="lx-src">interface Task {
-  id: number;
-  title: string;
-}
-
-type Status = "todo" | "done";
-
-function label(task: Task, status: Status = "todo"): string {
-  return `${task.title} (${status})`;
-}
-
-const raw: unknown = { id: 1, title: "Buy milk" };
-const task = raw as Task;
-console.log(label(task));</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx erase.ts</code> and of the browser terminal</div><pre class="lx-no-copy">Buy milk (todo)</pre></div>
-</figure>
-<p>Compile it in your <code>ts-tasks</code> folder, and read what Node.js will actually run:</p>
-<figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
-<pre class="lx-shell-body" data-copy="npx tsc --noEmit false --outDir dist
-cat dist/erase.js"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npx tsc --noEmit false --outDir dist</span>
-<span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>cat dist/erase.js</span>
-<span class="lx-res">function label(task, status = "todo") {</span>
-<span class="lx-res">    return `${task.title} (${status})`;</span>
-<span class="lx-res">}</span>
-<span class="lx-res">const raw = { id: 1, title: "Buy milk" };</span>
-<span class="lx-res">const task = raw;</span>
-<span class="lx-res">console.log(label(task));</span>
-<span class="lx-res">export {};</span></pre></figure>
-<p>The interface and the type alias are gone. So are the annotations. The default value <code>= "todo"</code> stayed, because it is JavaScript. And look at <code>const task = raw;</code>: the <code>as Task</code> became <strong>nothing at all</strong>. No check, no conversion. This is called <strong>type erasure</strong>, and it explains everything in this lesson.</p>
+<p>Step 2 is <strong>type erasure</strong>, which <a href="/learn/ts-compiler#erasure">What the TypeScript compiler does</a> showed line by line: interfaces, type aliases, annotations, generics, <code>as</code>, <code>!</code> and <code>satisfies</code> all disappear, and nothing is added in their place. By step 4, nothing is left of your types. That one fact explains everything in this lesson: whatever arrives while the program runs is checked by nobody, unless you write the check.</p>
 </section>
 
 <section>
@@ -194,8 +158,8 @@ cat dist/erase.js"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="tru
 </tbody>
 </table></div>
 <p>So you cannot ask, while the program runs, "is this value a <code>Task</code>?". There is no <code>Task</code> left to ask about:</p>
-<figure class="lx-example" data-index="1" data-file="instanceof.ts" data-project="world">
-<figcaption class="lx-bar"><span class="lx-file">instanceof.ts</span><button type="button" class="lx-edit" data-index="1" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="1"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="0" data-file="instanceof.ts" data-project="world">
+<figcaption class="lx-bar"><span class="lx-file">instanceof.ts</span><button type="button" class="lx-edit" data-index="0" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="0"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">Task</span> <span class="t-pn">{</span>
   id<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">;</span>
   title<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span>
@@ -228,8 +192,8 @@ Found 1 error in instanceof.ts:7</pre></div>
 <h2 id="gap">The gap: data from outside</h2>
 <p>Inside your program, the compiler follows every value from where it is made to where it is used. But a backend's most important data comes from <strong>outside</strong>: request bodies, query strings, environment variables, files, database rows, other APIs. That data arrives while the program runs, as text, and the compiler never saw it.</p>
 <p>The trap is <code>JSON.parse</code>. It is declared to return <code>any</code>, so you can put its result straight into a typed variable, and the compiler believes you:</p>
-<figure class="lx-example" data-index="2" data-file="gap.ts" data-project="world">
-<figcaption class="lx-bar"><span class="lx-file">gap.ts</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="2"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="1" data-file="gap.ts" data-project="world">
+<figcaption class="lx-bar"><span class="lx-file">gap.ts</span><button type="button" class="lx-edit" data-index="1" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="1"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">Task</span> <span class="t-pn">{</span>
   title<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span>
   done<span class="t-op">:</span> <span class="t-ty">boolean</span><span class="t-pn">;</span>
@@ -269,48 +233,15 @@ TypeError: task.title.toUpperCase is not a function</pre></div>
 </section>
 
 <section>
-<h2 id="assertions">Type assertions: when as lies</h2>
-<p><code>value as Task</code> is a <strong>type assertion</strong>. It tells the compiler "trust me, this is a <code>Task</code>". You just saw it compile to nothing. It changes the type the compiler believes, never the value:</p>
-<figure class="lx-example" data-index="3" data-file="as-lies.ts" data-project="world">
-<figcaption class="lx-bar"><span class="lx-file">as-lies.ts</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="3"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
-<pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">Task</span> <span class="t-pn">{</span>
-  id<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">;</span>
-  title<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
-
-<span class="t-kw">const</span> body<span class="t-op">:</span> <span class="t-ty">unknown</span> <span class="t-op">=</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-str">'{"id": "7"}'</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> task <span class="t-op">=</span> body <span class="t-kw">as</span> <span class="t-ty">Task</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> id <span class="t-op">=</span> <span class="t-str">"42"</span> <span class="t-kw">as</span> <span class="t-ty">unknown</span> <span class="t-kw">as</span> <span class="t-ty">number</span><span class="t-pn">;</span>
-
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-kw">typeof</span> task<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">,</span> task<span class="t-pn">.</span><span class="t-prop">title</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-kw">typeof</span> id<span class="t-pn">,</span> id <span class="t-op">+</span> <span class="t-num">1</span><span class="t-pn">)</span><span class="t-pn">;</span>
-</code></pre>
-<script type="text/plain" class="lx-src">interface Task {
-  id: number;
-  title: string;
-}
-
-const body: unknown = JSON.parse('{"id": "7"}');
-const task = body as Task;
-const id = "42" as unknown as number;
-
-console.log(typeof task.id, task.title);
-console.log(typeof id, id + 1);</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx as-lies.ts</code> and of the browser terminal</div><pre class="lx-no-copy">string undefined
-string 421</pre></div>
-</figure>
-<ul>
-<li><code>task.id</code> is typed as a <code>number</code>, but it is the string <code>"7"</code>, and <code>task.title</code> is typed as a <code>string</code> but does not exist.</li>
-<li><code>"42" as unknown as number</code> compiles, and <code>id + 1</code> gives <code>"421"</code>: string joining, not addition. TypeScript refuses <code>"42" as number</code> directly because it is obviously wrong, but going through <code>unknown</code> silences every objection.</li>
-</ul>
-<p>When is <code>as</code> acceptable? Only when <strong>you know something the compiler cannot</strong>, and you have checked it yourself. <code>as const</code> is always safe: it makes a type narrower, not different. <code>field as keyof NewTask</code> right after <code>Object.keys</code> on an object you built yourself, as in <a href="/learn/ts-advanced#mapped">Advanced and utility types</a>, is safe. On data from outside, <code>as</code> is never a check. The same goes for <code>any</code> and for the <code>!</code> operator (<code>value!</code>, "not null, trust me"): each one switches the compiler off for one spot.</p>
+<h2 id="assertions">Why as is not a check</h2>
+<p>A common first reaction to the gap is to write <code>JSON.parse(requestBody) as Task</code>. <a href="/learn/ts-assertions">Type assertions</a> showed why that fixes nothing: <code>as</code>, <code>as unknown as</code> and <code>!</code> change what the compiler believes, never the value, and they compile to nothing. At a boundary that gives one simple rule: <strong>no <code>as</code> on data from outside</strong>. The only assertions left in this lesson come right after a runtime check that proves them, on the line before.</p>
 </section>
 
 <section>
 <h2 id="guards">Type guards: value is T</h2>
-<p>You already narrow types with <code>typeof</code> and <code>in</code>. A <strong>type guard</strong> packs such checks into a function you can reuse. Its return type, <code>value is NewTask</code>, is called a <strong>type predicate</strong>: when the function returns <code>true</code>, TypeScript narrows the argument to that type.</p>
-<figure class="lx-example" data-index="4" data-file="guard.ts" data-project="world">
-<figcaption class="lx-bar"><span class="lx-file">guard.ts</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="4"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<p>You wrote type guards in <a href="/learn/ts-narrowing#type-guards">Narrowing</a>: a function whose return type is a <strong>type predicate</strong> such as <code>value is NewTask</code>. There, the value was already one of a few known types. At a boundary it starts as <code>unknown</code>, so the guard has to check the whole shape, field by field:</p>
+<figure class="lx-example" data-index="2" data-file="guard.ts" data-project="world">
+<figcaption class="lx-bar"><span class="lx-file">guard.ts</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="2"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">NewTask</span> <span class="t-pn">{</span>
   title<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span>
   done<span class="t-op">:</span> <span class="t-ty">boolean</span><span class="t-pn">;</span>
@@ -364,14 +295,14 @@ invalid: null</pre></div>
 <li><code>isRecord</code> checks the value is a plain object. <code>typeof null</code> is <code>"object"</code> in JavaScript, and so is an array, so both need their own test.</li>
 <li>Inside <code>if (isNewTask(body))</code>, <code>body</code> is a <code>NewTask</code>, and <code>.toUpperCase()</code> is allowed.</li>
 </ul>
-<div class="callout callout-warning"><p class="lx-callout-label">THE COMPILER TRUSTS YOUR GUARD</p>TypeScript does not check that the body of a type guard matches its predicate. A guard that forgets to check <code>done</code> still narrows to <code>NewTask</code>, and the bug is back. Type guards are the one place where a type can lie, so keep them short and write tests for them.</div>
+<div class="callout callout-warning"><p class="lx-callout-label">THE COMPILER TRUSTS YOUR GUARD</p>As <a href="/learn/ts-narrowing#type-guards">Narrowing</a> showed, TypeScript does not check that a guard's body matches its predicate. At a boundary that matters more than anywhere: a guard that forgets to check <code>done</code> still narrows to <code>NewTask</code>, and unchecked data is let in. Keep boundary guards short, check every field, and test them.</div>
 </section>
 
 <section>
 <h2 id="asserts">Assertion functions: asserts value is T</h2>
-<p>A type guard returns a boolean and you write the <code>if</code>. An <strong>assertion function</strong> throws instead, and when it returns normally, the value is narrowed for the rest of the code. Its return type is <code>asserts value is T</code>:</p>
-<figure class="lx-example" data-index="5" data-file="asserts.ts" data-project="world">
-<figcaption class="lx-bar"><span class="lx-file">asserts.ts</span><button type="button" class="lx-edit" data-index="5" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="5"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<p>The other tool from <a href="/learn/ts-narrowing#assertion-functions">Narrowing</a> is the <strong>assertion function</strong> (<code>asserts value is T</code>): it throws when the check fails, and when it returns normally the value is narrowed for the rest of the code. For a request body it reads naturally as "this must be a new task, or stop":</p>
+<figure class="lx-example" data-index="3" data-file="asserts.ts" data-project="world">
+<figcaption class="lx-bar"><span class="lx-file">asserts.ts</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="3"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">NewTask</span> <span class="t-pn">{</span>
   title<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span>
   done<span class="t-op">:</span> <span class="t-ty">boolean</span><span class="t-pn">;</span>
@@ -433,30 +364,9 @@ TypeError: done must be true or false</pre></div>
 
 <section>
 <h2 id="catch">unknown in catch</h2>
-<p>There is one more place where outside data sneaks in: <code>catch</code>. JavaScript lets code <code>throw</code> anything, not only <code>Error</code> objects. So with <code>strict</code> on, the variable in <code>catch (error)</code> has the type <code>unknown</code>:</p>
-<figure class="lx-example" data-index="6" data-file="catch.ts" data-project="world">
-<figcaption class="lx-bar"><span class="lx-file">catch.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="6"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
-<pre class="lx-code"><code><span class="t-kw">try</span> <span class="t-pn">{</span>
-  <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-str">"{not json"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
-  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>error<span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
-</code></pre>
-<script type="text/plain" class="lx-src">try {
-  JSON.parse("{not json");
-} catch (error) {
-  console.log(error.message);
-}</script>
-<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">catch.ts:4:15 - error TS18046: 'error' is of type 'unknown'.
-
-4   console.log(error.message);
-                ~~~~~
-
-
-Found 1 error in catch.ts:4</pre></div>
-</figure>
-<figure class="lx-example" data-index="7" data-file="catch.ts" data-project="world">
-<figcaption class="lx-bar"><span class="lx-file">catch.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="7"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<p>One more value arrives from outside your control: whatever was thrown. With <code>strict</code> on, the variable in <code>catch (error)</code> is <code>unknown</code> (<a href="/learn/ts-special-types#unknown">Special types</a> showed why), so you check it like a request body:</p>
+<figure class="lx-example" data-index="4" data-file="catch.ts" data-project="world">
+<figcaption class="lx-bar"><span class="lx-file">catch.ts</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="4"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">function</span> <span class="t-fn">messageOf</span><span class="t-pn">(</span>error<span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-pn">{</span>
   <span class="t-kw">return</span> error <span class="t-kw">instanceof</span> <span class="t-ty">Error</span> <span class="t-op">?</span> error<span class="t-pn">.</span><span class="t-prop">message</span> <span class="t-op">:</span> <span class="t-ty">String</span><span class="t-pn">(</span>error<span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
@@ -491,14 +401,28 @@ try {
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx catch.ts</code> and of the browser terminal</div><pre class="lx-no-copy">bad JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)
 thrown: a plain string</pre></div>
 </figure>
-<p><code>error instanceof Error</code> is a runtime check (<code>Error</code> is a class), so it narrows. Never write <code>catch (error: any)</code>; it just hides the question.</p>
+<p>Never write <code>catch (error: any)</code>; it just hides the question. <a href="/learn/ts-errors">Typed error handling</a>, two lessons from now, builds a whole error system on this.</p>
 </section>
 
 <section>
 <h2 id="validator">Build: a validator that returns a Result</h2>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Before you write the validator</h3><p>The create-task endpoint receives a JSON body. A valid task has a <code>title</code> (3 to 100 characters), an optional <code>done</code> flag (default <code>false</code>) and an optional <code>priority</code> (<code>"low"</code>, <code>"normal"</code> or <code>"high"</code>, default <code>"normal"</code>). Before reading the code, think:</p>
+<ol>
+<li>What can the body be instead of a perfect task? Think beyond wrong field types.</li>
+<li>A client sends <code>"  Buy milk "</code>. Should the stored title keep the spaces? What about <code>"  "</code>?</li>
+<li>A client adds <code>"id": 999</code> and <code>"role": "admin"</code>. What should happen to them?</li>
+<li>The title is too short and <code>done</code> is <code>"sometimes"</code>. Should the client hear about one problem or both?</li>
+<li>What should the function return, so that the handler cannot forget the failure case?</li>
+</ol><details class="lx-solution"><summary>Show the reasoning</summary><ol>
+<li>Not JSON at all, <code>null</code>, an array, a string, an object with missing fields, or fields of the wrong type. Each must give a clear answer, not a crash.</li>
+<li>Trim it: <code>"Buy milk"</code> is what the user meant. Length rules then apply to the trimmed text, so <code>"  "</code> is too short.</li>
+<li>Ignore them. The server decides ids and roles, so the validator builds the result from the three allowed fields only.</li>
+<li>Both, in one answer. A client that learns one problem per request has to guess and retry.</li>
+<li>A <code>Result</code>: either the checked task or the list of problems. The handler then has to look at <code>ok</code> before it can reach the task.</li>
+</ol></details></div>
 <p>A real API should not stop at the first problem. It should tell the client everything that is wrong, in one answer. It should also clean the data: trim spaces, enforce lengths, and <strong>copy only the fields it expects</strong>, so a client cannot sneak in an <code>id</code> or a <code>role</code> (the mass assignment hole from <a href="/learn/ts-objects#build">the user module</a>). Here is a validator that does all of that and returns the <code>Result</code> type from <a href="/learn/ts-generics#result">Generics</a>:</p>
-<figure class="lx-example" data-index="8" data-file="validate.ts" data-project="api">
-<figcaption class="lx-bar"><span class="lx-file">validate.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="8"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="5" data-file="validate.ts" data-project="api">
+<figcaption class="lx-bar"><span class="lx-file">validate.ts</span><button type="button" class="lx-edit" data-index="5" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="5"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">export</span> <span class="t-kw">type</span> <span class="t-ty">Result</span><span class="t-op">&lt;</span><span class="t-ty">T</span><span class="t-pn">,</span> <span class="t-ty">E</span><span class="t-op">&gt;</span> <span class="t-op">=</span> <span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">true</span><span class="t-pn">;</span> value<span class="t-op">:</span> <span class="t-ty">T</span> <span class="t-pn">}</span> <span class="t-op">|</span> <span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">;</span> error<span class="t-op">:</span> <span class="t-ty">E</span> <span class="t-pn">}</span><span class="t-pn">;</span>
 <span class="t-kw">export</span> <span class="t-kw">type</span> <span class="t-ty">Priority</span> <span class="t-op">=</span> <span class="t-str">"low"</span> <span class="t-op">|</span> <span class="t-str">"normal"</span> <span class="t-op">|</span> <span class="t-str">"high"</span><span class="t-pn">;</span>
 <span class="t-kw">export</span> <span class="t-kw">interface</span> <span class="t-ty">NewTask</span> <span class="t-pn">{</span>
@@ -565,8 +489,8 @@ export function parseNewTask(body: unknown): Result<NewTask, string[]> {
 </figure>
 <p>Read it top to bottom. The one <code>as</code> is safe: the line before it proved <code>body</code> is a non-null, non-array object, and <code>Record&lt;string, unknown&gt;</code> still says "every property is unknown". Each field is read, checked, and given its default. The final object is built by hand from three checked variables, so nothing else the client sent can get through.</p>
 <p>The last <code>if</code> repeats <code>typeof done</code> and <code>isPriority</code> even though <code>issues</code> already says whether they failed. The compiler cannot connect "the array is empty" to "these checks passed", so the checks are written where it can see them. Now the handler, the one function that touches the raw request:</p>
-<figure class="lx-example" data-index="9" data-file="handler.ts" data-project="api">
-<figcaption class="lx-bar"><span class="lx-file">handler.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="9"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="6" data-file="handler.ts" data-project="api">
+<figcaption class="lx-bar"><span class="lx-file">handler.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="6"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> parseNewTask <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./validate.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">NewTask</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./validate.js"</span><span class="t-pn">;</span>
 
@@ -646,7 +570,7 @@ console.log(handleCreateTask("{not json"));</script>
 }
 { status: 400, body: { error: 'body is not valid JSON' } }</pre></div>
 </figure>
-<p>Four requests, four correct answers. The spaces around <code>"Buy milk"</code> were trimmed. The bad body from earlier got a <strong>422</strong> with both problems listed, as you designed in <a href="/learn/rest-design">the REST design lesson</a>. The third client tried to choose its own <code>id</code> and make itself an <code>admin</code>; both fields were simply dropped. Broken JSON got a <strong>400</strong>. And <code>createTask</code> takes a <code>NewTask</code>, so it can only ever be called with checked data.</p>
+<p>Four requests, four correct answers. The spaces around <code>"Buy milk"</code> were trimmed. The bad body from earlier got a <strong>422</strong> ("the JSON was fine, its content was not") with both problems listed; <a href="/learn/rest-design">Designing a REST API</a>, in the backend course, explains how to choose such status codes. The third client tried to choose its own <code>id</code> and make itself an <code>admin</code>; both fields were simply dropped. Broken JSON got a <strong>400</strong>. And <code>createTask</code> takes a <code>NewTask</code>, so it can only ever be called with checked data.</p>
 </section>
 
 <section>
@@ -665,20 +589,47 @@ console.log(handleCreateTask("{not json"));</script>
 <section>
 <h2 id="next">Hand-written validators get long</h2>
 <p>Count the lines. Checking three fields took about twenty lines of careful code, plus a trick to keep the compiler convinced, plus the <code>NewTask</code> interface written separately from the checks. If someone adds a field to the interface and forgets the validator, nothing warns them. A real API has dozens of request shapes, with nested objects, arrays, e-mail addresses and dates.</p>
-<p>That is exactly the problem <code>@zudojs/schema</code> solves. You describe the shape once, as a schema; it checks values at runtime, collects every issue, strips unknown fields, and gives you the TypeScript type for free, so the type and the check can never disagree. The same task, with ZudoJS:</p>
-<pre><code>const NewTaskSchema = schema.object({
+<p>That is the problem schema libraries solve. You describe the shape once, as a schema; it checks values at runtime, collects every issue, strips unknown fields, and gives you the TypeScript type for free, so the type and the check can never disagree. Here is the same task with <code>@zudojs/schema</code>, ZudoJS's own schema library:</p>
+<figure class="lx-example" data-index="7" data-file="schema-task.ts" data-project="schema">
+<figcaption class="lx-bar"><span class="lx-file">schema-task.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="7"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema<span class="t-pn">,</span> <span class="t-kw">type</span> <span class="t-ty">Infer</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> <span class="t-ty">NewTaskSchema</span> <span class="t-op">=</span> schema<span class="t-pn">.</span><span class="t-ty">object</span><span class="t-pn">(</span><span class="t-pn">{</span>
+  title<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">trim</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">min</span><span class="t-pn">(</span><span class="t-num">3</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">max</span><span class="t-pn">(</span><span class="t-num">100</span><span class="t-pn">)</span><span class="t-pn">,</span>
+  done<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-kw">default</span><span class="t-pn">(</span>schema<span class="t-pn">.</span><span class="t-ty">boolean</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-cn">false</span><span class="t-pn">)</span><span class="t-pn">,</span>
+  priority<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-kw">default</span><span class="t-pn">(</span>schema<span class="t-pn">.</span><span class="t-kw">enum</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-str">"low"</span><span class="t-pn">,</span> <span class="t-str">"normal"</span><span class="t-pn">,</span> <span class="t-str">"high"</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-str">"normal"</span><span class="t-pn">)</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">type</span> <span class="t-ty">NewTask</span> <span class="t-op">=</span> <span class="t-ty">Infer</span><span class="t-op">&lt;</span><span class="t-kw">typeof</span> <span class="t-ty">NewTaskSchema</span><span class="t-op">&gt;</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> task<span class="t-op">:</span> <span class="t-ty">NewTask</span> <span class="t-op">=</span> <span class="t-ty">NewTaskSchema</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"  Buy milk "</span><span class="t-pn">,</span> priority<span class="t-op">:</span> <span class="t-str">"high"</span><span class="t-pn">,</span> role<span class="t-op">:</span> <span class="t-str">"admin"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>task<span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> bad <span class="t-op">=</span> <span class="t-ty">NewTaskSchema</span><span class="t-pn">.</span><span class="t-fn">safeParse</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-num">42</span><span class="t-pn">,</span> done<span class="t-op">:</span> <span class="t-str">"sometimes"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>bad<span class="t-pn">.</span><span class="t-prop">success</span><span class="t-pn">)</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>bad<span class="t-pn">.</span><span class="t-prop">issues</span><span class="t-pn">.</span><span class="t-fn">map</span><span class="t-pn">(</span><span class="t-pn">(</span>issue<span class="t-pn">)</span> <span class="t-op">=&gt;</span> issue<span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { schema, type Infer } from "@zudojs/schema";
+
+const NewTaskSchema = schema.object({
   title: schema.string().trim().min(3).max(100),
   done: schema.default(schema.boolean(), false),
   priority: schema.default(schema.enum(["low", "normal", "high"]), "normal"),
 });
-type NewTask = Infer&lt;typeof NewTaskSchema&gt;;</code></pre>
-<p>You will install it and use it in <a href="/learn/zudo-first-code">Your first Zudo code</a>. Now you know exactly what it does for you, and why.</p>
+type NewTask = Infer<typeof NewTaskSchema>;
+
+const task: NewTask = NewTaskSchema.parse({ title: "  Buy milk ", priority: "high", role: "admin" });
+console.log(task);
+
+const bad = NewTaskSchema.safeParse({ title: 42, done: "sometimes" });
+if (!bad.success) console.log(bad.issues.map((issue) => issue.message));</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx schema-task.ts</code> and of the browser terminal</div><pre class="lx-no-copy"></pre></div>
+</figure>
+<p><a href="/learn/ts-validation">Runtime validation</a>, next, shows how such a library works inside by building a small one, then compares Zod, Valibot and JSON Schema. You will use <code>@zudojs/schema</code> throughout the ZudoJS courses, starting with <a href="/learn/zudo-first-code">Your first Zudo code</a>.</p>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Read a port from the environment</h3><p>Write <code>readPort(value: string | undefined): Result&lt;number, string&gt;</code> for <code>process.env.PORT</code>. Missing means <code>3000</code>. Anything that is not a whole number from 1 to 65535 is an error. Why is the parameter <code>string | undefined</code> and not <code>number</code>?</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="10" data-file="port.ts" data-project="ex-port">
-<figcaption class="lx-bar"><span class="lx-file">port.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="10"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Read a port from the environment</h3><p>Write <code>readPort(value: string | undefined): Result&lt;number, string&gt;</code> for <code>process.env.PORT</code>. Missing means <code>3000</code>. Anything that is not a whole number from 1 to 65535 is an error. Why is the parameter <code>string | undefined</code> and not <code>number</code>?</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="8" data-file="port.ts" data-project="ex-port">
+<figcaption class="lx-bar"><span class="lx-file">port.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="8"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">type</span> <span class="t-ty">Result</span><span class="t-op">&lt;</span><span class="t-ty">T</span><span class="t-pn">,</span> <span class="t-ty">E</span><span class="t-op">&gt;</span> <span class="t-op">=</span> <span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">true</span><span class="t-pn">;</span> value<span class="t-op">:</span> <span class="t-ty">T</span> <span class="t-pn">}</span> <span class="t-op">|</span> <span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">;</span> error<span class="t-op">:</span> <span class="t-ty">E</span> <span class="t-pn">}</span><span class="t-pn">;</span>
 
 <span class="t-kw">function</span> <span class="t-fn">readPort</span><span class="t-pn">(</span>value<span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-op">|</span> <span class="t-cn">undefined</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Result</span><span class="t-op">&lt;</span><span class="t-ty">number</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>
@@ -721,8 +672,8 @@ for (const input of [undefined, "8080", "80.5", "http"]) {
 </figure>
 <p>Environment variables are always strings, or missing. That is what <code>@types/node</code> says too: <code>process.env.PORT</code> has the type <code>string | undefined</code>. In your program you would call <code>readPort(process.env.PORT)</code> and stop with a clear message when the result is not <code>ok</code>.</p></details></div>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Find the lying guard</h3><p>This guard compiles, and the program crashes. Find the bug, fix the guard, and explain why <code>tsc</code> did not catch it.</p>
-<figure class="lx-example" data-index="11" data-file="lying-guard.ts" data-project="ex-guard">
-<figcaption class="lx-bar"><span class="lx-file">lying-guard.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="9" data-file="lying-guard.ts" data-project="ex-guard">
+<figcaption class="lx-bar"><span class="lx-file">lying-guard.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="9"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">User</span> <span class="t-pn">{</span>
   email<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span>
   tags<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
@@ -760,8 +711,8 @@ if (isUser(body)) {
 }</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx lying-guard.ts</code> and of the browser terminal</div><pre class="lx-no-copy">TypeError: Cannot read properties of undefined (reading 'join')</pre></div>
 </figure><details class="lx-solution"><summary>Show a solution</summary><p>The guard only checks that <code>email</code> exists. It checks neither that <code>email</code> is a string nor that <code>tags</code> is an array of strings. <code>tsc</code> does not compare a guard's body with its <code>value is User</code> promise; it simply believes it.</p>
-<figure class="lx-example" data-index="12" data-file="lying-guard.ts" data-project="ex-guard">
-<figcaption class="lx-bar"><span class="lx-file">lying-guard.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="12"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="10" data-file="lying-guard.ts" data-project="ex-guard">
+<figcaption class="lx-bar"><span class="lx-file">lying-guard.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="10"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">User</span> <span class="t-pn">{</span>
   email<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span>
   tags<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
@@ -793,8 +744,8 @@ const body: unknown = JSON.parse('{"email": "ada@example.com"}');
 console.log(isUser(body) ? body.tags.join(", ") : "not a user");</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx lying-guard.ts</code> and of the browser terminal</div><pre class="lx-no-copy">not a user</pre></div>
 </figure></details></div>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Validate a patch</h3><p>Write <code>parseTaskPatch(body: unknown): Result&lt;{ title?: string; done?: boolean }, string[]&gt;</code>. Both fields are optional, but when present they must be valid (title 3 to 100 characters after trimming). An empty patch <code>{}</code> is an error: there is nothing to change.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="13" data-file="patch.ts" data-project="ex-patch">
-<figcaption class="lx-bar"><span class="lx-file">patch.ts</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="13"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Validate a patch</h3><p>Write <code>parseTaskPatch(body: unknown): Result&lt;{ title?: string; done?: boolean }, string[]&gt;</code>. Both fields are optional, but when present they must be valid (title 3 to 100 characters after trimming). An empty patch <code>{}</code> is an error: there is nothing to change.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="11" data-file="patch.ts" data-project="ex-patch">
+<figcaption class="lx-bar"><span class="lx-file">patch.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">type</span> <span class="t-ty">Result</span><span class="t-op">&lt;</span><span class="t-ty">T</span><span class="t-pn">,</span> <span class="t-ty">E</span><span class="t-op">&gt;</span> <span class="t-op">=</span> <span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">true</span><span class="t-pn">;</span> value<span class="t-op">:</span> <span class="t-ty">T</span> <span class="t-pn">}</span> <span class="t-op">|</span> <span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">;</span> error<span class="t-op">:</span> <span class="t-ty">E</span> <span class="t-pn">}</span><span class="t-pn">;</span>
 <span class="t-kw">interface</span> <span class="t-ty">TaskPatch</span> <span class="t-pn">{</span>
   title<span class="t-op">?:</span> <span class="t-ty">string</span><span class="t-pn">;</span>
@@ -876,10 +827,11 @@ console.log(parseTaskPatch({ title: "x", done: "yes" }));</script>
 <li>TypeScript becomes JavaScript before it runs. Types, interfaces and <code>as</code> are erased; only JavaScript checks exist at runtime.</li>
 <li>Outside data (JSON, <code>process.env</code>, files, other APIs) was never seen by the compiler. Type it as <code>unknown</code>.</li>
 <li><code>as</code> changes what the compiler believes, never the value. Do not use it on outside data.</li>
-<li>Type guards (<code>value is T</code>) and assertion functions (<code>asserts value is T</code>) narrow <code>unknown</code> after real checks. The compiler trusts them, so keep them correct.</li>
+<li>Type guards (<code>value is T</code>) and assertion functions (<code>asserts value is T</code>) turn <code>unknown</code> into a checked type at the boundary. The compiler trusts them, so they must check every field.</li>
 <li>In <code>catch</code>, the error is <code>unknown</code>; check with <code>instanceof Error</code>.</li>
-<li>Validate once at the boundary, return a <code>Result</code> with every issue, and copy only allowed fields. <code>@zudojs/schema</code> does this for you, next.</li>
+<li>Validate once at the boundary, return a <code>Result</code> with every issue, and copy only allowed fields. Schema libraries such as <code>@zudojs/schema</code> do this for you.</li>
 </ul>
+<p>Next: <a href="/learn/ts-validation">Runtime validation</a>, where one schema gives you both the runtime check and the TypeScript type.</p>
 </section>
       </div>
 
@@ -903,7 +855,7 @@ console.log(parseTaskPatch({ title: "x", done: "yes" }));</script>
       <a href="#pipeline" class="toc-link">From TypeScript to a running program</a>
       <a href="#compile-vs-runtime" class="toc-link">Compile time and runtime</a>
       <a href="#gap" class="toc-link">The gap: data from outside</a>
-      <a href="#assertions" class="toc-link">Type assertions: when as lies</a>
+      <a href="#assertions" class="toc-link">Why as is not a check</a>
       <a href="#guards" class="toc-link">Type guards: value is T</a>
       <a href="#asserts" class="toc-link">Assertion functions: asserts value is T</a>
       <a href="#catch" class="toc-link">unknown in catch</a>

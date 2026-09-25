@@ -1,10 +1,11 @@
 ---
 title: TypeScript and JavaScript together
-description: See exactly what TypeScript becomes when it runs, why types cannot check outside data, and how to close that gap by hand with type guards, assertion functions and a validator that returns a Result.
+description: See why types cannot check data that arrives while the program runs, and close the gap by hand with guards, assertion functions and a validator.
 minutes: 45
-youNeed: Modules in TypeScript
+youNeed: Narrowing, Type assertions and tsconfig in depth
 youBuild: A type-safe create-task handler that turns untrusted JSON into a checked NewTask, or a list of problems
 keywords: type erasure, typescript runtime, compile time vs runtime, runtime validation, type guard, value is T, assertion function, asserts value is T, type assertion as, as unknown as, JSON.parse any, unknown in catch, type-safe api design
+objectives: Explain which parts of a program exist only at compile time and which exist at runtime | Show why an annotation on JSON.parse checks nothing, and type outside data as unknown | Check outside data with type guards and assertion functions at the boundary | Build a validator that collects every issue, applies defaults and copies only allowed fields | Apply the rules of type-safe API design to a request handler
 ---
 <section>
 <h2 id="pipeline">From TypeScript to a running program</h2>
@@ -15,39 +16,7 @@ keywords: type erasure, typescript runtime, compile time vs runtime, runtime val
 <li><strong>Node.js</strong>: runs the JavaScript. It has never heard of your types.</li>
 <li><strong>Your application</strong>: receives requests, reads files and databases, and talks to other services, all while running.</li>
 </ol>
-<p>Here is a small file. It has an interface, a type alias, annotations, a default parameter and a type assertion (<code>as</code>):</p>
-<example file="erase.ts" project="erase">
-interface Task {
-  id: number;
-  title: string;
-}
-
-type Status = "todo" | "done";
-
-function label(task: Task, status: Status = "todo"): string {
-  return `${task.title} (${status})`;
-}
-
-const raw: unknown = { id: 1, title: "Buy milk" };
-const task = raw as Task;
-console.log(label(task));
-</example>
-<output>
-Buy milk (todo)
-</output>
-<p>Compile it in your <code>ts-tasks</code> folder, and read what Node.js will actually run:</p>
-<shell>
-$ npx tsc --noEmit false --outDir dist
-$ cat dist/erase.js
-function label(task, status = "todo") {
-    return `${task.title} (${status})`;
-}
-const raw = { id: 1, title: "Buy milk" };
-const task = raw;
-console.log(label(task));
-export {};
-</shell>
-<p>The interface and the type alias are gone. So are the annotations. The default value <code>= "todo"</code> stayed, because it is JavaScript. And look at <code>const task = raw;</code>: the <code>as Task</code> became <strong>nothing at all</strong>. No check, no conversion. This is called <strong>type erasure</strong>, and it explains everything in this lesson.</p>
+<p>Step 2 is <strong>type erasure</strong>, which <a href="/learn/ts-compiler#erasure">What the TypeScript compiler does</a> showed line by line: interfaces, type aliases, annotations, generics, <code>as</code>, <code>!</code> and <code>satisfies</code> all disappear, and nothing is added in their place. By step 4, nothing is left of your types. That one fact explains everything in this lesson: whatever arrives while the program runs is checked by nobody, unless you write the check.</p>
 </section>
 
 <section>
@@ -115,35 +84,13 @@ TypeError: task.title.toUpperCase is not a function
 </section>
 
 <section>
-<h2 id="assertions">Type assertions: when as lies</h2>
-<p><code>value as Task</code> is a <strong>type assertion</strong>. It tells the compiler "trust me, this is a <code>Task</code>". You just saw it compile to nothing. It changes the type the compiler believes, never the value:</p>
-<example file="as-lies.ts" project="world">
-interface Task {
-  id: number;
-  title: string;
-}
-
-const body: unknown = JSON.parse('{"id": "7"}');
-const task = body as Task;
-const id = "42" as unknown as number;
-
-console.log(typeof task.id, task.title);
-console.log(typeof id, id + 1);
-</example>
-<output>
-string undefined
-string 421
-</output>
-<ul>
-<li><code>task.id</code> is typed as a <code>number</code>, but it is the string <code>"7"</code>, and <code>task.title</code> is typed as a <code>string</code> but does not exist.</li>
-<li><code>"42" as unknown as number</code> compiles, and <code>id + 1</code> gives <code>"421"</code>: string joining, not addition. TypeScript refuses <code>"42" as number</code> directly because it is obviously wrong, but going through <code>unknown</code> silences every objection.</li>
-</ul>
-<p>When is <code>as</code> acceptable? Only when <strong>you know something the compiler cannot</strong>, and you have checked it yourself. <code>as const</code> is always safe: it makes a type narrower, not different. <code>field as keyof NewTask</code> right after <code>Object.keys</code> on an object you built yourself, as in <a href="/learn/ts-advanced#mapped">Advanced and utility types</a>, is safe. On data from outside, <code>as</code> is never a check. The same goes for <code>any</code> and for the <code>!</code> operator (<code>value!</code>, "not null, trust me"): each one switches the compiler off for one spot.</p>
+<h2 id="assertions">Why as is not a check</h2>
+<p>A common first reaction to the gap is to write <code>JSON.parse(requestBody) as Task</code>. <a href="/learn/ts-assertions">Type assertions</a> showed why that fixes nothing: <code>as</code>, <code>as unknown as</code> and <code>!</code> change what the compiler believes, never the value, and they compile to nothing. At a boundary that gives one simple rule: <strong>no <code>as</code> on data from outside</strong>. The only assertions left in this lesson come right after a runtime check that proves them, on the line before.</p>
 </section>
 
 <section>
 <h2 id="guards">Type guards: value is T</h2>
-<p>You already narrow types with <code>typeof</code> and <code>in</code>. A <strong>type guard</strong> packs such checks into a function you can reuse. Its return type, <code>value is NewTask</code>, is called a <strong>type predicate</strong>: when the function returns <code>true</code>, TypeScript narrows the argument to that type.</p>
+<p>You wrote type guards in <a href="/learn/ts-narrowing#type-guards">Narrowing</a>: a function whose return type is a <strong>type predicate</strong> such as <code>value is NewTask</code>. There, the value was already one of a few known types. At a boundary it starts as <code>unknown</code>, so the guard has to check the whole shape, field by field:</p>
 <example file="guard.ts" project="world">
 interface NewTask {
   title: string;
@@ -178,12 +125,12 @@ invalid: null
 <li><code>isRecord</code> checks the value is a plain object. <code>typeof null</code> is <code>"object"</code> in JavaScript, and so is an array, so both need their own test.</li>
 <li>Inside <code>if (isNewTask(body))</code>, <code>body</code> is a <code>NewTask</code>, and <code>.toUpperCase()</code> is allowed.</li>
 </ul>
-<warn title="THE COMPILER TRUSTS YOUR GUARD">TypeScript does not check that the body of a type guard matches its predicate. A guard that forgets to check <code>done</code> still narrows to <code>NewTask</code>, and the bug is back. Type guards are the one place where a type can lie, so keep them short and write tests for them.</warn>
+<warn title="THE COMPILER TRUSTS YOUR GUARD">As <a href="/learn/ts-narrowing#type-guards">Narrowing</a> showed, TypeScript does not check that a guard's body matches its predicate. At a boundary that matters more than anywhere: a guard that forgets to check <code>done</code> still narrows to <code>NewTask</code>, and unchecked data is let in. Keep boundary guards short, check every field, and test them.</warn>
 </section>
 
 <section>
 <h2 id="asserts">Assertion functions: asserts value is T</h2>
-<p>A type guard returns a boolean and you write the <code>if</code>. An <strong>assertion function</strong> throws instead, and when it returns normally, the value is narrowed for the rest of the code. Its return type is <code>asserts value is T</code>:</p>
+<p>The other tool from <a href="/learn/ts-narrowing#assertion-functions">Narrowing</a> is the <strong>assertion function</strong> (<code>asserts value is T</code>): it throws when the check fails, and when it returns normally the value is narrowed for the rest of the code. For a request body it reads naturally as "this must be a new task, or stop":</p>
 <example file="asserts.ts" project="world">
 interface NewTask {
   title: string;
@@ -221,23 +168,7 @@ TypeError: done must be true or false
 
 <section>
 <h2 id="catch">unknown in catch</h2>
-<p>There is one more place where outside data sneaks in: <code>catch</code>. JavaScript lets code <code>throw</code> anything, not only <code>Error</code> objects. So with <code>strict</code> on, the variable in <code>catch (error)</code> has the type <code>unknown</code>:</p>
-<example file="catch.ts" project="world" check="tsc-error">
-try {
-  JSON.parse("{not json");
-} catch (error) {
-  console.log(error.message);
-}
-</example>
-<output kind="tsc">
-catch.ts:4:15 - error TS18046: 'error' is of type 'unknown'.
-
-4   console.log(error.message);
-                ~~~~~
-
-
-Found 1 error in catch.ts:4
-</output>
+<p>One more value arrives from outside your control: whatever was thrown. With <code>strict</code> on, the variable in <code>catch (error)</code> is <code>unknown</code> (<a href="/learn/ts-special-types#unknown">Special types</a> showed why), so you check it like a request body:</p>
 <example file="catch.ts" project="world">
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -259,11 +190,30 @@ try {
 bad JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)
 thrown: a plain string
 </output>
-<p><code>error instanceof Error</code> is a runtime check (<code>Error</code> is a class), so it narrows. Never write <code>catch (error: any)</code>; it just hides the question.</p>
+<p>Never write <code>catch (error: any)</code>; it just hides the question. <a href="/learn/ts-errors">Typed error handling</a>, two lessons from now, builds a whole error system on this.</p>
 </section>
 
 <section>
 <h2 id="validator">Build: a validator that returns a Result</h2>
+<reason title="Before you write the validator">
+<p>The create-task endpoint receives a JSON body. A valid task has a <code>title</code> (3 to 100 characters), an optional <code>done</code> flag (default <code>false</code>) and an optional <code>priority</code> (<code>"low"</code>, <code>"normal"</code> or <code>"high"</code>, default <code>"normal"</code>). Before reading the code, think:</p>
+<ol>
+<li>What can the body be instead of a perfect task? Think beyond wrong field types.</li>
+<li>A client sends <code>"  Buy milk "</code>. Should the stored title keep the spaces? What about <code>"  "</code>?</li>
+<li>A client adds <code>"id": 999</code> and <code>"role": "admin"</code>. What should happen to them?</li>
+<li>The title is too short and <code>done</code> is <code>"sometimes"</code>. Should the client hear about one problem or both?</li>
+<li>What should the function return, so that the handler cannot forget the failure case?</li>
+</ol>
+<answer>
+<ol>
+<li>Not JSON at all, <code>null</code>, an array, a string, an object with missing fields, or fields of the wrong type. Each must give a clear answer, not a crash.</li>
+<li>Trim it: <code>"Buy milk"</code> is what the user meant. Length rules then apply to the trimmed text, so <code>"  "</code> is too short.</li>
+<li>Ignore them. The server decides ids and roles, so the validator builds the result from the three allowed fields only.</li>
+<li>Both, in one answer. A client that learns one problem per request has to guess and retry.</li>
+<li>A <code>Result</code>: either the checked task or the list of problems. The handler then has to look at <code>ok</code> before it can reach the task.</li>
+</ol>
+</answer>
+</reason>
 <p>A real API should not stop at the first problem. It should tell the client everything that is wrong, in one answer. It should also clean the data: trim spaces, enforce lengths, and <strong>copy only the fields it expects</strong>, so a client cannot sneak in an <code>id</code> or a <code>role</code> (the mass assignment hole from <a href="/learn/ts-objects#build">the user module</a>). Here is a validator that does all of that and returns the <code>Result</code> type from <a href="/learn/ts-generics#result">Generics</a>:</p>
 <example file="validate.ts" project="api">
 export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
@@ -352,7 +302,7 @@ console.log(handleCreateTask("{not json"));
 }
 { status: 400, body: { error: 'body is not valid JSON' } }
 </output>
-<p>Four requests, four correct answers. The spaces around <code>"Buy milk"</code> were trimmed. The bad body from earlier got a <strong>422</strong> with both problems listed, as you designed in <a href="/learn/rest-design">the REST design lesson</a>. The third client tried to choose its own <code>id</code> and make itself an <code>admin</code>; both fields were simply dropped. Broken JSON got a <strong>400</strong>. And <code>createTask</code> takes a <code>NewTask</code>, so it can only ever be called with checked data.</p>
+<p>Four requests, four correct answers. The spaces around <code>"Buy milk"</code> were trimmed. The bad body from earlier got a <strong>422</strong> ("the JSON was fine, its content was not") with both problems listed; <a href="/learn/rest-design">Designing a REST API</a>, in the backend course, explains how to choose such status codes. The third client tried to choose its own <code>id</code> and make itself an <code>admin</code>; both fields were simply dropped. Broken JSON got a <strong>400</strong>. And <code>createTask</code> takes a <code>NewTask</code>, so it can only ever be called with checked data.</p>
 </section>
 
 <section>
@@ -371,14 +321,26 @@ console.log(handleCreateTask("{not json"));
 <section>
 <h2 id="next">Hand-written validators get long</h2>
 <p>Count the lines. Checking three fields took about twenty lines of careful code, plus a trick to keep the compiler convinced, plus the <code>NewTask</code> interface written separately from the checks. If someone adds a field to the interface and forgets the validator, nothing warns them. A real API has dozens of request shapes, with nested objects, arrays, e-mail addresses and dates.</p>
-<p>That is exactly the problem <code>@zudojs/schema</code> solves. You describe the shape once, as a schema; it checks values at runtime, collects every issue, strips unknown fields, and gives you the TypeScript type for free, so the type and the check can never disagree. The same task, with ZudoJS:</p>
-<pre><code>const NewTaskSchema = schema.object({
+<p>That is the problem schema libraries solve. You describe the shape once, as a schema; it checks values at runtime, collects every issue, strips unknown fields, and gives you the TypeScript type for free, so the type and the check can never disagree. Here is the same task with <code>@zudojs/schema</code>, ZudoJS's own schema library:</p>
+<example file="schema-task.ts" project="schema">
+import { schema, type Infer } from "@zudojs/schema";
+
+const NewTaskSchema = schema.object({
   title: schema.string().trim().min(3).max(100),
   done: schema.default(schema.boolean(), false),
   priority: schema.default(schema.enum(["low", "normal", "high"]), "normal"),
 });
-type NewTask = Infer&lt;typeof NewTaskSchema&gt;;</code></pre>
-<p>You will install it and use it in <a href="/learn/zudo-first-code">Your first Zudo code</a>. Now you know exactly what it does for you, and why.</p>
+type NewTask = Infer<typeof NewTaskSchema>;
+
+const task: NewTask = NewTaskSchema.parse({ title: "  Buy milk ", priority: "high", role: "admin" });
+console.log(task);
+
+const bad = NewTaskSchema.safeParse({ title: 42, done: "sometimes" });
+if (!bad.success) console.log(bad.issues.map((issue) => issue.message));
+</example>
+<output>
+</output>
+<p><a href="/learn/ts-validation">Runtime validation</a>, next, shows how such a library works inside by building a small one, then compares Zod, Valibot and JSON Schema. You will use <code>@zudojs/schema</code> throughout the ZudoJS courses, starting with <a href="/learn/zudo-first-code">Your first Zudo code</a>.</p>
 </section>
 
 <section>
@@ -522,8 +484,9 @@ console.log(parseTaskPatch({ title: "x", done: "yes" }));
 <li>TypeScript becomes JavaScript before it runs. Types, interfaces and <code>as</code> are erased; only JavaScript checks exist at runtime.</li>
 <li>Outside data (JSON, <code>process.env</code>, files, other APIs) was never seen by the compiler. Type it as <code>unknown</code>.</li>
 <li><code>as</code> changes what the compiler believes, never the value. Do not use it on outside data.</li>
-<li>Type guards (<code>value is T</code>) and assertion functions (<code>asserts value is T</code>) narrow <code>unknown</code> after real checks. The compiler trusts them, so keep them correct.</li>
+<li>Type guards (<code>value is T</code>) and assertion functions (<code>asserts value is T</code>) turn <code>unknown</code> into a checked type at the boundary. The compiler trusts them, so they must check every field.</li>
 <li>In <code>catch</code>, the error is <code>unknown</code>; check with <code>instanceof Error</code>.</li>
-<li>Validate once at the boundary, return a <code>Result</code> with every issue, and copy only allowed fields. <code>@zudojs/schema</code> does this for you, next.</li>
+<li>Validate once at the boundary, return a <code>Result</code> with every issue, and copy only allowed fields. Schema libraries such as <code>@zudojs/schema</code> do this for you.</li>
 </ul>
+<p>Next: <a href="/learn/ts-validation">Runtime validation</a>, where one schema gives you both the runtime check and the TypeScript type.</p>
 </section>

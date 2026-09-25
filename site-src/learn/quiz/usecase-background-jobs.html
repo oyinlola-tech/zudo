@@ -1,0 +1,713 @@
+<question id="jobs-202" type="choice">
+<q>Why does <code>POST /invoices/:id/send</code> answer <code>202 Accepted</code>?</q>
+<option>Because the e-mail was sent and the invoice was created</option>
+<option correct>The request was recorded and will be carried out later; the client can poll <code>GET /deliveries/:id</code> for the result</option>
+<option>Because 200 is not allowed for <code>POST</code></option>
+<option>To tell the client to retry the request</option>
+<explain><p>202 means "accepted for processing, not finished". The response carries the delivery id, so the client can show progress without waiting for the provider.</p></explain>
+</question>
+
+<question id="jobs-same-transaction" type="choice">
+<q>Why is the <code>deliveries</code> row inserted in the same transaction as the invoice's change to <code>sending</code>?</q>
+<option>Because PGlite cannot run two transactions</option>
+<option correct>Either both are saved or neither: there is never an invoice marked "sending" with no record that an e-mail is owed, or the other way round</option>
+<option>So the e-mail is sent faster</option>
+<option>So that the queue can read the row before the commit</option>
+<explain><p>This is the outbox pattern. Before it, a deploy that restarted a server between the two steps left invoices "sending" forever. With one transaction, a crash rolls back both.</p></explain>
+</question>
+
+<question id="jobs-ledger-vs-queue" type="choice">
+<q>The in-memory queue already retries and dead-letters jobs. Why does InvoiceHub also keep a ledger table?</q>
+<option>The queue cannot run jobs concurrently</option>
+<option correct>The in-memory queue lives in one process and is gone when that process dies; the ledger in PostgreSQL survives and says what is still owed</option>
+<option>The ledger makes the queue faster</option>
+<option>Vitest needs a table to test against</option>
+<explain><p>The ledger is the truth, the queue is only the executor. After a crash the dispatcher finds the unfinished rows again; nothing depended on the dead process's memory.</p></explain>
+</question>
+
+<question id="jobs-at-least-once" type="choice">
+<q>A queue delivers "at least once". What gives the customer "exactly one e-mail" anyway?</q>
+<option>Setting <code>attempts: 1</code> so the job never runs twice</option>
+<option>A very long job timeout</option>
+<option correct>An idempotency key per delivery that reaches the provider, which answers a repeated key with the first result instead of sending again</option>
+<option>Catching every error in the processor</option>
+<explain><p>You cannot prevent a job from running twice (a crash after the send guarantees it sometimes will). You can make the second run harmless. The key has to reach the system that has the side effect, here the provider.</p></explain>
+</question>
+
+<question id="jobs-dedupe-key" type="choice">
+<q>What does <code>deliveries.dedupe_key text not null unique</code> protect against?</q>
+<option>Two workers claiming the same row</option>
+<option correct>Two records of the same intent: a double click on "Send", or two servers recording the same day's reminder</option>
+<option>The provider sending the e-mail twice</option>
+<option>A job that crashes every worker</option>
+<explain><p>The key names the intent: <code>invoice:1</code>, <code>reminder:1:2026-10-05</code>. The database refuses a second row with the same key, and <code>on conflict do nothing</code> turns the second request into "return the existing delivery".</p></explain>
+</question>
+
+<question id="jobs-lease-early" type="choice">
+<q>Right after worker A died, worker B's dispatch claimed nothing. Why is that correct?</q>
+<option>Worker B was not started yet</option>
+<option correct>Worker A's lease had not expired; from outside, a slow worker and a dead one look the same, and taking the work early could run it twice at the same time</option>
+<option>The row was already marked sent</option>
+<option>The dispatcher only runs once per minute</option>
+<explain><p>The lease is a promise: "this row is mine until then". Only when it expires may someone else assume the owner is gone. A minute later, worker B claimed it.</p></explain>
+</question>
+
+<question id="jobs-lease-length" type="choice">
+<q>InvoiceHub jobs have a 5-second timeout, 4 attempts and backoff between them. Which lease is safe?</q>
+<option>1 second, so crashes are noticed quickly</option>
+<option>5 seconds, the same as the timeout</option>
+<option correct>Comfortably more than all attempts with their backoff, such as the 60 seconds used here</option>
+<option>No lease: the queue's own retries are enough</option>
+<explain><p>If the lease runs out while a live worker is still retrying, a second worker claims the same row and both run it at once. The lease must outlast the longest legitimate run; longer jobs renew it with a heartbeat.</p></explain>
+</question>
+
+<question id="jobs-claims-cap" type="choice">
+<q>The queue already stops after 4 failed attempts. Why does the ledger also retire a row after 3 claims?</q>
+<option>Because 3 is smaller than 4</option>
+<option correct>A message that crashes the whole process never reaches a <code>catch</code>, so the queue never counts an attempt; only the claim counter sees it come back again and again</option>
+<option>To make the dispatcher faster</option>
+<option>Because claims are cheaper than attempts</option>
+<explain><p>An out-of-memory crash kills the process before any error handling runs. Without the claim cap, that poison message would take down a worker every time its lease expired, forever.</p></explain>
+</question>
+
+<question id="jobs-retry-which" type="choice">
+<q>Which provider answers should the processor retry?</q>
+<option>All of them: the provider might change its mind</option>
+<option correct>503, 429 and timeouts; not 422 "invalid recipient"</option>
+<option>Only 422, because the address might be fixed soon</option>
+<option>None: retries cause duplicates</option>
+<explain><p>A 503, a 429 or a timeout may go away. A 422 says the request itself is wrong and will fail the same way every time, so the delivery is marked dead at once and a person fixes the address.</p></explain>
+</question>
+
+<question id="jobs-bug-retried" type="choice">
+<q>INV-0004 throws a <code>TypeError</code> in our own rendering code on every attempt. What does the queue do with it?</q>
+<option>Marks it dead after the first attempt, because a <code>TypeError</code> is permanent</option>
+<option correct>Retries it until the attempts are used up, then dead-letters it; the queue cannot tell a bug from a temporary failure</option>
+<option>Retries it forever</option>
+<option>Crashes the worker process</option>
+<explain><p>Only the processor knows what an error means. <code>isPermanent</code> covers the provider's 4xx answers; an unexpected exception is treated as temporary, which costs a few wasted attempts but loses nothing.</p></explain>
+</question>
+
+<question id="jobs-poison-slots" type="choice">
+<q>With <code>concurrency: 5</code>, a poison job fails 4 times with backoff. What happens to the 12 other deliveries meanwhile?</q>
+<option>They wait until the poison job is dead-lettered</option>
+<option correct>They keep flowing through the other slots; the poison job only occupies one slot while it runs</option>
+<option>They are dead-lettered too</option>
+<option>They are retried as well</option>
+<explain><p>A job waiting for its next retry does not hold a slot, and a running one holds only one of five. The demo delivered twelve e-mails while delivery 4 kept failing.</p></explain>
+</question>
+
+<question id="jobs-concurrency-number" type="choice">
+<q>Why is the worker's <code>concurrency</code> 5 and not 100?</q>
+<option>Node.js can only run 5 promises at once</option>
+<option correct>The provider allows 5 e-mails at a time; concurrency is sized for the slowest or strictest thing the jobs call</option>
+<option>The database has 5 tables</option>
+<option>Higher numbers disable retries</option>
+<explain><p>With 100, the provider would answer 429 to most calls, which would turn into retries and even more load. The demo measured at most 5 e-mails at the provider at once.</p></explain>
+</question>
+
+<question id="jobs-context-lost" type="choice">
+<q>The HTTP handler runs inside a correlation context (AsyncLocalStorage). Why is that context gone when the worker runs the job?</q>
+<option>AsyncLocalStorage is cleared every second</option>
+<option correct>The job runs in a different async flow, started by the dispatcher's timer, and after a crash maybe in a different process</option>
+<option>The queue deletes all contexts on purpose</option>
+<option>Because the job data was serialized to JSON</option>
+<explain><p>AsyncLocalStorage follows one chain of async calls in one process. A durable hop breaks the chain, so the id must be written down with the job (the ledger's <code>correlation_id</code>) and restored on the other side.</p></explain>
+</question>
+
+<question id="jobs-carrier" type="choice">
+<q>What does the queue's <code>contextCarriers</code> option do in InvoiceHub?</q>
+<option>It stores jobs in the database</option>
+<option correct>It captures the correlation id from the current context when a job is added, and restores it around the processor, so log lines in the worker carry it without a parameter</option>
+<option>It retries jobs in a different context</option>
+<option>It encrypts job data</option>
+<explain><p>The dispatcher sets the context from the ledger row just before <code>queue.add()</code>. The carrier's <code>capture</code> stores it in the job's metadata and <code>restore</code> runs the processor inside it.</p></explain>
+</question>
+
+<question id="jobs-scheduler-records" type="choice">
+<q>Why does the 08:00 reminder handler only <em>record</em> reminder deliveries instead of sending the e-mails itself?</q>
+<option>Scheduled handlers cannot make HTTP calls</option>
+<option correct>The pipeline already has retries, leases, concurrency, dead letters and metrics; the handler stays short, and a crash during it loses nothing that was recorded</option>
+<option>Because the scheduler has no clock</option>
+<option>To make the reminders arrive later</option>
+<explain><p>A handler that sent 500 e-mails itself would need all of those features again. Recording rows takes milliseconds and hands the slow, unreliable part to the machinery built for it.</p></explain>
+</question>
+
+<question id="jobs-scheduledat" type="choice">
+<q>The reminder handler builds its dedupe key from <code>ctx.scheduledAt</code>, not from <code>new Date()</code>. Why?</q>
+<option><code>new Date()</code> is not allowed in handlers</option>
+<option correct>A run that was due at 23:59:59 but starts a few seconds late would otherwise be keyed to the next day, and could run twice for one day or skip one</option>
+<option>Because <code>scheduledAt</code> is in local time</option>
+<option>Because <code>ctx.scheduledAt</code> is faster to read</option>
+<explain><p>The key should describe which run this is, and that is the time it was due. The current time depends on how late the process was.</p></explain>
+</question>
+
+<question id="jobs-two-servers" type="choice">
+<q>Two servers each run the scheduler, and both fire at 08:00 on Monday. What stops customers from getting two reminders?</q>
+<option>The scheduler detects the other server</option>
+<option correct>Both try to record <code>reminder:1:2026-10-05</code>; the unique dedupe key lets only the first insert through</option>
+<option>The provider's idempotency key</option>
+<option>Nothing: you must run the scheduler on one server only</option>
+<explain><p>The demo played exactly that: server A created 1, server B created 0. Running the schedule on one instance also works, but then that instance is a single point of failure.</p></explain>
+</question>
+
+<question id="jobs-skip-locked" type="choice">
+<q>What does <code>for update skip locked</code> in <code>claimDue</code> give you?</q>
+<option>It skips rows that are dead</option>
+<option correct>Several dispatchers can claim at the same time without taking the same row; each skips rows another transaction has locked</option>
+<option>It unlocks rows whose lease expired</option>
+<option>It makes the query read-only</option>
+<explain><p>Without it, two dispatchers could select the same queued row and both mark it running. With it, the second one simply takes the next free rows.</p></explain>
+</question>
+
+<question id="jobs-fresh-data" type="choice">
+<q>The job carries only <code>{ deliveryId }</code>, and the processor loads the invoice itself. Why not put the whole invoice in the job?</q>
+<option>Job data must be smaller than 10 bytes</option>
+<option correct>The job may run minutes later, or again after a crash; loading by id gets the current data, such as a corrected address</option>
+<option>Invoices cannot be serialized</option>
+<option>Because the provider only accepts ids</option>
+<explain><p>A copy in the job goes stale. It also spreads customer data into queue storage, logs and dashboards. Ids in, fresh data loaded inside.</p></explain>
+</question>
+
+<question id="jobs-unhandled" type="choice">
+<q>Why does the dead-letter handler call <code>markDead(...).catch(...)</code> instead of <code>void markDead(...)</code>?</q>
+<option><code>void</code> is a syntax error here</option>
+<option correct>If the database is down, the rejected promise would be unhandled, and Node.js ends the whole process on an unhandled rejection, killing every running delivery</option>
+<option>So the delivery is retried at once</option>
+<option>Because <code>catch</code> makes the write faster</option>
+<explain><p>The catch logs the failure and moves on. The row stays <code>running</code>, and its lease brings it back later, so nothing is lost.</p></explain>
+</question>
+
+<question id="jobs-alert" type="choice">
+<q>Which pair of numbers best tells operations that deliveries are in trouble?</q>
+<option>Total e-mails sent and CPU usage</option>
+<option correct>The count of dead deliveries, and the age of the oldest delivery still waiting</option>
+<option>The number of workers and the number of tables</option>
+<option>The average invoice amount and the number of customers</option>
+<explain><p>Dead deliveries need a person. The oldest waiting delivery (the lag) catches stuck or too few workers, even when no error is ever logged.</p></explain>
+</question>
+
+<question id="jobs-shutdown" type="choice">
+<q>On <code>SIGTERM</code>, in which order should a worker process shut down?</q>
+<option>Close the database, then stop the worker</option>
+<option correct>Stop the dispatcher (no new claims), then <code>worker.stop()</code> so running deliveries finish, then close connections</option>
+<option>Call <code>kill()</code> at once; the leases will fix everything</option>
+<option>Stop the worker first, then keep dispatching until the process exits</option>
+<explain><p>New claims first, running work second, resources last. Leases are the safety net for real crashes, not the plan for a routine deploy: they cost a minute of delay per claimed row.</p></explain>
+</question>
+
+<question id="jobs-replay" type="choice">
+<q>Why does <code>replay(id)</code> only update rows <code>where status = 'dead'</code>, and reset <code>claims</code> to 0?</q>
+<option>So that it also restarts sent deliveries</option>
+<option correct>A double click in an admin page cannot restart a running delivery, and the replayed delivery gets its full crash budget again</option>
+<option>Because dead rows have no invoice</option>
+<option>So the idempotency key changes</option>
+<explain><p>The key stays <code>delivery-&lt;id&gt;</code>, so if the earlier attempt did reach the provider after all, the replay still does not send a second e-mail.</p></explain>
+</question>
+
+<question id="jobs-output-backoff" type="output">
+<q>The queue's retry delays come from <code>calculateRetryDelay</code>. What does this print?</q>
+<code file="backoff.ts">
+import { calculateRetryDelay, createExponentialBackoff } from "@zudojs/queue";
+
+const backoff = createExponentialBackoff(20, { jitter: "none", maxDelay: 100 });
+console.log([1, 2, 3, 4, 5].map((attempt) => calculateRetryDelay(attempt, backoff)));
+</code>
+<option correct>[ 20, 40, 80, 100, 100 ]</option>
+<option>[ 20, 40, 80, 160, 320 ]</option>
+<option>[ 20, 20, 20, 20, 20 ]</option>
+<option>[ 0, 20, 40, 80, 100 ]</option>
+<explain><p>The wait doubles from the base, 20 ms, and stops growing at <code>maxDelay</code>. In production leave jitter on so thousands of failed jobs do not retry at the same instant.</p></explain>
+</question>
+
+<question id="jobs-output-idempotency" type="output">
+<q>A provider that honours idempotency keys receives these calls. What does this print?</q>
+<code file="provider.js">
+const byKey = new Map();
+function send(key, to) {
+  if (byKey.has(key)) return { id: byKey.get(key), replayed: true };
+  const id = `msg_${byKey.size + 1}`;
+  byKey.set(key, id);
+  return { id, replayed: false };
+}
+
+console.log(send("delivery-1", "ada@example.ng"));
+console.log(send("delivery-1", "ada@example.ng"));
+console.log(send(`delivery-1-${2}`, "ada@example.ng"));
+console.log("e-mails sent:", byKey.size);
+</code>
+<option correct>{ id: 'msg_1', replayed: false }
+{ id: 'msg_1', replayed: true }
+{ id: 'msg_2', replayed: false }
+e-mails sent: 2</option>
+<option>{ id: 'msg_1', replayed: false }
+{ id: 'msg_1', replayed: true }
+{ id: 'msg_1', replayed: true }
+e-mails sent: 1</option>
+<option>{ id: 'msg_1', replayed: false }
+{ id: 'msg_2', replayed: false }
+{ id: 'msg_3', replayed: false }
+e-mails sent: 3</option>
+<option>{ id: 'msg_1', replayed: false }
+{ id: 'msg_2', replayed: true }
+{ id: 'msg_3', replayed: false }
+e-mails sent: 2</option>
+<explain><p>The same key is replayed. A key that changes per attempt, such as one with an attempt number or a timestamp in it, defeats the whole mechanism: the retry counts as a new e-mail.</p></explain>
+</question>
+
+<question id="jobs-output-permanent" type="output">
+<q>What does this print?</q>
+<code file="permanent.js">
+function isPermanent(status) {
+  return status !== undefined && status >= 400 && status < 500 && status !== 429;
+}
+
+console.log([503, 422, 429, 400, undefined].map(isPermanent));
+</code>
+<option correct>[ false, true, false, true, false ]</option>
+<option>[ true, true, true, true, false ]</option>
+<option>[ false, true, true, true, false ]</option>
+<option>[ false, false, false, false, false ]</option>
+<explain><p>503 and 429 may go away, and <code>undefined</code> (no status: a timeout or a dropped connection) may too. 422 and 400 say the request itself is wrong.</p></explain>
+</question>
+
+<question id="jobs-output-dead-letter" type="output">
+<q>A processor throws on every attempt. What does this print?</q>
+<code file="dead.ts">
+import { createFixedBackoff, createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const queue = createInMemoryQueue<{ invoiceId: number }>(createQueueName("deliveries"));
+let tries = 0;
+queue.process("deliver", async () => {
+  tries += 1;
+  throw new TypeError("Cannot read properties of null (reading 'toLocaleString')");
+});
+await queue.add("deliver", { invoiceId: 4 }, { attempts: 3, backoff: createFixedBackoff(10) });
+while ((await queue.getStats()).deadLettered === 0) await new Promise((resolve) => setTimeout(resolve, 10));
+const [dead] = await queue.getDeadLetterJobs();
+console.log("tries:", tries, "reason:", dead?.reason);
+await queue.close();
+</code>
+<option correct>tries: 3 reason: Cannot read properties of null (reading 'toLocaleString')</option>
+<option>tries: 1 reason: Cannot read properties of null (reading 'toLocaleString')</option>
+<option>tries: 4 reason: exceeded maximum attempts</option>
+<option>tries: 3 reason: undefined</option>
+<explain><p><code>attempts: 3</code> means three tries in total. The dead-letter entry keeps the last error's message as its <code>reason</code>, which is what InvoiceHub copies into the ledger.</p></explain>
+</question>
+
+<question id="jobs-output-carrier" type="output">
+<q>This queue carries a correlation id with a context carrier. What does it print?</q>
+<code file="carrier.ts">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+import type { QueueContextCarrier } from "@zudojs/queue";
+
+let current: string | undefined;
+const carrier: QueueContextCarrier<string> = {
+  key: "correlationId",
+  capture: () => current,
+  restore: async (value, run) => {
+    const previous = current;
+    current = value;
+    try {
+      return await run();
+    } finally {
+      current = previous;
+    }
+  },
+};
+
+const queue = createInMemoryQueue<{ invoiceId: number }>(createQueueName("deliveries"), { contextCarriers: [carrier] });
+let done = 0;
+queue.process("deliver", async (job) => {
+  console.log(`invoice ${job.data.invoiceId} corr=${current}`);
+  done += 1;
+});
+
+current = "req-41";
+await queue.add("deliver", { invoiceId: 1 });
+current = undefined;
+await queue.add("deliver", { invoiceId: 2 });
+while (done < 2) await new Promise((resolve) => setTimeout(resolve, 10));
+console.log("after the jobs:", current);
+await queue.close();
+</code>
+<option correct>invoice 1 corr=req-41
+invoice 2 corr=undefined
+after the jobs: undefined</option>
+<option>invoice 1 corr=undefined
+invoice 2 corr=undefined
+after the jobs: undefined</option>
+<option>invoice 1 corr=req-41
+invoice 2 corr=req-41
+after the jobs: req-41</option>
+<option>invoice 1 corr=req-41
+invoice 2 corr=undefined
+after the jobs: req-41</option>
+<explain><p>The id is captured at <code>add()</code> time: job 1 was added while <code>current</code> was <code>req-41</code>, job 2 after it was cleared. When the processors run, both <code>add</code> calls are long done, so only the carrier can bring the id back, and it restores the previous value afterwards.</p></explain>
+</question>
+
+<question id="jobs-output-event-handlers" type="output">
+<q>After a delivery, <code>invoice.delivered</code> is published to two handlers, and one of them fails. What does this print?</q>
+<code file="events.ts">
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+bus.on("invoice.delivered", () => { throw new Error("audit store is down"); }, { id: "audit" });
+bus.on("invoice.delivered", (event) => console.log("dashboard updated for", (event.payload as { deliveryId: number }).deliveryId), { id: "dashboard" });
+
+const result = await bus.publishEvent({ type: "invoice.delivered", payload: { deliveryId: 7 } });
+console.log(result.succeeded, result.failed);
+</code>
+<option correct>dashboard updated for 7
+1 1</option>
+<option>1 1</option>
+<option>dashboard updated for 7
+2 0</option>
+<option>Error: audit store is down</option>
+<explain><p>By default a failing handler does not stop the others, and <code>publishEvent</code> reports how many succeeded and failed. The delivery is already recorded as sent; a failed side effect needs its own retry (a job), not a re-send of the e-mail.</p></explain>
+</question>
+
+<question id="jobs-output-cron" type="output">
+<q>What does this print?</q>
+<code file="cron.ts" browser="no">
+import { CronTrigger } from "@zudojs/scheduler";
+
+const trigger = new CronTrigger("0 8 * * 1-5", "UTC");
+const saturday = new Date("2026-10-03T09:00:00Z");
+const first = trigger.next(saturday);
+console.log(first?.toISOString(), first ? trigger.next(first)?.toISOString() : "");
+</code>
+<option correct>2026-10-05T08:00:00.000Z 2026-10-06T08:00:00.000Z</option>
+<option>2026-10-04T08:00:00.000Z 2026-10-05T08:00:00.000Z</option>
+<option>2026-10-03T08:00:00.000Z 2026-10-05T08:00:00.000Z</option>
+<option>2026-10-05T09:00:00.000Z 2026-10-06T09:00:00.000Z</option>
+<explain><p><code>1-5</code> is Monday to Friday, so from Saturday the next run is Monday 5 October at 08:00 UTC, then Tuesday.</p></explain>
+</question>
+
+<question id="jobs-output-scheduled-key" type="output">
+<q>A reminder run was due at 23:59:59 but started 3 seconds late. What does this print?</q>
+<code file="day-key.js">
+const scheduledAt = new Date("2026-10-05T23:59:59Z");
+const startedAt = new Date("2026-10-06T00:00:02Z");
+const keyFor = (date) => `reminder:1:${date.toISOString().slice(0, 10)}`;
+
+console.log(keyFor(scheduledAt));
+console.log(keyFor(startedAt));
+</code>
+<option correct>reminder:1:2026-10-05
+reminder:1:2026-10-06</option>
+<option>reminder:1:2026-10-05
+reminder:1:2026-10-05</option>
+<option>reminder:1:2026-10-06
+reminder:1:2026-10-06</option>
+<option>reminder:1:2026-10-05T23:59:59
+reminder:1:2026-10-06T00:00:02</option>
+<explain><p>The start time belongs to the next day. Keyed by it, Monday's run would count as Tuesday's, and Tuesday's own run would then find its key taken. The time the run was due is the stable choice.</p></explain>
+</question>
+
+<question id="jobs-output-lease" type="output">
+<q>This sketch of <code>claimDue</code> works on an array and a clock. What does it print?</q>
+<code file="lease.js">
+const rows = [{ id: 1, status: "running", lockedUntil: 1_000, claims: 1 }, { id: 2, status: "queued", lockedUntil: 0, claims: 0 }];
+
+function claimDue(now, leaseMs) {
+  const due = rows.filter((r) => r.status === "queued" || (r.status === "running" && r.lockedUntil < now));
+  for (const row of due) {
+    row.status = "running";
+    row.claims += 1;
+    row.lockedUntil = now + leaseMs;
+  }
+  return due.map((r) => `${r.id}:${r.claims}`);
+}
+
+console.log(claimDue(500, 60_000));
+console.log(claimDue(2_000, 60_000));
+console.log(claimDue(70_000, 60_000));
+</code>
+<option>[ '2:1' ]
+[ '1:2' ]
+[ '2:2' ]</option>
+<option>[ '1:2', '2:1' ]
+[]
+[ '1:3', '2:2' ]</option>
+<option>[ '2:1' ]
+[]
+[]</option>
+<option correct>[ '2:1' ]
+[ '1:2' ]
+[ '1:3', '2:2' ]</option>
+<explain><p>At 500, row 1's lease (until 1,000) still holds, so only the queued row 2 is claimed, with a lease until 60,500. At 2,000 row 1's lease has run out: it is claimed a second time, until 62,000. At 70,000 both leases have run out, so both rows are claimed again. Every expired lease means "the owner may be dead", and the claim counter keeps growing, which is what the cap on claims watches.</p></explain>
+</question>
+
+<question id="jobs-output-no-idempotency" type="output">
+<q>A handler that credits a customer's balance runs twice for the same message, as at-least-once delivery allows. What does this print?</q>
+<code file="twice.js">
+const handled = new Set();
+let naive = 0;
+let safe = 0;
+
+function creditNaive(message) {
+  naive += message.amountKobo;
+}
+function creditSafe(message) {
+  if (handled.has(message.id)) return;
+  handled.add(message.id);
+  safe += message.amountKobo;
+}
+
+const message = { id: "pay-7", amountKobo: 450_000 };
+for (let delivery = 1; delivery <= 2; delivery++) {
+  creditNaive(message);
+  creditSafe(message);
+}
+console.log(naive, safe);
+</code>
+<option correct>900000 450000</option>
+<option>450000 450000</option>
+<option>900000 900000</option>
+<option>450000 900000</option>
+<explain><p>The naive handler credited ₦4,500 twice. The safe one remembers the message id and ignores the repeat. In a real system the <code>handled</code> set is a table with a unique key, written in the same transaction as the credit.</p></explain>
+</question>
+
+<question id="jobs-code-permanent" type="code" file="classify.js">
+<q>Write <code>classify(error)</code> for the processor. <code>error</code> is <code>{ status }</code> (status may be missing). Return <code>"retry"</code> for 429, any 5xx and a missing status, and <code>"dead"</code> for every other 4xx. Print the result for the five sample errors.</q>
+<starter>
+const samples = [{ status: 503 }, { status: 422 }, { status: 429 }, {}, { status: 404 }];
+
+function classify(error) {
+  // your code
+}
+</starter>
+<solution>
+const samples = [{ status: 503 }, { status: 422 }, { status: 429 }, {}, { status: 404 }];
+
+function classify(error) {
+  const status = error.status;
+  if (status === undefined || status === 429 || status >= 500) return "retry";
+  return "dead";
+}
+
+console.log(samples.map(classify));
+</solution>
+<expected>
+[ 'retry', 'dead', 'retry', 'retry', 'dead' ]
+</expected>
+<explain><p>A missing status means the request never got an answer (a timeout or a dropped connection), which may well work next time. 4xx answers other than 429 say the request is wrong.</p></explain>
+</question>
+
+<question id="jobs-code-reminder-key" type="code" file="reminder-key.js">
+<q>Write <code>reminderKey(invoiceId, scheduledAt)</code> that returns a dedupe key like <code>reminder:7:2026-10-05</code>, using the UTC date of <code>scheduledAt</code>. Then record keys in a <code>Set</code> for two servers firing Monday's run and one Tuesday run, and print how many keys were new each time.</q>
+<starter>
+function reminderKey(invoiceId, scheduledAt) {
+  // your code
+}
+
+const recorded = new Set();
+const runs = [
+  new Date("2026-10-05T08:00:00Z"),
+  new Date("2026-10-05T08:00:00Z"),
+  new Date("2026-10-06T08:00:00Z"),
+];
+</starter>
+<solution>
+function reminderKey(invoiceId, scheduledAt) {
+  return `reminder:${invoiceId}:${scheduledAt.toISOString().slice(0, 10)}`;
+}
+
+const recorded = new Set();
+const runs = [
+  new Date("2026-10-05T08:00:00Z"),
+  new Date("2026-10-05T08:00:00Z"),
+  new Date("2026-10-06T08:00:00Z"),
+];
+for (const run of runs) {
+  const key = reminderKey(7, run);
+  const isNew = !recorded.has(key);
+  recorded.add(key);
+  console.log(key, isNew ? "new" : "duplicate");
+}
+</solution>
+<expected>
+reminder:7:2026-10-05 new
+reminder:7:2026-10-05 duplicate
+reminder:7:2026-10-06 new
+</expected>
+<explain><p>The <code>Set</code> plays the unique index. <code>toISOString()</code> is always UTC, so the key does not depend on the server's time zone.</p></explain>
+</question>
+
+<question id="jobs-code-provider" type="code" file="idempotent-provider.js">
+<q>Write <code>createProvider()</code> returning <code>{ send(key, to), sentCount() }</code>. <code>send</code> returns <code>{ id, replayed }</code>: a new id <code>msg_1</code>, <code>msg_2</code>… for a new key, and the first answer with <code>replayed: true</code> for a key it has seen. Simulate a worker that sends, crashes, and a second worker that sends again with the same key, then print the two answers and the count.</q>
+<starter>
+function createProvider() {
+  // your code
+}
+</starter>
+<solution>
+function createProvider() {
+  const byKey = new Map();
+  return {
+    send(key, to) {
+      const saved = byKey.get(key);
+      if (saved) return { id: saved.id, replayed: true };
+      const message = { id: `msg_${byKey.size + 1}`, to };
+      byKey.set(key, message);
+      return { id: message.id, replayed: false };
+    },
+    sentCount: () => byKey.size,
+  };
+}
+
+const provider = createProvider();
+console.log(provider.send("delivery-1", "finance@gracehotel.ng"));
+console.log(provider.send("delivery-1", "finance@gracehotel.ng"));
+console.log("sent:", provider.sentCount());
+</solution>
+<expected>
+{ id: 'msg_1', replayed: false }
+{ id: 'msg_1', replayed: true }
+sent: 1
+</expected>
+<explain><p>The second worker cannot know whether the first one's e-mail went out; the provider can. That is why the key has to travel all the way to the system with the side effect.</p></explain>
+</question>
+
+<question id="jobs-code-claim" type="code" file="claim.js">
+<q>Write <code>claimDue(rows, now, leaseMs, maxClaims)</code>. First mark as <code>dead</code> every <code>running</code> row whose lease expired (<code>lockedUntil &lt; now</code>) and that already has <code>maxClaims</code> claims. Then claim every row that is <code>queued</code>, or <code>running</code> with an expired lease: set it <code>running</code>, add one claim, and set <code>lockedUntil = now + leaseMs</code>. Return the claimed ids. Play four crashed workers, one lease apart, and print what each claimed and the row's final state.</q>
+<starter>
+const rows = [{ id: 1, status: "queued", claims: 0, lockedUntil: 0 }];
+
+function claimDue(rows, now, leaseMs, maxClaims) {
+  // your code
+}
+</starter>
+<solution>
+const rows = [{ id: 1, status: "queued", claims: 0, lockedUntil: 0 }];
+
+function claimDue(rows, now, leaseMs, maxClaims) {
+  for (const row of rows) {
+    if (row.status === "running" && row.lockedUntil < now && row.claims >= maxClaims) row.status = "dead";
+  }
+  const due = rows.filter((row) => row.status === "queued" || (row.status === "running" && row.lockedUntil < now));
+  for (const row of due) {
+    row.status = "running";
+    row.claims += 1;
+    row.lockedUntil = now + leaseMs;
+  }
+  return due.map((row) => row.id);
+}
+
+let now = 0;
+for (let worker = 1; worker <= 4; worker++) {
+  console.log(`worker ${worker} claimed`, claimDue(rows, now, 60_000, 3));
+  now += 61_000;
+}
+console.log(rows[0]);
+</solution>
+<expected>
+worker 1 claimed [ 1 ]
+worker 2 claimed [ 1 ]
+worker 3 claimed [ 1 ]
+worker 4 claimed []
+{ id: 1, status: 'dead', claims: 3, lockedUntil: 182000 }
+</expected>
+<explain><p>Retiring before claiming is what stops the fourth worker from receiving the poison. The clock is a parameter, so the test runs in microseconds instead of four minutes.</p></explain>
+</question>
+
+<question id="jobs-code-backoff" type="code" file="delays.js">
+<q>Write <code>retryDelays(base, maxDelay, retries)</code> that returns the waits before each retry with exponential backoff and no jitter: <code>base</code>, then double each time, never more than <code>maxDelay</code>. Print the delays for base 1000, cap 30000 and 7 retries, separated by spaces.</q>
+<starter>
+function retryDelays(base, maxDelay, retries) {
+  // your code
+}
+</starter>
+<solution>
+function retryDelays(base, maxDelay, retries) {
+  const delays = [];
+  for (let retry = 1; retry <= retries; retry++) {
+    delays.push(Math.min(base * 2 ** (retry - 1), maxDelay));
+  }
+  return delays;
+}
+
+console.log(retryDelays(1000, 30000, 7).join(" "));
+</solution>
+<expected>
+1000 2000 4000 8000 16000 30000 30000
+</expected>
+<explain><p>These are the same numbers the queue's <code>calculateRetryDelay</code> gives for an exponential backoff without jitter. The cap keeps a long outage from producing hour-long waits.</p></explain>
+</question>
+
+<question id="jobs-code-lag" type="code" file="lag.js">
+<q>Write <code>oldestWaitingSeconds(deliveries, now)</code>: the age in whole seconds of the oldest delivery that is <code>queued</code> or <code>running</code>, or 0 when there is none. Print it for the sample, then again after the oldest one is sent.</q>
+<starter>
+const deliveries = [
+  { id: 1, status: "queued", createdAt: new Date("2026-10-05T09:00:00Z") },
+  { id: 2, status: "running", createdAt: new Date("2026-10-05T09:04:30Z") },
+  { id: 3, status: "sent", createdAt: new Date("2026-10-05T08:00:00Z") },
+];
+const now = new Date("2026-10-05T09:05:00Z");
+
+function oldestWaitingSeconds(deliveries, now) {
+  // your code
+}
+</starter>
+<solution>
+const deliveries = [
+  { id: 1, status: "queued", createdAt: new Date("2026-10-05T09:00:00Z") },
+  { id: 2, status: "running", createdAt: new Date("2026-10-05T09:04:30Z") },
+  { id: 3, status: "sent", createdAt: new Date("2026-10-05T08:00:00Z") },
+];
+const now = new Date("2026-10-05T09:05:00Z");
+
+function oldestWaitingSeconds(deliveries, now) {
+  const waiting = deliveries.filter((d) => d.status === "queued" || d.status === "running");
+  if (waiting.length === 0) return 0;
+  const oldest = Math.min(...waiting.map((d) => d.createdAt.getTime()));
+  return Math.floor((now.getTime() - oldest) / 1000);
+}
+
+console.log(oldestWaitingSeconds(deliveries, now));
+deliveries[0].status = "sent";
+console.log(oldestWaitingSeconds(deliveries, now));
+</solution>
+<expected>
+300
+30
+</expected>
+<explain><p>The sent delivery is older still, but it is not waiting, so it does not count. A lag that keeps growing means the workers are stuck or too few, even when no error is logged.</p></explain>
+</question>
+
+<question id="jobs-code-queue-permanent" type="code" file="permanent-queue.ts">
+<q>With <code>@zudojs/queue</code>, write a processor for <code>deliver</code> jobs that treats a "permanent" failure (the job's <code>email</code> has no <code>@</code>) by recording the id in <code>dead</code> and returning normally, and otherwise succeeds. Add one good and one bad job with <code>attempts: 3</code>, wait until both are done, and print how many times the processor ran and the queue's <code>deadLettered</code> count.</q>
+<starter>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const queue = createInMemoryQueue<{ id: number; email: string }>(createQueueName("deliveries"));
+const dead: number[] = [];
+let runs = 0;
+// your processor, jobs and waiting
+</starter>
+<solution>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const queue = createInMemoryQueue<{ id: number; email: string }>(createQueueName("deliveries"));
+const dead: number[] = [];
+let runs = 0;
+queue.process("deliver", async (job) => {
+  runs += 1;
+  if (!job.data.email.includes("@")) {
+    dead.push(job.data.id);
+    return;
+  }
+});
+
+await queue.add("deliver", { id: 1, email: "accounts@mamaput.ng" }, { attempts: 3 });
+await queue.add("deliver", { id: 3, email: "not-an-email" }, { attempts: 3 });
+while ((await queue.getStats()).succeeded < 2) await new Promise((resolve) => setTimeout(resolve, 10));
+console.log("runs:", runs, "dead:", dead, "deadLettered:", (await queue.getStats()).deadLettered);
+await queue.close();
+</solution>
+<expected>
+runs: 2 dead: [ 3 ] deadLettered: 0
+</expected>
+<explain><p>Returning normally tells the queue the job is finished, so it never spends the other two attempts on an address that will never work. Your own record (here <code>dead</code>, in InvoiceHub the ledger) says what happened.</p></explain>
+</question>

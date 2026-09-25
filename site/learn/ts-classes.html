@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Classes in TypeScript — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/ts-classes.md" title="Markdown version">
-  <meta name="description" content="Declare typed class properties, use parameter properties and access modifiers, compare private with #private, write abstract classes and classes that implement interfaces, and wire classes together with constructor injection.">
+  <meta name="description" content="Type class properties, use access modifiers and #private, write abstract classes and classes that implement interfaces, and wire them with constructor injection.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/ts-classes">
@@ -110,10 +110,10 @@
         <div class="lx-hero-tag">LEVEL 5 · LESSON 17 OF 23</div>
         <p class="lx-hero-part">Classes, modules and configuration <span class="lx-tier lx-tier-foundation" title="Foundation: Must understand before moving on.">Foundation</span></p>
         <h1>Classes in TypeScript</h1>
-        <p class="lx-hero-lead">Declare typed class properties, use parameter properties and access modifiers, compare private with #private, write abstract classes and classes that implement interfaces, and wire classes together with constructor injection.</p>
+        <p class="lx-hero-lead">Type class properties, use access modifiers and #private, write abstract classes and classes that implement interfaces, and wire them with constructor injection.</p>
         <ul class="lx-hero-meta">
           <li><strong>40 min</strong> to read and try</li>
-          <li><strong>You need:</strong> Generics, and the JavaScript classes lesson</li>
+          <li><strong>You need:</strong> Generics, Advanced and utility types, and this, prototypes and classes</li>
           <li><strong>You build:</strong> A TaskService that depends on interfaces, wired by hand in main.ts and tested with a fake repository and a fixed clock</li>
         </ul>
         <div class="lx-hero-actions">
@@ -122,6 +122,16 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Declare class properties with types and satisfy strictPropertyInitialization</li>
+          <li>Use parameter properties, and know why Node's type stripping refuses them</li>
+          <li>Choose between private and #private, knowing which one survives JSON.stringify</li>
+          <li>Write abstract classes and classes that implement interfaces</li>
+          <li>Inject dependencies through the constructor and swap in fakes for tests</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="properties">Properties and constructors</h2>
@@ -252,7 +262,7 @@ console.log(task);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx short.ts</code> and of the browser terminal</div><pre class="lx-no-copy">Task { id: 1, title: 'Buy oat milk', done: false }</pre></div>
 </figure>
 <p>Three properties, declared and filled in far fewer lines. <code>public done = false</code> also shows that a parameter property can have a default value. <code>readonly</code> means the id is set once in the constructor and can never change; <code>task.id = 2</code> would be error TS2540.</p>
-<div class="callout callout-note"><p class="lx-callout-label">NOT ERASABLE</p>Parameter properties generate code (the <code>this.id = id</code> lines), so Node's built-in type stripping, from <a href="/learn/ts-setup#run">Why TypeScript exists</a>, refuses them. <code>tsx</code>, <code>tsc</code> and the browser terminal all handle them. ZudoJS itself uses them, so this course runs code with <code>tsx</code>.</div>
+<div class="callout callout-note"><p class="lx-callout-label">NOT ERASABLE</p>Parameter properties generate code (the <code>this.id = id</code> lines), so Node's built-in type stripping, from <a href="/learn/ts-setup#run">Why TypeScript exists</a>, refuses them, and <code>erasableSyntaxOnly</code> reports them (<a href="/learn/ts-compiler#not-erased">What the TypeScript compiler does</a>). <code>tsx</code>, <code>tsc</code> and the browser terminal all handle them. ZudoJS itself uses them, so this course runs code with <code>tsx</code>.</div>
 </section>
 
 <section>
@@ -568,6 +578,18 @@ Found 1 error in broken-repository.ts:3</pre></div>
 <section>
 <h2 id="injection">Dependency injection by hand</h2>
 <p>Now the service with the business rules. It needs somewhere to store tasks and a way to know the current time. It could create them itself: <code>new MemoryTaskRepository()</code> and <code>new Date()</code>. But then it is stuck with them forever: no database later, and no way to test "is this task overdue?" without waiting for a real day to pass.</p>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>What should the service create itself?</h3><p><code>TaskService</code> adds tasks with a due date and lists the overdue ones. It needs somewhere to store tasks and a way to know the current time. Before reading on, decide:</p>
+<ol>
+<li>If the service calls <code>new MemoryTaskRepository()</code> itself, what has to change on the day you move to PostgreSQL?</li>
+<li>If it calls <code>new Date()</code> itself, how would a test check that a task becomes overdue three days later?</li>
+<li>What is the smallest thing the service needs from each dependency: a class, or just a few methods?</li>
+<li>Where in the program should the real repository and clock be created?</li>
+</ol><details class="lx-solution"><summary>Show the reasoning</summary><ol>
+<li>The service itself, and every test of it. A class that creates its own dependencies is welded to them.</li>
+<li>It could not without really waiting three days, or tricking the system clock. The current time is a dependency like any other.</li>
+<li>Just the methods it calls: <code>save</code> and <code>findAll</code> from storage, <code>now()</code> from the clock. Those become two small interfaces, so any object with those methods fits.</li>
+<li>In one place at the start of the program (the entry file), which passes them into the service. Tests pass fakes instead, and the service cannot tell the difference.</li>
+</ol></details></div>
 <p>Instead, the service <strong>asks for</strong> what it needs, in its constructor, typed as the interfaces. Whoever creates the service <strong>passes them in</strong>. This is called <strong>dependency injection</strong>, and passing them to the constructor is <strong>constructor injection</strong>:</p>
 <figure class="lx-example" data-index="10" data-file="task-service.ts" data-project="di">
 <figcaption class="lx-bar"><span class="lx-file">task-service.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="10"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
@@ -736,7 +758,7 @@ console.log("day 3:", await service.overdue());</script>
 day 0: []
 day 3: [ 'File taxes' ]</pre></div>
 </figure>
-<p>Three days pass in a microsecond, and every run prints the same thing. <code>TaskService</code> did not change at all: it cannot tell a fake from the real thing, because it only knows the interfaces. With the Vitest setup from <a href="/learn/testing-basics">the testing lesson</a>, the same idea becomes a test file:</p>
+<p>Three days pass in a microsecond, and every run prints the same thing. <code>TaskService</code> did not change at all: it cannot tell a fake from the real thing, because it only knows the interfaces. With Vitest, the test runner that <a href="/learn/testing-basics">Testing fundamentals</a> sets up in the backend course, the same idea becomes a test file:</p>
 <figure class="lx-example" data-index="14" data-file="task-service.test.ts" data-project="di">
 <figcaption class="lx-bar"><span class="lx-file">task-service.test.ts</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> describe<span class="t-pn">,</span> expect<span class="t-pn">,</span> it <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"vitest"</span><span class="t-pn">;</span>
@@ -835,7 +857,7 @@ console.log(counter.hit("ada@example.com"));</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx rate-counter.ts</code> and of the browser terminal</div><pre class="lx-no-copy">2 {}
 1</pre></div>
 </figure></details></div>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Inject the notifier</h3><p>Give <code>TaskService</code> a third dependency: a <code>Notifier</code> interface with <code>send(text: string): Promise&lt;void&gt;</code>. Add a method <code>remindOverdue()</code> that sends one message per overdue task. Test it with a fake notifier that stores the messages in an array.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="16" data-file="remind.ts" data-project="ex-remind">
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Inject the notifier</h3><p>Write a <code>ReminderService</code> with a method <code>remindOverdue()</code> that sends one message per overdue task and returns how many it sent. It takes two dependencies through its constructor: a function that returns the overdue titles (in the app, <code>() =&gt; service.overdue()</code>), and a <code>Notifier</code> interface with <code>send(text: string): Promise&lt;void&gt;</code>. Test it with a fake notifier that stores the messages in an array.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="16" data-file="remind.ts" data-project="ex-remind">
 <figcaption class="lx-bar"><span class="lx-file">remind.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="16"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">Notifier</span> <span class="t-pn">{</span>
   <span class="t-fn">send</span><span class="t-pn">(</span>text<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-kw">void</span><span class="t-op">&gt;</span><span class="t-pn">;</span>
@@ -894,7 +916,7 @@ const reminders = new ReminderService(async () => ["File taxes", "Call Ada"], fa
 console.log(await reminders.remindOverdue(), fake.sent);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx remind.ts</code> and of the browser terminal</div><pre class="lx-no-copy">2 [ '"File taxes" is overdue', '"Call Ada" is overdue' ]</pre></div>
 </figure>
-<p>This solution goes one step further: instead of the whole <code>TaskService</code>, the reminder service depends only on a function that returns overdue titles. Depending on the smallest thing you need makes testing even easier. A dependency can be a function type, not just an interface.</p></details></div>
+<p>The reminder service does not depend on the whole <code>TaskService</code>, only on a function that returns overdue titles. Depending on the smallest thing you need makes testing even easier: the test passes an inline <code>async</code> function instead of building a service. A dependency can be a function type, not just an interface.</p></details></div>
 </section>
 
 <section>
@@ -906,6 +928,7 @@ console.log(await reminders.remindOverdue(), fake.sent);</script>
 <li>An abstract class shares code and forces subclasses to fill in abstract methods. <code>implements</code> checks a class against an interface.</li>
 <li>Constructor injection: depend on interfaces, create the real objects in one place, and swap in fakes for tests.</li>
 </ul>
+<p>Next: <a href="/learn/ts-modules">Modules in TypeScript</a>, where a project is split into files that import types and values from each other.</p>
 </section>
       </div>
 
