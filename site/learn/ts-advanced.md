@@ -1,28 +1,36 @@
 ---
-title: "Advanced and utility types"
-description: "Build new types from existing ones with keyof, typeof, indexed access, mapped, conditional and template literal types, and use the built-in utility types (Partial, Pick, Omit, Record, ReturnType, Awaited and more) to keep one source of truth."
+title: "Advanced and utility types — ZudoJS Academy"
+description: "Derive types from one source of truth with keyof, typeof, indexed access and the utility types, and get a first look at mapped, conditional and template types."
 source: https://zudojs.oyinlola.site/learn/ts-advanced
 ---
 
-LESSON 37 OF 84
+LEVEL 5 · LESSON 16 OF 23
 
-TypeScript Foundation
+Generics and type operators Foundation
 
 # Advanced and utility types
 
-Build new types from existing ones with keyof, typeof, indexed access, mapped, conditional and template literal types, and use the built-in utility types (Partial, Pick, Omit, Record, ReturnType, Awaited and more) to keep one source of truth.
+Derive types from one source of truth with keyof, typeof, indexed access and the utility types, and get a first look at mapped, conditional and template types.
 
 - **45 min** to read and try
-- **You need:** Generics
+- **You need:** Generics and Designing generic APIs
 - **You build:** Task API types derived from one Task interface - create input, patch, summary, labels and event names - so they can never drift apart
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Derive types from values with typeof, keyof and indexed access
+- Keep one list for runtime and types with as const and (typeof LIST)[number]
+- Derive create, patch and summary shapes with Omit, Partial, Pick and Record
+- Get types from functions with ReturnType, Parameters and Awaited
+- Read simple mapped, conditional and template literal types
 
 ## One source of truth
 
 A Task API needs several shapes of a task: the full task, what a client sends to create one (no `id`), what it sends to change one (every field optional), a short summary for lists. You could write four interfaces by hand. Then someone adds a `priority` field to one and forgets the other three.
 
-This lesson shows how to **compute** types from other types, so that there is one definition and everything else follows from it. You already did a little of this in [Generics](https://zudojs.oyinlola.site/learn/ts-generics#constraints) with `keyof T` and `T[K]`.
+This lesson shows how to **compute** types from other types, so that there is one definition and everything else follows from it. You already did a little of this in [Generics](https://zudojs.oyinlola.site/learn/ts-generics#constraints) with `keyof T` and `T[K]`. This lesson is the everyday toolkit; the Advanced TypeScript course, which follows this one, gives each tool a lesson of its own.
 
 ## keyof and typeof
 
@@ -121,9 +129,11 @@ done
 7 home
 ```
 
-- `as const` tells TypeScript the array will never change, so it keeps the exact values: its type is `readonly ["todo", "doing", "done"]`, not `string[]`.
+- `as const` (from [Type inference in depth](https://zudojs.oyinlola.site/learn/ts-inference#widening)) tells TypeScript the array will never change, so it keeps the exact values: its type is `readonly ["todo", "doing", "done"]`, not `string[]`.
 - `(typeof STATUSES)[number]` is "the type of any element": `"todo" | "doing" | "done"`.
 - `STATUSES` still exists when the program runs, so you can loop over it, show it in a dropdown, or check input against it. Add a status to the array and the `Status` type follows.
+
+[Type operators](https://zudojs.oyinlola.site/learn/ts-type-operators) goes deeper into `typeof`, `keyof` and indexed access, including lookups inside generic functions.
 
 ## The utility types
 
@@ -141,8 +151,27 @@ TypeScript ships with generic types that transform other types. They are called 
 | `Awaited<T>` | What `await` gives for a `Promise<T>` |
 | `NonNullable<T>` | `T` without `null` and `undefined` |
 | `Exclude<U, X>` | The members of union `U` that are not in `X` |
+| `Extract<U, X>` | The members of union `U` that fit `X` |
 
 ### Input shapes: Omit, Partial and Pick
+
+REASON IT OUT
+
+### What may a client send?
+
+The Task API has three endpoints that receive or return tasks: create, update and list. Before deriving any type, decide for each field of `Task` (`id`, `title`, `status`, `tags`, `dueDate`):
+
+1. Which fields may a client send when creating a task, and which does the server decide?
+2. In an update, which fields may be left out? Which must never be changed?
+3. A client wants to remove a task's due date. How is that different from not mentioning the due date at all?
+4. A list only shows ids and titles. Should its items still carry the full task?
+
+**Show the reasoning**
+
+1. Everything except `id`: the server assigns ids. That is `Omit<Task, "id">`.
+2. Any field may be left out of an update, so every property is optional, but `id` is still not allowed: `Partial<Omit<Task, "id">>`.
+3. Removing sends `dueDate: null`; not mentioning it leaves the property out (`undefined`). The update code must treat those differently, which is why `applyPatch` below checks `=== undefined` instead of using `??` for `dueDate`.
+4. No: send only what is shown, `Pick<Task, "id" | "title">`, built by copying those two fields. Smaller responses leak less.
 
 Here are the Task API's shapes, all derived from the `Task` interface above:
 
@@ -316,7 +345,7 @@ Output of `npx tsx non-null.ts` and of the browser terminal
 [ 'todo', 'doing' ] [ 'ada@example.com', 'grace@example.com' ]
 ```
 
-`Exclude<Status, "done">` is `"todo" | "doing"`, and `NonNullable` leaves just `string`. Recent TypeScript versions also understand that `filter((email) => email != null)` removes the nulls, so the result is a `string[]` and fits `Email[]`.
+`Exclude<Status, "done">` is `"todo" | "doing"`, and `NonNullable` leaves just `string`. Since version 5.5, TypeScript also understands that `filter((email) => email != null)` removes the nulls, so the result is a `string[]` and fits `Email[]`.
 
 ## Mapped types
 
@@ -346,9 +375,9 @@ Output of `npx tsx mapped.ts` and of the browser terminal
 { title: 'Bu' } [ 'title' ]
 ```
 
-This is a form: `Touched` remembers which fields the user has visited, `Errors` holds a message per field, and `MyPartial` is exactly how the built-in `Partial` is written. Add a field to `Task`, and all three follow. (The `as keyof NewTask` is needed because `Object.keys` always returns `string[]`; [TypeScript and JavaScript together](https://zudojs.oyinlola.site/learn/ts-runtime#assertions) says when such an `as` is safe.)
+This is a form: `Touched` remembers which fields the user has visited, `Errors` holds a message per field, and `MyPartial` is exactly how the built-in `Partial` is written. Add a field to `Task`, and all three follow. (The `as keyof NewTask` is needed because `Object.keys` always returns `string[]`; [Type assertions](https://zudojs.oyinlola.site/learn/ts-assertions#justified) explains when such an `as` is safe.)
 
-Inside a mapped type, `?` and `readonly` add those marks, and `-?` and `-readonly` remove them. `Required<T>` is `{ [K in keyof T]-?: T[K] }`.
+Inside a mapped type, `?` and `readonly` add those marks, and `-?` and `-readonly` remove them. `Required<T>` is `{ [K in keyof T]-?: T[K] }`. [Utility types](https://zudojs.oyinlola.site/learn/ts-utility-types) and [Mapped types](https://zudojs.oyinlola.site/learn/ts-mapped-types), in the Advanced TypeScript course, build every utility type from these parts.
 
 ## Conditional types and infer
 
@@ -400,7 +429,7 @@ This file is written to fail, as a trick to *see* types: assign a wrong value, a
 - `ElementOf<boolean[]>` is `boolean`: `infer E` captured the element type.
 - `Unwrap<Promise<number>>` is `number`, and `Unwrap<string>` is just `string`, because it is not a promise. That is roughly how `Awaited` works.
 
-When the tested type is a union, a conditional type is applied to each member separately. That is how `Exclude<U, X>` works: it is `U extends X ? never : U`, and `never` members disappear from a union. You will rarely write conditional types in application code, but reading them helps you understand library types.
+When the tested type is a union, a conditional type is applied to each member separately. That is how `Exclude<U, X>` works: it is `U extends X ? never : U`, and `never` members disappear from a union. You will rarely write conditional types in application code, but reading them helps you understand library types. [Conditional types](https://zudojs.oyinlola.site/learn/ts-conditional-types) covers them in depth.
 
 ## Template literal types
 
@@ -463,7 +492,7 @@ events.ts:7:7 - error TS2322: Type '"tasks"' is not assignable to type '`/${stri
 Found 2 errors in the same file, starting at: events.ts:6
 ```
 
-TypeScript also has four built-in helpers for string types: `Uppercase`, `Lowercase`, `Capitalize` and `Uncapitalize`. For example, `\`on${Capitalize<Action>}\`` gives `"onCreated" | "onUpdated" | "onDeleted"`.
+TypeScript also has four built-in helpers for string types: `Uppercase`, `Lowercase`, `Capitalize` and `Uncapitalize`. For example, `\`on${Capitalize<Action>}\`` gives `"onCreated" | "onUpdated" | "onDeleted"`. [Template literal types](https://zudojs.oyinlola.site/learn/ts-template-literals) goes further, including taking strings apart with `infer`.
 
 ## Practice
 
@@ -550,6 +579,8 @@ Output of `npx tsx nullable.ts` and of the browser terminal
 - `Partial`, `Required`, `Readonly`, `Pick`, `Omit` and `Record` derive shapes from one interface. `ReturnType`, `Parameters` and `Awaited` derive types from functions.
 - Mapped types loop over keys; conditional types choose with `extends ? :` and capture parts with `infer`.
 - Template literal types build string unions such as event names, so typos do not compile.
+
+Next: [Classes in TypeScript](https://zudojs.oyinlola.site/learn/ts-classes), where classes get typed properties, access modifiers and interfaces to implement.
 
 ## Test yourself
 

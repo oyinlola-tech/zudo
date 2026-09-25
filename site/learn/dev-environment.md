@@ -1,22 +1,30 @@
 ---
-title: "Your developer environment"
-description: "Meet the tools a developer uses every day, the terminal, a code editor and the browser's developer tools, and learn to move around your files by typing commands."
+title: "Your developer environment — ZudoJS Academy"
+description: "Meet the tools a developer uses every day, the terminal, a code editor and the browser's devtools, and learn to move around your files by typing commands."
 source: https://zudojs.oyinlola.site/learn/dev-environment
 ---
 
-LESSON 2 OF 84
+LEVEL 1 · LESSON 2 OF 18
 
 Start here Foundation
 
 # Your developer environment
 
-Meet the tools a developer uses every day, the terminal, a code editor and the browser's developer tools, and learn to move around your files by typing commands.
+Meet the tools a developer uses every day, the terminal, a code editor and the browser's devtools, and learn to move around your files by typing commands.
 
 - **35 min** to read and try
 - **You need:** A computer where you can install programs
 - **You build:** A projects folder made from the terminal, opened in VS Code
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain files, folders and paths, and read a path on Linux, macOS and Windows
+- Open a terminal and use pwd, ls, cd, mkdir, touch, echo and cat to build and read a folder tree
+- Read a shell error message and fix the command, including command not found and case mistakes
+- Explain how the shell finds programs through the PATH, and why a new terminal is needed after an install
+- Open a project in VS Code and run JavaScript in the browser's devtools Console
 
 ## Files, folders and paths
 
@@ -173,6 +181,25 @@ Your paths can differ, and that is fine. In PowerShell, use `Get-Command node`. 
 >
 > Download tools only from their official website or your system's package manager. Be careful with commands copied from the internet that start with `sudo` (Linux, macOS) or need "Run as administrator" (Windows): they can change anything on your computer.
 
+REASON IT OUT
+
+### Installed, but command not found
+
+Chidi installs Git with the official installer. In the terminal he already had open, he types `git --version` and gets `command not found`. Before you read the answer, think it through:
+
+- What exactly does "command not found" tell you? What does it *not* tell you?
+- List the possible causes, from the most likely to the least.
+- For each cause, which quick check would confirm or rule it out?
+- Someone on a forum says "run it with `sudo`". Would that help?
+
+**Show the reasoning**
+
+The message only says one thing: the shell looked through the folders on its PATH and found no program called `git`. It does not say whether Git is installed somewhere else, or whether the installation failed.
+
+Likely causes, in order: (1) the terminal was opened *before* the install, so it still has the old PATH; (2) a typing mistake in the command; (3) the installer did not add Git's folder to the PATH, or the install did not finish. The checks follow the same order: open a new terminal and try again; read the command letter by letter; run `which git` (or `Get-Command git` in PowerShell) and, if it still finds nothing, run the installer again and read what it says.
+
+`sudo` would not help. It runs a command with administrator rights, but the problem is that the shell cannot *find* the program, not that it is not allowed to run it. Reaching for more power before you understand the error is how people damage their systems. Read the message, form a guess, check the guess.
+
 ## A code editor
 
 Code is plain text, but you want more than a notepad: colours for the different parts of the code, warnings about mistakes, and a terminal in the same window. This course uses [Visual Studio Code](https://code.visualstudio.com/) (VS Code). It is free and works on Windows, macOS and Linux.
@@ -218,6 +245,7 @@ console.js
 console.log(2 + 3);
 console.log("Tasks:", ["Buy milk", "Write report"].length);
 console.log("Today is a good day to learn".toUpperCase());
+console.log("PROJECTS".toLowerCase());
 ```
 
 Output of `node console.js` and of the browser terminal
@@ -226,9 +254,10 @@ Output of `node console.js` and of the browser terminal
 5
 Tasks: 2
 TODAY IS A GOOD DAY TO LEARN
+projects
 ```
 
-The browser did the sum, counted the two tasks in the list, and turned the sentence into capital letters. In the devtools Console you will also see `undefined` after each line. That is the console telling you `console.log` gives back no value. You can ignore it.
+The browser did the sum, counted the two tasks in the list (a **list** is several values between square brackets, and `.length` counts them), turned the sentence into capital letters, and turned `PROJECTS` into small letters. `.length` works on text too: `"notes.txt".length` is the number of characters, 9. In the devtools Console you will also see `undefined` after each line. That is the console telling you `console.log` gives back no value. You can ignore it.
 
 > NOTE
 >
@@ -249,7 +278,7 @@ $ git --version
 git version 2.53.0
 ```
 
-If it is missing, install it from [git-scm.com](https://git-scm.com/downloads) or with your package manager. The [Git lesson](https://zudojs.oyinlola.site/learn/git) teaches it properly, once you have code worth saving.
+If it is missing, install it from [git-scm.com](https://git-scm.com/downloads) or with your package manager. [Git and GitHub](https://zudojs.oyinlola.site/learn/git), in a later course, teaches it properly, once you have code worth saving.
 
 ## Practice
 
@@ -322,7 +351,7 @@ DEVELOPER
 - VS Code opens a whole project folder with `code .`. The browser's devtools Console runs JavaScript on the spot.
 - Git records a project's history; GitHub stores it online.
 
-Next: what actually happens when a computer runs your code.
+Next: [How programs run](https://zudojs.oyinlola.site/learn/how-programs-run), what actually happens between the code you type and the result on the screen.
 
 ## Test yourself
 

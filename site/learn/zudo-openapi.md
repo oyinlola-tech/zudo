@@ -1,22 +1,30 @@
 ---
-title: "OpenAPI documents"
-description: "Describe the Task API in an OpenAPI document with @zudojs/openapi. Turn your schemas into components, choose between OpenAPI 3.0 and 3.1, validate the document, save it as JSON or YAML, and serve a documentation page."
+title: "OpenAPI documents — ZudoJS Academy"
+description: "Describe the Task API in an OpenAPI document with @zudojs/openapi: schemas as components, OpenAPI 3.0 or 3.1, validation, JSON or YAML, a docs page."
 source: https://zudojs.oyinlola.site/learn/zudo-openapi
 ---
 
-LESSON 72 OF 84
+LEVEL 14 · LESSON 9 OF 18
 
-APIs and services Advanced
+Services and contracts Advanced
 
 # OpenAPI documents
 
-Describe the Task API in an OpenAPI document with @zudojs/openapi. Turn your schemas into components, choose between OpenAPI 3.0 and 3.1, validate the document, save it as JSON or YAML, and serve a documentation page.
+Describe the Task API in an OpenAPI document with @zudojs/openapi: schemas as components, OpenAPI 3.0 or 3.1, validation, JSON or YAML, a docs page.
 
 - **40 min** to read and try
 - **You need:** The Task API project, and the lessons on validation, HTTP routing and @zudojs/api
 - **You build:** An openapi.json and openapi.yaml for the Task API, checked by a validator and served with a documentation page at /docs
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Build an OpenAPI document from routes and turn @zudojs/schema schemas into shared components
+- Choose OpenAPI 3.0 or 3.1 and let the manager write the right keywords for each
+- Validate a document and tell a real error from a warning before it reaches your users
+- Save the document as JSON or YAML and serve it with a Swagger UI docs page
+- Generate the document straight from an @zudojs/http router or an @zudojs/api registry, with one source of truth
 
 ## What OpenAPI is
 
@@ -202,6 +210,16 @@ Output of `npx tsx versions.ts`
 You never write these by hand: pass `version` to the manager and every schema uses the right spelling. Choose 3.1 unless a tool you must support only reads 3.0.
 
 ## Validate the document
+
+REASON IT OUT
+
+### A route forgets to declare its :id parameter. Another route names a security scheme that was never added. Should both stop the build?
+
+Think about what each mistake actually costs a reader of the document. A missing parameter declaration means the manager still knows a `{…}` slot exists in the path (it can see the path itself), it just does not yet know the type is really an integer rather than any string. A security scheme that does not exist in `components.securitySchemes` means a client reading the document has no way at all to work out how to authenticate — there is nothing to fall back to.
+
+**Show the reasoning**
+
+The manager treats them differently for exactly this reason. The forgotten parameter is recoverable: it fills in a sensible default (a required string) from the path itself, documents it, and only records a warning, because a document with a slightly loose type is still usable. The unknown security scheme is not recoverable: the manager cannot invent a scheme that does not exist, so the reference stays broken and any tool trying to build a request would not know what header or token to send. That is a real error, and `generate(true)` throws rather than silently shipping a document that lies about how to call the API. The general rule: something the manager can safely fill in for you is a warning; something it cannot fill in, only flag, is an error.
 
 A document can be valid JSON and still be wrong. `manager.validate()` checks the OpenAPI rules and returns `{ valid, errors, warnings }`. This document has two mistakes that are easy to make:
 
@@ -552,7 +570,7 @@ Run it in CI next to your tests. A broken reference or a forgotten parameter the
 - With `@zudojs/http`, routes carry their own `openapi` option. `generateOpenAPIDocument(router)` builds the document and `mountOpenAPI(router)` serves `/openapi.json` and `/docs`.
 - Documentation is public. Hiding a route from it is not security.
 
-Next, you test the Task API: unit tests, fakes and integration tests with `@zudojs/testing`.
+Next, [Testing a ZudoJS app](https://zudojs.oyinlola.site/learn/zudo-testing) tests the Task API: unit tests, fakes and integration tests with `@zudojs/testing`.
 
 ## Test yourself
 

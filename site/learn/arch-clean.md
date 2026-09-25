@@ -1,0 +1,1558 @@
+---
+title: "Clean architecture: ports and adapters — ZudoJS Academy"
+description: "Rebuild the BookStore's order flow as domain, use cases, ports and adapters, run it over HTTP and a CLI, and enforce the dependency rule with a checker."
+source: https://zudojs.oyinlola.site/learn/arch-clean
+---
+
+LEVEL 11 · LESSON 7 OF 12
+
+Architecture Core
+
+# Clean architecture: ports and adapters
+
+Rebuild the BookStore's order flow as domain, use cases, ports and adapters, run it over HTTP and a CLI, and enforce the dependency rule with a checker.
+
+- **55 min** to read and try
+- **You need:** Backend architecture, Type-safe API layers and Design principles through refactoring
+- **You build:** The BookStore's order flow (place, pay, cancel, expire) in clean architecture, with in-memory and PGlite adapters, two driving adapters, printed tests and an import-rule checker
+
+  [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Sort a feature's code into domain, application, adapters and composition root, and say why each piece lives where it does
+- Write a domain model that protects its own rules, with value objects, results and domain events
+- Define ports from the use case's point of view and implement them with in-memory and database adapters
+- Drive the same use cases from HTTP and from a command line without duplicating a rule
+- Enforce the dependency rule with an import checker that can run in CI
+- Judge when the extra layers pay off and when they are ceremony
+
+## The phone order and the midnight job
+
+The BookStore's order route from [Backend architecture](https://zudojs.oyinlola.site/learn/backend-architecture) works. Then two new jobs arrive. The shop starts taking orders by phone, so staff need a small command-line tool to place them. And unpaid orders hold copies that other customers want, so a background job must cancel orders that stay unpaid for more than 30 minutes and put the copies back on the shelf.
+
+Here is a compact version of an order route as many projects write it, followed by the phone script and the job, each written later by a different developer:
+
+before.ts
+
+```ts
+interface HttpRequest {
+  readonly headers: Record<string, string | undefined>;
+  readonly body: unknown;
+}
+
+const books = new Map([["b1", { title: "Things Fall Apart", priceKobo: 450_000, stock: 3 }]]);
+const orders: { id: number; customer: string; bookId: string; quantity: number; status: string }[] = [];
+
+export async function postOrder(req: HttpRequest) {
+  const customer = req.headers["x-customer"];
+  if (!customer) return { status: 401, body: { error: "log in first" } };
+  const { bookId, quantity } = req.body as { bookId: string; quantity: number };
+  const book = books.get(bookId);
+  if (!book) return { status: 404, body: { error: "no such book" } };
+  if (quantity > 5) return { status: 400, body: { error: "at most 5 copies" } };
+  if (book.stock < quantity) return { status: 409, body: { error: "out of stock" } };
+  book.stock -= quantity;
+  const order = { id: orders.length + 1, customer, bookId, quantity, status: "placed" };
+  orders.push(order);
+  const total = `₦${((book.priceKobo * quantity) / 100).toFixed(2)}`;
+  console.log(`[mail] ${customer}: order ${order.id} placed, ${total}`);
+  return { status: 201, body: { id: order.id, total } };
+}
+
+export async function payOrder(id: number) {
+  const order = orders.find((o) => o.id === id);
+  if (order) order.status = "paid";
+}
+
+// The phone-order script, written later by another developer:
+const reply = await postOrder({ headers: { "x-customer": "ada" }, body: { bookId: "b1", quantity: 2 } });
+console.log("phone order:", reply.status);
+
+// The expiry job, written later still:
+for (const order of orders) {
+  order.status = "cancelled";
+  books.get(order.bookId)!.stock += order.quantity;
+}
+await payOrder(1);
+console.log(orders[0], "stock:", books.get("b1")!.stock);
+```
+
+Output of `npx tsx before.ts` and of the browser terminal
+
+```json
+[mail] ada: order 1 placed, ₦9000.00
+phone order: 201
+{ id: 1, customer: 'ada', bookId: 'b1', quantity: 2, status: 'paid' } stock: 3
+```
+
+Read what happened. The phone script had to *pretend to be an HTTP request*, with a header and a body, because that is the only way into the order rules. The job needed "cancel an order and put the copies back", found no function for it, and wrote the rule again. And `payOrder` accepted a cancelled order. The last line shows the result: an order marked paid whose two copies are back on the shelf, ready to be sold a second time.
+
+None of these bugs is a typo. They all come from where the rules live. "At most 5 copies", "an order can be paid only while it is placed" and "cancelling returns the copies" are rules of the *shop*, but they live inside an HTTP handler and a loop, so every new way into the system either fakes HTTP or copies the rules and gets them slightly wrong.
+
+Backend architecture split the code into layers. This lesson goes further, in three ways: the business rules move into a **domain model** that cannot be put into an invalid state, every way in and out of the application becomes a replaceable **adapter**, and a small program **checks** the dependency rule, so the design survives the next developer.
+
+## Which rule belongs where?
+
+REASON IT OUT
+
+### Sort the BookStore's rules
+
+Here are twelve facts about the BookStore's orders. Before reading on, decide for each one: is it a rule of the **shop** (true even if the shop used paper), a step of **one use case** of this application, or a detail of a **technology** (HTTP, a database, a payment provider)?
+
+1. A customer may order at most 5 copies of one book per order.
+2. An order can be paid only while it is placed; a cancelled order can never be paid.
+3. Money is counted in whole kobo; there is no such thing as half a kobo.
+4. "Place an order" means: look up the books, check the rules, reserve the copies, save the order, announce it.
+5. A refused order is answered with status 409.
+6. The response shows the total as `"₦16,500.00"`.
+7. Copies are reserved with one SQL `UPDATE … WHERE stock >= $2`.
+8. Unpaid orders expire after 30 minutes.
+9. The payment provider needs an idempotency key so a retried charge is not taken twice.
+10. Customers may only see and pay their own orders.
+11. The customer id comes from a verified session token, never from the request body.
+12. The time an order was placed comes from the clock.
+
+**Show the reasoning**
+
+**Shop rules (domain):** 1, 2 and 3. They would be true in a paper ledger, and they must hold whoever calls: the website, the phone tool or the job. Rule 8 is borderline: "unpaid orders expire" is the shop's policy, but 30 is a setting, so the rule lives in a use case and the number is passed in.
+
+**Use case steps (application):** 4, 8 and 10. They describe what *this application* does, in order, and which checks it makes about who is asking. Rule 10 is an application rule rather than a domain rule because it is about the caller, not about orders.
+
+**Technology details (adapters):** 5 and 6 belong to HTTP and to presentation. 7 is how one database keeps rule "no negative stock" safe under concurrency. 9 is how one payment provider avoids double charges, although the use case must supply a stable key. 11 is how the HTTP adapter learns who the caller is.
+
+Rule 12 is the subtle one. The *fact* that an order has a placing time is domain; *reading the system clock* is a technology detail, because a test cannot control it. So the domain receives the time as an argument, and the application gets it from a `Clock` it is given.
+
+Notice that the before-code mixed all three kinds in one function, which is why a second caller could not reuse the first kind without dragging the other two along.
+
+## Four rings and one rule
+
+The architecture you are about to build has several names: **clean architecture** (Robert C. Martin), **hexagonal architecture** or **ports and adapters** (Alistair Cockburn), and **onion architecture** (Jeffrey Palermo). They differ in drawings and vocabulary, not in the core idea: put the business rules in the middle, put every technology at the edge, and let dependencies point only inward.
+
+```ts
+  ┌──────────────────────────────────────────────────────────────┐
+  │ composition root (main.ts): creates and connects everything  │
+  │  ┌────────────────────────────────────────────────────────┐  │
+  │  │ adapters                                               │  │
+  │  │  driving: HTTP handler, CLI, job                       │  │
+  │  │  driven: repositories, stock, payments, clock, ids     │  │
+  │  │  ┌──────────────────────────────────────────────────┐  │  │
+  │  │  │ application: use cases + ports (interfaces)      │  │  │
+  │  │  │  PlaceOrder, PayOrder, CancelOrder, Expire…      │  │  │
+  │  │  │  ┌────────────────────────────────────────────┐  │  │  │
+  │  │  │  │ domain: Order, Money, rules, events        │  │  │  │
+  │  │  │  └────────────────────────────────────────────┘  │  │  │
+  │  │  └──────────────────────────────────────────────────┘  │  │
+  │  └────────────────────────────────────────────────────────┘  │
+  └──────────────────────────────────────────────────────────────┘
+        every import points inward, from an outer ring to an inner one
+```
+
+The rings of this lesson's BookStore. Inner rings never name anything in an outer ring.
+
+The vocabulary, defined once:
+
+| Term | Meaning | In this lesson |
+| --- | --- | --- |
+| **Entity** | A domain object with an identity that stays the same while its data changes. | `Order` (ord-1 is ord-1 whether placed or paid) |
+| **Value object** | A domain object defined only by its value, immutable, with its own rules. | `Money` (₦4,500 is ₦4,500) |
+| **Aggregate** | An entity plus the objects it owns, changed only through the entity, saved as one unit. | an `Order` with its lines |
+| **Use case** | One thing a user can do with the application, written as steps. Also called an *interactor* or *application service*. | `PlaceOrder`, `PayOrder` |
+| **Port** | An interface owned by the application that says what it needs from, or offers to, the outside world. | `OrderRepository`, `PaymentGateway` |
+| **Adapter** | Code that connects one technology to one port. | `InMemoryOrders`, the HTTP handler |
+| **Driving adapter** | Calls *into* the application (a user or system starts the action). Also called primary. | HTTP handler, CLI, expiry job |
+| **Driven adapter** | Is called *by* the application (the application starts the action). Also called secondary. | repositories, payment gateway, clock |
+
+The **dependency rule** says that source code dependencies point only inward. The domain imports nothing outside itself. The application imports the domain. Adapters import the application and the domain. Only the composition root, the `main` file, knows every concrete class. When the application needs something from outside, like storage, it does not import a database adapter; it declares a port, and the adapter implements the port. The *call* goes outward at runtime while the *import* points inward. This reversal is called **dependency inversion**, the D of SOLID.
+
+## The domain: rules that cannot be skipped
+
+The project uses one folder per ring: `src/domain`, `src/application`, `src/adapters`, and `src/main.ts`. The domain starts with two small building blocks. `Result` is a discriminated union ([Unions](https://zudojs.oyinlola.site/learn/ts-unions)) for expected failures: a refused order is a normal outcome, not a crash, so the domain returns it instead of throwing it.
+
+src/domain/result.ts
+
+```ts
+export type Result<T, E> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: E };
+
+export function ok<T>(value: T): Result<T, never> {
+  return { ok: true, value };
+}
+
+export function fail<E>(error: E): Result<never, E> {
+  return { ok: false, error };
+}
+```
+
+`Money` is a value object. Its constructor is private, so the only way to get one is `Money.ofKobo`, which refuses fractions and negative amounts. Every `Money` in the program is therefore valid, and no other code needs to check again. Its methods return new values; nothing changes a `Money` after it exists.
+
+src/domain/money.ts
+
+```ts
+export class Money {
+  private constructor(readonly kobo: number) {}
+
+  static readonly zero = new Money(0);
+
+  static ofKobo(kobo: number): Money {
+    if (!Number.isSafeInteger(kobo) || kobo < 0) {
+      throw new RangeError(`Money needs a whole, non-negative number of kobo, got ${kobo}`);
+    }
+    return new Money(kobo);
+  }
+
+  plus(other: Money): Money {
+    return Money.ofKobo(this.kobo + other.kobo);
+  }
+
+  times(quantity: number): Money {
+    return Money.ofKobo(this.kobo * quantity);
+  }
+
+  equals(other: Money): boolean {
+    return this.kobo === other.kobo;
+  }
+}
+```
+
+Notice what `Money` does *not* do: format itself as `"₦16,500.00"`. Formatting is presentation, and a CLI, an e-mail and a JSON API may all want different formats. That belongs in an adapter.
+
+### The Order aggregate
+
+Now the entity. Its state is in a private field, so no code outside the class can set `status` directly, which is exactly what the midnight job did. Every change goes through a method that checks the rule first:
+
+src/domain/order.ts
+
+```ts
+import { Money } from "./money.js";
+import { fail, ok } from "./result.js";
+import type { Result } from "./result.js";
+
+export const MAX_COPIES_PER_LINE = 5;
+
+export type OrderStatus = "placed" | "paid" | "cancelled";
+
+export interface OrderLine {
+  readonly bookId: string;
+  readonly title: string;
+  readonly unitPrice: Money;
+  readonly quantity: number;
+}
+
+export interface OrderState {
+  readonly id: string;
+  readonly customerId: string;
+  readonly lines: readonly OrderLine[];
+  readonly status: OrderStatus;
+  readonly placedAt: Date;
+  readonly paymentRef: string | null;
+}
+
+export type OrderProblem =
+  | { readonly code: "empty_order" }
+  | { readonly code: "bad_quantity"; readonly bookId: string; readonly max: number }
+  | { readonly code: "wrong_status"; readonly action: "pay" | "cancel"; readonly status: OrderStatus };
+
+export type OrderEvent =
+  | { readonly type: "OrderPlaced"; readonly orderId: string; readonly total: Money }
+  | { readonly type: "OrderPaid"; readonly orderId: string; readonly paymentRef: string }
+  | { readonly type: "OrderCancelled"; readonly orderId: string; readonly reason: string };
+
+export class Order {
+  #state: OrderState;
+  #events: OrderEvent[] = [];
+
+  private constructor(state: OrderState) {
+    this.#state = state;
+  }
+
+  static place(id: string, customerId: string, lines: readonly OrderLine[], now: Date): Result<Order, OrderProblem> {
+    if (lines.length === 0) return fail({ code: "empty_order" });
+    for (const line of lines) {
+      if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > MAX_COPIES_PER_LINE) {
+        return fail({ code: "bad_quantity", bookId: line.bookId, max: MAX_COPIES_PER_LINE });
+      }
+    }
+    const order = new Order({ id, customerId, lines: [...lines], status: "placed", placedAt: now, paymentRef: null });
+    order.#events.push({ type: "OrderPlaced", orderId: id, total: order.total });
+    return ok(order);
+  }
+
+  static restore(state: OrderState): Order {
+    return new Order(state);
+  }
+
+  get id(): string {
+    return this.#state.id;
+  }
+
+  get customerId(): string {
+    return this.#state.customerId;
+  }
+
+  get status(): OrderStatus {
+    return this.#state.status;
+  }
+
+  get total(): Money {
+    return this.#state.lines.reduce((sum, line) => sum.plus(line.unitPrice.times(line.quantity)), Money.zero);
+  }
+
+  snapshot(): OrderState {
+    return this.#state;
+  }
+
+  can(action: "pay" | "cancel"): Result<void, OrderProblem> {
+    if (this.#state.status !== "placed") return fail({ code: "wrong_status", action, status: this.#state.status });
+    return ok(undefined);
+  }
+
+  pay(paymentRef: string): Result<void, OrderProblem> {
+    const allowed = this.can("pay");
+    if (!allowed.ok) return allowed;
+    this.#state = { ...this.#state, status: "paid", paymentRef };
+    this.#events.push({ type: "OrderPaid", orderId: this.id, paymentRef });
+    return allowed;
+  }
+
+  cancel(reason: string): Result<void, OrderProblem> {
+    const allowed = this.can("cancel");
+    if (!allowed.ok) return allowed;
+    this.#state = { ...this.#state, status: "cancelled" };
+    this.#events.push({ type: "OrderCancelled", orderId: this.id, reason });
+    return allowed;
+  }
+
+  pullEvents(): OrderEvent[] {
+    const events = this.#events;
+    this.#events = [];
+    return events;
+  }
+}
+```
+
+- `Order.place` is the only way to create a *new* order, so an empty order or 9 copies of one book cannot exist. `Order.restore` rebuilds an order that already exists in storage; it trusts its input because the order was valid when it was saved.
+- `place` takes the time as the argument `now`. The domain never reads the clock, so its results depend only on its inputs, like the pure functions of [Functional JavaScript](https://zudojs.oyinlola.site/learn/js-functional).
+- `can("pay")` lets a use case ask before it does something expensive, such as charging a card, and `pay` asks the same question again, so the rule holds even for a caller that forgot to ask.
+- Each successful change records a **domain event**: a fact in the past tense, like `OrderPaid`. The order only records events; `pullEvents` hands them to the application, which decides how to publish them. [A type-safe event system](https://zudojs.oyinlola.site/learn/ts-typed-events) built the kind of bus they would go to.
+
+try-domain.ts
+
+```ts
+import { Money } from "./src/domain/money.js";
+import { Order } from "./src/domain/order.js";
+
+const line = { bookId: "b1", title: "Things Fall Apart", unitPrice: Money.ofKobo(450_000), quantity: 2 };
+const placed = Order.place("ord-1", "ada", [line], new Date("2026-09-24T09:00:00Z"));
+if (!placed.ok) throw new Error("expected an order");
+const order = placed.value;
+
+console.log(order.status, order.total.kobo);
+console.log(order.cancel("changed my mind"));
+console.log(order.pay("pay-ref-1"));
+console.log(order.pullEvents().map((event) => event.type));
+console.log(Order.place("ord-2", "ada", [{ ...line, quantity: 9 }], new Date("2026-09-24T09:05:00Z")));
+
+try {
+  Money.ofKobo(99.5);
+} catch (error) {
+  console.log(String(error));
+}
+```
+
+Output of `npx tsx try-domain.ts` and of the browser terminal
+
+```ts
+placed 900000
+{ ok: true, value: undefined }
+{
+  ok: false,
+  error: { code: 'wrong_status', action: 'pay', status: 'cancelled' }
+}
+[ 'OrderPlaced', 'OrderCancelled' ]
+{ ok: false, error: { code: 'bad_quantity', bookId: 'b1', max: 5 } }
+RangeError: Money needs a whole, non-negative number of kobo, got 99.5
+```
+
+The bug from the opening can no longer be written: once the order is cancelled, `pay` answers with `wrong_status` and changes nothing. And this test needed no server, no database and no fake of any kind.
+
+> NOTE
+>
+> An object that only holds data, with all its rules in services around it, is called an **anemic domain model**. The before-code's order was one: `{ status: string }` that anybody could set. Anemic models are fine for simple data. Once an object has states and rules about moving between them, put the rules inside it, where no caller can skip them.
+
+## The application: ports and use cases
+
+The use cases need books, stock, storage, payments, a way to publish events, the time and new ids. The application states each need as a port. Ports are written from the application's point of view, in its words, not in the words of any technology: `reserve(items)`, not `UPDATE books`.
+
+src/application/ports.ts
+
+```ts
+import type { Money } from "../domain/money.js";
+import type { Order, OrderEvent } from "../domain/order.js";
+import type { Result } from "../domain/result.js";
+
+export interface BookInfo {
+  readonly id: string;
+  readonly title: string;
+  readonly price: Money;
+}
+
+export interface StockRequest {
+  readonly bookId: string;
+  readonly quantity: number;
+}
+
+export interface OutOfStock {
+  readonly code: "out_of_stock";
+  readonly bookId: string;
+  readonly left: number;
+}
+
+export interface Catalog {
+  findBooks(ids: readonly string[]): Promise<BookInfo[]>;
+  reserve(items: readonly StockRequest[]): Promise<Result<void, OutOfStock>>;
+  release(items: readonly StockRequest[]): Promise<void>;
+}
+
+export interface OrderRepository {
+  get(id: string): Promise<Order | undefined>;
+  save(order: Order): Promise<void>;
+  listPlacedBefore(time: Date): Promise<Order[]>;
+}
+
+export interface PaymentGateway {
+  charge(request: { readonly orderId: string; readonly amount: Money; readonly idempotencyKey: string }): Promise<Result<string, string>>;
+}
+
+export interface EventPublisher {
+  publish(events: readonly OrderEvent[]): Promise<void>;
+}
+
+export interface Clock {
+  now(): Date;
+}
+
+export interface IdGenerator {
+  next(): string;
+}
+```
+
+`reserve` is **all or nothing**: either every copy of every line is reserved, or none is. That promise is part of the port, and each adapter must keep it; a database adapter would use a transaction. The `Clock` and `IdGenerator` ports exist for one reason: tests must be able to control time and ids.
+
+### What a use case returns
+
+A use case should not hand the `Order` entity to an adapter. An adapter holding the entity could call `order.cancel()` itself, skipping the use case, its ownership check and its stock release. So use cases return an **output model**: plain, read-only data made by a mapper, and a union of every failure the caller may have to handle:
+
+src/application/results.ts
+
+```ts
+import type { Order, OrderProblem, OrderStatus } from "../domain/order.js";
+import type { OutOfStock } from "./ports.js";
+
+export interface OrderSummary {
+  readonly id: string;
+  readonly status: OrderStatus;
+  readonly totalKobo: number;
+  readonly lines: readonly { readonly title: string; readonly quantity: number }[];
+}
+
+export type OrderFailure =
+  | OrderProblem
+  | OutOfStock
+  | { readonly code: "unknown_book"; readonly bookId: string }
+  | { readonly code: "order_not_found"; readonly orderId: string }
+  | { readonly code: "payment_declined"; readonly reason: string };
+
+export function toSummary(order: Order): OrderSummary {
+  const state = order.snapshot();
+  return {
+    id: state.id,
+    status: state.status,
+    totalKobo: order.total.kobo,
+    lines: state.lines.map((line) => ({ title: line.title, quantity: line.quantity })),
+  };
+}
+```
+
+Placing an order, as steps:
+
+src/application/place-order.ts
+
+```ts
+import { Order } from "../domain/order.js";
+import type { OrderLine } from "../domain/order.js";
+import { fail, ok } from "../domain/result.js";
+import type { Result } from "../domain/result.js";
+import type { Catalog, Clock, EventPublisher, IdGenerator, OrderRepository, StockRequest } from "./ports.js";
+import { toSummary } from "./results.js";
+import type { OrderFailure, OrderSummary } from "./results.js";
+
+export interface PlaceOrderCommand {
+  readonly customerId: string;
+  readonly items: readonly StockRequest[];
+}
+
+export interface PlaceOrderDeps {
+  readonly catalog: Catalog;
+  readonly orders: OrderRepository;
+  readonly events: EventPublisher;
+  readonly clock: Clock;
+  readonly ids: IdGenerator;
+}
+
+export class PlaceOrder {
+  constructor(private readonly deps: PlaceOrderDeps) {}
+
+  async execute(command: PlaceOrderCommand): Promise<Result<OrderSummary, OrderFailure>> {
+    const { catalog, orders, events, clock, ids } = this.deps;
+    const books = await catalog.findBooks(command.items.map((item) => item.bookId));
+    const lines: OrderLine[] = [];
+    for (const item of command.items) {
+      const book = books.find((candidate) => candidate.id === item.bookId);
+      if (book === undefined) return fail({ code: "unknown_book", bookId: item.bookId });
+      lines.push({ bookId: book.id, title: book.title, unitPrice: book.price, quantity: item.quantity });
+    }
+
+    const placed = Order.place(ids.next(), command.customerId, lines, clock.now());
+    if (!placed.ok) return placed;
+    const order = placed.value;
+
+    const reserved = await catalog.reserve(command.items);
+    if (!reserved.ok) return reserved;
+    try {
+      await orders.save(order);
+    } catch (error) {
+      await catalog.release(command.items);
+      throw error;
+    }
+    await events.publish(order.pullEvents());
+    return ok(toSummary(order));
+  }
+}
+```
+
+REASON IT OUT
+
+### What if a step fails halfway?
+
+`execute` has four steps with side effects or possible failures: `reserve`, `save`, `publish`, and the id taken from the generator. Before reading the answer, ask of each: what if it fails, and what if the *next* one fails after it succeeded?
+
+**Show the reasoning**
+
+**The rules are checked before anything changes.** `Order.place` runs before `reserve`, so a 9-copy order is refused while nothing has been touched. An id is used up, which is harmless: database sequences do the same, and nobody should expect order numbers without gaps.
+
+**`reserve` fails:** it is all or nothing, so no stock changed. Return the failure.
+
+**`save` throws after `reserve` succeeded:** the copies are held for an order that does not exist. The `catch` gives them back and rethrows. That is a **compensating action**: undoing a step by hand because the steps are not in one transaction. It is imperfect (what if `release` fails too?), which is why a real database adapter puts stock and order in one transaction; see [production concerns](#production).
+
+**`publish` fails after `save`:** the order exists but nobody hears about it, so no e-mail is sent. Retrying the whole use case would place a second order. The standard fix, the **outbox**, saves the events in the same transaction as the order and publishes them later; [Architecture styles](https://zudojs.oyinlola.site/learn/arch-styles) builds one.
+
+Paying, cancelling and expiring share the same shape: load, check, act, save, publish. `findOwn` answers "not found" for an order that exists but belongs to someone else, so a customer cannot even learn that `ord-3` exists:
+
+src/application/order-actions.ts
+
+```ts
+import type { Order } from "../domain/order.js";
+import { fail, ok } from "../domain/result.js";
+import type { Result } from "../domain/result.js";
+import type { Catalog, Clock, EventPublisher, OrderRepository, PaymentGateway } from "./ports.js";
+import { toSummary } from "./results.js";
+import type { OrderFailure, OrderSummary } from "./results.js";
+
+export interface OrderCommand {
+  readonly customerId: string;
+  readonly orderId: string;
+}
+
+type Outcome = Promise<Result<OrderSummary, OrderFailure>>;
+
+async function findOwn(orders: OrderRepository, command: OrderCommand): Promise<Result<Order, OrderFailure>> {
+  const order = await orders.get(command.orderId);
+  if (order === undefined || order.customerId !== command.customerId) {
+    return fail({ code: "order_not_found", orderId: command.orderId });
+  }
+  return ok(order);
+}
+
+export class PayOrder {
+  constructor(private readonly deps: { orders: OrderRepository; payments: PaymentGateway; events: EventPublisher }) {}
+
+  async execute(command: OrderCommand): Outcome {
+    const found = await findOwn(this.deps.orders, command);
+    if (!found.ok) return found;
+    const order = found.value;
+    const allowed = order.can("pay");
+    if (!allowed.ok) return allowed;
+
+    const charged = await this.deps.payments.charge({ orderId: order.id, amount: order.total, idempotencyKey: `pay-${order.id}` });
+    if (!charged.ok) return fail({ code: "payment_declined", reason: charged.error });
+    order.pay(charged.value);
+    await this.deps.orders.save(order);
+    await this.deps.events.publish(order.pullEvents());
+    return ok(toSummary(order));
+  }
+}
+
+export interface CancelDeps {
+  readonly orders: OrderRepository;
+  readonly catalog: Catalog;
+  readonly events: EventPublisher;
+}
+
+async function cancelAndRelease(order: Order, reason: string, deps: CancelDeps): Outcome {
+  const cancelled = order.cancel(reason);
+  if (!cancelled.ok) return cancelled;
+  await deps.catalog.release(order.snapshot().lines);
+  await deps.orders.save(order);
+  await deps.events.publish(order.pullEvents());
+  return ok(toSummary(order));
+}
+
+export class CancelOrder {
+  constructor(private readonly deps: CancelDeps) {}
+
+  async execute(command: OrderCommand & { readonly reason: string }): Outcome {
+    const found = await findOwn(this.deps.orders, command);
+    if (!found.ok) return found;
+    return cancelAndRelease(found.value, command.reason, this.deps);
+  }
+}
+
+export class ExpireUnpaidOrders {
+  constructor(private readonly deps: CancelDeps & { readonly clock: Clock; readonly maxAgeMinutes: number }) {}
+
+  async execute(): Promise<number> {
+    const cutoff = new Date(this.deps.clock.now().getTime() - this.deps.maxAgeMinutes * 60_000);
+    let expired = 0;
+    for (const order of await this.deps.orders.listPlacedBefore(cutoff)) {
+      const result = await cancelAndRelease(order, "not paid in time", this.deps);
+      if (result.ok) expired++;
+    }
+    return expired;
+  }
+}
+```
+
+`PayOrder` asks `order.can("pay")` *before* charging, so a cancelled order is never charged. It sends a stable idempotency key (`pay-ord-1`), so if two requests race past that check, the provider charges once; [Idempotency](https://zudojs.oyinlola.site/learn/api-idempotency) covers why. `ExpireUnpaidOrders` is the midnight job, and it reuses `cancelAndRelease` instead of rewriting the rule.
+
+## Driven adapters: storage, stock, payments, time
+
+Storage holds **records**, not live objects. A record is plain data shaped for the storage (here, `snake_case` columns and an ISO date string), and a **persistence mapper** turns an order into a record and back. The mapper lives with the adapters because it knows the storage format. Reading a record back is reading from the outside world, so `fromRecord` checks the status instead of trusting it:
+
+src/adapters/order-record.ts
+
+```ts
+import { Money } from "../domain/money.js";
+import { Order } from "../domain/order.js";
+import type { OrderStatus } from "../domain/order.js";
+
+export interface OrderRecord {
+  readonly id: string;
+  readonly customer_id: string;
+  readonly status: string;
+  readonly placed_at: string;
+  readonly payment_ref: string | null;
+  readonly lines: readonly { book_id: string; title: string; unit_price_kobo: number; quantity: number }[];
+}
+
+const STATUSES: readonly string[] = ["placed", "paid", "cancelled"] satisfies OrderStatus[];
+
+function isStatus(value: string): value is OrderStatus {
+  return STATUSES.includes(value);
+}
+
+export function toRecord(order: Order): OrderRecord {
+  const state = order.snapshot();
+  return {
+    id: state.id,
+    customer_id: state.customerId,
+    status: state.status,
+    placed_at: state.placedAt.toISOString(),
+    payment_ref: state.paymentRef,
+    lines: state.lines.map((line) => ({
+      book_id: line.bookId,
+      title: line.title,
+      unit_price_kobo: line.unitPrice.kobo,
+      quantity: line.quantity,
+    })),
+  };
+}
+
+export function fromRecord(record: OrderRecord): Order {
+  if (!isStatus(record.status)) throw new Error(`order ${record.id} has unknown status "${record.status}"`);
+  return Order.restore({
+    id: record.id,
+    customerId: record.customer_id,
+    status: record.status,
+    placedAt: new Date(record.placed_at),
+    paymentRef: record.payment_ref,
+    lines: record.lines.map((line) => ({
+      bookId: line.book_id,
+      title: line.title,
+      unitPrice: Money.ofKobo(line.unit_price_kobo),
+      quantity: line.quantity,
+    })),
+  });
+}
+```
+
+The in-memory adapters implement every driven port. They are not throwaway test code: they let you run the whole application, write fast tests and demo a feature before the database exists. `FakePayments` declines charges over a card limit and remembers idempotency keys, like a real provider:
+
+src/adapters/memory.ts
+
+```ts
+import { Money } from "../domain/money.js";
+import type { Order, OrderEvent } from "../domain/order.js";
+import { fail, ok } from "../domain/result.js";
+import type { Result } from "../domain/result.js";
+import type { BookInfo, Catalog, Clock, EventPublisher, IdGenerator, OrderRepository, OutOfStock, PaymentGateway, StockRequest } from "../application/ports.js";
+import { fromRecord, toRecord } from "./order-record.js";
+import type { OrderRecord } from "./order-record.js";
+
+export class InMemoryCatalog implements Catalog {
+  readonly #books = new Map<string, { title: string; priceKobo: number; stock: number }>();
+
+  constructor(books: readonly { id: string; title: string; priceKobo: number; stock: number }[]) {
+    for (const { id, ...book } of books) this.#books.set(id, book);
+  }
+
+  stockOf(bookId: string): number {
+    return this.#books.get(bookId)?.stock ?? 0;
+  }
+
+  async findBooks(ids: readonly string[]): Promise<BookInfo[]> {
+    return ids.flatMap((id) => {
+      const book = this.#books.get(id);
+      return book ? [{ id, title: book.title, price: Money.ofKobo(book.priceKobo) }] : [];
+    });
+  }
+
+  async reserve(items: readonly StockRequest[]): Promise<Result<void, OutOfStock>> {
+    for (const item of items) {
+      const left = this.stockOf(item.bookId);
+      if (left < item.quantity) return fail({ code: "out_of_stock", bookId: item.bookId, left });
+    }
+    for (const item of items) this.#books.get(item.bookId)!.stock -= item.quantity;
+    return ok(undefined);
+  }
+
+  async release(items: readonly StockRequest[]): Promise<void> {
+    for (const item of items) {
+      const book = this.#books.get(item.bookId);
+      if (book) book.stock += item.quantity;
+    }
+  }
+}
+
+export class InMemoryOrders implements OrderRepository {
+  readonly #records = new Map<string, OrderRecord>();
+
+  async get(id: string): Promise<Order | undefined> {
+    const record = this.#records.get(id);
+    return record === undefined ? undefined : fromRecord(record);
+  }
+
+  async save(order: Order): Promise<void> {
+    this.#records.set(order.id, toRecord(order));
+  }
+
+  async listPlacedBefore(time: Date): Promise<Order[]> {
+    return [...this.#records.values()]
+      .filter((record) => record.status === "placed" && Date.parse(record.placed_at) < time.getTime())
+      .map(fromRecord);
+  }
+}
+
+export class FakePayments implements PaymentGateway {
+  readonly #byKey = new Map<string, string>();
+  charges = 0;
+
+  constructor(private readonly cardLimit: Money) {}
+
+  async charge(request: { orderId: string; amount: Money; idempotencyKey: string }): Promise<Result<string, string>> {
+    const earlier = this.#byKey.get(request.idempotencyKey);
+    if (earlier !== undefined) return ok(earlier);
+    if (request.amount.kobo > this.cardLimit.kobo) return fail("card limit exceeded");
+    this.charges++;
+    const reference = `pay-ref-${this.charges}`;
+    this.#byKey.set(request.idempotencyKey, reference);
+    return ok(reference);
+  }
+}
+
+export class RecordingEvents implements EventPublisher {
+  readonly published: OrderEvent[] = [];
+
+  async publish(events: readonly OrderEvent[]): Promise<void> {
+    this.published.push(...events);
+  }
+}
+
+export class ManualClock implements Clock {
+  constructor(private time: Date) {}
+
+  now(): Date {
+    return this.time;
+  }
+
+  advance(minutes: number): void {
+    this.time = new Date(this.time.getTime() + minutes * 60_000);
+  }
+}
+
+export class SequentialIds implements IdGenerator {
+  #next = 1;
+
+  next(): string {
+    return `ord-${this.#next++}`;
+  }
+}
+```
+
+Because `InMemoryOrders` stores records, it behaves like a database in one important way: changing an order you loaded changes nothing until you `save` it. A repository that stored the live objects would let an unsaved change leak into storage, and your tests would pass against the fake and fail against PostgreSQL:
+
+try-records.ts
+
+```ts
+import { InMemoryOrders } from "./src/adapters/memory.js";
+import { toRecord } from "./src/adapters/order-record.js";
+import { Money } from "./src/domain/money.js";
+import { Order } from "./src/domain/order.js";
+
+const line = { bookId: "b2", title: "Half of a Yellow Sun", unitPrice: Money.ofKobo(750_000), quantity: 1 };
+const placed = Order.place("ord-7", "tunde", [line], new Date("2026-09-24T09:00:00Z"));
+if (!placed.ok) throw new Error("expected an order");
+
+const orders = new InMemoryOrders();
+await orders.save(placed.value);
+console.log(toRecord(placed.value));
+
+const loaded = await orders.get("ord-7");
+loaded?.pay("pay-ref-9");
+console.log("in memory:", loaded?.status, "| stored:", (await orders.get("ord-7"))?.status);
+```
+
+Output of `npx tsx try-records.ts` and of the browser terminal
+
+```json
+{
+  id: 'ord-7',
+  customer_id: 'tunde',
+  status: 'placed',
+  placed_at: '2026-09-24T09:00:00.000Z',
+  payment_ref: null,
+  lines: [
+    {
+      book_id: 'b2',
+      title: 'Half of a Yellow Sun',
+      unit_price_kobo: 750000,
+      quantity: 1
+    }
+  ]
+}
+in memory: paid | stored: placed
+```
+
+## Driving adapters and the composition root
+
+The HTTP adapter translates in both directions: from an HTTP request to a use case command, and from a use case result to a status code and a JSON body. It owns the HTTP DTO (`{ items: [{ bookId, quantity }] }`), the status table and the naira format. The table is typed `Record<OrderFailure["code"], number>`, so adding a failure code to the application without giving it a status is a compile error:
+
+src/adapters/http.ts
+
+```ts
+import type { CancelOrder, PayOrder } from "../application/order-actions.js";
+import type { PlaceOrder } from "../application/place-order.js";
+import type { OrderFailure, OrderSummary } from "../application/results.js";
+import type { Result } from "../domain/result.js";
+
+export interface HttpRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly customerId: string | undefined;
+  readonly body?: unknown;
+}
+
+export interface HttpResponse {
+  readonly status: number;
+  readonly body: unknown;
+}
+
+const STATUS: Record<OrderFailure["code"], number> = {
+  empty_order: 400,
+  bad_quantity: 400,
+  unknown_book: 404,
+  order_not_found: 404,
+  out_of_stock: 409,
+  wrong_status: 409,
+  payment_declined: 402,
+};
+
+export function formatNaira(kobo: number): string {
+  const naira = Math.floor(kobo / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `₦${naira}.${String(kobo % 100).padStart(2, "0")}`;
+}
+
+function parseItems(body: unknown): { bookId: string; quantity: number }[] | undefined {
+  if (typeof body !== "object" || body === null || !("items" in body) || !Array.isArray(body.items)) return undefined;
+  const items: { bookId: string; quantity: number }[] = [];
+  for (const item of body.items as unknown[]) {
+    if (typeof item !== "object" || item === null) return undefined;
+    const { bookId, quantity } = item as Record<string, unknown>;
+    if (typeof bookId !== "string" || typeof quantity !== "number") return undefined;
+    items.push({ bookId, quantity });
+  }
+  return items;
+}
+
+function respond(result: Result<OrderSummary, OrderFailure>, created: boolean): HttpResponse {
+  if (!result.ok) return { status: STATUS[result.error.code], body: { error: result.error.code } };
+  const order = result.value;
+  return {
+    status: created ? 201 : 200,
+    body: { id: order.id, status: order.status, total: formatNaira(order.totalKobo), items: order.lines.map((l) => `${l.quantity} x ${l.title}`) },
+  };
+}
+
+export function httpAdapter(useCases: { place: PlaceOrder; pay: PayOrder; cancel: CancelOrder }) {
+  return async function handle(request: HttpRequest): Promise<HttpResponse> {
+    const customerId = request.customerId;
+    if (customerId === undefined) return { status: 401, body: { error: "log_in_first" } };
+    if (request.method === "POST" && request.path === "/orders") {
+      const items = parseItems(request.body);
+      if (items === undefined) return { status: 400, body: { error: "send items: [{ bookId, quantity }]" } };
+      return respond(await useCases.place.execute({ customerId, items }), true);
+    }
+    const match = /^\/orders\/([\w-]+)\/(pay|cancel)$/.exec(request.path);
+    if (request.method !== "POST" || match === null) return { status: 404, body: { error: "no_such_route" } };
+    const [, orderId = "", action] = match;
+    const result = action === "pay"
+      ? await useCases.pay.execute({ customerId, orderId })
+      : await useCases.cancel.execute({ customerId, orderId, reason: "customer asked" });
+    return respond(result, false);
+  };
+}
+```
+
+This adapter takes a small request object instead of Node's `IncomingMessage`, so it runs anywhere, including the browser. A few lines in a `node:http` server would read the body, verify the session token to get `customerId`, and call `handle`; you will write exactly that server in [Build a mini framework, part 2](https://zudojs.oyinlola.site/learn/framework-build-http).
+
+The phone tool is a second driving adapter. It calls the same use cases, and it phrases failures for a person on the phone instead of for a program:
+
+src/adapters/cli.ts
+
+```ts
+import type { CancelOrder, PayOrder } from "../application/order-actions.js";
+import type { PlaceOrder } from "../application/place-order.js";
+import type { OrderFailure } from "../application/results.js";
+import { formatNaira } from "./http.js";
+
+function describe(error: OrderFailure): string {
+  switch (error.code) {
+    case "out_of_stock":
+      return `only ${error.left} left of ${error.bookId}`;
+    case "bad_quantity":
+      return `between 1 and ${error.max} copies of ${error.bookId}, please`;
+    case "wrong_status":
+      return `cannot ${error.action} an order that is ${error.status}`;
+    default:
+      return error.code.replaceAll("_", " ");
+  }
+}
+
+export function cliAdapter(useCases: { place: PlaceOrder; pay: PayOrder; cancel: CancelOrder }) {
+  return async function run(line: string): Promise<string> {
+    const [command, customerId = "", ...rest] = line.trim().split(/\s+/);
+    let result;
+    if (command === "place") {
+      const items = rest.map((word) => {
+        const [bookId = "", quantity = "1"] = word.split("x");
+        return { bookId, quantity: Number(quantity) };
+      });
+      result = await useCases.place.execute({ customerId, items });
+    } else if (command === "pay" || command === "cancel") {
+      const orderId = rest[0] ?? "";
+      result = command === "pay"
+        ? await useCases.pay.execute({ customerId, orderId })
+        : await useCases.cancel.execute({ customerId, orderId, reason: "phone request" });
+    } else {
+      return `unknown command "${command}" (use place, pay or cancel)`;
+    }
+    if (!result.ok) return `refused: ${describe(result.error)}`;
+    return `${result.value.id} is ${result.value.status}, total ${formatNaira(result.value.totalKobo)}`;
+  };
+}
+```
+
+The composition root creates every adapter and use case and connects them. It is the only file that names concrete classes, and swapping `InMemoryOrders` for a database repository is a one-line change here ([A type-safe dependency injection container](https://zudojs.oyinlola.site/learn/ts-typed-di) automates this wiring). It returns the fakes too, so tests can inspect them:
+
+src/main.ts
+
+```ts
+import { CancelOrder, ExpireUnpaidOrders, PayOrder } from "./application/order-actions.js";
+import { PlaceOrder } from "./application/place-order.js";
+import { cliAdapter } from "./adapters/cli.js";
+import { httpAdapter } from "./adapters/http.js";
+import { FakePayments, InMemoryCatalog, InMemoryOrders, ManualClock, RecordingEvents, SequentialIds } from "./adapters/memory.js";
+import { Money } from "./domain/money.js";
+
+export function createBookStore() {
+  const catalog = new InMemoryCatalog([
+    { id: "b1", title: "Things Fall Apart", priceKobo: 450_000, stock: 3 },
+    { id: "b2", title: "Half of a Yellow Sun", priceKobo: 750_000, stock: 10 },
+  ]);
+  const orders = new InMemoryOrders();
+  const payments = new FakePayments(Money.ofKobo(2_000_000));
+  const events = new RecordingEvents();
+  const clock = new ManualClock(new Date("2026-09-24T09:00:00Z"));
+  const ids = new SequentialIds();
+
+  const place = new PlaceOrder({ catalog, orders, events, clock, ids });
+  const pay = new PayOrder({ orders, payments, events });
+  const cancel = new CancelOrder({ orders, catalog, events });
+  const expire = new ExpireUnpaidOrders({ orders, catalog, events, clock, maxAgeMinutes: 30 });
+
+  return {
+    http: httpAdapter({ place, pay, cancel }),
+    cli: cliAdapter({ place, pay, cancel }),
+    expire,
+    fakes: { catalog, orders, payments, events, clock },
+  };
+}
+```
+
+Now the web shop's traffic, through the HTTP adapter:
+
+run-http.ts
+
+```ts
+import { createBookStore } from "./src/main.js";
+
+const store = createBookStore();
+const send = async (method: string, path: string, customerId: string | undefined, body?: unknown) => {
+  const response = await store.http({ method, path, customerId, body });
+  console.log(`${method} ${path} -> ${response.status} ${JSON.stringify(response.body)}`);
+};
+
+await send("POST", "/orders", "ada", { items: [{ bookId: "b1", quantity: 2 }, { bookId: "b2", quantity: 1 }] });
+await send("POST", "/orders", "tunde", { items: [{ bookId: "b1", quantity: 2 }] });
+await send("POST", "/orders", "tunde", { items: [{ bookId: "b1", quantity: 1 }] });
+await send("POST", "/orders/ord-1/pay", "ada");
+await send("POST", "/orders/ord-1/cancel", "ada");
+await send("POST", "/orders/ord-3/pay", "ada");
+await send("POST", "/orders", undefined, { items: [] });
+console.log("stock of b1:", store.fakes.catalog.stockOf("b1"));
+```
+
+Output of `npx tsx run-http.ts` and of the browser terminal
+
+```ts
+POST /orders -> 201 {"id":"ord-1","status":"placed","total":"₦16,500.00","items":["2 x Things Fall Apart","1 x Half of a Yellow Sun"]}
+POST /orders -> 409 {"error":"out_of_stock"}
+POST /orders -> 201 {"id":"ord-3","status":"placed","total":"₦4,500.00","items":["1 x Things Fall Apart"]}
+POST /orders/ord-1/pay -> 200 {"id":"ord-1","status":"paid","total":"₦16,500.00","items":["2 x Things Fall Apart","1 x Half of a Yellow Sun"]}
+POST /orders/ord-1/cancel -> 409 {"error":"wrong_status"}
+POST /orders/ord-3/pay -> 404 {"error":"order_not_found"}
+POST /orders -> 401 {"error":"log_in_first"}
+stock of b1: 0
+```
+
+Tunde's first order asked for two copies when only one was left, and was refused with 409 without touching anything; his id `ord-2` was used up, so his next order is `ord-3`. Ada could not cancel her paid order, and she got 404 for Tunde's order, the same answer as for an order that does not exist. And the phone staff, through the CLI:
+
+run-cli.ts
+
+```ts
+import { createBookStore } from "./src/main.js";
+
+const store = createBookStore();
+const lines = ["place chioma b2x3", "pay chioma ord-1", "place chioma b2x6", "cancel chioma ord-1", "refund chioma ord-1"];
+for (const line of lines) {
+  console.log(`> ${line}`);
+  console.log(await store.cli(line));
+}
+```
+
+Output of `npx tsx run-cli.ts` and of the browser terminal
+
+```ts
+> place chioma b2x3
+ord-1 is placed, total ₦22,500.00
+> pay chioma ord-1
+refused: payment declined
+> place chioma b2x6
+refused: between 1 and 5 copies of b2, please
+> cancel chioma ord-1
+ord-1 is cancelled, total ₦22,500.00
+> refund chioma ord-1
+unknown command "refund" (use place, pay or cancel)
+```
+
+Same rules, same results, different words: the CLI says "between 1 and 5 copies of b2, please" where HTTP says 400. The card limit of ₦20,000 declined the ₦22,500 order, and cancelling it put three copies of *Half of a Yellow Sun* back. No rule was written twice.
+
+## Enforcing the dependency rule
+
+A structure that only lives in people's heads decays. Six months from now, someone in a hurry will import `formatNaira` into the domain, or the in-memory catalog into a use case, and nothing will complain. The fix is an **architecture test**: a program that reads the imports and fails the build when one points the wrong way.
+
+The rules as data: which ring may import which, and which rings may import packages at all. The domain and the application may not import any package, not even `node:crypto`, so they run the same in Node, in a browser and in a test:
+
+tools/import-rules.ts
+
+```ts
+export type Layer = "domain" | "application" | "adapters" | "main";
+
+const MAY_IMPORT: Record<Layer, readonly Layer[]> = {
+  domain: ["domain"],
+  application: ["domain", "application"],
+  adapters: ["domain", "application", "adapters"],
+  main: ["domain", "application", "adapters", "main"],
+};
+
+const MAY_IMPORT_PACKAGES: Record<Layer, boolean> = { domain: false, application: false, adapters: true, main: true };
+
+export interface Violation {
+  readonly file: string;
+  readonly line: number;
+  readonly message: string;
+}
+
+export function layerOf(path: string): Layer | undefined {
+  const match = /^src\/(domain|application|adapters)\//.exec(path);
+  if (match) return match[1] as Layer;
+  return path === "src/main.ts" ? "main" : undefined;
+}
+
+const IMPORT = /\b(?:import|export)\b[^"';]*?\bfrom\s*["']([^"']+)["']|\bimport\s*\(?\s*["']([^"']+)["']/g;
+
+export function importsOf(source: string): { spec: string; line: number }[] {
+  return [...source.matchAll(IMPORT)].map((m) => ({
+    spec: (m[1] ?? m[2])!,
+    line: source.slice(0, m.index).split("\n").length,
+  }));
+}
+
+export function resolveImport(from: string, spec: string): string {
+  const parts = from.split("/").slice(0, -1);
+  for (const part of spec.split("/")) {
+    if (part === "..") parts.pop();
+    else if (part !== ".") parts.push(part);
+  }
+  return parts.join("/").replace(/\.js$/, ".ts");
+}
+
+export function checkImports(files: Readonly<Record<string, string>>): Violation[] {
+  const violations: Violation[] = [];
+  for (const [file, source] of Object.entries(files)) {
+    const layer = layerOf(file);
+    if (layer === undefined) continue;
+    for (const { spec, line } of importsOf(source)) {
+      if (!spec.startsWith(".")) {
+        if (!MAY_IMPORT_PACKAGES[layer]) violations.push({ file, line, message: `${layer} may not import the package "${spec}"` });
+        continue;
+      }
+      const target = resolveImport(file, spec);
+      const targetLayer = layerOf(target);
+      if (targetLayer === undefined) violations.push({ file, line, message: `imports ${target}, which is outside every layer` });
+      else if (!MAY_IMPORT[layer].includes(targetLayer)) {
+        violations.push({ file, line, message: `${layer} may not import ${targetLayer} (${target})` });
+      }
+    }
+  }
+  return violations;
+}
+```
+
+- `importsOf` finds every `import … from`, `export … from`, side-effect `import "…"` and dynamic `import("…")`, and computes the line number from the match's position. `import type` counts too: a type import is still a dependency on the other ring's design.
+- `resolveImport` turns `"../domain/order.js"` in `src/application/place-order.ts` into `src/domain/order.ts`, walking `..` and `.` like a file system.
+- An import that does not start with `.` is a package. Relative imports that leave `src/` altogether are reported too, because the rings cannot vouch for such files.
+
+Feed it some typical mistakes:
+
+try-rules.ts
+
+```ts
+import { checkImports } from "./tools/import-rules.js";
+
+const files = {
+  "src/domain/order.ts": `import { Money } from "./money.js";
+import { formatNaira } from "../adapters/http.js";`,
+  "src/application/place-order.ts": `import type { Order } from "../domain/order.js";
+import { PGlite } from "@electric-sql/pglite";
+import {
+  InMemoryCatalog,
+} from "../adapters/memory.js";`,
+  "src/adapters/pg-orders.ts": `import { PGlite } from "@electric-sql/pglite";
+export type { OrderRepository } from "../application/ports.js";`,
+  "src/main.ts": `import { createBookStore } from "./adapters/wiring.js";
+const helper = await import("../scripts/seed.js");`,
+};
+
+for (const v of checkImports(files)) console.log(`${v.file}:${v.line} ${v.message}`);
+```
+
+Output of `npx tsx try-rules.ts` and of the browser terminal
+
+```ts
+src/domain/order.ts:2 domain may not import adapters (src/adapters/http.ts)
+src/application/place-order.ts:2 application may not import the package "@electric-sql/pglite"
+src/application/place-order.ts:3 application may not import adapters (src/adapters/memory.ts)
+src/main.ts:2 imports scripts/seed.ts, which is outside every layer
+```
+
+Four violations, with file and line, and the legal imports (`./money.js` inside the domain, a package and a port in an adapter, a sibling in `main`) pass silently. The multi-line import is reported on the line where it starts. Now point it at the real project, from Node, so it reads the files from disk and sets the exit code a CI job looks at:
+
+tools/check-src.tsNode.js only
+
+```ts
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { checkImports } from "./import-rules.js";
+
+const files: Record<string, string> = {};
+for (const name of readdirSync("src", { recursive: true, encoding: "utf8" })) {
+  if (name.endsWith(".ts")) files[join("src", name)] = readFileSync(join("src", name), "utf8");
+}
+
+const violations = checkImports(files);
+console.log(`checked ${Object.keys(files).length} files: ${violations.length} violations`);
+for (const v of violations) console.log(`${v.file}:${v.line} ${v.message}`);
+if (violations.length > 0) process.exitCode = 1;
+```
+
+Output of `npx tsx tools/check-src.ts`
+
+```ts
+checked 12 files: 0 violations
+```
+
+Add `"check:arch": "tsx tools/check-src.ts"` to `package.json` and run it in CI next to the tests. The ZudoJS repository does the same at a larger scale: a script checks that each package imports only packages from lower tiers (errors and constants at the bottom, core at the top) and fails the build otherwise.
+
+> WATCH OUT
+>
+> A regular expression is a quick checker, not a parser. It can be fooled by an import written inside a string or a comment, and it cannot see `require()` or an import built from a variable. For a large codebase use a tool that parses the code: `dependency-cruiser`, `eslint-plugin-boundaries`, ESLint's built-in `no-restricted-imports`, or TypeScript project references, which refuse the import at compile time.
+
+## Testing ring by ring
+
+Each ring suggests its own kind of test:
+
+- **Domain:** plain function calls, like `try-domain.ts`. The fastest and most numerous tests, because the rules live here.
+- **Use cases:** run through the composition root with in-memory adapters, and check the outcome *and* the side effects: stock, charges, events.
+- **Adapters:** a **contract test** runs the same checks against every implementation of a port, so the fake and the database cannot drift apart. The first exercise writes one.
+- **The whole thing:** a few end-to-end tests through a real server and a real database, for the wiring. You wrote these in [Testing fundamentals](https://zudojs.oyinlola.site/learn/testing-basics).
+
+A tiny test harness keeps the output readable in the terminal. In a real project you would use Vitest; the structure of the tests is the same:
+
+tests/harness.ts
+
+```ts
+let passed = 0;
+let failed = 0;
+
+export async function test(name: string, body: () => void | Promise<void>): Promise<void> {
+  try {
+    await body();
+    passed++;
+    console.log(`PASS ${name}`);
+  } catch (error) {
+    failed++;
+    console.log(`FAIL ${name}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export function expectEqual(actual: unknown, expected: unknown): void {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  if (a !== e) throw new Error(`expected ${e}, got ${a}`);
+}
+
+export function report(): void {
+  console.log(`${passed} passed, ${failed} failed`);
+}
+```
+
+tests/use-cases.test.ts
+
+```ts
+import { createBookStore } from "../src/main.js";
+import { expectEqual, report, test } from "./harness.js";
+
+await test("placing an order reserves stock and records OrderPlaced", async () => {
+  const { http, fakes } = createBookStore();
+  const response = await http({ method: "POST", path: "/orders", customerId: "ada", body: { items: [{ bookId: "b1", quantity: 2 }] } });
+  expectEqual(response.status, 201);
+  expectEqual(fakes.catalog.stockOf("b1"), 1);
+  expectEqual(fakes.events.published.map((event) => event.type), ["OrderPlaced"]);
+});
+
+await test("a refused order leaves stock and events untouched", async () => {
+  const { http, fakes } = createBookStore();
+  const response = await http({ method: "POST", path: "/orders", customerId: "ada", body: { items: [{ bookId: "b2", quantity: 1 }, { bookId: "b1", quantity: 4 }] } });
+  expectEqual(response.body, { error: "out_of_stock" });
+  expectEqual([fakes.catalog.stockOf("b1"), fakes.catalog.stockOf("b2")], [3, 10]);
+  expectEqual(fakes.events.published.length, 0);
+});
+
+await test("paying twice charges the card once", async () => {
+  const { http, fakes } = createBookStore();
+  await http({ method: "POST", path: "/orders", customerId: "ada", body: { items: [{ bookId: "b1", quantity: 1 }] } });
+  await http({ method: "POST", path: "/orders/ord-1/pay", customerId: "ada" });
+  const again = await http({ method: "POST", path: "/orders/ord-1/pay", customerId: "ada" });
+  expectEqual(again.status, 409);
+  expectEqual(fakes.payments.charges, 1);
+});
+
+await test("the expiry job cancels only unpaid orders older than 30 minutes", async () => {
+  const { cli, expire, fakes } = createBookStore();
+  await cli("place ada b1x1");
+  await cli("place tunde b1x1");
+  await cli("pay tunde ord-2");
+  fakes.clock.advance(20);
+  await cli("place chioma b1x1");
+  fakes.clock.advance(15);
+  expectEqual(await expire.execute(), 1);
+  expectEqual(await cli("pay ada ord-1"), "refused: cannot pay an order that is cancelled");
+  expectEqual(fakes.catalog.stockOf("b1"), 1);
+});
+
+report();
+```
+
+Output of `npx tsx tests/use-cases.test.ts` and of the browser terminal
+
+```ts
+PASS placing an order reserves stock and records OrderPlaced
+PASS a refused order leaves stock and events untouched
+PASS paying twice charges the card once
+PASS the expiry job cancels only unpaid orders older than 30 minutes
+4 passed, 0 failed
+```
+
+The expiry test is the midnight job from the opening, now with a controlled clock: four orders' worth of history in a few milliseconds, with no waiting and no flakiness. It checks the exact bug the before-code had: the cancelled order can no longer be paid, and its copy went back exactly once.
+
+## When it pays off, and when it hurts
+
+Count the files: twelve in `src/` for four operations on one table. The before-code was one. The trade is real, so here are the honest costs:
+
+- **Mapping fatigue.** The same order appears as a command, an entity, a record, an output model and an HTTP DTO. For an admin screen that only edits a row, those mappers add nothing. Use plain CRUD there, even inside a clean project.
+- **Leaky ports.** A port named `queryOrders(sql: string)` is a database in disguise, and every adapter must understand SQL. Name ports after what the use case needs.
+- **The generic repository.** A `Repository<T>` with `findAll`, `findWhere` and `update` for every entity hides nothing and invites every use case to build queries. Give each repository only the methods its use cases call.
+- **Chatty repositories.** Loading orders one by one through `get` in a loop is the N+1 query problem from [Indexes and query performance](https://zudojs.oyinlola.site/learn/db-indexes). Add a port method that fetches what the use case needs in one go, like `listPlacedBefore`.
+- **Layers for their own sake.** A use case that only calls `repository.save` and a controller that only calls the use case are ceremony. Keep the layers where there are rules to protect or technologies to swap.
+
+The payoff grows with three things: how many rules the domain has, how many ways in (web, phone, jobs, queues) and out (databases, providers) there are, and how long the code must live. The BookStore's orders qualify on all three. Its "contact us" form does not.
+
+## Production concerns
+
+- **Transactions.** `reserve` then `save` must succeed or fail together. The usual design adds a **unit of work** port: `transaction(work)` runs the use case's writes in one database transaction, and the database adapters join it. [Transactions in ZudoJS](https://zudojs.oyinlola.site/learn/zudo-transactions) implements this with context propagation, so repositories find the transaction without it being passed around.
+- **Authentication and authorization.** The driving adapter *authenticates* (it verifies the token and produces `customerId`); the use case *authorizes* (it checks that this customer may touch this order). Authorization in an adapter would have to be repeated in the CLI and the job.
+- **Cross-cutting concerns.** Logging, metrics and tracing do not belong inside use cases. Wrap them: a decorator with the same `execute` method that times the call and logs the outcome, applied in the composition root. [Design principles](https://zudojs.oyinlola.site/learn/design-principles) showed the idea.
+- **Folders by feature.** In a large codebase, put the rings *inside* each feature (`src/orders/domain`, `src/orders/application`, …) rather than one giant `domain` folder for everything. The checker only needs a different `layerOf`.
+- **Adopting it gradually.** You do not rewrite a working system into rings in one go. Pick the feature with the most rules, extract its domain model first, then its use cases, and leave the rest alone.
+
+ZudoJS projects follow the same shape: `@zudojs/http` routes are driving adapters, `@zudojs/database` repositories are driven adapters, and `@zudojs/container` is the composition root. [Anatomy of a ZudoJS project](https://zudojs.oyinlola.site/learn/zudo-project-anatomy) traces those pieces in a generated project.
+
+## Practice
+
+TRY IT YOURSELF
+
+### One contract, two adapters
+
+Write a PGlite adapter for `OrderRepository` (the order in one row, its lines in a `jsonb` column, reusing `toRecord` and `fromRecord`). Then write `orderRepositoryContract(name, make)`: three tests that any `OrderRepository` must pass, and run them against both adapters.
+
+**Show a solution**
+
+src/adapters/pglite-orders.tsNode.js only
+
+```ts
+import type { PGlite } from "@electric-sql/pglite";
+import type { OrderRepository } from "../application/ports.js";
+import type { Order } from "../domain/order.js";
+import { fromRecord, toRecord } from "./order-record.js";
+import type { OrderRecord } from "./order-record.js";
+
+const COLUMNS = `id, customer_id, status, to_char(placed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS placed_at, payment_ref, lines`;
+
+export class PgliteOrders implements OrderRepository {
+  constructor(private readonly db: PGlite) {}
+
+  static async open(db: PGlite): Promise<PgliteOrders> {
+    await db.exec(`CREATE TABLE IF NOT EXISTS orders (
+      id text PRIMARY KEY, customer_id text NOT NULL, status text NOT NULL,
+      placed_at timestamptz NOT NULL, payment_ref text, lines jsonb NOT NULL)`);
+    return new PgliteOrders(db);
+  }
+
+  async get(id: string): Promise<Order | undefined> {
+    const { rows } = await this.db.query<OrderRecord>(`SELECT ${COLUMNS} FROM orders WHERE id = $1`, [id]);
+    return rows[0] === undefined ? undefined : fromRecord(rows[0]);
+  }
+
+  async save(order: Order): Promise<void> {
+    const r = toRecord(order);
+    await this.db.query(
+      `INSERT INTO orders (id, customer_id, status, placed_at, payment_ref, lines) VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, payment_ref = EXCLUDED.payment_ref`,
+      [r.id, r.customer_id, r.status, r.placed_at, r.payment_ref, JSON.stringify(r.lines)],
+    );
+  }
+
+  async listPlacedBefore(time: Date): Promise<Order[]> {
+    const { rows } = await this.db.query<OrderRecord>(
+      `SELECT ${COLUMNS} FROM orders WHERE status = 'placed' AND placed_at < $1 ORDER BY placed_at`,
+      [time.toISOString()],
+    );
+    return rows.map(fromRecord);
+  }
+}
+```
+
+`to_char(… AT TIME ZONE 'UTC', …)` makes PostgreSQL return the time as the ISO string the record expects, so the same mapper serves both adapters. `ON CONFLICT … DO UPDATE` turns `save` into insert-or-update. Now the contract:
+
+tests/orders-contract.tsNode.js only
+
+```ts
+import { PGlite } from "@electric-sql/pglite";
+import type { OrderRepository } from "../src/application/ports.js";
+import { InMemoryOrders } from "../src/adapters/memory.js";
+import { PgliteOrders } from "../src/adapters/pglite-orders.js";
+import { Money } from "../src/domain/money.js";
+import { Order } from "../src/domain/order.js";
+import { expectEqual, report, test } from "./harness.js";
+
+function newOrder(id: string, isoTime: string): Order {
+  const line = { bookId: "b1", title: "Things Fall Apart", unitPrice: Money.ofKobo(450_000), quantity: 2 };
+  const placed = Order.place(id, "ada", [line], new Date(isoTime));
+  if (!placed.ok) throw new Error("test order refused");
+  return placed.value;
+}
+
+async function orderRepositoryContract(name: string, make: () => Promise<OrderRepository>): Promise<void> {
+  await test(`${name}: what you save is what you get`, async () => {
+    const repo = await make();
+    await repo.save(newOrder("ord-1", "2026-09-24T09:00:00.000Z"));
+    const loaded = await repo.get("ord-1");
+    expectEqual([loaded?.status, loaded?.total.kobo, loaded?.snapshot().placedAt.toISOString()], ["placed", 900_000, "2026-09-24T09:00:00.000Z"]);
+  });
+  await test(`${name}: changes count only after save`, async () => {
+    const repo = await make();
+    await repo.save(newOrder("ord-1", "2026-09-24T09:00:00.000Z"));
+    (await repo.get("ord-1"))!.pay("ref-1");
+    expectEqual((await repo.get("ord-1"))?.status, "placed");
+  });
+  await test(`${name}: lists only placed orders before the time`, async () => {
+    const repo = await make();
+    const paid = newOrder("ord-2", "2026-09-24T08:00:00.000Z");
+    paid.pay("ref-2");
+    for (const order of [newOrder("ord-1", "2026-09-24T08:30:00.000Z"), paid, newOrder("ord-3", "2026-09-24T09:30:00.000Z")]) await repo.save(order);
+    const due = await repo.listPlacedBefore(new Date("2026-09-24T09:00:00.000Z"));
+    expectEqual(due.map((order) => order.id), ["ord-1"]);
+  });
+}
+
+await orderRepositoryContract("in memory", async () => new InMemoryOrders());
+await orderRepositoryContract("pglite", async () => PgliteOrders.open(new PGlite()));
+report();
+```
+
+Output of `npx tsx tests/orders-contract.ts`
+
+```ts
+PASS in memory: what you save is what you get
+PASS in memory: changes count only after save
+PASS in memory: lists only placed orders before the time
+PASS pglite: what you save is what you get
+PASS pglite: changes count only after save
+PASS pglite: lists only placed orders before the time
+6 passed, 0 failed
+```
+
+The second test is the one that catches a fake that stores live objects. When the fake and the database pass the same contract, tests written against the fake say something true about production.
+
+TRY IT YOURSELF
+
+### Hidden inputs
+
+The import checker cannot see a use case that calls `new Date()` or `crypto.randomUUID()`: those are globals, not imports. Write `checkPurity(files)`, which reports lines in the domain and the application that read the clock, make random values, read `process.env` or write to the console, each with a hint about the port to use instead.
+
+**Show a solution**
+
+purity.ts
+
+```ts
+import { layerOf } from "./tools/import-rules.js";
+import type { Violation } from "./tools/import-rules.js";
+
+const HIDDEN_INPUTS: readonly [RegExp, string][] = [
+  [/\bDate\.now\(|\bnew Date\(\s*\)/, "reads the system clock: take a Clock port"],
+  [/\bMath\.random\(|\bcrypto\.randomUUID\(/, "makes random values: take an IdGenerator port"],
+  [/\bprocess\.env\b/, "reads the environment: pass the setting in"],
+  [/\bconsole\.\w+\(/, "writes to the console: publish an event or take a logger port"],
+];
+
+export function checkPurity(files: Readonly<Record<string, string>>): Violation[] {
+  const violations: Violation[] = [];
+  for (const [file, source] of Object.entries(files)) {
+    const layer = layerOf(file);
+    if (layer !== "domain" && layer !== "application") continue;
+    source.split("\n").forEach((text, index) => {
+      for (const [pattern, message] of HIDDEN_INPUTS) {
+        if (pattern.test(text)) violations.push({ file, line: index + 1, message });
+      }
+    });
+  }
+  return violations;
+}
+
+const files = {
+  "src/domain/order.ts": `static place(id: string, customerId: string, lines: readonly OrderLine[], now: Date) {`,
+  "src/application/place-order.ts": `const id = crypto.randomUUID();
+const order = Order.place(id, command.customerId, lines, new Date());
+console.log("placed", id);`,
+  "src/application/expire.ts": `const maxAge = Number(process.env.MAX_AGE_MINUTES);
+const cutoff = new Date(Date.now() - maxAge * 60_000);`,
+  "src/adapters/memory.ts": `now(): Date { return new Date(); }`,
+};
+
+for (const v of checkPurity(files)) console.log(`${v.file}:${v.line} ${v.message}`);
+```
+
+Output of `npx tsx purity.ts` and of the browser terminal
+
+```ts
+src/application/place-order.ts:1 makes random values: take an IdGenerator port
+src/application/place-order.ts:2 reads the system clock: take a Clock port
+src/application/place-order.ts:3 writes to the console: publish an event or take a logger port
+src/application/expire.ts:1 reads the environment: pass the setting in
+src/application/expire.ts:2 reads the system clock: take a Clock port
+```
+
+The domain line passes because `now` arrives as a parameter, and the adapter's `new Date()` passes because reading the clock is an adapter's job. Hidden inputs make use cases untestable in exactly the way the opening code was: you cannot pin the result of a function that reads the clock.
+
+TRY IT YOURSELF
+
+### Where does it go?
+
+Three change requests arrive. For each, say which files change, and which rings stay untouched. (1) Customers may now order up to 10 copies. (2) The finance team wants every paid order sent to their accounting system. (3) Staff want the phone tool to print totals without the kobo.
+
+**Show a solution**
+
+(1) One constant in `src/domain/order.ts`. The HTTP 400 and the CLI message both read `max` from the failure, so they follow automatically. If the limit differed per customer group, it would become an argument of `Order.place`, filled in by the use case.
+
+(2) A new driven adapter: an event publisher that forwards `OrderPaid` events to the accounting system, wired in `main.ts` (next to or instead of `RecordingEvents`). No use case changes, because `PayOrder` already publishes the event. That is what the domain events were for.
+
+(3) Only `src/adapters/cli.ts`: it gets its own formatter instead of reusing the HTTP one. The domain and the application never knew how money is shown.
+
+A good test of any architecture: likely changes touch one ring, and the ring matches the kind of change.
+
+## Recap
+
+- Clean, hexagonal and onion architecture share one idea: business rules in the middle, technologies at the edge, dependencies pointing inward.
+- The domain protects its own rules: private state, factories that refuse invalid input, methods that check before they change, value objects like `Money`, and domain events for facts.
+- Use cases are the application's steps. They depend on ports, interfaces written in the application's words, and return output models and typed failures, never entities.
+- Driven adapters implement ports (storage, stock, payments, time); driving adapters call use cases (HTTP, CLI, jobs). Mappers convert at every boundary, and only the composition root knows concrete classes.
+- An import checker in CI keeps the dependency rule true after the lesson ends; contract tests keep fakes honest.
+- The layers cost files and mappings. Spend them where rules and technologies are many and the code will live long.
+
+Next: [Architecture styles](https://zudojs.oyinlola.site/learn/arch-styles) zooms out from one application to how whole systems are shaped: monoliths, modules, services, events and messages.
+
+## Test yourself
+
+Five questions, picked at random from this lesson's question bank. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it in the terminal. Get 4 of 5 right to pass. If you don't, read the explanations and try again: you get 5 different questions.

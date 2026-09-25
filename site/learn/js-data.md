@@ -1,22 +1,31 @@
 ---
-title: "Objects and JSON"
+title: "Objects and JSON — ZudoJS Academy"
 description: "Group related values into objects, read and change their properties, copy and take them apart safely, and turn them into JSON, the text format every API speaks."
 source: https://zudojs.oyinlola.site/learn/js-data
 ---
 
-LESSON 12 OF 84
+LEVEL 2 · LESSON 10 OF 19
 
-JavaScript fundamentals Foundation
+Arrays and objects Foundation
 
 # Objects and JSON
 
 Group related values into objects, read and change their properties, copy and take them apart safely, and turn them into JSON, the text format every API speaks.
 
 - **40 min** to read and try
-- **You need:** Lessons on values, operators, conditions, loops, functions and arrays
+- **You need:** Arrays, Functions and Types in depth
 - **You build:** A small user profile system that creates, updates and publishes profiles safely
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Group related values into objects and read, add, change and delete their properties
+- Choose between an array and an object for a piece of data
+- Loop over and transform objects with Object.keys, values, entries and fromEntries
+- Copy and merge objects with spread and structuredClone, and take them apart with destructuring
+- Turn data into JSON and back, and know what JSON cannot carry
+- Accept outside changes safely with an allow-list instead of spreading them
 
 ## What an object is
 
@@ -88,8 +97,8 @@ Hello, I am Ada
 ```
 
 - `user.address.city` reads from left to right: take `user`, then its `address`, then that object's `city`.
-- `greet() { ... }` is the short way to write a method. You call it with brackets: `user.greet()`.
-- Inside a method, `this` means "the object the method was called on", here `user`. The lesson [this, prototypes and classes](https://zudojs.oyinlola.site/learn/js-classes) explains `this` fully.
+- `greet() { ... }` is the short way to write a method. You call it with parentheses: `user.greet()`.
+- Inside a method, `this` means "the object the method was called on", here `user`. [this, prototypes and classes](https://zudojs.oyinlola.site/learn/js-classes#this), later in this course, shows how it can get lost, and [this in depth](https://zudojs.oyinlola.site/learn/js-this), in the Advanced JavaScript course, covers every rule.
 
 ## Reading properties
 
@@ -125,7 +134,7 @@ false true
 
 Reading a property that does not exist gives `undefined`. It does not crash. That is convenient, and it is also how typos slip through: `user.nmae` is just `undefined`. The `in` operator answers the question "does this object have a property with this name?".
 
-Reading a property of `undefined` *does* crash. If a user has no `address`, then `user.address.city` fails with `TypeError: Cannot read properties of undefined (reading 'city')`. You will learn a safe way to write it, `user.address?.city`, in [Modern JavaScript](https://zudojs.oyinlola.site/learn/js-modern).
+Reading a property of `undefined` *does* crash. If a user has no `address`, then `user.address.city` fails with `TypeError: Cannot read properties of undefined (reading 'city')`. The safe way to write it is `user.address?.city`, the optional chaining you met in [Operators](https://zudojs.oyinlola.site/learn/js-operators#optional-chaining).
 
 ## Updating, adding and deleting
 
@@ -151,11 +160,11 @@ Output of `node change.js` and of the browser terminal
 undefined
 ```
 
-This works even though `user` is a `const`. `const` only stops the *name* `user` from pointing at a different object. It does not freeze the object itself. If you want an object that nobody can change, call `Object.freeze(user)`.
+This works even though `user` is a `const`. `const` only stops the *name* `user` from pointing at a different object. It does not freeze the object itself. If you want an object that nobody can change, call `Object.freeze(user)` (see [Types in depth](https://zudojs.oyinlola.site/learn/js-types-deep#mutability)).
 
 ## Objects are shared, not copied
 
-This is the most important idea in the lesson. A variable does not hold the object itself. It holds a **reference**: an arrow pointing at the object. When you assign an object to a second variable, you copy the arrow, not the object:
+You met this in [Types in depth](https://zudojs.oyinlola.site/learn/js-types-deep#copy-or-share), and it matters more with every object you build: a variable holds a **reference** to an object, not the object itself. Assigning an object to a second variable, or passing it to a function, copies the reference, so both names point at the same object:
 
 shared.js
 
@@ -178,9 +187,7 @@ true
 false
 ```
 
-Changing `sameUser` changed `user`, because both names point at the same object. And `===` on objects asks "is this the *same* object?", not "do they look the same?". Two objects written separately are never equal, even with identical contents.
-
-The same happens when you pass an object to a function: the function receives the arrow, so it can change the caller's object. Many bugs in real backends come from a function quietly changing an object that someone else is still using. The next sections show how to make real copies.
+Changing `sameUser` changed `user`, and `===` on objects asks "is this the *same* object?", not "do they look the same?". Many bugs in real backends come from a function quietly changing an object that someone else is still using. The next sections show how to make real copies.
 
 ## Shorthand and computed properties
 
@@ -424,6 +431,27 @@ Time to put it together. A profile system needs three things:
 2. `updateProfile(profile, changes)`: apply the changes a user sends, and return a new profile.
 3. `toPublic(profile)`: the version that is safe to send back as JSON.
 
+REASON IT OUT
+
+### Before you code: what may a user change?
+
+The mobile app sends profile changes as JSON, for example `{"theme":"dark"}`. Anyone can send any JSON to your API, not only your app. Before writing `updateProfile`, think it through:
+
+- A profile has `id`, `name`, `role`, `theme`, `language` and `bio`. Which of them may the user change about themselves?
+- What happens if the code simply merges everything that was sent into the stored profile?
+- What should happen to a field the server does not recognise, such as `"isVerified": true`?
+- Should `updateProfile` change the profile it receives, or return a new one?
+
+**Show the reasoning**
+
+**Editable:** `name`, `theme`, `language` and `bio`. **Never editable by the user:** `id` (it identifies the record) and `role` (it decides what they are allowed to do).
+
+**Merging everything** lets the caller set `role` to `"admin"` or change their `id` to someone else's. That is a real attack, shown next.
+
+**Unknown fields** must be ignored (or rejected with an error). The safe design is an **allow-list**: name the fields that may change, and drop everything else. A block-list ("everything except `role`") breaks the day someone adds a new sensitive field.
+
+**New object:** returning a new profile means the old one is still intact if a later step fails, and no other code holding the old object sees a half-applied change.
+
 Here is a first try at `updateProfile`. It has a serious bug:
 
 profile-bug.js
@@ -632,6 +660,8 @@ true false
 - `{ ...a, ...b }` copies and merges one level deep. `structuredClone` copies every level.
 - Never spread outside input into stored data: keep an allow-list of the fields a user may change.
 - JSON is the text format APIs use. `JSON.stringify` writes it and `JSON.parse` reads it. Dates become strings, and functions and `undefined` disappear.
+
+Next, [Objects in depth](https://zudojs.oyinlola.site/learn/js-objects-deep): lock an object's shape, check every write, and copy and compare objects on purpose.
 
 ## Test yourself
 

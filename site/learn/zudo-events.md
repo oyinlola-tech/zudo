@@ -1,22 +1,31 @@
 ---
-title: "Events"
-description: "Announce that something happened and let other parts of the Task API react, without the code that announces it knowing who listens. Handlers, wildcards, priorities, dispatch modes, middleware and handler errors with @zudojs/events."
+title: "Events — ZudoJS Academy"
+description: "Decouple Task API features with events: handlers, wildcards, priorities, sequential and parallel dispatch, middleware and handler errors with @zudojs/events."
 source: https://zudojs.oyinlola.site/learn/zudo-events
 ---
 
-LESSON 64 OF 84
+LEVEL 14 · LESSON 1 OF 18
 
-Events, messages and background work Advanced
+Events, messages and CQRS Advanced
 
 # Events
 
-Announce that something happened and let other parts of the Task API react, without the code that announces it knowing who listens. Handlers, wildcards, priorities, dispatch modes, middleware and handler errors with @zudojs/events.
+Decouple Task API features with events: handlers, wildcards, priorities, sequential and parallel dispatch, middleware and handler errors with @zudojs/events.
 
 - **40 min** to read and try
 - **You need:** The Task API project and the caching lesson
 - **You build:** A task service that publishes "task.completed", with email, statistics and cache handlers
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Decouple features by publishing and subscribing to events with createEventBus
+- Define typed, frozen events with defineEvent
+- Match many event types with wildcard patterns and control order with priorities
+- Choose sequential or parallel dispatch for independent handlers
+- Handle a failing or slow handler without breaking the publisher
+- Wrap event delivery with middleware for logging and validation
 
 ## Why events
 
@@ -185,6 +194,8 @@ email active: false handlers left: 0
 
 `bus.publish(event)` publishes an event you built with `create`. After the unsubscribe, no handler is left, so the third event reaches nobody. That is not an error: the publisher does not care who listens.
 
+The `<Event<TaskCompleted>>` type argument on `bus.on` is unchecked: nothing connects it to the string `"task.completed"`, so it compiles just as happily if you get the name or the payload type wrong, and the mismatch only shows up at runtime. [A type-safe event system](https://zudojs.oyinlola.site/learn/ts-typed-events#zudo) shows the same gap in the package's types and a small wrapper that closes it.
+
 > COMMON MISTAKE: SUBSCRIBING PER REQUEST
 >
 > Subscribe your handlers once, when the app starts. If you call `bus.on` inside a request handler, every request adds another copy, each event runs it more and more times, and memory grows forever. This is called a **listener leak**. The bus warns you when one event type collects more than 100 handlers.
@@ -193,7 +204,7 @@ email active: false handlers left: 0
 
 A handler can subscribe to a pattern instead of one type:
 
-- `"task.*"` matches every event whose name starts with `task.`: `task.created`, `task.completed`, `task.deleted`. The `*` also crosses dots, so it matches `task.comment.added` too.
+- `"task.*"` matches every event whose name starts with `task.`: `task.created`, `task.completed`, `task.deleted`. The `*` also crosses dots, so it matches `task.comment.added` too, and it also matches the bare namespace event `task` itself, with no dot at all.
 - `"*"` matches every event. That is handy for an audit log.
 
 When several handlers match, they run in **priority** order: higher numbers first, and the default is 0. Handlers with the same priority run in the order they subscribed:
@@ -284,7 +295,17 @@ You can set the mode for the whole bus with `createEventBus({ emitter: { mode } 
 
 ## When a handler throws
 
-The mail server is down and the email handler throws. What should happen to the request that completed the task? The task *was* saved. Failing the request would be wrong, and so would silently forgetting the error. By default the bus runs the other handlers anyway and reports the failure in the result:
+REASON IT OUT
+
+### The mail server is down and the email handler throws. What should happen to the request that completed the task?
+
+The task row was already saved before any handler ran. Should the HTTP request that triggered `complete()` now fail with a 500, since one of its side effects broke? Should the statistics handler, which has not run yet, still get a chance to run? Should the error just disappear so the caller sees a normal success response?
+
+**Show the reasoning**
+
+Failing the request would be wrong: the task really is done, and telling the caller otherwise would make them retry a "completed" task and could duplicate work downstream. Silently swallowing the error is also wrong: nobody finds out the email never went out. The bus's default (`CONTINUE`) is a third option: the request that published the event still succeeds, because the work it was responsible for did happen, but every other handler still gets to run — one broken reaction should not stop unrelated ones — and the failure is recorded in `result.errors` and reported to `onError`, so something in the system (a log, an alert) still knows about it. The stricter `THROW` mode exists for the opposite case: places, such as a test or a setup script, where every handler succeeding is itself part of what "done" means.
+
+By default the bus runs the other handlers anyway and reports the failure in the result:
 
 handler-errors.ts
 
@@ -529,7 +550,7 @@ This event bus lives in the memory of one process. Keep three limits in mind:
 - **Publish after the data is saved.** If you publish inside a database transaction that later rolls back, the handlers have already reacted to something that never happened. Publish after the commit, as you saw in [the transactions lesson](https://zudojs.oyinlola.site/learn/zudo-transactions).
 - **Other servers do not hear it.** A second copy of the Task API has its own bus. Events between services need a message broker, covered in [the microservices lesson](https://zudojs.oyinlola.site/learn/zudo-microservices).
 
-Within those limits, events are the simplest way to keep features apart inside one application.
+Within those limits, events are the simplest way to keep features apart inside one application. [Event-driven systems](https://zudojs.oyinlola.site/learn/zudo-event-driven) covers the distributed version of these same limits: lost events, outboxes and delivery guarantees across services.
 
 ## Practice
 
@@ -628,6 +649,8 @@ For each case, choose sequential or parallel: (a) three handlers that each call 
 - A failing handler does not stop the others. Read `result.errors` and always log failures in `onError`.
 - Middleware wraps every delivery for logging, timing and validation.
 - In-memory events can be lost and stay in one process. Publish after saving, and use a queue for work that must happen.
+
+Events are fire-and-forget: the publisher never learns what a handler produced. Next, [Messaging](https://zudojs.oyinlola.site/learn/zudo-messaging) covers the other half, where the caller needs exactly one answer back.
 
 ## Test yourself
 

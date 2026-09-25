@@ -1,22 +1,31 @@
 ---
-title: "Interfaces, unions and literal types"
-description: "Name object shapes with interfaces and type aliases, mark properties optional or readonly, extend and combine shapes, and model data that can take several forms with unions, literal types and discriminated unions."
+title: "Interfaces, unions and literal types — ZudoJS Academy"
+description: "Name object shapes, mark properties optional or readonly, extend and combine them, and model data with several forms using unions and literal types."
 source: https://zudojs.oyinlola.site/learn/ts-objects
 ---
 
-LESSON 35 OF 84
+LEVEL 5 · LESSON 6 OF 23
 
-TypeScript Foundation
+Everyday types Foundation
 
 # Interfaces, unions and literal types
 
-Name object shapes with interfaces and type aliases, mark properties optional or readonly, extend and combine shapes, and model data that can take several forms with unions, literal types and discriminated unions.
+Name object shapes, mark properties optional or readonly, extend and combine them, and model data with several forms using unions and literal types.
 
 - **40 min** to read and try
 - **You need:** Typing functions
 - **You build:** A typed user management module with roles, account states and safe profile updates
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Name object shapes with interface and type, and explain structural typing
+- Mark properties optional or readonly, and know what readonly does not protect
+- Build shapes from other shapes with extends and intersections
+- Allow only listed values with literal unions, and narrow unions with typeof and in
+- Model account states with a discriminated union and an exhaustive switch
+- Copy allowed fields by name so outside data cannot add fields such as role
 
 ## Two ways to name a shape
 
@@ -52,10 +61,10 @@ Assigning `a` to `b` works even though the names differ. TypeScript compares **s
 
 So which one should you use?
 
-- **interface** only describes objects (and classes). It can be extended with `extends`, and the compiler's error messages show its name.
+- **interface** only describes objects (and classes). It can be extended with `extends`, and two interfaces with the same name merge into one.
 - **type** can name anything: a union like `"todo" | "done"`, a tuple, a function type. Only a type alias can do those.
 
-A simple rule, and the one ZudoJS follows: **use `interface` for object shapes, and `type` for everything else.**
+A simple rule, and the one ZudoJS follows: **use `interface` for object shapes, and `type` for everything else.** [Type aliases and interfaces](https://zudojs.oyinlola.site/learn/ts-aliases-interfaces), later in this course, lists every real difference between the two.
 
 ## Optional and readonly properties
 
@@ -180,7 +189,7 @@ Hello, Grace | Hello, Ada | users:write
 
 ## Unions and literal types
 
-A **union** type, written with `|`, says a value is one of several types. You already used `Task | undefined`. A **literal type** is a type with exactly one value, such as `"admin"`. Put literals in a union and you get a fixed list of allowed values, which is what an `enum` is for in other languages:
+A **union** type, written with `|`, says a value is one of several types. You already used `Task | undefined`. A **literal type** is a type with exactly one value, such as `"admin"`. Put literals in a union and you get a fixed list of allowed values, which is what an `enum` is for in other languages ([Enums and their alternatives](https://zudojs.oyinlola.site/learn/ts-enums) compares the two):
 
 role.ts
 
@@ -214,7 +223,7 @@ Found 2 errors in the same file, starting at: role.ts:3
 
 The first error is what you expect: `"superuser"` is not a role. The second one is a surprise at first. `status` holds `"active"`, an allowed value, so why is it refused, while `fixedStatus` on the last line is fine?
 
-A `const` can never change, so `fixedStatus` keeps the literal type `"active"`. A `let` gets the wider type `string`. When you want a variable to hold only certain words, annotate it: `let status: "active" | "suspended" = "active"`.
+It is the widening rule from [Type inference in depth](https://zudojs.oyinlola.site/learn/ts-inference#widening): a `const` can never change, so `fixedStatus` keeps the literal type `"active"`, while a `let` gets the wider type `string`. When you want a variable to hold only certain words, annotate it: `let status: "active" | "suspended" = "active"`. [Union types in depth](https://zudojs.oyinlola.site/learn/ts-unions) builds on all of this.
 
 ## Narrowing a union
 
@@ -248,7 +257,7 @@ email ada@example.com
 phone +44 20 7946 0000
 ```
 
-After `typeof contact === "string"` returns, only the two object shapes are left. After the `"email" in contact` check returns, only the phone shape is left, so `contact.country` is allowed on the last line without any check.
+After `typeof contact === "string"` returns, only the two object shapes are left. After the `"email" in contact` check returns, only the phone shape is left, so `contact.country` is allowed on the last line without any check. [Narrowing](https://zudojs.oyinlola.site/learn/ts-narrowing) covers every kind of check, and the traps in each.
 
 ## Discriminated unions
 
@@ -292,9 +301,27 @@ suspended until 2026-10-01: spam
 
 Inside `case "suspended"`, TypeScript knows `state` has `reason` and `until`. Reading `state.reason` in the `"active"` case would be an error. The `default` branch is the exhaustiveness check you learned in [Basic types](https://zudojs.oyinlola.site/learn/ts-types#void-never): add a fourth state and every `switch` that forgot it stops compiling.
 
-Compare this with the alternative, one shape with many optional properties: `{ kind: string; lastLogin?: string; invitedBy?: number; reason?: string; until?: string }`. That allows nonsense like an active user with a suspension reason, and forces a check on every read. With a discriminated union, impossible states cannot even be written.
+Compare this with the alternative, one shape with many optional properties: `{ kind: string; lastLogin?: string; invitedBy?: number; reason?: string; until?: string }`. That allows nonsense like an active user with a suspension reason, and forces a check on every read. With a discriminated union, impossible states cannot even be written. [Union types in depth](https://zudojs.oyinlola.site/learn/ts-unions#states), next, uses this to model a whole workflow.
 
 ## Build: a user management module
+
+REASON IT OUT
+
+### Who may set which field?
+
+You are about to write the types and functions for user accounts: sign-up, role changes, suspension and profile edits. Before any code, decide:
+
+1. A sign-up request arrives from a browser. Which fields of a user may the client send, and which must the server decide?
+2. Which fields should never change once a user exists?
+3. Can an admin who has been suspended still change other people's roles?
+4. A profile edit is `{ name?: string; email?: string }`. What stops a client from sending `"role": "admin"` in the same body?
+
+**Show the reasoning**
+
+1. The client may send its email and name. The id, the role and the account state are decided by the server, so the sign-up type (`NewUser`) should not even have them.
+2. The id: mark it `readonly`. Everything else can legitimately change.
+3. No. A permission check must look at the actor's state as well as its role, and deny by default. `changeRole` below does; `suspend` forgets, and the last exercise fixes it.
+4. Not the type: types are erased, and a parsed request body is not checked against them. Only code that copies the allowed fields by name stops it, as the last part of this section shows.
 
 Put it all together. First the types, in their own file:
 
@@ -572,6 +599,8 @@ Write permission checks as one clear "allowed" condition, and deny by default: t
 - Literal types in a union (`"member" | "admin"`) allow only listed values. `const` keeps literal types; `let` widens to `string`.
 - Narrow unions with `typeof`, `in` and equality checks. A discriminated union with an exhaustive `switch` makes impossible states impossible to write.
 - Types do not remove extra properties sent by a client. Copy allowed fields by name.
+
+Next: [Union types in depth](https://zudojs.oyinlola.site/learn/ts-unions), where unions model real states and failures, and impossible states cannot be written.
 
 ## Test yourself
 

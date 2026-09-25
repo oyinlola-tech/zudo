@@ -1,0 +1,872 @@
+---
+title: "Heaps and priority queues — ZudoJS Academy"
+description: "Build a binary heap on a plain array, use it as a priority job queue, then sort with it, find the top-k products and merge sorted order lists."
+source: https://zudojs.oyinlola.site/learn/dsa-heaps
+---
+
+LEVEL 3 · LESSON 7 OF 21
+
+Data structures Core
+
+# Heaps and priority queues
+
+Build a binary heap on a plain array, use it as a priority job queue, then sort with it, find the top-k products and merge sorted order lists.
+
+- **50 min** to read and try
+- **You need:** Trees and binary search trees, Stacks and queues, and this, prototypes and classes
+- **You build:** A tested Heap class used for a priority job queue, heap sort, top-k best sellers and a k-way merge
+
+  [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain the heap property and why a heap is not sorted
+- Store a complete binary tree in an array with index arithmetic
+- Implement push and pop with sift up and sift down in O(log n), and heapify in O(n)
+- Build a fair priority job queue with a tie-breaker
+- Use a heap for heap sort, top-k and merging sorted lists, and state each cost
+
+## The problem: which job runs next?
+
+A shop's backend has a background worker. Jobs arrive all the time: confirm a payment the bank just reported, email a receipt, resize product photos, rebuild the sitemap. They are not equally urgent. A customer is staring at a spinner until the payment is confirmed; nobody is waiting for the sitemap. So every job gets a **priority**, a number where (in this lesson) **smaller means more urgent**: 1 for payments, 3 for emails, 5 for housekeeping.
+
+The worker needs two operations, over and over: *add a job* and *take the most urgent job*. A structure with exactly those operations is called a **priority queue**. A normal queue from [Stacks and queues](https://zudojs.oyinlola.site/learn/dsa-stacks-queues) hands out the oldest item; a priority queue hands out the most important one.
+
+The simplest priority queue is an array you scan:
+
+scan-queue.js
+
+```ts
+let comparisons = 0;
+
+function takeMostUrgent(jobs) {
+  let best = 0;
+  for (let i = 1; i < jobs.length; i++) {
+    comparisons++;
+    if (jobs[i].priority < jobs[best].priority) best = i;
+  }
+  return jobs.splice(best, 1)[0];
+}
+
+const jobs = [
+  { name: "rebuild sitemap", priority: 5 },
+  { name: "email receipt #1041", priority: 3 },
+  { name: "confirm payment #1042", priority: 1 },
+  { name: "resize photos", priority: 4 },
+];
+while (jobs.length > 0) console.log(takeMostUrgent(jobs).name);
+console.log(`comparisons: ${comparisons}`);
+
+for (const n of [1000, 10000]) {
+  comparisons = 0;
+  const many = Array.from({ length: n }, (_, i) => ({ priority: (i * 7919) % 100 }));
+  while (many.length > 0) takeMostUrgent(many);
+  console.log(`${n} jobs: ${comparisons} comparisons`);
+}
+```
+
+Output of `node scan-queue.js` and of the browser terminal
+
+```ts
+confirm payment #1042
+email receipt #1041
+resize photos
+rebuild sitemap
+comparisons: 6
+1000 jobs: 499500 comparisons
+10000 jobs: 49995000 comparisons
+```
+
+Adding is O(1), but every take scans the whole array: O(n). Draining *n* jobs costs about n²/2 comparisons, which is why ten times more jobs cost a hundred times more work. (`splice` also shifts the elements after the removed one, another O(n).) Keeping the array sorted flips the problem: taking becomes O(1), but every insert must find its place and shift elements, O(n).
+
+A **heap** makes *both* operations O(log n). For 10,000 jobs that is the difference between 50 million comparisons and a few hundred thousand.
+
+## What a heap is
+
+A **binary heap** is a binary tree (from [the previous lesson](https://zudojs.oyinlola.site/learn/dsa-trees)) with two rules:
+
+1. **Shape**: it is a **complete** binary tree. Every level is full except possibly the last, and the last level fills from the left with no gaps.
+2. **Heap property**: every parent comes before its children. In a **min-heap** every parent is less than or equal to its children; in a **max-heap** it is greater than or equal.
+
+```ts
+                1  confirm payment
+             /     \
+            3        2
+          /   \     /
+         4     3   5
+```
+
+A min-heap of job priorities. Every parent is less than or equal to its children.
+
+Follow any path from the root down and the priorities never decrease. So the smallest item is always at the root, where you can read it in O(1).
+
+Notice what the heap property does *not* say. It says nothing about siblings or cousins: the 3 on the left is bigger than the 2 on the right. A heap is **not sorted**, and it is not a binary search tree. It keeps just enough order to know the minimum, and that is exactly why it is cheaper to maintain than a sorted structure.
+
+The shape rule keeps the tree as short as possible: a complete tree with *n* nodes has height ⌊log₂ n⌋ (⌊x⌋ means "round down"). A heap of a million jobs has height 19: only 20 levels. Every operation below walks at most one path from the root to a leaf, so every operation is O(log n).
+
+## A tree stored in a plain array
+
+Because a complete tree has no gaps, you can write its nodes level by level, left to right, into an array, and never need `left` and `right` pointers. The positions do the work. For the node at index `i`:
+
+- its left child is at `2 * i + 1`,
+- its right child is at `2 * i + 2`,
+- its parent is at `Math.floor((i - 1) / 2)`.
+
+layout.js
+
+```ts
+const heap = [1, 3, 2, 4, 3, 5];
+
+const parent = (i) => Math.floor((i - 1) / 2);
+const left = (i) => 2 * i + 1;
+const right = (i) => 2 * i + 2;
+
+for (let i = 0; i < heap.length; i++) {
+  const kids = [left(i), right(i)].filter((c) => c < heap.length).map((c) => heap[c]);
+  const up = i === 0 ? "root" : `parent ${heap[parent(i)]}`;
+  console.log(`index ${i}: ${heap[i]}  ${up}  children [${kids.join(", ")}]`);
+}
+
+let valid = true;
+for (let i = 1; i < heap.length; i++) {
+  if (heap[parent(i)] > heap[i]) valid = false;
+}
+console.log("heap property holds:", valid);
+```
+
+Output of `node layout.js` and of the browser terminal
+
+```ts
+index 0: 1  root  children [3, 2]
+index 1: 3  parent 1  children [4, 3]
+index 2: 2  parent 1  children [5]
+index 3: 4  parent 3  children []
+index 4: 3  parent 3  children []
+index 5: 5  parent 2  children []
+heap property holds: true
+```
+
+This layout is compact (no node objects, no pointers), and it is fast because the items sit next to each other in memory. It only works because of the shape rule: a gap in the tree would be a hole in the array.
+
+## Push and pop: sift up and sift down
+
+### Push: add at the end, then sift up
+
+To add an item, put it in the only place that keeps the shape complete: the end of the array (the next free slot on the bottom level). The shape is fine, but the new item may be smaller than its parent. So compare it with its parent and swap while it is smaller. This is **sift up** (also called "bubble up"). It stops at the root at the latest, so it does at most ⌊log₂ n⌋ swaps.
+
+```ts
+push 0:   [1, 3, 2, 4, 3, 5, 0]      0 is at index 6, parent index 2 holds 2
+swap:     [1, 3, 0, 4, 3, 5, 2]      now at index 2, parent index 0 holds 1
+swap:     [0, 3, 1, 4, 3, 5, 2]      at the root: stop
+```
+
+Pushing priority 0: it starts at the end of the array and swaps upward past larger parents.
+
+### Pop: move the last item to the root, then sift down
+
+To remove the minimum, you must take the root, but you cannot leave a hole at the top. Move the *last* item into the root (the shape stays complete), then repair the order: compare it with its children, swap it with the *smaller* child while that child is smaller than it. This is **sift down**. It also stops after at most ⌊log₂ n⌋ swaps.
+
+REASON IT OUT
+
+### Getting pop right
+
+Before looking at the code, think through these cases. What should `pop` return when the heap is empty? What happens when it holds exactly one item, and you "move the last item to the root"? During sift down, when *both* children are smaller than the item, which one do you swap with, and what goes wrong if you pick the other? And if two jobs have the same priority, which one comes out first?
+
+**Show the reasoning**
+
+- **Empty heap**: there is nothing to return. Returning `undefined` (like `Array.prototype.pop`) is a reasonable choice; throwing is another. Either way, decide on purpose and test it.
+- **One item**: the last item *is* the root. If you pop the last item and then write it into index 0, you put the removed item straight back. The code must only move the last item up when something is left after removing it.
+- **Both children smaller**: swap with the *smaller* child. It becomes the parent of the other child, and it is smaller than that child, so the heap property holds. Swap with the larger one and the larger child ends up above the smaller one: broken.
+- **Equal priorities**: a heap does not remember insertion order, so equal items can come out in any order. For a job queue that is unfair: two emails queued a minute apart may be sent in reverse. The fix, a tie-breaker, comes in [the job queue section](#jobs).
+
+Here is the heap as a class. It takes a `before(a, b)` function that says whether `a` should come out before `b`, so the same class is a min-heap, a max-heap, or a heap of job objects. It counts comparisons so you can see the cost:
+
+heap.js
+
+```ts
+export class Heap {
+  #items = [];
+  #before;
+  comparisons = 0;
+
+  constructor(before = (a, b) => a < b) {
+    this.#before = before;
+  }
+
+  static from(items, before) {
+    const heap = new Heap(before);
+    heap.#items = [...items];
+    for (let i = Math.floor(heap.#items.length / 2) - 1; i >= 0; i--) heap.#siftDown(i);
+    return heap;
+  }
+
+  get size() { return this.#items.length; }
+  peek() { return this.#items[0]; }
+  toArray() { return [...this.#items]; }
+
+  push(item) {
+    this.#items.push(item);
+    this.#siftUp(this.#items.length - 1);
+  }
+
+  pop() {
+    const items = this.#items;
+    if (items.length === 0) return undefined;
+    const top = items[0];
+    const last = items.pop();
+    if (items.length > 0) {
+      items[0] = last;
+      this.#siftDown(0);
+    }
+    return top;
+  }
+
+  #earlier(i, j) {
+    this.comparisons++;
+    return this.#before(this.#items[i], this.#items[j]);
+  }
+
+  #swap(i, j) {
+    [this.#items[i], this.#items[j]] = [this.#items[j], this.#items[i]];
+  }
+
+  #siftUp(i) {
+    while (i > 0) {
+      const parent = Math.floor((i - 1) / 2);
+      if (!this.#earlier(i, parent)) return;
+      this.#swap(i, parent);
+      i = parent;
+    }
+  }
+
+  #siftDown(i) {
+    const n = this.#items.length;
+    while (true) {
+      const left = 2 * i + 1;
+      const right = left + 1;
+      let first = i;
+      if (left < n && this.#earlier(left, first)) first = left;
+      if (right < n && this.#earlier(right, first)) first = right;
+      if (first === i) return;
+      this.#swap(i, first);
+      i = first;
+    }
+  }
+}
+```
+
+Some details:
+
+- `#siftDown` finds the earliest of the node and its (up to two) children, and swaps with it. If the node itself is earliest, the heap property holds below it and the loop stops. A child index past the end means that child does not exist.
+- `pop` only moves `last` into the root when the array is not empty after removing it: the one-item case from the reasoning box.
+- `Heap.from` builds a heap from existing items in one go. It is explained in [Building a heap in O(n)](#heapify).
+- `toArray` returns a copy, so tests can inspect the layout without being able to break it.
+
+basic.js
+
+```ts
+import { Heap } from "./heap.js";
+
+const heap = new Heap();
+for (const priority of [5, 3, 4, 1, 3, 2]) heap.push(priority);
+
+console.log("array:", heap.toArray().join(" "));
+console.log("peek:", heap.peek(), "size:", heap.size);
+
+const out = [];
+while (heap.size > 0) out.push(heap.pop());
+console.log("popped:", out.join(" "));
+console.log("pop on empty:", heap.pop());
+```
+
+Output of `node basic.js` and of the browser terminal
+
+```ts
+array: 1 3 2 5 3 4
+peek: 1 size: 6
+popped: 1 2 3 3 4 5
+pop on empty: undefined
+```
+
+The internal array is not sorted, yet the items come *out* in sorted order, because every pop returns the current minimum and repairs the rest. That observation is heap sort, a few sections down.
+
+Now the real comparison with the scanning queue, counting comparisons for the same workloads:
+
+heap-vs-scan.js
+
+```ts
+import { Heap } from "./heap.js";
+
+for (const n of [1000, 10000, 100000]) {
+  const heap = new Heap();
+  for (let i = 0; i < n; i++) heap.push((i * 7919) % 100);
+  while (heap.size > 0) heap.pop();
+  const perOp = (heap.comparisons / (2 * n)).toFixed(1);
+  console.log(`${n} jobs: ${heap.comparisons} comparisons (${perOp} per push or pop, log2 n = ${Math.log2(n).toFixed(1)})`);
+}
+```
+
+Output of `node heap-vs-scan.js` and of the browser terminal
+
+```ts
+1000 jobs: 17084 comparisons (8.5 per push or pop, log2 n = 10.0)
+10000 jobs: 237173 comparisons (11.9 per push or pop, log2 n = 13.3)
+100000 jobs: 3030216 comparisons (15.2 per push or pop, log2 n = 16.6)
+```
+
+For 10,000 jobs the scan needed about 50 million comparisons; the heap needs a few hundred thousand. Pushing is often cheaper than log₂ n, because a new item usually stops after a step or two; popping costs about two comparisons per level, because sift down looks at both children.
+
+## A fair priority job queue
+
+Now use the heap for real jobs. The `before` function compares priorities. Watch what happens to the four receipt emails, which all have priority 3 and were queued in the order 1, 2, 3, 4:
+
+unfair.js
+
+```ts
+import { Heap } from "./heap.js";
+
+const queue = new Heap((a, b) => a.priority < b.priority);
+for (const [name, priority] of [
+  ["rebuild sitemap", 5], ["email receipt #1", 3], ["email receipt #2", 3],
+  ["email receipt #3", 3], ["confirm payment #7", 1], ["email receipt #4", 3],
+]) {
+  queue.push({ name, priority });
+}
+
+while (queue.size > 0) console.log(queue.pop().name);
+```
+
+Output of `node unfair.js` and of the browser terminal
+
+```ts
+confirm payment #7
+email receipt #4
+email receipt #3
+email receipt #1
+email receipt #2
+rebuild sitemap
+```
+
+The payment goes first and the sitemap last, as they should. But receipt #4, queued last, is sent first, and #2 is sent last. A heap is not **stable**: it does not preserve the original order of equal items. For a job queue, that can starve an old job: newer jobs of the same priority keep overtaking it.
+
+The fix is a **tie-breaker**: give every job an increasing sequence number when it is added, and compare that number when the priorities are equal. Then no two jobs are ever equal, and among the same priority, the oldest wins:
+
+job-queue.js
+
+```ts
+import { Heap } from "./heap.js";
+
+export class JobQueue {
+  #heap = new Heap((a, b) => a.priority < b.priority || (a.priority === b.priority && a.seq < b.seq));
+  #nextSeq = 0;
+
+  add(name, priority) {
+    if (!Number.isFinite(priority)) throw new Error(`priority must be a number, got ${priority}`);
+    this.#heap.push({ name, priority, seq: this.#nextSeq++ });
+  }
+
+  next() {
+    return this.#heap.pop();
+  }
+
+  get size() {
+    return this.#heap.size;
+  }
+}
+```
+
+fair.js
+
+```ts
+import { JobQueue } from "./job-queue.js";
+
+const queue = new JobQueue();
+for (const [name, priority] of [
+  ["rebuild sitemap", 5], ["email receipt #1", 3], ["email receipt #2", 3],
+  ["email receipt #3", 3], ["confirm payment #7", 1], ["email receipt #4", 3],
+]) {
+  queue.add(name, priority);
+}
+
+while (queue.size > 0) {
+  const job = queue.next();
+  console.log(`p${job.priority} #${job.seq} ${job.name}`);
+}
+
+try {
+  queue.add("broken job", undefined);
+} catch (error) {
+  console.log(error.message);
+}
+```
+
+Output of `node fair.js` and of the browser terminal
+
+```ts
+p1 #4 confirm payment #7
+p3 #1 email receipt #1
+p3 #2 email receipt #2
+p3 #3 email receipt #3
+p3 #5 email receipt #4
+p5 #0 rebuild sitemap
+priority must be a number, got undefined
+```
+
+The priority check matters more than it looks. `undefined < 3` and `3 < undefined` are both `false`, and so is every comparison with `NaN`. A job with a missing priority would never sift anywhere and could sit in the heap in a place that breaks the heap property for the items around it. Reject it at the door.
+
+### Failure case: changing a priority while the job is inside
+
+A customer upgrades to express delivery, so you make their waiting job more urgent by changing its `priority` field. The heap has no idea: nothing sifted the job up, so the heap property is now broken around it.
+
+mutate.js
+
+```ts
+import { Heap } from "./heap.js";
+
+const queue = new Heap((a, b) => a.priority < b.priority);
+const jobs = [5, 4, 3, 2, 6, 7, 8].map((priority, i) => ({ name: `order ${i + 1}`, priority }));
+for (const job of jobs) queue.push(job);
+
+const express = jobs.find((job) => job.name === "order 7");
+express.priority = 0;
+
+console.log("first out:", queue.pop().name, "(expected order 7)");
+```
+
+Output of `node mutate.js` and of the browser terminal
+
+```ts
+first out: order 4 (expected order 7)
+```
+
+Treat items inside a heap as read-only. To change a priority, either remove the job and add it again (a plain binary heap cannot find an item quickly, so that needs an extra map from job to index), or use **lazy deletion**: add a new entry with the new priority, mark the old one as stale, and skip stale entries when you pop them.
+
+## Building a heap in O(n)
+
+When the worker restarts, it loads 100,000 waiting jobs from the database at once. Pushing them one by one costs O(n log n). There is a faster way, called **heapify**: copy the items into the array as they are, then sift down every node that has children, starting from the last one and moving back to the root.
+
+Why does that work? Sifting down node `i` needs both of its subtrees to already be heaps. Going backwards guarantees it: leaves are heaps of size one on their own, and every node is processed after all the nodes below it. That is what `Heap.from` does.
+
+Why is it O(n) and not O(n log n)? Half of the nodes are leaves and need no work at all. A quarter sit one level above and sift down at most one level. An eighth sift at most two levels, and so on. Only the root can sift the full height. Added up (n/4 × 1 + n/8 × 2 + n/16 × 3 + …), the levels sifted total less than n, and each level costs at most two comparisons.
+
+heapify.js
+
+```ts
+import { Heap } from "./heap.js";
+
+const n = 100000;
+const inputs = {
+  "random order": Array.from({ length: n }, (_, i) => (i * 7919) % n),
+  "each more urgent": Array.from({ length: n }, (_, i) => n - i),
+};
+
+for (const [label, priorities] of Object.entries(inputs)) {
+  const pushed = new Heap();
+  for (const p of priorities) pushed.push(p);
+  const built = Heap.from(priorities);
+  console.log(`${label}: push one by one ${pushed.comparisons}, heapify ${built.comparisons}, same min ${pushed.peek() === built.peek()}`);
+}
+console.log(`for comparison: n log2 n = ${Math.round(n * Math.log2(n))}, 2n = ${2 * n}`);
+```
+
+Output of `node heapify.js` and of the browser terminal
+
+```ts
+random order: push one by one 205715, heapify 185087, same min true
+each more urgent: push one by one 1468946, heapify 199978, same min true
+for comparison: n log2 n = 1660964, 2n = 200000
+```
+
+With jobs in random order, one-by-one pushing is already fairly cheap, because a random new item rarely climbs far. The second input is the worst case for pushing: every new job is more urgent than all the earlier ones, so every push climbs all the way to the root, and the total approaches n log₂ n. Heapify stays below 2n comparisons for both: its cost varies a little with the input, but its O(n) bound holds for any order.
+
+## Heap sort
+
+You have already seen that popping everything from a heap yields sorted output. **Heap sort** does this inside the array itself, with no second array:
+
+1. Heapify the array as a **max-heap**: the largest item goes to index 0.
+2. Swap the root with the last item of the heap. The largest item is now in its final place at the end. Shrink the heap by one, so that item is never touched again.
+3. Sift the new root down within the smaller heap, and repeat until the heap has one item.
+
+heap-sort.js
+
+```ts
+let comparisons = 0;
+
+function siftDown(a, i, n) {
+  while (true) {
+    const left = 2 * i + 1;
+    const right = left + 1;
+    let largest = i;
+    if (left < n && (comparisons++, a[left] > a[largest])) largest = left;
+    if (right < n && (comparisons++, a[right] > a[largest])) largest = right;
+    if (largest === i) return;
+    [a[i], a[largest]] = [a[largest], a[i]];
+    i = largest;
+  }
+}
+
+function heapSort(a) {
+  for (let i = Math.floor(a.length / 2) - 1; i >= 0; i--) siftDown(a, i, a.length);
+  for (let end = a.length - 1; end > 0; end--) {
+    [a[0], a[end]] = [a[end], a[0]];
+    siftDown(a, 0, end);
+  }
+  return a;
+}
+
+const prices = [45000, 1200, 89000, 3500, 1200, 250000, 15000];
+console.log(heapSort(prices).join(" "));
+
+for (const n of [1000, 100000]) {
+  comparisons = 0;
+  const data = Array.from({ length: n }, (_, i) => (i * 7919) % n);
+  const sorted = heapSort(data).every((v, i, arr) => i === 0 || arr[i - 1] <= v);
+  console.log(`n=${n}: sorted ${sorted}, ${comparisons} comparisons, n log2 n = ${Math.round(n * Math.log2(n))}`);
+}
+```
+
+Output of `node heap-sort.js` and of the browser terminal
+
+```ts
+1200 1200 3500 15000 45000 89000 250000
+n=1000: sorted true, 16837 comparisons, n log2 n = 9966
+n=100000: sorted true, 3017574 comparisons, n log2 n = 1660964
+```
+
+The counts are about 2n log₂ n, because every level of sift down compares with two children. Heap sort is O(n log n) in the *worst* case, not just on average, and it needs only O(1) extra memory. Its weaknesses: it is not stable (equal items can swap order, like the emails), and it jumps around the array, which caches dislike, so in practice it is usually slower than merge sort or quicksort. The complexity and stability table in [Sorting algorithms](https://zudojs.oyinlola.site/learn/dsa-sorting#compare) lines it up against bubble, selection, insertion, merge and quick sort. Its ideas matter more than the sort itself: heapify and sift down are what make heaps useful.
+
+## Top-k: the best sellers
+
+The shop's home page shows the five best-selling products. Last month there were 200,000 order lines across 5,000 products. The obvious way is: add up revenue per product (a `Map`, O(n)), sort all 5,000 products by revenue, take the first five. Sorting all 5,000 to keep 5 is wasteful.
+
+The heap way keeps a **min-heap of size k** holding the best k seen so far. Its root is the *weakest* of the current top k, the one to beat. For each product: if the heap has fewer than k items, push it; otherwise, if the product beats the root, pop the root and push the product. Each step costs O(log k), so the whole thing is O(n log k), and it only ever holds k items in memory.
+
+top-k.js
+
+```ts
+import { Heap } from "./heap.js";
+
+let seed = 2024;
+const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+const revenue = new Map();
+for (let i = 0; i < 200000; i++) {
+  const product = 1 + Math.floor(random() ** 3 * 5000);
+  const naira = 500 + Math.floor(random() * 20000);
+  revenue.set(product, (revenue.get(product) ?? 0) + naira);
+}
+
+function topK(entries, k) {
+  const heap = new Heap((a, b) => a[1] < b[1]);
+  let checks = 0;
+  for (const entry of entries) {
+    if (heap.size < k) heap.push(entry);
+    else if ((checks++, entry[1] > heap.peek()[1])) {
+      heap.pop();
+      heap.push(entry);
+    }
+  }
+  const best = [];
+  while (heap.size > 0) best.push(heap.pop());
+  return { best: best.reverse(), comparisons: heap.comparisons + checks };
+}
+
+const { best, comparisons } = topK(revenue.entries(), 5);
+for (const [product, total] of best) console.log(`product ${product}: ₦${total.toLocaleString("en-NG")}`);
+
+const sorted = [...revenue.entries()].sort((a, b) => b[1] - a[1]);
+const same = sorted.slice(0, 5).every(([id], i) => id === best[i][0]);
+const n = revenue.size;
+console.log(`${n} products | heap: ${comparisons} comparisons | a full sort: about n log2 n = ${Math.round(n * Math.log2(n))} | same answer: ${same}`);
+```
+
+Output of `node top-k.js` and of the browser terminal
+
+```ts
+product 1: ₦123,620,264
+product 2: ₦31,230,760
+product 3: ₦23,053,512
+product 4: ₦18,130,218
+product 5: ₦15,539,494
+5000 products | heap: 5059 comparisons | a full sort: about n log2 n = 61439 | same answer: true
+```
+
+`random() ** 3` skews the product numbers so a few products sell far more than the rest, as in real shops. The last line checks the heap's answer against the obvious sort, which is the right way to test a clever algorithm: compare it with a simple one on the same data.
+
+The heap needed about one comparison per product: the best sellers entered the heap early, so almost every later product lost the single check against the root and never touched the heap. The worst case is still O(n log k). And the heap does not need all products in memory at once. That makes it work on a **stream**, data that arrives one item at a time and is too big to keep: the top 10 search terms of the day from a log, the 100 slowest requests out of millions.
+
+> TIP
+>
+> The direction feels backwards at first: to find the *largest* k, use a *min*-heap, because you need quick access to the smallest of your current winners, the one a newcomer has to beat.
+
+## Merging sorted lists
+
+Three warehouses each send the day's dispatch log, already sorted by time. Head office wants one combined log in time order. With *k* sorted lists and *N* items in total, keep a min-heap holding the *current front item of each list*. Pop the earliest, output it, and push the next item from the same list. The heap never holds more than *k* items, so each step is O(log k) and the merge is O(N log k).
+
+merge.js
+
+```ts
+import { Heap } from "./heap.js";
+
+const logs = {
+  Lagos: ["08:02 #1001", "09:15 #1004", "11:40 #1009"],
+  Abuja: ["08:30 #1002", "08:45 #1003", "12:05 #1010"],
+  Kano: ["10:00 #1006", "10:20 #1007"],
+};
+
+function mergeSorted(lists) {
+  const heap = new Heap((a, b) => a.value < b.value);
+  for (const [source, items] of Object.entries(lists)) {
+    if (items.length > 0) heap.push({ value: items[0], source, index: 0 });
+  }
+  const merged = [];
+  while (heap.size > 0) {
+    const { value, source, index } = heap.pop();
+    merged.push(`${value} (${source})`);
+    const items = lists[source];
+    if (index + 1 < items.length) heap.push({ value: items[index + 1], source, index: index + 1 });
+  }
+  return merged;
+}
+
+console.log(mergeSorted(logs).join("\n"));
+```
+
+Output of `node merge.js` and of the browser terminal
+
+```ts
+08:02 #1001 (Lagos)
+08:30 #1002 (Abuja)
+08:45 #1003 (Abuja)
+09:15 #1004 (Lagos)
+10:00 #1006 (Kano)
+10:20 #1007 (Kano)
+11:40 #1009 (Lagos)
+12:05 #1010 (Abuja)
+```
+
+Comparing `"08:02"` with `"08:30"` as strings works because the times have a fixed width, the same reason ISO dates sort correctly as strings. The same algorithm merges sorted chunks of a file too big for memory (external sorting), and it is how databases combine sorted runs and how log tools merge files from many servers.
+
+## Testing the heap
+
+As with the binary search tree, check the **invariant** and compare against a **reference model**. The invariant here is the heap property: every item is not earlier than its parent. The model is a sorted array: its first item must always equal the heap's `peek()`.
+
+heap-test.js
+
+```ts
+import { Heap } from "./heap.js";
+
+function check(label, actual, expected) {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`${ok ? "PASS" : "FAIL"} ${label}${ok ? "" : ` -> got ${JSON.stringify(actual)}`}`);
+}
+
+function isHeap(items, before = (a, b) => a < b) {
+  for (let i = 1; i < items.length; i++) {
+    if (before(items[i], items[Math.floor((i - 1) / 2)])) return false;
+  }
+  return true;
+}
+
+const empty = new Heap();
+check("pop on empty", empty.pop(), undefined);
+check("peek on empty", empty.peek(), undefined);
+
+const one = new Heap();
+one.push(42);
+check("single item", [one.pop(), one.size], [42, 0]);
+
+const max = new Heap((a, b) => a > b);
+for (const n of [3, 9, 1, 9, 4]) max.push(n);
+check("max-heap order", [max.pop(), max.pop(), max.pop(), max.pop(), max.pop()], [9, 9, 4, 3, 1]);
+check("heapify builds a valid heap", isHeap(Heap.from([9, 8, 7, 6, 5, 4, 3, 2, 1]).toArray()), true);
+
+let seed = 99;
+const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const heap = new Heap();
+const model = [];
+let failures = 0;
+for (let step = 0; step < 5000; step++) {
+  if (random() < 0.55) {
+    const value = Math.floor(random() * 50);
+    heap.push(value);
+    model.push(value);
+    model.sort((a, b) => a - b);
+  } else {
+    const got = heap.pop();
+    const want = model.shift();
+    if (got !== want) failures++;
+  }
+  if (heap.peek() !== model[0] || heap.size !== model.length || !isHeap(heap.toArray())) failures++;
+}
+check("5000 random operations match a sorted array", failures, 0);
+```
+
+Output of `node heap-test.js` and of the browser terminal
+
+```ts
+PASS pop on empty
+PASS peek on empty
+PASS single item
+PASS max-heap order
+PASS heapify builds a valid heap
+PASS 5000 random operations match a sorted array
+```
+
+Values between 0 and 49 over 5,000 operations produce plenty of duplicates, which is where heap bugs like to hide (a `<` that should be `<=` in sift down, for example). To see the test catch a real bug, swap with the *larger* child in `#siftDown` and run it again.
+
+## Heaps in production
+
+- **Where they already run.** Node.js keeps its timers in a binary heap ordered by expiry time, so `setTimeout` can always find the next timer to fire. Operating system schedulers, network routers and event simulations use priority queues. So does Dijkstra's shortest-path algorithm, which you will meet in [Graph search](https://zudojs.oyinlola.site/learn/dsa-graph-search).
+- **Starvation.** If urgent jobs keep arriving, a priority-5 job may never run. Common fixes: **aging** (a job's effective priority improves the longer it waits), separate queues with a guaranteed share of workers, or a maximum wait after which a job jumps the line.
+- **Which direction is "urgent"?** This lesson used smaller = more urgent, as Unix process priorities do. Many job systems use the opposite: in `@zudojs/queue`, a job's `priority` option is a number where higher runs first (`JobPriorityLevels.CRITICAL` is 200, `LOW` is 10). Check the convention before you set one; getting it backwards runs the least important work first. You will use that package in [Background jobs](https://zudojs.oyinlola.site/learn/zudo-queue).
+- **Durability.** A heap in memory disappears when the process restarts or crashes, along with every waiting job. Real job queues keep jobs in a database or in Redis (whose sorted sets give O(log n) add and pop-minimum, the same operations as a heap), and a worker process only holds what it is running.
+- **What a heap cannot do.** Finding or removing an arbitrary item is O(n): there is no search order. If you need that too, keep a side `Map` from item to array index and update it on every swap, or use lazy deletion.
+- **Do you need a heap at all?** For a few dozen items, sorting an array when needed is simpler and fast enough. A heap pays off when items keep arriving and leaving and you always want the current best one.
+
+## Practice
+
+TRY IT YOURSELF
+
+### Largest orders first
+
+The fraud team reviews the largest orders first. Use the `Heap` class as a max-heap of orders by amount, and print them in review order. What is the only thing you change?
+
+**Show a solution**
+
+fraud-review.js
+
+```ts
+import { Heap } from "./heap.js";
+
+const orders = [
+  { id: 1041, naira: 12500 }, { id: 1042, naira: 980000 }, { id: 1043, naira: 45000 },
+  { id: 1044, naira: 2300000 }, { id: 1045, naira: 7800 },
+];
+
+const review = new Heap((a, b) => a.naira > b.naira);
+for (const order of orders) review.push(order);
+
+while (review.size > 0) {
+  const order = review.pop();
+  console.log(`#${order.id} ₦${order.naira.toLocaleString("en-NG")}`);
+}
+```
+
+Output of `node fraud-review.js` and of the browser terminal
+
+```ts
+#1044 ₦2,300,000
+#1042 ₦980,000
+#1043 ₦45,000
+#1041 ₦12,500
+#1045 ₦7,800
+```
+
+Only the `before` function changes: `>` instead of `<`. Everything else in the heap is written in terms of "comes before", so min and max are the same code.
+
+TRY IT YOURSELF
+
+### Top 3 search terms
+
+The search log below has one line per search. Print the three most searched terms, most searched first, using a `Map` to count and a size-3 min-heap to select. When two terms have the same count, prefer the one that comes first alphabetically.
+
+**Show a solution**
+
+top-searches.js
+
+```ts
+import { Heap } from "./heap.js";
+
+const log = "phone case,charger,phone case,laptop,charger,sneakers,phone case,laptop,charger,earbuds,laptop,sneakers".split(",");
+
+const counts = new Map();
+for (const term of log) counts.set(term, (counts.get(term) ?? 0) + 1);
+
+const worse = (a, b) => a.count < b.count || (a.count === b.count && a.term > b.term);
+const heap = new Heap(worse);
+for (const [term, count] of counts) {
+  const entry = { term, count };
+  if (heap.size < 3) heap.push(entry);
+  else if (worse(heap.peek(), entry)) {
+    heap.pop();
+    heap.push(entry);
+  }
+}
+
+const top = [];
+while (heap.size > 0) top.push(heap.pop());
+for (const { term, count } of top.reverse()) console.log(`${count} ${term}`);
+```
+
+Output of `node top-searches.js` and of the browser terminal
+
+```ts
+3 charger
+3 laptop
+3 phone case
+```
+
+Counting is O(n) for n log lines; selecting is O(m log 3) for m distinct terms. The tie-break lives inside `worse`, so it applies both inside the heap and to the "does the newcomer beat the root?" test; defining it once avoids the two disagreeing.
+
+TRY IT YOURSELF
+
+### Running median of delivery times
+
+Delivery times (in minutes) arrive one at a time. After each one, print the median so far (the middle value, or the average of the two middle values). Keep two heaps: a max-heap for the lower half and a min-heap for the upper half, with sizes differing by at most one. Each new time should cost O(log n).
+
+**Show a solution**
+
+running-median.js
+
+```ts
+import { Heap } from "./heap.js";
+
+const lower = new Heap((a, b) => a > b);
+const upper = new Heap((a, b) => a < b);
+
+function add(minutes) {
+  if (lower.size === 0 || minutes <= lower.peek()) lower.push(minutes);
+  else upper.push(minutes);
+  if (lower.size > upper.size + 1) upper.push(lower.pop());
+  if (upper.size > lower.size) lower.push(upper.pop());
+}
+
+function median() {
+  if (lower.size > upper.size) return lower.peek();
+  return (lower.peek() + upper.peek()) / 2;
+}
+
+for (const minutes of [35, 50, 20, 45, 120, 40, 30]) {
+  add(minutes);
+  console.log(`after ${String(minutes).padStart(3)} min: median ${median()}`);
+}
+```
+
+Output of `node running-median.js` and of the browser terminal
+
+```ts
+after  35 min: median 35
+after  50 min: median 42.5
+after  20 min: median 35
+after  45 min: median 40
+after 120 min: median 45
+after  40 min: median 42.5
+after  30 min: median 40
+```
+
+The lower half's largest value and the upper half's smallest value sit at the two roots, so the median is always one or two `peek`s away. Each `add` does at most three pushes or pops: O(log n). Sorting after every arrival would be O(n log n) each time. Notice how the 120-minute outlier barely moves the median; that is why dashboards report medians rather than averages for delivery times.
+
+## Recap
+
+- A priority queue hands out the most important item first. A scanned array makes each take O(n); a heap makes add and take O(log n), and peek O(1).
+- A binary heap is a complete binary tree where every parent comes before its children. It is not sorted; only the root is known.
+- Store it in an array: children of `i` at `2i + 1` and `2i + 2`, parent at `⌊(i − 1) / 2⌋`. Push adds at the end and sifts up; pop moves the last item to the root and sifts down, swapping with the smaller child.
+- Heaps are not stable. Add a sequence number as a tie-breaker for fair job queues, validate priorities, and never change an item's priority while it is inside.
+- Heapify builds a heap in O(n). Heap sort is O(n log n) worst case with O(1) extra space but not stable. Top-k with a size-k min-heap is O(n log k); merging k sorted lists is O(N log k).
+
+Next: [Graphs and topological sort](https://zudojs.oyinlola.site/learn/dsa-graphs) drop the "one parent" rule entirely, which lets you model routes between cities and package dependencies, and work out a safe install order.
+
+## Test yourself
+
+Five questions, picked at random from this lesson's question bank. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it in the terminal. Get 4 of 5 right to pass. If you don't, read the explanations and try again: you get 5 different questions.

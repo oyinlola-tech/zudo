@@ -1,22 +1,30 @@
 ---
-title: "Calling services with RPC"
-description: "Call a function that runs in another service as if it were local. Define procedures with @zudojs/rpc, call them through a client and a transport, and handle validation, errors, identity, timeouts and retries."
+title: "Calling services with RPC — ZudoJS Academy"
+description: "Call a function in another service as if it were local: procedures, clients, transports, validation, errors, identity, timeouts and retries with @zudojs/rpc."
 source: https://zudojs.oyinlola.site/learn/zudo-rpc
 ---
 
-LESSON 70 OF 84
+LEVEL 14 · LESSON 7 OF 18
 
-APIs and services Advanced
+Services and contracts Advanced
 
 # Calling services with RPC
 
-Call a function that runs in another service as if it were local. Define procedures with @zudojs/rpc, call them through a client and a transport, and handle validation, errors, identity, timeouts and retries.
+Call a function in another service as if it were local: procedures, clients, transports, validation, errors, identity, timeouts and retries with @zudojs/rpc.
 
 - **45 min** to read and try
 - **You need:** The Task API project, and the lessons on validation, errors and HTTP routing
 - **You build:** A task service that other services call over HTTP with RPC, protected by a token, with timeouts and retries
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Register a procedure with an input schema and call it through an RPCClient and a transport
+- Tell a temporary internal error from an exposed, typed RPC error on the caller side
+- Keep a caller's claimed identity out of authorization decisions by trusting only verified context.auth
+- Serve procedures over HTTP with a fetch handler and a shared, constant-time-checked token
+- Bound a call with a timeout and retry only idempotent procedures on a retryable error
 
 ## What RPC is
 
@@ -505,6 +513,16 @@ Networks fail for a moment and then work again. `retry(operation, options)` runs
 - Only retry errors that can go away, such as `RPCUnavailableError`. A validation error fails the same way every time.
 - Only retry calls that are safe to repeat. Reading a list is. Creating a task may not be: if the first call worked but its answer was lost, a retry creates a second task. That is what the `idempotent: true` option on a procedure documents. It is advice for you; the package does not retry anything by itself.
 
+REASON IT OUT
+
+### tasks.create times out. The client never saw a response. Is it safe to retry it?
+
+A timeout only tells you that *you* gave up waiting; it tells you nothing about what happened on the server. Walk through the possibilities: the request never reached the server (safe to retry), the server received it but hadn't started the handler yet (safe to retry), or the handler had already created the task and was on its way back with the answer when the network dropped it (not safe: the task exists, and the caller does not know its id). Given that you cannot tell which of these happened from the timeout alone, what does that mean for retrying a `tasks.create` call versus a `tasks.list` call?
+
+**Show the reasoning**
+
+`tasks.list` is safe to retry regardless of which case happened: reading data twice changes nothing, so a retry can never do harm. `tasks.create` is not, in the general case: retrying blindly risks the third scenario above, creating a duplicate task nobody asked for. This is exactly why the package leaves retrying up to you rather than doing it automatically, and why `idempotent: true` exists as a marker rather than a behaviour: it documents, procedure by procedure, which calls you have made safe to repeat — usually by having the caller supply an id up front (so a repeat with the same id is a no-op) or by having the handler check whether the work was already done, the same idempotency pattern from [the background jobs lesson](https://zudojs.oyinlola.site/learn/zudo-queue). Without that, retry only reads and other naturally idempotent operations, and let unsafe ones fail loudly so a human decides.
+
 A transport is only an object with `send`, so you can wrap one. Here, a small transport wraps the memory transport and fails the first two sends, like a service that is restarting:
 
 retry.tsNode.js only
@@ -629,7 +647,7 @@ Retrying after a timeout is only safe for idempotent procedures: the first call 
 - `createRPCMemoryTransport`, `createRPCHttpTransport` and `createRPCFetchHandler` carry frames in one process or over HTTP. The fetch handler's `auth` option checks the caller's token.
 - Timeouts abort `context.signal`, and a caller that gives up cancels the server side too. Retry only temporary errors, and only idempotent calls.
 
-In the next lesson you define an operation once and serve it over HTTP, RPC and a queue with `@zudojs/api`.
+Next, [One operation, many transports](https://zudojs.oyinlola.site/learn/zudo-api) defines an operation once and serves it over HTTP, RPC and a queue with `@zudojs/api`.
 
 ## Test yourself
 

@@ -1,16 +1,16 @@
 ---
-title: "Production engineering"
-description: "What changes when real users depend on your app. A checklist for configuration, secrets, logs, metrics, traces, health and readiness checks, graceful shutdown, timeouts, rate limits, caching and database performance, with a small runnable proof for each item."
+title: "Production engineering — ZudoJS Academy"
+description: "A checklist for taking a ZudoJS app to production: config, secrets, logs, metrics, health checks, shutdown, rate limits, caching and database performance."
 source: https://zudojs.oyinlola.site/learn/production-engineering
 ---
 
-LESSON 81 OF 84
+LEVEL 17 · LESSON 1 OF 5
 
 Production Production
 
 # Production engineering
 
-What changes when real users depend on your app. A checklist for configuration, secrets, logs, metrics, traces, health and readiness checks, graceful shutdown, timeouts, rate limits, caching and database performance, with a small runnable proof for each item.
+A checklist for taking a ZudoJS app to production: config, secrets, logs, metrics, health checks, shutdown, rate limits, caching and database performance.
 
 - **55 min** to read and try
 - **You need:** The Task API project and the ZudoJS core, data and quality lessons
@@ -18,11 +18,20 @@ What changes when real users depend on your app. A checklist for configuration, 
 
   [Test yourself](#test)
 
+BY THE END OF THIS LESSON YOU CAN
+
+- Check configuration at startup with a schema, so bad settings fail fast without ever printing a secret
+- Write structured JSON logs with a request id, at a level a machine can filter
+- Tell a liveness check from a readiness check, and measure traffic, errors and latency percentiles
+- Shut down gracefully on SIGTERM: refuse new requests, finish the ones in flight, then close resources
+- Rate-limit public endpoints and cache hot reads with tags and a TTL
+- Index the columns you query often, and size a connection pool from real limits
+
 ## The production checklist
 
 On your computer, a crash means you restart `npm run dev`. In **production**, the place where real users use your app, a crash means lost orders, and nobody may notice until a customer complains. Production engineering is the set of habits that keep an app running, and tell you quickly when it is not.
 
-This lesson is built around one checklist. Each row links to a section with a small example that proves the point. Copy the list into your project's README and tick it off before your first deployment in [the next lesson](https://zudojs.oyinlola.site/learn/deployment).
+This lesson is built around one checklist. Each row links to a section with a small example that proves the point. Copy the list into your project's README and tick it off before your first deployment, in [Deploying a ZudoJS app](https://zudojs.oyinlola.site/learn/deployment) later in this course.
 
 | ✓ | Item | Done when |
 | --- | --- | --- |
@@ -139,7 +148,7 @@ The first call failed at once and listed both problems, not just the first. The 
 ### Where secrets live
 
 - **On your computer:** a `.env` file, never committed, with throwaway values.
-- **On a server:** environment variables set by the host: a systemd `EnvironmentFile` readable only by the app's user, Docker secrets, or your cloud's secret manager. The next lesson shows the first two.
+- **On a server:** environment variables set by the host: a systemd `EnvironmentFile` readable only by the app's user, Docker secrets, or your cloud's secret manager. [Deploying a ZudoJS app](https://zudojs.oyinlola.site/learn/deployment) shows the first two.
 - **Rotate** a secret (replace it with a new one) whenever someone who knew it leaves, and at once if it may have leaked. Code that reads it from the environment needs no change for that.
 
 ## Logs a machine can read
@@ -351,6 +360,20 @@ A request that waits forever is worse than one that fails: it holds memory, a co
 - **Incoming:** the Node adapter already has tighter defaults than Node itself: 10 s to receive the headers, 30 s for the whole request (`headersTimeout`, `requestTimeout`). Lower them if your API should never take that long.
 - **Outgoing:** every `HttpClient` gets a `timeout`, and `retry` only for safe methods, as in [the microservices lesson](https://zudojs.oyinlola.site/learn/zudo-microservices).
 - **Database:** set a statement timeout (`SET statement_timeout = '5s'` in PostgreSQL) so one bad query cannot hold a connection for minutes.
+
+REASON IT OUT
+
+### Should a timed-out call be retried?
+
+Your `HttpClient` calls the payments service to charge a customer's card. The call times out after 5 seconds: no response reached you, but you cannot tell whether the payments service never received the request, received it and is still working, or received it, charged the card, and its response was what got lost.
+
+Is it safe to retry this call automatically? What would make it safe?
+
+**Show the reasoning**
+
+No, not as it stands: retrying a plain "charge this card" call risks charging the customer twice, because the timeout tells you nothing about whether the first attempt already succeeded. That is why retries are only safe for methods that are **idempotent**, safe to run twice with the same effect as once, such as a `GET` or a `PUT` that sets a value.
+
+To make a charge safely retryable, the client must attach an **idempotency key**, a request id generated once per attempt-set and sent with every retry, so the payments service can recognise a repeat and return the first result instead of charging again. Without that key on both sides, the only safe move after a timeout is to check the payment's actual status before trying again, not to blindly resend it.
 
 ## Rate limiting
 
@@ -615,7 +638,7 @@ Then check the plan still holds during a deployment, when old and new processes 
 - On `SIGTERM`, stop taking requests, finish the ones in flight, then close resources.
 - Put timeouts on every edge, rate-limit public endpoints, cache hot reads with tags and TTLs, index what you query, and keep connection pools small.
 
-Your app is ready for production. Next, you put it there: a build, a server, Docker, a database, HTTPS and backups.
+Your app is ready for production, but readiness is not the same as safety. Before you deploy it, run it through [A production security review](https://zudojs.oyinlola.site/learn/zudo-production-security), the same kind of checklist you just built here, aimed at authentication, injection and the data this app can leak.
 
 ## Test yourself
 

@@ -1,26 +1,37 @@
 ---
-title: "Testing fundamentals"
-description: "Why automated tests matter, the difference between unit, integration and end-to-end tests, and how to write them with node:assert and Node's built-in test runner, including mocks, spies, isolated tests and a fresh test database. Then the same tests in Vitest."
+title: "Testing fundamentals — ZudoJS Academy"
+description: "Test a backend with Node's built-in runner: unit, integration and end-to-end tests, assertions, mocks and spies, isolated tests and a fresh test database."
 source: https://zudojs.oyinlola.site/learn/testing-basics
 ---
 
-LESSON 31 OF 84
+LEVEL 7 · LESSON 6 OF 15
 
-Backend fundamentals Foundation
+Testing Core
 
 # Testing fundamentals
 
-Why automated tests matter, the difference between unit, integration and end-to-end tests, and how to write them with node:assert and Node's built-in test runner, including mocks, spies, isolated tests and a fresh test database. Then the same tests in Vitest.
+Test a backend with Node's built-in runner: unit, integration and end-to-end tests, assertions, mocks and spies, isolated tests and a fresh test database.
 
 - **45 min** to read and try
-- **You need:** The Git and GitHub lesson
+- **You need:** Joins, grouping and transactions, HTTP in depth, and Testing TypeScript
 - **You build:** A test suite for a task list, a task store on a real test database, and an HTTP endpoint
 
   [Test yourself](#test)
 
+BY THE END OF THIS LESSON YOU CAN
+
+- Tell unit, integration and end-to-end tests apart, and pick the level for a check
+- Write tests with node:assert/strict and node:test, and run them with npm test
+- Replace an e-mail sender or another edge with mock.fn and mock.method, and restore it
+- Keep tests isolated with beforeEach and a fresh PGlite database per test
+- Test an HTTP endpoint end to end on a free port
+- Translate node:test tests to Vitest and back
+
 ## Why test?
 
-So far you checked your code by running it and reading the output. That works once. But every change can break something that used to work, and nobody re-checks forty endpoints by hand after each commit. An **automated test** is a small program that runs your code with known input and checks the result. You write it once, and it runs again in seconds, as often as you like: before every commit, and on every pull request, as the [Git lesson](https://zudojs.oyinlola.site/learn/git) mentioned.
+In [Testing TypeScript](https://zudojs.oyinlola.site/learn/ts-testing) you tested pure functions and types with Vitest. A backend is harder to test. Its code talks to a database, sends e-mail, and answers HTTP requests, and every change can break something that used to work. Nobody re-checks forty endpoints by hand after each commit. An **automated test** is a small program that runs your code with known input and checks the result. You write it once, and it runs again in seconds, as often as you like: before every commit, and on every pull request, where CI runs it for you ([Professional Git](https://zudojs.oyinlola.site/learn/git-collaboration#pull-requests)).
+
+This lesson tests a small task list, a task store on a real database, and an HTTP endpoint. It uses the test runner built into Node.js, `node:test`, which needs nothing installed; the rest of this course uses it too. Everything carries over to Vitest, and the [last section](#vitest) shows how the names map.
 
 Tests come in three sizes:
 
@@ -377,7 +388,7 @@ Output of `node mailer.test.js`
 
 > TIP
 >
-> Mock the edges of your system (e-mail, payment providers, other services, the clock), not your own logic. A test that mocks everything only proves that the mocks work.
+> Mock the edges of your system (e-mail, payment providers, other services, the clock), not your own logic. A test that mocks everything only proves that the mocks work. [Testing strategies](https://zudojs.oyinlola.site/learn/testing-strategies#doubles), later in this course, sorts stand-ins into dummies, stubs, spies, mocks and fakes, and shows when each one fits.
 
 ## Test isolation
 
@@ -428,6 +439,22 @@ Output of `node isolation.test.js`
 Both tests see a list with exactly one task. Without `beforeEach`, a shared list would give the second test id 3, and the result would depend on the order the tests run in. There are also `afterEach`, `before` (once, before all tests) and `after` (once, at the end).
 
 ## Integration tests with a test database
+
+REASON IT OUT
+
+### Mock the database, or use a real one?
+
+You want to test `createTask(db, userId, title)`, which runs an `insert`. You could pass a fake `db` whose `query` just records the SQL it was given, or a real PostgreSQL. Before choosing, answer:
+
+- Which bugs would a test with a fake `db` catch? Which would it miss?
+- What does the real database cost you in speed and setup?
+- Test A inserts "Buy milk". Test B checks that the table is empty. What happens if they share one database?
+
+**Show the reasoning**
+
+A fake `db` can only check that your function sent *some* text. A typo in a column name, a missing `returning`, a `check` constraint the data breaks, a wrong placeholder number: the fake accepts them all, and the test passes while the code is broken. For code whose whole job is SQL, only a real database tests anything. (Mocks are right at the edges you do not control, such as the e-mail sender above.)
+
+The cost is time: starting PostgreSQL takes a moment, even in-process with PGlite. And shared state: if tests A and B use one database, B passes or fails depending on whether A ran first. So each test gets its own clean copy, made cheaply, as below.
 
 A task store that runs SQL is best tested against a **real** database: a mock would not notice a typo in the SQL or a broken constraint. The same isolation rule applies, so each test needs its own clean database. PGlite from [How databases work](https://zudojs.oyinlola.site/learn/databases) makes that easy. Creating a database takes a few seconds, so the file builds one **template** with the schema in `before`, and `beforeEach` gives every test its own copy with `clone()`, which is much faster:
 
@@ -573,30 +600,23 @@ Output of `node api.test.js`
 
 This test checks the status codes and JSON bodies a client really receives. It would catch a wrong header or a crash in the request handling that a unit test of `TaskList` cannot see.
 
-## Vitest
+## The same tests in Vitest
 
-`node:test` needs nothing installed, which makes it perfect for learning. Many projects use **Vitest** instead, a test runner from npm with a watch mode, nicer output, and TypeScript support without setup. ZudoJS projects use Vitest. The ideas are identical; the names differ a little: `expect(value).toBe(...)` instead of `assert.equal`, `toEqual` for deep comparison, and `vi.fn()` instead of `mock.fn()`.
+You set up **Vitest** in [Testing TypeScript](https://zudojs.oyinlola.site/learn/ts-testing#setup). It is the runner ZudoJS projects use: it has a watch mode, nicer output, and runs TypeScript without setup. `node:test` needs nothing installed, which is why this course's backend lessons use it. The ideas are identical; only the names differ:
 
-A project uses one test runner: each runner would also try to run the other's test files. So try Vitest in a new folder, `tasks-vitest`, with a copy of `tasks.js`. Install it as a development dependency (`-D`) and write a test:
+| node:test and node:assert | Vitest |
+| --- | --- |
+| `import { describe, it } from "node:test"` | `import { describe, it, expect, vi } from "vitest"` |
+| `assert.equal(actual, expected)` | `expect(actual).toBe(expected)` |
+| `assert.deepEqual(actual, expected)` | `expect(actual).toEqual(expected)` |
+| `assert.throws(fn, RangeError)` | `expect(fn).toThrow(RangeError)` |
+| `await assert.rejects(promise, /db down/)` | `await expect(promise).rejects.toThrow(/db down/)` |
+| `mock.fn()`, `fn.mock.callCount()` | `vi.fn()`, `expect(fn).toHaveBeenCalledTimes(n)` |
+| `mock.method(object, "name")`, `mock.restoreAll()` | `vi.spyOn(object, "name")`, `vi.restoreAllMocks()` |
+| `before`, `beforeEach`, `afterEach`, `after` | `beforeAll`, `beforeEach`, `afterEach`, `afterAll` |
+| `node --test` | `vitest run` (plain `vitest` starts watch mode) |
 
-Terminal on your computer
-
-```bash
-$ mkdir tasks-vitest
-$ cd tasks-vitest
-$ npm init -y
-Wrote to ~/tasks-vitest/package.json:
-…
-$ npm pkg set type=module
-$ npm install -D vitest
-
-added 37 packages, and audited 38 packages in 22s
-
-12 packages are looking for funding
-  run `npm fund` for details
-
-found 0 vulnerabilities
-```
+Here is part of this lesson's suite, translated:
 
 tasks.test.js
 
@@ -624,40 +644,7 @@ describe("TaskList", () => {
 });
 ```
 
-Run it once with `vitest run`. `--reporter=verbose` lists every test; without it, Vitest prints only the summary when everything passes:
-
-Terminal on your computer
-
-```bash
-$ npx vitest run --reporter=verbose
-
- RUN  v5.0.1 ~/tasks-vitest
-
- ✓ tasks.test.js > validateTitle > trims spaces 4ms
- ✓ tasks.test.js > validateTitle > rejects titles that are too short 1ms
- ✓ tasks.test.js > TaskList > notifies once per added task 4ms
-
- Test Files  1 passed (1)
-      Tests  3 passed (3)
-   Start at  15:07:41
-   Duration  573ms (transform 44%, import 34%, tests 12%, worker 9%)
-$ npm pkg set scripts.test="vitest run"
-$ npm test
-
-> tasks-vitest@1.0.0 test
-> vitest run
-
-
- RUN  v5.0.1 ~/tasks-vitest
-
-
- Test Files  1 passed (1)
-      Tests  3 passed (3)
-   Start at  15:07:43
-   Duration  394ms (transform 46%, import 28%, tests 15%, worker 10%)
-```
-
-Plain `npx vitest`, without `run`, starts **watch mode**: it stays open and reruns the affected tests every time you save a file. [Testing a ZudoJS application](https://zudojs.oyinlola.site/learn/zudo-testing) builds on this.
+A project uses one test runner: each would also try to run the other's test files. [Testing a ZudoJS app](https://zudojs.oyinlola.site/learn/zudo-testing) builds on Vitest.
 
 ## Practice
 
@@ -727,6 +714,8 @@ Unit, integration or end-to-end? (a) `slug("Buy milk")` returns `buy-milk`; (b) 
 - `mock.fn()` records calls; `mock.method()` replaces or spies on a method. Restore mocks after each test, and mock only the edges.
 - Every test gets a fresh start with `beforeEach`, including a fresh database: a PGlite template and a `clone()` per test.
 - Vitest works the same way with `expect` and `vi.fn()`, and ZudoJS projects use it.
+
+Next: [TypeScript on Node.js](https://zudojs.oyinlola.site/learn/ts-node), where the backend code becomes typed, starting with environment variables, files, requests and streams.
 
 ## Test yourself
 

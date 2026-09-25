@@ -1,22 +1,30 @@
 ---
-title: "Classes in TypeScript"
-description: "Declare typed class properties, use parameter properties and access modifiers, compare private with #private, write abstract classes and classes that implement interfaces, and wire classes together with constructor injection."
+title: "Classes in TypeScript — ZudoJS Academy"
+description: "Type class properties, use access modifiers and #private, write abstract classes and classes that implement interfaces, and inject dependencies."
 source: https://zudojs.oyinlola.site/learn/ts-classes
 ---
 
-LESSON 38 OF 84
+LEVEL 5 · LESSON 17 OF 23
 
-TypeScript Foundation
+Classes, modules and configuration Foundation
 
 # Classes in TypeScript
 
-Declare typed class properties, use parameter properties and access modifiers, compare private with #private, write abstract classes and classes that implement interfaces, and wire classes together with constructor injection.
+Type class properties, use access modifiers and #private, write abstract classes and classes that implement interfaces, and inject dependencies.
 
 - **40 min** to read and try
-- **You need:** Generics, and the JavaScript classes lesson
+- **You need:** Generics, Advanced and utility types, and this, prototypes and classes
 - **You build:** A TaskService that depends on interfaces, wired by hand in main.ts and tested with a fake repository and a fixed clock
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Declare class properties with types and satisfy strictPropertyInitialization
+- Use parameter properties, and know why Node's type stripping refuses them
+- Choose between private and #private, knowing which one survives JSON.stringify
+- Write abstract classes and classes that implement interfaces
+- Inject dependencies through the constructor and swap in fakes for tests
 
 ## Properties and constructors
 
@@ -124,7 +132,7 @@ Three properties, declared and filled in far fewer lines. `public done = false` 
 
 > NOT ERASABLE
 >
-> Parameter properties generate code (the `this.id = id` lines), so Node's built-in type stripping, from [Why TypeScript exists](https://zudojs.oyinlola.site/learn/ts-setup#run), refuses them. `tsx`, `tsc` and the browser terminal all handle them. ZudoJS itself uses them, so this course runs code with `tsx`.
+> Parameter properties generate code (the `this.id = id` lines), so Node's built-in type stripping, from [Why TypeScript exists](https://zudojs.oyinlola.site/learn/ts-setup#run), refuses them, and `erasableSyntaxOnly` reports them ([What the TypeScript compiler does](https://zudojs.oyinlola.site/learn/ts-compiler#not-erased)). `tsx`, `tsc` and the browser terminal all handle them. ZudoJS itself uses them, so this course runs code with `tsx`.
 
 ## public, private, protected and #private
 
@@ -372,6 +380,24 @@ A class can implement several interfaces (`implements A, B`), and `implements` a
 
 Now the service with the business rules. It needs somewhere to store tasks and a way to know the current time. It could create them itself: `new MemoryTaskRepository()` and `new Date()`. But then it is stuck with them forever: no database later, and no way to test "is this task overdue?" without waiting for a real day to pass.
 
+REASON IT OUT
+
+### What should the service create itself?
+
+`TaskService` adds tasks with a due date and lists the overdue ones. It needs somewhere to store tasks and a way to know the current time. Before reading on, decide:
+
+1. If the service calls `new MemoryTaskRepository()` itself, what has to change on the day you move to PostgreSQL?
+2. If it calls `new Date()` itself, how would a test check that a task becomes overdue three days later?
+3. What is the smallest thing the service needs from each dependency: a class, or just a few methods?
+4. Where in the program should the real repository and clock be created?
+
+**Show the reasoning**
+
+1. The service itself, and every test of it. A class that creates its own dependencies is welded to them.
+2. It could not without really waiting three days, or tricking the system clock. The current time is a dependency like any other.
+3. Just the methods it calls: `save` and `findAll` from storage, `now()` from the clock. Those become two small interfaces, so any object with those methods fits.
+4. In one place at the start of the program (the entry file), which passes them into the service. Tests pass fakes instead, and the service cannot tell the difference.
+
 Instead, the service **asks for** what it needs, in its constructor, typed as the interfaces. Whoever creates the service **passes them in**. This is called **dependency injection**, and passing them to the constructor is **constructor injection**:
 
 task-service.ts
@@ -486,7 +512,7 @@ day 0: []
 day 3: [ 'File taxes' ]
 ```
 
-Three days pass in a microsecond, and every run prints the same thing. `TaskService` did not change at all: it cannot tell a fake from the real thing, because it only knows the interfaces. With the Vitest setup from [the testing lesson](https://zudojs.oyinlola.site/learn/testing-basics), the same idea becomes a test file:
+Three days pass in a microsecond, and every run prints the same thing. `TaskService` did not change at all: it cannot tell a fake from the real thing, because it only knows the interfaces. With Vitest, the test runner that [Testing fundamentals](https://zudojs.oyinlola.site/learn/testing-basics) sets up in the backend course, the same idea becomes a test file:
 
 task-service.test.ts
 
@@ -572,7 +598,7 @@ TRY IT YOURSELF
 
 ### Inject the notifier
 
-Give `TaskService` a third dependency: a `Notifier` interface with `send(text: string): Promise<void>`. Add a method `remindOverdue()` that sends one message per overdue task. Test it with a fake notifier that stores the messages in an array.
+Write a `ReminderService` with a method `remindOverdue()` that sends one message per overdue task and returns how many it sent. It takes two dependencies through its constructor: a function that returns the overdue titles (in the app, `() => service.overdue()`), and a `Notifier` interface with `send(text: string): Promise<void>`. Test it with a fake notifier that stores the messages in an array.
 
 **Show a solution**
 
@@ -614,7 +640,7 @@ Output of `npx tsx remind.ts` and of the browser terminal
 2 [ '"File taxes" is overdue', '"Call Ada" is overdue' ]
 ```
 
-This solution goes one step further: instead of the whole `TaskService`, the reminder service depends only on a function that returns overdue titles. Depending on the smallest thing you need makes testing even easier. A dependency can be a function type, not just an interface.
+The reminder service does not depend on the whole `TaskService`, only on a function that returns overdue titles. Depending on the smallest thing you need makes testing even easier: the test passes an inline `async` function instead of building a service. A dependency can be a function type, not just an interface.
 
 ## Recap
 
@@ -623,6 +649,8 @@ This solution goes one step further: instead of the whole `TaskService`, the rem
 - `public`, `protected` and `private` are compile-time only. `#private` is enforced at runtime and stays out of `JSON.stringify`.
 - An abstract class shares code and forces subclasses to fill in abstract methods. `implements` checks a class against an interface.
 - Constructor injection: depend on interfaces, create the real objects in one place, and swap in fakes for tests.
+
+Next: [Modules in TypeScript](https://zudojs.oyinlola.site/learn/ts-modules), where a project is split into files that import types and values from each other.
 
 ## Test yourself
 

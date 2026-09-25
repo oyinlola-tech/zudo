@@ -1,22 +1,30 @@
 ---
-title: "Configuration"
-description: "Keep settings out of the code with @zudojs/config. Layer defaults, a config file and environment variables by priority, validate the result with a schema, keep secrets out of logs, and make the Task API's generated configuration stricter in production than in development."
+title: "Configuration — ZudoJS Academy"
+description: "Keep settings out of code with @zudojs/config: layered sources, validation at startup, secrets kept out of logs, and a Task API stricter in production."
 source: https://zudojs.oyinlola.site/learn/zudo-config
 ---
 
-LESSON 53 OF 84
+LEVEL 12 · LESSON 16 OF 19
 
-The ZudoJS core Core
+Configuration, validation and errors Core
 
 # Configuration
 
-Keep settings out of the code with @zudojs/config. Layer defaults, a config file and environment variables by priority, validate the result with a schema, keep secrets out of logs, and make the Task API's generated configuration stricter in production than in development.
+Keep settings out of code with @zudojs/config: layered sources, validation at startup, secrets kept out of logs, and a Task API stricter in production.
 
 - **45 min** to read and try
-- **You need:** Middleware, CORS, security headers and graceful shutdown
+- **You need:** "Middleware pipelines with @zudojs/middleware", and the write limit from "Middleware, CORS, security headers and graceful shutdown"
 - **You build:** A stricter Task API configuration that listens only on your own computer in development, checks every CORS origin, allows only https origins in production, and stops with one clear line when a setting is wrong
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain which values belong in configuration and why secrets come only from the environment
+- Merge defaults, a file and environment variables by priority with @zudojs/config
+- Convert and validate settings at startup so a typo stops the app with one clear message
+- Keep secrets out of logs, and explain why redaction by key name is only a safety net
+- Make production stricter than development without changing code
 
 ## Why configuration lives outside the code
 
@@ -26,7 +34,7 @@ Picture the Task API with its settings written straight into `src/server.ts`: th
 - **Secrets would end up in git.** A database password or a token-signing key written in code is visible to everyone who can read the repository, forever, even after you delete it.
 - **Nobody can see what is configurable.** The settings are scattered through the code.
 
-**Configuration** is every value that changes between environments. The usual rule, from the "twelve-factor app" guidelines, is: code is the same everywhere, and configuration comes from outside, mostly from **environment variables**. You read those in [Node.js APIs](https://zudojs.oyinlola.site/learn/node-apis) with `process.env`.
+**Configuration** is every value that changes between environments. The usual rule, from the "twelve-factor app" guidelines, is: code is the same everywhere, and configuration comes from outside, mostly from **environment variables**. You read those in [Files, paths and your computer](https://zudojs.oyinlola.site/learn/node-apis) with `process.env`.
 
 `@zudojs/config` collects settings from several places, decides which one wins, and keeps secrets out of logs. It is already in the Task API's `package.json`, and the generated `src/configs/index.ts` uses it. That is why your `src/server.ts` reads `config.port` and `config.corsOrigins` instead of fixed values. At the [end of this lesson](#task-api) you read that file line by line and make it stricter.
 
@@ -235,7 +243,7 @@ export const ConfigSchema = schema.object({
 export type AppConfig = Infer<typeof ConfigSchema>;
 ```
 
-`cors_origins` arrives as one comma-separated string, and the `transform` turns it into a list. `jwt_secret` is the key the [authentication lesson](https://zudojs.oyinlola.site/learn/zudo-auth) will use to sign tokens. If it is given, it must be at least 32 characters. Now check some bad settings:
+`cors_origins` arrives as one comma-separated string, and the `transform` turns it into a list. `jwt_secret` stands for the key that signs login tokens, which the [authentication lesson](https://zudojs.oyinlola.site/learn/zudo-auth) needs (it calls it `JWT_ACCESS_SECRET`). If it is given, it must be at least 32 characters. Now check some bad settings:
 
 validate.ts
 
@@ -372,7 +380,19 @@ Output of `npx tsx redact-log.ts` and of the browser terminal
 
 `NODE_ENV` is the environment variable every Node.js tool uses to tell development from production. `resolveEnvironment()` from `@zudojs/constants` (already used in the generated `src/app.ts`) reads it and returns `"development"`, `"test"` or `"production"`. When it is not set, you get `"development"`.
 
-Production gets stricter rules. Development defaults are allowed to be convenient; production must be told everything explicitly. For the Task API, by the end of this lesson:
+REASON IT OUT
+
+### What may have a default?
+
+Before reading the table below, sort these Task API settings into three groups: safe to default everywhere, safe to default only in development, and never defaulted. `PORT`, `HOST`, `CORS_ORIGINS`, `RATE_LIMIT_MAX`, `DATABASE_URL` with a password in it, and the secret that will sign login tokens. For each default you allow, ask: what happens if someone deploys to production and forgets to set it?
+
+**Show the reasoning**
+
+- **Safe everywhere**: `PORT` (3000) and `RATE_LIMIT_MAX` (300). A forgotten value gives a working, reasonably safe app.
+- **Development only**: `HOST` and `CORS_ORIGINS`. On a laptop, `127.0.0.1` and `http://localhost:5173` are convenient and safe. In production the host must be reachable and the origins must be your real `https://` sites, so their values differ by environment, and a development value that leaks into production is refused.
+- **Never defaulted**: the database password and the signing secret. A default secret is written in the code, so it is public: anyone could sign their own login tokens. Missing means "refuse to start".
+
+Production gets stricter rules. Development defaults are allowed to be convenient; production must be told everything explicitly. For the Task API, the first two rows hold by the end of this lesson; the third arrives with login in the authentication lesson:
 
 | Setting | Development | Production |
 | --- | --- | --- |
@@ -432,7 +452,7 @@ export type AppConfig = Awaited<ReturnType<typeof loadConfig>>;
 - **Easy to test.** `loadConfig` takes the environment as a parameter. Given a plain object, it does not touch `.env` or `process.env` at all.
 - The `// zudojs:config` markers are where `zudojs add` puts the settings of a feature.
 
-Four things from this lesson are still missing: production is not stricter than development, the server listens on every network interface even on your laptop, `CORS_ORIGINS` accepts anything, and the write limit from the previous lesson is written in the code. Here is the whole file with all four added. The new parts are the two imports, `OriginSchema`, the `origins` helper, the `production` constant, and the `production`, `host`, `corsOrigins` and `writeMax` lines in `loadConfig`:
+Four things from this lesson are still missing: production is not stricter than development, the server listens on every network interface even on your laptop, `CORS_ORIGINS` accepts anything, and the write limit from [the middleware lesson](https://zudojs.oyinlola.site/learn/zudo-middleware#task-api) is written in the code. Here is the whole file with all four added. The new parts are the two imports, `OriginSchema`, the `origins` helper, the `production` constant, and the `production`, `host`, `corsOrigins` and `writeMax` lines in `loadConfig`:
 
 src/configs/index.tsNode.js only
 
@@ -585,6 +605,8 @@ production  -> 0.0.0.0 3000 [ 'https://tasks.example.com' ] 5
 
 Development starts with its safe defaults. A wrong port, a malformed origin and a plain-HTTP origin in production each stop with a `ConfigurationError` that says exactly what to fix. None of these settings is a secret, so the messages may show the value. For a secret, name the setting and never print its value.
 
+The import token from [the pipelines lesson](https://zudojs.oyinlola.site/learn/zudo-middleware-pipelines#task-api), `TASKS_IMPORT_TOKEN`, is such a secret. It can stay where it is, read once in `registerServices`, or move here as an optional setting with no default: without it, the list of operators is empty and every import is refused, which is the safe answer.
+
 Now `src/server.ts`. It calls `loadConfig()` first, before anything else starts. If that throws, Node.js prints a long stack trace, which says less than the message. Catch it, print the message, and exit with code 1. While you are in the file, give the write limit its new setting:
 
 src/server.ts (part)Node.js only
@@ -714,7 +736,7 @@ A teammate wants to debug a production problem and adds `console.log("config", c
 - Secrets only come from the environment, have no defaults, and never reach logs: use `toSafeObject()`, and the logger redacts secret-looking keys too.
 - `NODE_ENV=production` switches on stricter rules. A `.env` file, loaded by the generated `loadConfig` (or with `--env-file`) and never committed, is for development.
 
-You have now used schemas for request bodies and for configuration. The next lesson looks at schemas in depth: coercion, transformations, refinements, and validating what goes *out* as well as what comes in.
+You have now used schemas for request bodies and for configuration. Next, [Schemas and validation in depth](https://zudojs.oyinlola.site/learn/zudo-validation) covers coercion, transformations, refinements, and validating what goes *out* as well as what comes in.
 
 ## Test yourself
 

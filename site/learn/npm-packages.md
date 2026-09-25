@@ -1,22 +1,30 @@
 ---
-title: "npm and packages"
-description: "Install, update and remove packages with npm, read package.json and package-lock.json, understand version ranges, write npm scripts, share code with workspaces, see what publishing would send, and keep the packages you install safe."
+title: "npm and packages — ZudoJS Academy"
+description: "Install, update and remove packages with npm, read package.json and the lockfile, use version ranges and scripts, and keep the packages you install safe."
 source: https://zudojs.oyinlola.site/learn/npm-packages
 ---
 
-LESSON 22 OF 84
+LEVEL 4 · LESSON 6 OF 20
 
-Node.js and npm Foundation
+npm and packages Core
 
 # npm and packages
 
-Install, update and remove packages with npm, read package.json and package-lock.json, understand version ranges, write npm scripts, share code with workspaces, see what publishing would send, and keep the packages you install safe.
+Install, update and remove packages with npm, read package.json and the lockfile, use version ranges and scripts, and keep the packages you install safe.
 
 - **40 min** to read and try
-- **You need:** Streams and buffers
+- **You need:** What Node.js is, Files, paths and your computer, and Cryptography with node:crypto
 - **You build:** A task-tools project with a dependency, a dev tool, npm scripts and an approved install script
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Check a package with npm view, then install it as a dependency or a dev dependency
+- Read package.json and explain what each field is for
+- Say which versions a caret, tilde or exact range allows, and why the lockfile and npm ci make installs repeatable
+- Name, list and run npm scripts, and use npx with care
+- Keep installs safe with npm audit, install-script approval and careful package names
 
 ## What npm is
 
@@ -42,7 +50,30 @@ $ npm pkg set type=module
 
 ## Installing a package
 
-Suppose your tasks need due dates like "in 2 days". Converting that to milliseconds is fiddly, and a small, popular package called `ms` already does it. Before installing anything, look it up. `npm view` shows what the registry knows about a package:
+Suppose your tasks need due dates like "in 2 days". Converting that to milliseconds is fiddly, and a small, popular package called `ms` already does it.
+
+REASON IT OUT
+
+### Before you install: what are you really adding?
+
+`npm install ms` takes a few seconds. Before you type it, think about what the command does to your project:
+
+- Who wrote the code you are about to run, and how could you find out?
+- A package can depend on other packages. How many strangers' code does one install really bring in?
+- Where will this code run: only on your laptop, or also on your server with its secrets?
+- Next month the author publishes a new version. Does your project change by itself?
+
+**Show the reasoning**
+
+Anyone can publish to npm, so a package is code from a stranger until you have checked it: its description, its source repository, how long it has existed and how widely it is used. `npm view` shows all of that without installing anything.
+
+Every dependency of the package is installed too, and their dependencies, so one command can add hundreds of packages. A package with no dependencies, like `ms`, is the easy case; `npm view` shows the count.
+
+A normal dependency runs on your server, with access to its environment variables and files. That is why the rest of this lesson ends with a section on installing safely.
+
+Whether a new version arrives by itself depends on the version range and the lockfile, the two things this lesson explains next.
+
+Before installing anything, look it up. `npm view` shows what the registry knows about a package:
 
 Terminal on your computer
 
@@ -321,7 +352,7 @@ Output of `node caret.js` and of the browser terminal
 3.0.0 false
 ```
 
-Same answers as the real `semver` package: the major number must match, and the version must be at least the one in the range. The real rules have more cases, such as versions starting with `0.`, where `^0.2.0` only accepts `0.2.x`, because before 1.0.0 every minor version may break things. That is why you use the `semver` package rather than your own function in real code.
+Same answers as the real `semver` package: the major number must match, and the version must be at least the one in the range. The real rules have more cases, such as versions starting with `0.`, where `^0.2.0` only accepts `0.2.x`, because before 1.0.0 every minor version may break things. That is why you use the `semver` package rather than your own function in real code. [The npm ecosystem in depth](https://zudojs.oyinlola.site/learn/npm-ecosystem#semver) covers those cases, prereleases and the other range forms.
 
 > npx RUNS CODE FROM THE INTERNET
 >
@@ -340,7 +371,7 @@ A range like `^2.1.3` could mean a different version next month. `package-lock.j
 }
 ```
 
-The `integrity` value is a SHA-512 hash, the same idea as the SHA-256 fingerprints in [Files, paths and your computer](https://zudojs.oyinlola.site/learn/node-apis#crypto). If the downloaded file does not match it, npm refuses to install it. So the lockfile gives everyone on the team, and your server, exactly the same code. **Commit it.**
+The `integrity` value is a SHA-512 hash, the same idea as the SHA-256 checksums in [Cryptography with node:crypto](https://zudojs.oyinlola.site/learn/node-crypto#hashes). If the downloaded file does not match it, npm refuses to install it. So the lockfile gives everyone on the team, and your server, exactly the same code. **Commit it.**
 
 On a server or in automated builds, install with `npm ci` ("clean install") instead of `npm install`. It deletes `node_modules`, installs exactly what the lockfile says, and refuses to run if `package.json` and the lockfile disagree, rather than quietly changing versions:
 
@@ -472,7 +503,7 @@ $ node main.js
 [ ] #2 Write report
 ```
 
-`npm install` linked `node_modules/@tasks/format` to the folder (the arrow in `npm ls`), so a change in `packages/format` is seen at once. A name like `@tasks/format` is **scoped**: `@tasks` groups related packages, the same way every ZudoJS package is `@zudojs/something`. `"private": true` stops the root from ever being published by accident.
+`npm install` linked `node_modules/@tasks/format` to the folder (the arrow in `npm ls`), so a change in `packages/format` is seen at once. A name like `@tasks/format` is **scoped**: `@tasks` groups related packages, the same way every ZudoJS package is `@zudojs/something`. `"private": true` stops the root from ever being published by accident. [The npm ecosystem in depth](https://zudojs.oyinlola.site/learn/npm-ecosystem#local) compares workspaces with other ways to use a local package.
 
 ## Publishing a package
 
@@ -535,7 +566,7 @@ npm notice 207B package.json
 npm notice total files: 3
 ```
 
-npm always adds `package.json` and the README. A real release would also bump the version first, with `npm version patch` (or `minor` or `major`, following the semver rules above).
+npm always adds `package.json` and the README. A real release would also bump the version first, with `npm version patch` (or `minor` or `major`, following the semver rules above). The next lesson walks through a real publish, access, dist-tags and prereleases.
 
 ## Installing packages safely
 
@@ -743,7 +774,7 @@ npm notice total files: 3
 - Workspaces link local packages. Before publishing, check `npm pack --dry-run` and use a `files` allow-list.
 - Run `npm audit`, review install scripts before `npm install-scripts approve`, type package names carefully, and check `npm audit signatures`.
 
-Next, you will use Node.js's own `node:http` module to build a web server, with no packages at all.
+Next: [The npm ecosystem in depth](https://zudojs.oyinlola.site/learn/npm-ecosystem), where you read the dependency tree and the lockfile in detail, fix peer dependency conflicts, publish a package properly and defend against supply-chain attacks.
 
 ## Test yourself
 

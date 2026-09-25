@@ -1,22 +1,31 @@
 ---
-title: "Final production challenge"
-description: "Someone else's gift-card feature works in the demo and fails everything else. Find its architectural problems, then make it production-ready step by step, with acceptance criteria, hints and worked solutions for the key fixes."
+title: "Final production challenge — ZudoJS Academy"
+description: "Someone else's gift-card feature works in the demo and fails everything else. Find its problems, fix them step by step, and prove each fix with a test."
 source: https://zudojs.oyinlola.site/learn/final-challenge
 ---
 
-LESSON 84 OF 84
+LEVEL 19 · LESSON 10 OF 10
 
-Production Production
+Capstone Production
 
 # Final production challenge
 
-Someone else's gift-card feature works in the demo and fails everything else. Find its architectural problems, then make it production-ready step by step, with acceptance criteria, hints and worked solutions for the key fixes.
+Someone else's gift-card feature works in the demo and fails everything else. Find its problems, fix them step by step, and prove each fix with a test.
 
 - **120 min** to read and try
 - **You need:** The whole course, especially the ShopFlow capstone
 - **You build:** A secure, transactional, tested and deployable gift-card and wallet service, fixed from a broken one
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Read someone else's code for security, correctness, architecture and operations problems, and name at least ten before changing anything
+- Replace string-built SQL and a check-then-act redemption with parameterized queries and one atomic UPDATE that closes the race
+- Move authentication to a session token and authorization to "only your own wallet", removing every endpoint that trusts a caller-supplied user id
+- Wrap a debit and credit in one transaction and roll both back when either fails
+- Write tests that fail on the original code and pass on the fix, including one that redeems the same card twice at once
+- Work through a production checklist (events, queues, caching, rate limits, observability, OpenAPI, deployment) against a feature that started as a prototype
 
 ## The situation
 
@@ -405,6 +414,18 @@ end: user 1: 6000, user 2: 1000
 - **4.** A negative amount: 400, and nobody's money moved.
 - **5.** The debit from Linus happened inside the transaction, the credit found no wallet, the `NotFoundError` rolled both back: 404, and Linus still has 10.00.
 - **7.** The second redemption of the same card found no *unused* card: 404. The money adds up: 10.00 + 10.00 + 50.00 = 70.00.
+
+## Before you trust the fix
+
+REASON IT OUT
+
+### Why does folding the check into the UPDATE close the race, and does the fix need a test to prove it?
+
+The original code ran a `SELECT` for an unused card, then a separate `UPDATE`. Two redemptions of the same code sent together could both pass that `SELECT` before either `UPDATE` ran, so the card would pay twice. The fix folds the check into the `UPDATE` itself. Why does that close the race, and is reading the code enough, or do you still need a test that fires two redemptions at once?
+
+**Show the reasoning**
+
+`UPDATE gift_cards SET redeemed_by = $1 WHERE code = $2 AND redeemed_by IS NULL RETURNING amount_cents` is one atomic statement: PostgreSQL locks the row for whichever request's `UPDATE` reaches it first, and the second request's `UPDATE` now matches `redeemed_by IS NULL` against a row that already has a redeemer, so it claims zero rows and throws `NotFoundError`. Reading the code is a hypothesis, not proof: a test that calls `redeem` twice with `Promise.allSettled` and asserts exactly one call is fulfilled is what turns "this should close the race" into a fact — the test Step 4 asks you to write.
 
 ## Step 4: prove it with tests
 

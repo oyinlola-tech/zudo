@@ -1,12 +1,12 @@
 ---
-title: "Why TypeScript exists"
+title: "Why TypeScript exists — ZudoJS Academy"
 description: "See a bug that JavaScript runs without complaint, install TypeScript, write a tsconfig.json, and learn the three ways to run TypeScript on Node.js 24."
 source: https://zudojs.oyinlola.site/learn/ts-setup
 ---
 
-LESSON 32 OF 84
+LEVEL 5 · LESSON 1 OF 23
 
-TypeScript Foundation
+Why TypeScript Foundation
 
 # Why TypeScript exists
 
@@ -17,6 +17,14 @@ See a bug that JavaScript runs without complaint, install TypeScript, write a ts
 - **You build:** A ts-tasks project you can check with tsc, run with tsx or node, and compile to JavaScript
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain what TypeScript adds to JavaScript and what tsc does
+- Install TypeScript, tsx and @types/node and write a short tsconfig.json
+- Read a tsc error: file, line, column, error code and message
+- Annotate function parameters and let inference type the rest
+- Choose between tsc, tsx and node file.ts, and say which of them checks types
 
 ## A bug JavaScript lets through
 
@@ -42,7 +50,7 @@ Output of `node report.js` and of the browser terminal
 
 The property is spelled `titel`. JavaScript did not complain. It read a property that does not exist, got `undefined`, and printed it. You saw this trap in [the objects lesson](https://zudojs.oyinlola.site/learn/js-data). In a real API that `undefined` would be sent to users or saved to the database, and nobody would notice until much later.
 
-JavaScript finds mistakes like this only while the program runs, and only on the lines that actually run. A test can catch it, as you saw in [the testing lesson](https://zudojs.oyinlola.site/learn/testing-basics), but only if somebody wrote that test. In a big codebase, with many people changing code every day, that is not enough.
+JavaScript finds mistakes like this only while the program runs, and only on the lines that actually run. A test can catch it (you will write tests in [Testing fundamentals](https://zudojs.oyinlola.site/learn/testing-basics), in the backend course), but only if somebody wrote that test. In a big codebase, with many people changing code every day, that is not enough.
 
 ## What TypeScript adds
 
@@ -218,7 +226,7 @@ $ npx tsx report.ts
 #1 Buy milk (open)
 ```
 
-`type Task = { ... }` gives a name to an object shape. [Interfaces, unions and literal types](https://zudojs.oyinlola.site/learn/ts-objects) covers the ways to name types. The `: string` after the parameter list is the **return type**: the compiler checks that `report` really returns a string.
+`type Task = { ... }` gives a name to an object shape. [Interfaces, unions and literal types](https://zudojs.oyinlola.site/learn/ts-objects) and [Type aliases and interfaces](https://zudojs.oyinlola.site/learn/ts-aliases-interfaces) cover the ways to name types. The `: string` after the parameter list is the **return type**: the compiler checks that `report` really returns a string.
 
 ## You do not have to write every type
 
@@ -337,7 +345,7 @@ Node.js v24.19.0
 The limits of `node file.ts`:
 
 - **It does not check types.** Neither does `tsx`. Only `tsc` checks.
-- **Erasable syntax only.** No `enum`, no `namespace`, no parameter properties (you will meet those in [Classes in TypeScript](https://zudojs.oyinlola.site/learn/ts-classes)). This course avoids `enum`; a union of strings does the same job, as you will see.
+- **Erasable syntax only.** No `enum`, no `namespace`, no parameter properties (you will meet those in [Classes in TypeScript](https://zudojs.oyinlola.site/learn/ts-classes)). This course avoids `enum`; a union of strings does the same job, as [Enums and their alternatives](https://zudojs.oyinlola.site/learn/ts-enums) shows.
 - **It ignores `tsconfig.json`.**
 - **Imports must name the `.ts` file.** `tsx` and `tsc` accept `import … from "./store.js"` for a file called `store.ts`; `node` does not. [Modules in TypeScript](https://zudojs.oyinlola.site/learn/ts-modules) explains why the course writes `.js`.
 
@@ -355,13 +363,24 @@ Terminal on your computer
 $ npx tsc --noEmit false --outDir dist
 $ ls dist
 report.js
-$ cat dist/report.js
+```
+
+This is the file `tsc` wrote:
+
+dist/report.js
+
+```ts
 const task = { id: 1, title: "Buy milk", done: false };
 function report(task) {
     return `#${task.id} ${task.title} (${task.done ? "done" : "open"})`;
 }
 console.log(report(task));
 export {};
+```
+
+Terminal on your computer
+
+```bash
 $ node dist/report.js
 #1 Buy milk (open)
 ```
@@ -375,6 +394,24 @@ Look at `dist/report.js`. The `type Task` block is gone, and so are `: Task` and
 | `node file.ts` | No | Quick scripts with erasable syntax only |
 | `npx tsc` + `node dist/file.js` | Yes | Building for production |
 
+REASON IT OUT
+
+### Which command runs, and which one checks?
+
+A small team runs its Task API in production with `npx tsx src/server.ts`. A teammate says: "We use TypeScript, so a type error can never reach our users." Before reading the answer, think it through:
+
+1. Which of the commands in the table ever reads your types and reports a mistake?
+2. A typo like `task.titel` is pushed on Friday evening. What happens when the server restarts with `tsx`?
+3. Where should `npx tsc --noEmit` run so that the typo is caught before it is deployed?
+4. Is the teammate's sentence ever true? What would have to change?
+
+**Show the reasoning**
+
+1. Only `tsc` (and your editor, which runs the same checker in the background). `tsx` and `node` remove the types and run the rest without looking at them.
+2. The server starts normally and prints `undefined` wherever the title should be, exactly like the JavaScript version at the top of this lesson. Nothing fails until a user notices.
+3. Before every commit, and as a required step in CI (the server that tests every push), so that code with a type error cannot be merged or deployed at all.
+4. Only when a failing `tsc` blocks the deploy. TypeScript's safety is a step you run, not a property of the files. [What the TypeScript compiler does](https://zudojs.oyinlola.site/learn/ts-compiler), the next lesson, builds package scripts that make that step impossible to skip.
+
 ## Types disappear when the code runs
 
 You just saw it in `dist/report.js`: types exist only for the compiler. That has two consequences:
@@ -386,7 +423,7 @@ You just saw it in `dist/report.js`: types exist only for the compiler. That has
 >
 > VS Code runs the TypeScript checker as you type. The typo above gets a red squiggle the moment you write it, which is the fastest feedback of all.
 
-There is one more consequence, and it matters a lot for a backend: types cannot check data that arrives while the program is running, such as a request from a user. [TypeScript and JavaScript together](https://zudojs.oyinlola.site/learn/ts-runtime), at the end of this part, deals with that.
+There is one more consequence, and it matters a lot for a backend: types cannot check data that arrives while the program is running, such as a request from a user. [TypeScript and JavaScript together](https://zudojs.oyinlola.site/learn/ts-runtime) and [Runtime validation](https://zudojs.oyinlola.site/learn/ts-validation), near the end of this course, deal with that.
 
 ## Practice
 
@@ -511,6 +548,8 @@ The `enum`. Deleting the types from the other two lines leaves valid JavaScript 
 - Annotate function parameters; let TypeScript infer the rest.
 - `npx tsc --noEmit` checks. `npx tsx file.ts` runs. `node file.ts` runs erasable TypeScript. `tsc` without `noEmit` compiles to `.js`. Only `tsc` checks.
 - Types are removed before the code runs, so they cannot check data that arrives at runtime.
+
+Next: [What the TypeScript compiler does](https://zudojs.oyinlola.site/learn/ts-compiler), where you look underneath all three ways of running TypeScript.
 
 ## Test yourself
 

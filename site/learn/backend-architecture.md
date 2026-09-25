@@ -1,28 +1,37 @@
 ---
-title: "Backend architecture"
-description: "Give backend code a shape. Learn controllers, services, repositories, models and DTOs, middleware, dependency injection and configuration, the difference between domain, application and infrastructure code, and which way dependencies must point. Then refactor the BookStore's orders into those layers."
+title: "Backend architecture — ZudoJS Academy"
+description: "Apply separation of concerns and SOLID to a whole backend: domain, application and infrastructure layers, ports, dependency injection and a composition root."
 source: https://zudojs.oyinlola.site/learn/backend-architecture
 ---
 
-LESSON 44 OF 84
+LEVEL 11 · LESSON 6 OF 12
 
-Architecture and frameworks Core
+Architecture Core
 
 # Backend architecture
 
-Give backend code a shape. Learn controllers, services, repositories, models and DTOs, middleware, dependency injection and configuration, the difference between domain, application and infrastructure code, and which way dependencies must point. Then refactor the BookStore's orders into those layers.
+Apply separation of concerns and SOLID to a whole backend: domain, application and infrastructure layers, ports, dependency injection and a composition root.
 
 - **45 min** to read and try
-- **You need:** The three BookStore API lessons
+- **You need:** Design principles through refactoring, SOLID, DRY, KISS and YAGNI, and Behavioural patterns
 - **You build:** The BookStore's order feature split into layers, with middleware, a composition root and a swappable database
 
   [Test yourself](#test)
 
+BY THE END OF THIS LESSON YOU CAN
+
+- Sort backend code into domain, application and infrastructure layers, and explain why dependencies must point inward
+- Define a port as an interface the application layer owns, and implement it from infrastructure so the concrete database can be swapped
+- Inject every dependency through a constructor and wire the whole graph in one composition root
+- Recognise middleware as the chain-of-responsibility pattern applied to HTTP requests
+- Load configuration once, validate it and freeze it before handing it to services
+- Test business rules against fake repositories instead of a real database
+
 ## One job per piece of code
 
-At the end of [the last lesson](https://zudojs.oyinlola.site/learn/bookstore-auth) you listed the BookStore's problems. Many of them come from one thing: a single route handler does several jobs at once. The order route reads a header, checks a token, parses a body, runs SQL, applies the stock rule and formats the answer. To change any one of those, you must read all of them.
+[Design principles through refactoring](https://zudojs.oyinlola.site/learn/design-principles#separation) pulled one tangled function apart by separation of concerns, cohesion and coupling; [SOLID, DRY, KISS and YAGNI](https://zudojs.oyinlola.site/learn/design-solid#srp) gave the single-responsibility and dependency-inversion vocabulary for it. This lesson applies the same two ideas to a whole backend instead of one function. The BookStore's order route is the tangled function at application scale: it reads a header, checks a token, parses a body, runs SQL, applies the stock rule and formats the answer, all in one handler. To change any one of those, you must read all of them.
 
-**Separation of concerns** is the fix: each piece of code has one job, and knows as little as possible about the others. Backend developers everywhere use the same names for the usual pieces:
+Backend developers everywhere use the same names for the pieces a route handler's jobs split into:
 
 | Piece | Its one job | In the BookStore |
 | --- | --- | --- |
@@ -152,9 +161,17 @@ export class OrderService {
 
 Read `place` out loud and it is the business process: check the amount, find the book, take the copies, record the order. There is no SQL, no status code and no header in it.
 
-> NOTE
->
-> With a real database, "find, then save" has a gap: two customers can both read "1 left". In [the data lesson](https://zudojs.oyinlola.site/learn/bookstore-data) you closed that gap with a single SQL statement. A layered design keeps that fix inside the database repository, or uses a **transaction**, which a later lesson covers.
+REASON IT OUT
+
+### Does the layering fix the race condition too?
+
+`place` calls `this.books.find(bookId)`, then later `this.books.save(...)`. Two customers can both call `place` for the last copy, both read "1 left" before either saves, and both succeed. Does moving this code into a service, behind a port, remove that gap? Would a stricter type on `BookRepository` catch it?
+
+**Show the reasoning**
+
+No. Layering only moves code around; it does not add concurrency control. `find` then `save` is still two separate steps with a database round trip between them, whichever object calls them. No TypeScript type can express "no one else may read this row until I save it", because that is a runtime property of the database, not a shape of data.
+
+The fix has to live inside whichever repository implementation talks to the real database: a single SQL statement such as `UPDATE books SET stock = stock - $1 WHERE id = $2 AND stock >= $1` closes the gap in one round trip, as in [the data lesson](https://zudojs.oyinlola.site/learn/bookstore-data), or the two steps run inside one **transaction**. The `BookRepository` port stays exactly as written; only the PostgreSQL repository behind it needs to be correct.
 
 ## Infrastructure: repositories, DTOs, a controller
 
@@ -197,7 +214,7 @@ export class MemoryOrderRepository implements OrderRepository {
 }
 ```
 
-The **DTOs** describe what crosses the network. The incoming DTO has only the fields a client may send: no `userId`, no price. The outgoing DTO is not the model either: it shows the total as `"25.98"` and leaves out `userId`. Your model can change without breaking clients, and internal fields never leak by accident:
+The **DTOs** describe what crosses the network, exactly as in [Type-safe API layers](https://zudojs.oyinlola.site/learn/ts-api-layers#entities-dtos): the incoming DTO has only the fields a client may send, no `userId` and no price, and the outgoing DTO shows the total as `"25.98"` and leaves `userId` out. Your model can change without breaking clients, and internal fields never leak by accident:
 
 order.dto.ts
 
@@ -237,7 +254,7 @@ export function toOrderDto(order: Order): OrderDto {
 }
 ```
 
-The **controller** is thin. It checks that there is a user, parses the DTO, calls the service and formats the answer. The `userId` in its request comes from the verified token, as in the last lesson, never from the body:
+The **controller** is thin. It checks that there is a user, parses the DTO, calls the service and formats the answer. The `userId` in its request comes from a verified token, as in [BookStore API: authentication and tests](https://zudojs.oyinlola.site/learn/bookstore-auth), never from the body:
 
 order.controller.ts
 
@@ -276,7 +293,7 @@ export class OrderController {
 
 ## Middleware
 
-The controller does not catch errors, and does not log. Those jobs are the same for every handler, so they belong in **middleware**: a function that takes the next handler and returns a new handler that does something before and after it.
+The controller does not catch errors, and does not log. Those jobs are the same for every handler, so they belong in **middleware**, the chain-of-responsibility pattern from [Behavioural patterns](https://zudojs.oyinlola.site/learn/design-patterns-behavioral#chain) applied to HTTP: a function that takes the next handler and returns a new handler that does something before and after it.
 
 middleware.ts
 
@@ -311,9 +328,7 @@ export function use(handler: Handler, ...middlewares: Middleware[]): Handler {
 }
 ```
 
-- `handleErrors` turns a `DomainError` into a status code. This is the one place where the domain's words ("out of stock") meet HTTP's numbers (409).
-- `logRequests` gets its `log` function injected, so a test can collect the lines instead of printing them.
-- `use(handler, a, b)` wraps the handler so that `a` runs outermost, then `b`, then the handler: a **pipeline**. `reduceRight` is `reduce` ([Arrays](https://zudojs.oyinlola.site/learn/js-arrays)) walking the list from the end, so it builds the pipeline from the inside out.
+`handleErrors` is the one place where the domain's words ("out of stock") meet HTTP's numbers (409); `logRequests` gets its `log` function injected, so a test can collect the lines instead of printing them; `use(handler, a, b)` is the same `chain` pipeline as before, built with `reduceRight` instead of the explicit recursion, so that `a` runs outermost, then `b`, then the handler.
 
 ## Configuration and the composition root
 
@@ -392,7 +407,7 @@ Compare this with the route handlers of the BookStore:
 - **The database is replaceable.** The service only knows the ports. The second exercise swaps in PostgreSQL without touching the service.
 - **Cross-cutting jobs are written once**, as middleware, not repeated in every handler.
 
-The cost is more files, and a composition root that grows with every class. Wiring dozens of services by hand, in the right order, with their settings and their shutdown, is exactly the kind of job the next lesson hands to a framework.
+The cost is more files, and a composition root that grows with every class. Wiring dozens of services by hand, in the right order, with their settings and their shutdown, only gets harder as the graph grows: [Clean architecture: ports and adapters](https://zudojs.oyinlola.site/learn/arch-clean) pushes this same composition root further, and [What a framework does](https://zudojs.oyinlola.site/learn/frameworks) is exactly the lesson where a framework takes that job off your hands.
 
 ## Practice
 
@@ -515,7 +530,7 @@ No file in the domain or the application layer changed. Only infrastructure and 
 - Middleware wraps handlers for jobs every request shares, such as error mapping and logging.
 - Configuration is read once, checked, frozen and injected.
 
-Next: what a framework is, and which of these jobs it takes off your hands.
+Next: [Clean architecture: ports and adapters](https://zudojs.oyinlola.site/learn/arch-clean), which takes this same domain/application/infrastructure split and enforces the dependency rule with four rings and a checker.
 
 ## Test yourself
 

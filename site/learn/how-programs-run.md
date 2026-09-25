@@ -1,22 +1,30 @@
 ---
-title: "How programs run"
-description: "What happens between the code you type and the result on the screen, what JavaScript engines and runtimes are, and the difference between a syntax error and a runtime error."
+title: "How programs run — ZudoJS Academy"
+description: "What happens between the code you type and the result on screen: compilers, interpreters, engines and runtimes, and syntax, runtime and logic errors."
 source: https://zudojs.oyinlola.site/learn/how-programs-run
 ---
 
-LESSON 3 OF 84
+LEVEL 1 · LESSON 3 OF 18
 
 Start here Foundation
 
 # How programs run
 
-What happens between the code you type and the result on the screen, what JavaScript engines and runtimes are, and the difference between a syntax error and a runtime error.
+What happens between the code you type and the result on screen: compilers, interpreters, engines and runtimes, and syntax, runtime and logic errors.
 
 - **25 min** to read and try
-- **You need:** Lessons 1 and 2
-- **You build:** Small programs that show the order code runs in, and the two main kinds of error
+- **You need:** Welcome to ZudoJS Academy and Your developer environment
+- **You build:** Small programs that show the order code runs in, and the three kinds of error: syntax, runtime and logic
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain the difference between source code and machine code, and between a compiler, an interpreter and JIT compilation
+- Name the main JavaScript engines and explain what a runtime adds to an engine
+- Say which tools JavaScript gets in the browser and in Node.js, and why a server never trusts the browser
+- Tell a library from a framework, and a package from a dependency
+- Recognise a syntax error, a runtime error and a logic error from what the program prints, and catch a runtime error with try and catch
 
 ## Source code
 
@@ -80,6 +88,10 @@ $ node -p process.versions.v8
 
 `node -p` runs one expression and prints the result. Your version number can be different; it depends on your Node.js version.
 
+> NOTE
+>
+> You install Node.js in [Set up your computer](https://zudojs.oyinlola.site/learn/setup), at the start of the next course. Until then, the commands in this lesson's boxes show you exactly what Node.js prints, and every example without the **Node.js only** label runs in the browser terminal on this page. Come back and try the boxes once Node.js is installed.
+
 ## Where JavaScript runs
 
 JavaScript runs in two main places, and each gives it different tools:
@@ -90,7 +102,7 @@ JavaScript runs in two main places, and each gives it different tools:
 | Extra tools | `window`, `document` (the page), `localStorage` | `process`, files, network servers |
 | Who controls it | The visitor: any code sent to the browser can be read and changed. | You: the code stays on your server. |
 
-`typeof` tells you what kind of value a name holds, or `"undefined"` if it does not exist. Run this with Node.js on your computer:
+`typeof` tells you what kind of value a name holds, or `"undefined"` if it does not exist. Here is what this prints when Node.js runs it on your computer:
 
 where.jsNode.js only
 
@@ -113,6 +125,25 @@ Node.js has no page, so it has no `window` and no `document`. It does have `proc
 > Never trust the browser
 >
 > Because the visitor controls the browser, a backend must check everything the browser sends. A check in the web page is a convenience for the user. The real check always happens on the server. This rule comes back in every part of the course.
+
+REASON IT OUT
+
+### Where should the quantity check run?
+
+An online shop's order page has a quantity box. JavaScript in the page refuses any quantity below 1 before the order is sent. The server just multiplies the price by whatever quantity arrives. Before you read on, think it through:
+
+- Who controls the JavaScript that runs in the page? Who controls the code on the server?
+- What could a visitor do to get a quantity of `-5` to the server anyway?
+- What would a quantity of `-5` do to the bill?
+- Is the check in the page useless, then?
+
+**Show the reasoning**
+
+The page's JavaScript is sent to the visitor's browser, and the visitor controls the browser: they can open the devtools and change the code, switch JavaScript off, or skip the page completely and send the request from a program of their own. The server's code stays on the server, where only you can change it.
+
+So a quantity of `-5` can reach the server whenever someone wants it to. Multiplied by the price, it gives a negative amount: the shop would owe the customer money for taking goods. The check that matters is the one on the server, which must refuse any quantity below 1 whatever the page did.
+
+The check in the page is still worth keeping: it tells an honest customer about a typing mistake at once, without waiting for the server. It is a convenience, not a protection. Keep both, and never rely on the first.
 
 ### JavaScript is not Java
 
@@ -214,7 +245,7 @@ console.log("This line is fine");
 console.log("This line is missing a bracket";
 ```
 
-Press **Run in browser** to see the terminal's message, then run it on your computer:
+Press **Run in browser** to see the terminal's message. Here is the same file run with Node.js on a computer:
 
 Terminal on your computer
 
@@ -237,7 +268,7 @@ Notice what is *not* there: `This line is fine` was never printed. The mistake i
 
 ### Runtime errors: while the program runs
 
-A **runtime error** happens when the grammar is fine, but a statement cannot be carried out. This program asks for the title of a task that does not exist:
+A **runtime error** happens when the grammar is fine, but a statement cannot be carried out. This program asks for the title of a task that does not exist. Its second line, `const task = undefined;`, creates a name, `task`, and gives it the special value `undefined`, which means "no value at all". `task.title` then asks for the title of nothing:
 
 crash.js
 
@@ -291,7 +322,7 @@ Message: Cannot read properties of undefined (reading 'title')
 The program is still running
 ```
 
-Same error, but no crash. A backend must work this way: one bad request must never stop the server for everyone. The [lesson on errors](https://zudojs.oyinlola.site/learn/js-errors) covers `try` and `catch` in depth.
+Same error, but no crash. A backend must work this way: one bad request must never stop the server for everyone. [Handling errors](https://zudojs.oyinlola.site/learn/js-errors), in the JavaScript course, covers `try` and `catch` in depth.
 
 ### Logic errors: no message at all
 
@@ -310,7 +341,7 @@ Output of `node average.js` and of the browser terminal
 Average price: 40
 ```
 
-As in maths, division happens before addition, so this computed `10 + 20 + 10`. The fix is brackets: `(10 + 20 + 30) / 3`. The only way to catch a logic error is to check the output against what you expected. That is why every example in this course shows its real output, and why you will learn to write tests.
+`const average = …` works out the value on the right and keeps it under the name `average`. As in maths, division happens before addition, so this computed `10 + 20 + 10`. The fix is brackets: `(10 + 20 + 30) / 3`. The only way to catch a logic error is to check the output against what you expected. That is why every example in this course shows its real output, and why you will learn to write tests.
 
 ## Practice
 
@@ -318,7 +349,7 @@ TRY IT YOURSELF
 
 ### Fix the syntax error
 
-Fix `broken.js` so both lines print. Run it in the browser, then with `node broken.js` on your computer.
+Fix `broken.js` so both lines print, and run it in the browser. (Once Node.js is installed, run it with `node broken.js` too.)
 
 **Show a solution**
 
@@ -358,7 +389,7 @@ TRY IT YOURSELF
 
 ### Let the framework call you more
 
-Add a third function, `onStop`, to the object you pass to `runTaskApp`, and change `runTaskApp` so it calls it just before `[framework] stopped`. Make it print `Goodbye`.
+Add a third function, `onStop`, to the object you pass to `runTaskApp`, and change `runTaskApp` so it calls it just before `[framework] stopped`. Make it print `Goodbye`. You do not need to know the rules for writing functions yet: copy the shape of `onStart`, and remember the comma between the functions.
 
 **Show a solution**
 
@@ -408,7 +439,7 @@ Your code only says *what* to do on stop. The framework decides *when*. ZudoJS h
 - You call a library; a framework calls you. A package is published code with a name and version; the packages you use are your dependencies.
 - A syntax error stops the whole file before it runs. A runtime error stops the program at one line, unless you catch it. A logic error gives a wrong answer with no message.
 
-Next: what happens between a browser and a server when you open a web page.
+Next: [How the web works](https://zudojs.oyinlola.site/learn/how-the-web-works), what happens between a browser and a server when you open a web page.
 
 ## Test yourself
 

@@ -1,22 +1,31 @@
 ---
-title: "Joins, grouping and transactions"
-description: "Combine tables with joins, summarise data with group by and aggregates, filter groups with having, nest queries, control transactions yourself, measure queries with explain analyze, and connect Node.js to a real PostgreSQL server."
+title: "Joins, grouping and transactions — ZudoJS Academy"
+description: "Join tables, summarise them with group by and having, nest queries, run transactions by hand, measure with explain analyze, and connect Node.js to PostgreSQL."
 source: https://zudojs.oyinlola.site/learn/sql-advanced
 ---
 
-LESSON 29 OF 84
+LEVEL 7 · LESSON 5 OF 15
 
-Backend fundamentals Foundation
+Databases and SQL Core
 
 # Joins, grouping and transactions
 
-Combine tables with joins, summarise data with group by and aggregates, filter groups with having, nest queries, control transactions yourself, measure queries with explain analyze, and connect Node.js to a real PostgreSQL server.
+Join tables, summarise them with group by and having, nest queries, run transactions by hand, measure with explain analyze, and connect Node.js to PostgreSQL.
 
 - **45 min** to read and try
 - **You need:** The SQL with PostgreSQL lesson
 - **You build:** A task report with joins and aggregates, a measured index, and a Node.js script talking to your PostgreSQL server
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Combine tables with inner and left joins, and keep a left join from turning into an inner join
+- Summarise rows with group by, aggregates, filter and having
+- Answer questions with scalar, list and correlated subqueries
+- Control a transaction with begin, commit and rollback, and keep it on one connection
+- Measure a query with explain analyze and add the index it needs
+- Connect to PostgreSQL with pg and DATABASE_URL, and know which types arrive as strings
 
 ## The data for this lesson
 
@@ -225,7 +234,25 @@ Output of `node subqueries.js`
 
 The first subquery computes one value, the average estimate (60), and the outer query keeps tasks above it. The second is **correlated**: it refers to `u.id` from the outer query, so it runs for each user and asks "does this user have any open task?". `not exists` keeps the users for whom the answer is no. Grace has no tasks at all, so she has no open tasks either.
 
+A subquery can also be given a name and used like a table, with `with name as (select …)`. This is called a **common table expression** (CTE). You will use one in [BookStore API: validation and PostgreSQL](https://zudojs.oyinlola.site/learn/bookstore-data#repositories) to take stock and write an order in a single statement, and a *recursive* one, which walks a tree such as product categories, in [Modelling data for a shop](https://zudojs.oyinlola.site/learn/db-modeling#recursive).
+
 ## Transactions with begin, commit and rollback
+
+REASON IT OUT
+
+### The transfer that stopped halfway
+
+A wallet app moves ₦5,000 from Ada to Alan with two statements: subtract from Ada's balance, add to Alan's. Think through what can go wrong before reading on:
+
+- The server crashes after the first statement. Where is the money?
+- The second statement fails a `check (balance >= 0)` constraint, or Alan's account does not exist. What should happen to the first?
+- Ada starts two ₦5,000 transfers at the same moment, from two phones, with ₦8,000 in her account. Can both succeed?
+
+**Show the reasoning**
+
+Without a transaction, a crash between the two statements destroys ₦5,000: it left Ada and never reached Alan. If the second statement fails, the first has already happened, and your code would have to undo it by hand, which can also fail. Put both statements in **one transaction** and the database guarantees all or nothing: a crash or an error before `commit` undoes everything.
+
+The third question is harder. Both transfers may read ₦8,000 before either writes, and both may decide there is enough. A transaction alone does not prevent that. What does is letting the database check and write in one step (`update … set balance = balance - $1 where id = $2 and balance >= $1`, then look at how many rows changed), or locking the row first. [Transactions, isolation and locks](https://zudojs.oyinlola.site/learn/db-transactions) works through these cases on a real server.
 
 In [How databases work](https://zudojs.oyinlola.site/learn/databases) you used `db.transaction`. Underneath, it sends three SQL commands, and you can send them yourself:
 
@@ -270,7 +297,7 @@ The delete really happened inside the transaction: the count dropped to 2. `roll
 
 > One connection per transaction
 >
-> A transaction belongs to one database connection. PGlite has only one, so the `begin` above is safe. A real server app uses a **pool** of connections, and two `pool.query` calls may go out on two different connections. With the `pg` package below, take one client with `pool.connect()`, run `begin`, your queries and `commit` on that client, and `release()` it at the end. ZudoJS does this for you in [the transactions lesson](https://zudojs.oyinlola.site/learn/zudo-transactions).
+> A transaction belongs to one database connection. PGlite has only one, so the `begin` above is safe. A real server app uses a **pool** of connections, and two `pool.query` calls may go out on two different connections. With the `pg` package below, take one client with `pool.connect()`, run `begin`, your queries and `commit` on that client, and `release()` it at the end. ZudoJS does this for you ([Transactions](https://zudojs.oyinlola.site/learn/zudo-transactions), in the ZudoJS course).
 
 ## Indexes and query performance
 
@@ -285,6 +312,7 @@ const db = new PGlite();
 await db.exec(`
   create table tasks (id integer primary key, user_id integer not null, done boolean not null, title text not null);
   insert into tasks select n, n % 2000, n % 3 = 0, 'Task ' || n from generate_series(1, 200000) as n;
+  set default_statistics_target = 1000;
   analyze tasks;
 `);
 
@@ -328,6 +356,8 @@ Read a plan from the most indented line outwards:
 - `Execution Time` is the real time the query took. Your numbers will differ from the ones shown, but the index version is many times faster, and the gap grows with the table.
 
 The index covers two columns, `(user_id, done)`, in the same order the query filters by. A **composite index** like this can serve queries on `user_id` alone too, but not queries on `done` alone. We turned off per-step timing and cost estimates (`timing off, costs off`) only to keep the output short; plain `explain analyze` shows them.
+
+One more line in the setup needs explaining. `analyze` collects statistics about the data, and the planner chooses a plan from them. Normally it reads a random sample of rows (30,000 at the default setting), so on a big table the statistics, and sometimes the plan, can differ a little between two runs. `default_statistics_target = 1000` raises the sample to 300,000 rows, more than this table has, so every row is read and the plan is the same every time. You would not normally change it; it is here so the example is repeatable. [Indexes and query plans](https://zudojs.oyinlola.site/learn/db-indexes) explains statistics and plans in depth.
 
 > TIP
 >
@@ -398,7 +428,9 @@ $ node tasks.js done
 { n: '2' }
 ```
 
-These are the two rows you inserted with psql. Look at the count: `'2'`, a string. `count` returns a 64-bit integer (`bigint`), which can be larger than JavaScript numbers can hold exactly, so `pg` returns it as text. Write `count(*)::int` when you know the number is small, or convert it with `Number(...)`. PGlite converts it for you, which is why the examples above printed plain numbers.
+These are the two rows you inserted with psql. Look at the count: `'2'`, a string. `count` returns a 64-bit integer (`bigint`), which can be larger than JavaScript numbers can hold exactly, so `pg` returns it as text. Write `count(*)::int` when you know the number is small, or convert it with `Number(...)`.
+
+The two drivers disagree here, so learn both rules. `pg` returns every `bigint` as a string. PGlite returns a JavaScript `number` when the value fits safely (up to 253 − 1, `Number.MAX_SAFE_INTEGER`), which is why the counts above printed as plain numbers, and a JavaScript `bigint` such as `9007199254740993n` when it does not. Both return `numeric` as a string. So a `bigint` column is a `string` with `pg` and a `number | bigint` with PGlite; [Typing database code](https://zudojs.oyinlola.site/learn/db-typescript#driver-types) shows how to give such columns one honest type.
 
 Use port 5432 in the URL if that is where your server listens. A wrong password fails with `password authentication failed for user "postgres"`.
 
@@ -499,7 +531,9 @@ If two tasks of one user tie for the largest estimate, both are shown.
 - Subqueries produce a value, a list or an exists-test; correlated ones refer to the outer row.
 - `begin`, `commit`, `rollback` control a transaction, and a transaction lives on one connection.
 - `explain analyze` runs a query and shows its real plan and time. A `Seq Scan` that removes most rows asks for an index.
-- Connect with `pg` and a `Pool`, read `DATABASE_URL` from the environment, and remember that `bigint` and `numeric` arrive as strings.
+- Connect with `pg` and a `Pool`, and read `DATABASE_URL` from the environment. `numeric` arrives as a string from both drivers; `bigint` arrives as a string from `pg`, and as a number (or a JavaScript `bigint` beyond 253) from PGlite.
+
+Next: [Testing fundamentals](https://zudojs.oyinlola.site/learn/testing-basics), where you check a task store against a real database automatically, on every change.
 
 ## Test yourself
 

@@ -1,22 +1,31 @@
 ---
-title: "\"BookStore API: validation and PostgreSQL\""
-description: "Check every request body by hand with type guards, move the BookStore data into PostgreSQL with PGlite, write repositories with parameterized SQL, and map typed errors to 400, 404 and 409."
+title: "\"BookStore API: validation and PostgreSQL\" — ZudoJS Academy"
+description: "Check BookStore request bodies with type guards, move the data into PostgreSQL, write repositories with parameterized SQL, and map errors to 400, 404 and 409."
 source: https://zudojs.oyinlola.site/learn/bookstore-data
 ---
 
-LESSON 42 OF 84
+LEVEL 7 · LESSON 9 OF 15
 
-Project: a TypeScript backend Core
+TypeScript on the server Core
 
 # "BookStore API: validation and PostgreSQL"
 
-Check every request body by hand with type guards, move the BookStore data into PostgreSQL with PGlite, write repositories with parameterized SQL, and map typed errors to 400, 404 and 409.
+Check BookStore request bodies with type guards, move the data into PostgreSQL, write repositories with parameterized SQL, and map errors to 400, 404 and 409.
 
 - **50 min** to read and try
-- **You need:** "BookStore API: HTTP and routing", and the SQL lessons
+- **You need:** "BookStore API: HTTP and routing", SQL with PostgreSQL, and Joins, grouping and transactions
 - **You build:** A BookStore API that stores authors, books and orders in PostgreSQL and answers bad input with clear errors
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Model expected failures as typed errors that know nothing about HTTP, and map them to 400, 404 and 409 in one place
+- Parse unknown request bodies into typed objects that keep only known fields and report every problem at once
+- Store the BookStore in PostgreSQL with tables that protect themselves with foreign keys, UNIQUE and CHECK
+- Write repositories that own all the SQL, use placeholders, and turn database error codes into typed errors
+- Sell the last copy safely with one conditional SQL statement
+- Swap PGlite for a PostgreSQL server behind a small Queryable interface
 
 ## What changes in this lesson
 
@@ -70,7 +79,7 @@ export class ConflictError extends AppError {
 }
 ```
 
-`new.target` is the class that was actually created with `new`, so `new.target.name` gives every subclass its own `name`, such as `"NotFoundError"`, without repeating it. You built error classes like these in [Handling errors](https://zudojs.oyinlola.site/learn/js-errors).
+`new.target` is the class that was actually created with `new`, so `new.target.name` gives every subclass its own `name`, such as `"NotFoundError"`, without repeating it. You built error classes like these in [Handling errors](https://zudojs.oyinlola.site/learn/js-errors) and [Typed error handling](https://zudojs.oyinlola.site/learn/ts-errors).
 
 Now `src/http/errors.ts` maps each type to its status code. Replace the old `toErrorResponse` with this one:
 
@@ -120,7 +129,7 @@ export function toErrorResponse(error: unknown): { status: number; body: unknown
 
 ## Check every body by hand
 
-A request body is `unknown`. Before you use it, you prove what it is with **type guards** ([TypeScript and JavaScript together](https://zudojs.oyinlola.site/learn/ts-runtime)). Three small helpers do most of the work:
+A request body is `unknown`. Before you use it, you prove what it is with **type guards** ([TypeScript and JavaScript together](https://zudojs.oyinlola.site/learn/ts-runtime)). In a real project you would describe each body with a schema library, as in [Runtime validation](https://zudojs.oyinlola.site/learn/ts-validation). Here you write the checks by hand, once, to see exactly what such a library does for you. Three small helpers do most of the work:
 
 src/validation/rules.ts
 
@@ -315,45 +324,13 @@ export function isPgError(error: unknown): error is Error & { code: string } {
 
 - **`Queryable`** is the one thing the rest of the code needs from a database: "run this SQL with these parameters and give me rows". PGlite fits that interface, and so will a real PostgreSQL connection later in this lesson.
 - **The tables protect themselves.** `REFERENCES authors (id)` is a **foreign key**: PostgreSQL refuses a book whose author does not exist. `UNIQUE` refuses a second author with the same name, and `CHECK (stock >= 0)` refuses negative stock. Even a bug in your TypeScript cannot break those rules.
-- **`MIGRATIONS`** are the steps that build the database. `IF NOT EXISTS` makes them safe to run on every start. Real projects use a migration tool that remembers which steps already ran; ZudoJS has one, and you will meet it later.
+- **`serial`** is PostgreSQL's older shorthand for an integer the database numbers by itself. It works like the `generated always as identity` column from [How databases work](https://zudojs.oyinlola.site/learn/databases#tables), which is the modern, standard form; you will see both in real projects.
+- **`MIGRATIONS`** are the steps that build the database. `IF NOT EXISTS` makes them safe to run on every start. That is simpler than the numbered migrations from [How databases work](https://zudojs.oyinlola.site/learn/databases#migrations), and only safe while every step is a `CREATE … IF NOT EXISTS` or an `ADD COLUMN IF NOT EXISTS`. Real projects use a migration tool that remembers which steps already ran; ZudoJS has one, and you will meet it later.
 - **`isPgError`** is a type guard for the errors PostgreSQL throws. Each has a `code`: `23505` means "unique rule broken", `23503` means "foreign key broken".
 
 ## Parameters, never string building
 
-> THE WRONG WAY, SHOWN ONCE
->
-> The first query below builds SQL by pasting user input into a string. Never do this. It is here so you can see the attack work.
-
-try-injection.tsNode.js only
-
-```ts
-import { openDatabase } from "./src/db.js";
-
-const db = await openDatabase();
-await db.exec(`INSERT INTO authors (name) VALUES ('Chinua Achebe');
-  INSERT INTO books (title, author_id, price_cents, stock) VALUES
-    ('Things Fall Apart', 1, 1299, 3), ('Arrow of God', 1, 1199, 0);`);
-
-const search = "x' OR '1'='1";
-
-const unsafe = await db.query(`SELECT title FROM books WHERE title = '${search}'`);
-console.log("built with a template string:", unsafe.rows);
-
-const safe = await db.query("SELECT title FROM books WHERE title = $1", [search]);
-console.log("with a $1 parameter:", safe.rows);
-await db.close();
-```
-
-Output of `npx tsx try-injection.ts`
-
-```ts
-built with a template string: [ { title: 'Things Fall Apart' }, { title: 'Arrow of God' } ]
-with a $1 parameter: []
-```
-
-The "search" contains a quote. Pasted into the string, it ends the text early and adds `OR '1'='1'`, which is always true, so the query returned *every* book. That is **SQL injection**. With other input, the same trick can read the users table or delete data.
-
-With `$1`, the SQL and the value travel to PostgreSQL **separately**. The value is only ever data, never SQL, so it matched no title at all. Every query in the BookStore uses `$1`, `$2`, … for every outside value, with no exceptions.
+Every query in the BookStore sends outside values as `$1`, `$2`, … parameters, with no exceptions. The SQL text and the values travel to PostgreSQL separately, so a value is only ever data, never SQL. [SQL with PostgreSQL](https://zudojs.oyinlola.site/learn/sql-basics#injection) showed what happens without them: one quote in a search box, and the query returned every user's tasks. The repositories below paste only fixed strings that you wrote, such as a list of column names, into the SQL.
 
 ## Repositories
 
@@ -449,7 +426,33 @@ export class BookRepository {
 
 `${COLUMNS}` is pasted into the SQL, but that is safe: it is a fixed string you wrote, never user input.
 
-Placing an order is the tricky one. Two customers may buy the last copy at the same moment. So taking the stock and writing the order happen in **one** SQL statement, which PostgreSQL runs as a single step. `WITH taken AS (…)` gives the result of the `UPDATE` a name, `taken`, that the `INSERT` right after it can read from:
+Placing an order is the tricky one.
+
+REASON IT OUT
+
+### The last copy
+
+One copy of *Things Fall Apart* is left. Two customers press "Buy" at the same moment, and two requests run `place` at once. Think through this first version:
+
+1. `SELECT stock FROM books WHERE id = $1`
+2. If the stock is enough, `UPDATE books SET stock = stock - $2 WHERE id = $1`
+3. `INSERT INTO orders …`
+
+- What can both requests see in step 1? What happens next?
+- The server crashes between step 2 and step 3. What state is the shop in?
+- Where should the price of the order come from?
+
+**Show the reasoning**
+
+Both requests can read `stock = 1` in step 1 before either runs step 2. Both decide there is enough, both subtract, and the stock becomes −1 (or, with the `CHECK (stock >= 0)`, the second update fails after the customer was told there was a copy). Checking in one statement and changing in another is a **race**: the answer depends on timing.
+
+A crash between step 2 and step 3 takes a copy out of stock with no order for it. The two writes must succeed or fail together.
+
+The price must come from the database. If the client could send it, anyone could buy a book for 1 cent.
+
+The fix for all three: let PostgreSQL check and change the stock and write the order in **one statement**. One statement is atomic, and the `UPDATE … WHERE stock >= $2` locks the row, so the second buyer waits and then sees the new stock.
+
+So taking the stock and writing the order happen in **one** SQL statement. `WITH taken AS (…)` is a **common table expression** ([Joins, grouping and transactions](https://zudojs.oyinlola.site/learn/sql-advanced#subqueries)): it gives the rows returned by the `UPDATE` a name, `taken`, that the `INSERT` right after it can read from:
 
 src/repositories/orders.tsNode.js only
 
@@ -567,7 +570,7 @@ type Env = Readonly<Record<string, string | undefined>>;
 export function loadConfig(env: Env): Config {
   const raw = env["PORT"] ?? "3000";
   const port = Number(raw);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  if (!/^\d{1,5}$/.test(raw) || port > 65535) {
     throw new Error(`PORT must be a whole number from 0 to 65535, got "${raw}"`);
   }
   return { port, dataDir: env["DATA_DIR"] };
@@ -938,9 +941,10 @@ The foreign key refused to leave books without an author, and the client learns 
 - Every body is checked by type guards that return a new, typed object with only the known fields, and report every problem at once.
 - PGlite is real PostgreSQL inside your process. Foreign keys, `UNIQUE` and `CHECK` make the database protect its own data.
 - Repositories own the SQL. Every outside value goes in as a `$1` parameter, which makes SQL injection impossible.
+- Stock is taken and the order written in one conditional statement, so two buyers can never both get the last copy.
 - Because the code depends on a small `Queryable` interface, moving to a PostgreSQL server with `pg` and `DATABASE_URL` is one new file.
 
-Anyone can still place an order for anyone. Next, the BookStore gets users, passwords, log-in tokens and tests.
+Anyone can still place an order for anyone. Next: [BookStore API: authentication and tests](https://zudojs.oyinlola.site/learn/bookstore-auth), where the BookStore gets users, passwords, log-in tokens and tests.
 
 ## Test yourself
 

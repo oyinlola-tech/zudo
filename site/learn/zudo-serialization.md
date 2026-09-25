@@ -1,22 +1,30 @@
 ---
-title: "Serialization"
-description: "Turn values into text and back without losing what they were. See exactly what plain JSON loses, keep Dates, BigInts, Maps, Sets, bytes and Errors with @zudojs/serialization, add your own types, read untrusted input safely, and version your payloads with envelopes."
+title: "Serialization — ZudoJS Academy"
+description: "Turn values into text and back without losing what they were: Dates, BigInts, Maps, Sets, bytes, custom types and versioned payloads with @zudojs/serialization."
 source: https://zudojs.oyinlola.site/learn/zudo-serialization
 ---
 
-LESSON 69 OF 84
+LEVEL 14 · LESSON 6 OF 18
 
-Events, messages and background work Advanced
+Services and contracts Advanced
 
 # Serialization
 
-Turn values into text and back without losing what they were. See exactly what plain JSON loses, keep Dates, BigInts, Maps, Sets, bytes and Errors with @zudojs/serialization, add your own types, read untrusted input safely, and version your payloads with envelopes.
+Turn values into text and back without losing what they were: Dates, BigInts, Maps, Sets, bytes, custom types and versioned payloads with @zudojs/serialization.
 
 - **35 min** to read and try
 - **You need:** The background jobs lesson
 - **You build:** Reminder job payloads that keep their types across the queue, and survive a change of format
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain exactly what plain JSON.stringify loses and why no type error warns you
+- Keep Dates, BigInts, Maps, Sets and bytes across a serialize/deserialize round trip
+- Deserialize untrusted text safely against prototype pollution and tag spoofing
+- Teach the serializer a custom type with a TypeTransformer
+- Wrap payloads in an envelope and version them so old and new readers coexist
 
 ## Values that leave your process
 
@@ -167,6 +175,16 @@ true true called the bank
 Read the text: every special value became a small object with a `$type` tag and a `$value`. The date is an ISO string, the BigInt its digits, the Set and Map arrays, and the bytes **base64**, a way of writing bytes as plain letters. It is still valid JSON, so any system can store and send it. Only a reader that understands the tags can rebuild the values, and it did: a real `Date`, `bigint`, `Set`, `Map` and `Uint8Array`.
 
 The option has a cost: the text is longer, and a non-JavaScript service reading it sees the tags. Use it where both sides are your code, such as your queue and your cache. For a public API, send plain JSON with dates as ISO strings, and parse them with a schema as in [the validation lesson](https://zudojs.oyinlola.site/learn/zudo-validation).
+
+REASON IT OUT
+
+### preserveTypes makes payloads bigger and puts $type tags in the output. Why default to it for the queue and the cache, but not for a public API?
+
+Think about who reads each payload back. A job you put on the queue is read only by your own processors, running the same package. A cache entry is read only by your own app. A public API response is read by whoever calls it: a mobile app, a partner's backend, a script someone else wrote, possibly in a language that has never heard of a `$type` tag.
+
+**Show the reasoning**
+
+Where both sides are your own code, the tags cost you nothing you care about (a few extra bytes) and buy back real correctness: a job's `Date` stays a `Date` without every processor re-parsing strings by hand, and a bug like "the reminder crashed because `remindAt` was a string" simply cannot happen. A public API has no such guarantee about its readers, so the tags become a liability instead: an unfamiliar client either has to learn your tagging convention or gets a confusing `{ "$type": "Date", "$value": "…" }` where it expected a plain string. The fix is not to disable type safety, but to move it to the boundary: send plain JSON with ISO date strings on the wire, and parse the response into real types with a schema, exactly once, right where the untrusted text turns back into a value your code trusts.
 
 ## Errors, limits and circular data
 
@@ -619,6 +637,8 @@ Each step upgrades one version, and steps chain. Adding version 4 later means on
 - A transformer adds your own types: `serialize` returns the value to store, `deserialize` checks its input. Register it with `registerTransformer` or a `TransformerRegistry`. The built-in types keep working unless you pass `builtins: false`.
 - Envelopes carry the format and version, and refuse what they cannot read. Version your own payloads with a `v` field and upgrade old ones on read.
 - The queue's default serializer keeps job data types. Plain JSON (`preserveTypes: false`) turns a `Date` into a string.
+
+Next, [Calling services with RPC](https://zudojs.oyinlola.site/learn/zudo-rpc) uses this same serializer to move typed values not just across a queue, but over the network to another service.
 
 ## Test yourself
 

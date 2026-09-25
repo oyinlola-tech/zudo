@@ -1,0 +1,1180 @@
+---
+title: "Use case: background processing — ZudoJS Academy"
+description: "Move invoice e-mails out of the request: a durable job ledger, a queue with retries, scheduled reminders, correlation ids and recovery from crashed workers."
+source: https://zudojs.oyinlola.site/learn/usecase-background-jobs
+---
+
+LEVEL 19 · LESSON 5 OF 10
+
+Real-world use cases Production
+
+# Use case: background processing
+
+Move invoice e-mails out of the request: a durable job ledger, a queue with retries, scheduled reminders, correlation ids and recovery from crashed workers.
+
+- **60 min** to read and try
+- **You need:** The lessons on background jobs, scheduled tasks, events and observability, plus the multi-tenant SaaS use case
+- **You build:** InvoiceHub's delivery system: an API that answers 202, a job ledger in PostgreSQL, workers with retries, backoff, timeouts and a concurrency limit, a weekday reminder schedule, correlation ids and metrics, and a Vitest suite that kills a worker mid-job and feeds it poison
+
+  [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Split slow, unreliable work out of a request into a durable ledger and an in-process queue
+- Make every step safe to repeat with dedupe keys and an idempotency key that reaches the provider
+- Recover work from a worker that died mid-job with leases, and stop a message that crashes every worker
+- Separate permanent from temporary failures, and retry only the temporary ones
+- Carry a correlation id from the HTTP request into the job, and count what the workers do
+- Schedule recurring work so that two servers firing at once still do it once
+
+## The brief: nobody waits for the mail server
+
+In [the SaaS use case](https://zudojs.oyinlola.site/learn/usecase-saas), sending an invoice only changed a status. The real route also renders the invoice and e-mails it to the customer through an e-mail provider, and it does that while the user waits. InvoiceHub's support inbox shows the result:
+
+- "Send" takes three seconds, and fails whenever the e-mail provider has a bad minute, although nothing is wrong with the invoice.
+- Users click "Send" twice when it is slow, and their customers receive two invoices.
+- One night a server was restarted during a deploy, and some invoices were marked "sending" forever. Nobody knows whether they went out.
+
+The founders write the brief:
+
+"Send" must answer at once, and the app must show whether the e-mail went out. A customer gets each invoice exactly once, however often the user clicks and whatever crashes. The provider allows 5 e-mails at a time. Every weekday at 08:00 UTC, customers with overdue invoices get one reminder. One broken invoice must never hold up the others. When a customer says "I never got it", support must find every log line for that invoice in one search.
+
+This is the pipeline from [background jobs](https://zudojs.oyinlola.site/learn/zudo-queue) and [scheduled tasks](https://zudojs.oyinlola.site/learn/zudo-scheduler), built for real: **API → queue → worker → database → event**. The lesson does not re-teach queues, schedules, events or metrics; it links to them. What is new is making the whole path survive the failures in the brief, and proving it with tests. As before, everything runs in one Node.js process with real HTTP on random ports and PGlite as PostgreSQL, so run the examples with `npx tsx <file>.ts`.
+
+```ts
+POST /invoices/1/send ──► deliveries row (queued)  ◄── same transaction as invoice.status = 'sending'
+        │ 202                  │
+        ▼                      │ dispatcher, every 20 ms: claim due rows with a lease
+    client polls               ▼
+    GET /deliveries/1     in-memory queue ──► worker (5 at a time, retries, timeout)
+                                                   │ POST /messages  Idempotency-Key: delivery-1
+                                                   ▼
+                                  e-mail provider ──► deliveries row: sent + invoice: sent
+                                                                  │
+                                                                  ▼
+                                                    event invoice.delivered ──► audit log
+```
+
+The delivery pipeline. The database row is the truth; the queue is only how the work gets done.
+
+## Design: what must survive a crash?
+
+REASON IT OUT
+
+### Where does a job live, and what happens when things die?
+
+Before any code, walk through the path and ask at each arrow: what if the process dies right here? In particular: (1) The in-memory queue from [the queue lesson](https://zudojs.oyinlola.site/learn/zudo-queue#production) is lost on restart. Where must "this e-mail still has to go out" be written, and in which transaction? (2) The worker sent the e-mail, and died before it recorded "sent". What happens next, and how does the customer not get a second copy? (3) The user clicks twice. What stops two jobs? (4) Which failures are worth a retry: a 503 from the provider, a 422 "invalid recipient", a `TypeError` in our own rendering code? (5) What if one particular job kills every worker that picks it up?
+
+**Show the reasoning**
+
+1. **A durable ledger.** The route writes a `deliveries` row in the same transaction as the invoice change. If the transaction commits, the e-mail is owed; if it rolls back, it is not. This is the outbox pattern from [microservices](https://zudojs.oyinlola.site/learn/zudo-microservices#consistency). The in-memory queue is only the executor: a dispatcher copies due rows into it.
+2. **Leases and an idempotency key.** A worker *claims* a row with a lease ("mine until 09:01"). If it dies, the lease runs out and another worker claims the row again. That second worker will call the provider again, so the call carries an idempotency key, `delivery-1`, and the provider answers a repeated key with the first result instead of sending again. Queues deliver *at least once*; the key makes the *effect* happen once.
+3. **A dedupe key in the database.** `deliveries.dedupe_key` is unique: `invoice:1` for the invoice itself, `reminder:1:2026-10-05` for Monday's reminder. A second click, or a second server firing the same schedule, finds the existing row.
+4. **Only temporary failures are retried.** A 503, a timeout or a dropped connection may go away. A 422 will fail the same way forever, and so will a bug triggered by the data. Retrying them wastes attempts and delays the rest.
+5. **A cap on claims.** The row counts how often it was claimed. A job that was claimed three times and never finished is a **poison message**: it is marked dead instead of being handed to a fourth worker.
+
+Here is the schema. `deliveries` is the ledger: `status` moves `queued → running → sent` or `dead`, `locked_by` and `locked_until` are the lease, `claims` counts the claims, and `correlation_id` remembers which request asked for it. Two of the seed invoices are broken on purpose: INV-0003 has an address the provider will refuse, and INV-0004 was imported from an old system without an amount.
+
+db.ts
+
+```ts
+import { PGlite } from "@electric-sql/pglite";
+
+export async function createDatabase(): Promise<PGlite> {
+  const db = new PGlite();
+  await db.exec(`
+    create table invoices (
+      id             serial primary key,
+      number         text not null unique,
+      customer_email text not null,
+      amount_kobo    integer check (amount_kobo > 0),
+      due_on         date not null,
+      status         text not null default 'draft' check (status in ('draft', 'sending', 'sent', 'paid'))
+    );
+    create table deliveries (
+      id             serial primary key,
+      invoice_id     integer not null references invoices (id),
+      kind           text not null check (kind in ('invoice', 'reminder')),
+      dedupe_key     text not null unique,
+      status         text not null default 'queued' check (status in ('queued', 'running', 'sent', 'dead')),
+      claims         integer not null default 0,
+      locked_by      text,
+      locked_until   timestamptz,
+      correlation_id text not null,
+      provider_id    text,
+      last_error     text,
+      created_at     timestamptz not null default now()
+    );
+    create index deliveries_due on deliveries (status, locked_until);
+    insert into invoices (number, customer_email, amount_kobo, due_on) values
+      ('INV-0001', 'accounts@mamaput.ng', 4500000, '2026-10-01'),
+      ('INV-0002', 'finance@gracehotel.ng', 1200000, '2026-10-30'),
+      ('INV-0003', 'not-an-email', 800000, '2026-10-30'),
+      ('INV-0004', 'ops@lagostaxi.ng', null, '2026-10-30');
+  `);
+  return db;
+}
+```
+
+The ledger is a small repository around that table:
+
+ledger.ts
+
+```ts
+import type { PGlite } from "@electric-sql/pglite";
+
+export interface Claimed {
+  readonly id: number;
+  readonly invoiceId: number;
+  readonly kind: "invoice" | "reminder";
+  readonly correlationId: string;
+  readonly claims: number;
+}
+export interface Delivery extends Claimed {
+  readonly status: "queued" | "running" | "sent" | "dead";
+  readonly providerId: string | null;
+  readonly lastError: string | null;
+}
+
+const columns = `id, invoice_id as "invoiceId", kind, status, claims, correlation_id as "correlationId",
+  provider_id as "providerId", last_error as "lastError"`;
+
+/** The durable record of every e-mail that must go out. The queue is only how it gets done. */
+export function createLedger(db: PGlite) {
+  return {
+    /** Records the intent to send, in the same transaction as the invoice change. Idempotent per key. */
+    async request(invoiceId: number, kind: "invoice" | "reminder", dedupeKey: string, correlationId: string) {
+      return db.transaction(async (tx) => {
+        const invoice = await tx.query("select id from invoices where id = $1 for update", [invoiceId]);
+        if (invoice.rows.length === 0) return undefined;
+        const inserted = await tx.query(
+          `insert into deliveries (invoice_id, kind, dedupe_key, correlation_id) values ($1, $2, $3, $4)
+           on conflict (dedupe_key) do nothing returning id`, [invoiceId, kind, dedupeKey, correlationId]);
+        if (kind === "invoice") await tx.query("update invoices set status = 'sending' where id = $1 and status = 'draft'", [invoiceId]);
+        const { rows } = await tx.query<Delivery>(`select ${columns} from deliveries where dedupe_key = $1`, [dedupeKey]);
+        return { delivery: rows[0]!, created: inserted.rows.length > 0 };
+      });
+    },
+
+    /** Claims due deliveries for one worker, with a lease. Rows whose lease ran out are claimed again. */
+    async claimDue(workerId: string, now: Date, leaseMs: number, maxClaims: number, limit = 20): Promise<Claimed[]> {
+      await db.query(
+        `update deliveries set status = 'dead', last_error = 'crashed ' || claims || ' workers', locked_until = null
+         where status = 'running' and locked_until < $1 and claims >= $2`, [now, maxClaims]);
+      const { rows } = await db.query<Claimed>(
+        `update deliveries set status = 'running', claims = claims + 1, locked_by = $1, locked_until = $2
+         where id in (select id from deliveries
+                      where status = 'queued' or (status = 'running' and locked_until < $3)
+                      order by id limit $4 for update skip locked)
+         returning id, invoice_id as "invoiceId", kind, correlation_id as "correlationId", claims`,
+        [workerId, new Date(now.getTime() + leaseMs), now, limit]);
+      return rows.sort((a, b) => a.id - b.id);
+    },
+
+    async get(id: number): Promise<Delivery | undefined> {
+      return (await db.query<Delivery>(`select ${columns} from deliveries where id = $1`, [id])).rows[0];
+    },
+
+    /** Marks the delivery (and, for an invoice, the invoice) as sent, in one transaction. */
+    async markSent(id: number, providerId: string): Promise<boolean> {
+      return db.transaction(async (tx) => {
+        const { rows } = await tx.query<{ invoiceId: number; kind: string }>(
+          `update deliveries set status = 'sent', provider_id = $2, locked_until = null
+           where id = $1 and status = 'running' returning invoice_id as "invoiceId", kind`, [id, providerId]);
+        const row = rows[0];
+        if (!row) return false;
+        if (row.kind === "invoice") await tx.query("update invoices set status = 'sent' where id = $1", [row.invoiceId]);
+        return true;
+      });
+    },
+
+    /** Puts a dead delivery back in the line, after someone fixed the cause. */
+    async replay(id: number): Promise<boolean> {
+      const result = await db.query(
+        "update deliveries set status = 'queued', claims = 0, last_error = null where id = $1 and status = 'dead'", [id]);
+      return (result.affectedRows ?? 0) > 0;
+    },
+
+    async markDead(id: number, error: string): Promise<void> {
+      await db.query(
+        "update deliveries set status = 'dead', last_error = $2, locked_until = null where id = $1 and status = 'running'",
+        [id, error]);
+    },
+  };
+}
+export type Ledger = ReturnType<typeof createLedger>;
+```
+
+- `request` inserts with `on conflict (dedupe_key) do nothing` and then reads the row, so a repeated request returns the same delivery and reports `created: false`. It locks the invoice row first, so two clicks at the same moment are handled one after the other.
+- `claimDue` takes the clock as a parameter, `now`. Production passes the real time; tests and the demos below pass "a minute later" to make a lease run out without waiting a minute. It first retires rows whose lease expired too often, then claims up to 20 rows that are queued or whose lease expired. `for update skip locked` lets several dispatchers on several servers run this at once without claiming the same row twice.
+- `markSent` changes the delivery and the invoice in one transaction, and only if the delivery is still `running`.
+
+## The provider and the mailer
+
+The e-mail provider is another company's service, so the demos use a fake one on a real HTTP port. It behaves like the real ones in the ways that matter: it wants an `Idempotency-Key`, replays the first answer for a repeated key, refuses an invalid address with `422`, can be told to fail with `503`, and counts how many e-mails it handled at the same time.
+
+provider.ts
+
+```ts
+import { createNodeHttpAdapter, createResponseContext } from "@zudojs/http";
+
+interface Message { readonly id: string; readonly to: string; readonly subject: string }
+
+/** A fake e-mail provider on a real HTTP port. It honours Idempotency-Key, like real providers do. */
+export async function startMailProvider(options: { delayMs?: number } = {}) {
+  const byKey = new Map<string, Message>();
+  let failures = 0;
+  let inFlight = 0;
+  let mostAtOnce = 0;
+  const adapter = createNodeHttpAdapter({
+    host: "127.0.0.1",
+    port: 0,
+    handler: async (request) => {
+      const key = request.getHeader("idempotency-key");
+      const body = JSON.parse(new TextDecoder().decode(request.body as Uint8Array)) as { to: string; subject: string };
+      if (!key) return createResponseContext({ status: 400 }).json({ error: "Idempotency-Key required" });
+      if (failures > 0) {
+        failures -= 1;
+        return createResponseContext({ status: 503 }).json({ error: "try again later" });
+      }
+      inFlight += 1;
+      mostAtOnce = Math.max(mostAtOnce, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, options.delayMs ?? 0));
+      inFlight -= 1;
+      if (!/^[^@\s]+@[^@\s]+\.[a-z]+$/.test(body.to)) {
+        return createResponseContext({ status: 422 }).json({ error: `invalid recipient ${body.to}` });
+      }
+      const saved = byKey.get(key);
+      if (saved) return { id: saved.id, replayed: true };
+      const message = { id: `msg_${byKey.size + 1}`, to: body.to, subject: body.subject };
+      byKey.set(key, message);
+      return { id: message.id, replayed: false };
+    },
+  });
+  await adapter.start();
+  return {
+    url: `http://127.0.0.1:${adapter.address?.port}`,
+    /** Every e-mail a customer actually received. */
+    inbox: (): Message[] => [...byKey.values()],
+    failNext(count: number): void { failures = count; },
+    /** Forgets every message: for tests that share one provider. */
+    reset(): void { byKey.clear(); failures = 0; mostAtOnce = 0; },
+    mostAtOnce: () => mostAtOnce,
+    stop: () => adapter.stop(),
+  };
+}
+```
+
+The mailer is the `HttpClient` from [the HTTP lesson](https://zudojs.oyinlola.site/learn/zudo-http) with a timeout. It does not retry by itself (the client retries only `GET` by default, and this is a `POST`): retries belong to the queue, which spaces them out and counts them. `isPermanent` is the whole retry policy in one line: a 4xx other than 429 means "this request is wrong", and no retry will fix it.
+
+mailer.ts
+
+```ts
+import { HttpClient, HttpClientError } from "@zudojs/http";
+
+export interface OutgoingMail { readonly to: string; readonly subject: string; readonly text: string }
+
+export function createMailer(baseUrl: string) {
+  const client = new HttpClient({ baseUrl, timeout: 1_000 });
+  return {
+    /** Sends once per key: the provider replays the first answer for a repeated key. */
+    async send(key: string, mail: OutgoingMail, signal: AbortSignal) {
+      const response = await client.request<{ id: string; replayed: boolean }>("/messages", {
+        method: "POST",
+        headers: { "idempotency-key": key },
+        body: { ...mail },
+        signal,
+      });
+      return response.data;
+    },
+  };
+}
+export type Mailer = ReturnType<typeof createMailer>;
+
+/** 4xx other than 429 will fail the same way every time: retrying cannot help. */
+export function isPermanent(error: unknown): boolean {
+  return error instanceof HttpClientError && error.status !== undefined
+    && error.status >= 400 && error.status < 500 && error.status !== 429;
+}
+```
+
+## Correlation ids across the queue
+
+Support's wish from the brief, "every log line for that invoice in one search", needs a **correlation id**: one id that the HTTP request, the job and every log line share. Inside one request, [the observability lesson](https://zudojs.oyinlola.site/learn/zudo-observability#context) kept such ids in AsyncLocalStorage. A queue breaks that chain: the job runs later, in another async flow, maybe in another process.
+
+REASON IT OUT
+
+### Why does the context get lost, and where must the id live?
+
+The request stores its id in AsyncLocalStorage and adds a job. Hours later a worker runs the job. Is the request's context still there? What if the job is claimed again after a crash, by a worker on another server? Where must the id be written so that every attempt finds it?
+
+**Show the reasoning**
+
+AsyncLocalStorage follows the async calls of one flow in one process. The worker's flow started from a timer in the dispatcher, not from the request, so the context is gone, and after a crash even the process is gone. Anything that must survive the hop has to be written down *with the job*: the ledger row stores `correlation_id`. The dispatcher then puts it back into the context while it adds the job, and the queue's **context carrier** (the `contextCarriers` option of @zudojs/queue) captures it at `add()` and restores it around the processor. Every log line the processor writes then has the id, without a parameter.
+
+telemetry.ts
+
+```ts
+import { createObservability, createPropagationContext } from "@zudojs/observability";
+import type { LogExporter } from "@zudojs/observability";
+import type { QueueContextCarrier } from "@zudojs/queue";
+
+/** Collects log lines so a demo can print them in order. In production: a real exporter. */
+export const logLines: string[] = [];
+const collect: LogExporter = {
+  async export(records) {
+    for (const r of records) {
+      const context = Object.entries(r.context ?? {}).map(([key, value]) => `${key}=${value}`).join(" ");
+      logLines.push(`${r.levelName.padEnd(5)} ${r.loggerName.padEnd(20)} ${r.message} ${context}`.trimEnd());
+    }
+  },
+  async shutdown() {},
+};
+
+export const obs = createObservability({ serviceName: "invoicehub", useConsoleExporters: false, logExporter: collect });
+
+/** A logger whose lines carry the correlation id of the current request or job. */
+export function logger(name: string) {
+  return obs.logger.child(name, { corr: obs.propagation.current()?.correlationId ?? "-" });
+}
+
+/** Runs `work` with a correlation id, as the HTTP handler and the dispatcher do. */
+export function withCorrelation<T>(correlationId: string, work: () => Promise<T>): Promise<T> {
+  return obs.propagation.run(createPropagationContext({ correlationId }), work);
+}
+
+/** Carries the correlation id from `queue.add()` into the processor. */
+export const correlationCarrier: QueueContextCarrier<string> = {
+  key: "correlationId",
+  capture: () => obs.propagation.current()?.correlationId,
+  restore: (correlationId, run) => withCorrelation(correlationId, run),
+};
+```
+
+The log exporter collects lines in an array so the demos can print them in order; in production it would be one of the exporters from the observability lesson. Note the `logger()` helper: records from @zudojs/observability carry the `traceId` of the current context, but not its `correlationId`, so the helper adds it to each child logger's context itself.
+
+## The worker
+
+A **worker process** here is what one server runs: its own in-memory queue, a `createWorker` with `concurrency: 5` (the provider's limit), and a `dispatch` function that claims due rows from the ledger and adds them to the queue with their correlation id. The processor, `deliver`, is written so that running it twice is harmless:
+
+1. Load the delivery. If it is not `running` any more (someone else finished it), do nothing.
+2. Load the invoice and render the e-mail.
+3. Call the provider with the key `delivery-<id>`. A permanent refusal marks the row dead and returns normally, so the queue does not retry. Anything else is thrown, and the queue retries it with exponential backoff, up to 4 attempts.
+4. Mark the delivery and the invoice sent, count it, and publish `invoice.delivered` on the event bus from [the events lesson](https://zudojs.oyinlola.site/learn/zudo-events).
+
+worker.ts
+
+```ts
+import type { PGlite } from "@electric-sql/pglite";
+import type { EventBus } from "@zudojs/events";
+import { createExponentialBackoff, createInMemoryQueue, createQueueName, createWorker } from "@zudojs/queue";
+import type { JobContext } from "@zudojs/queue";
+import type { Ledger } from "./ledger.js";
+import { isPermanent } from "./mailer.js";
+import type { Mailer } from "./mailer.js";
+import { correlationCarrier, logger, obs, withCorrelation } from "./telemetry.js";
+
+export const LEASE_MS = 60_000;
+export const MAX_CLAIMS = 3;
+
+interface DeliveryJob { readonly deliveryId: number }
+interface InvoiceRow { readonly number: string; readonly customerEmail: string; readonly amountKobo: number; readonly dueOn: string }
+
+export interface WorkerDeps {
+  readonly db: PGlite;
+  readonly ledger: Ledger;
+  readonly mailer: Mailer;
+  readonly bus: EventBus;
+  /** Test hook: runs after the provider accepted the e-mail, before the ledger is updated. */
+  readonly afterSend?: (deliveryId: number) => Promise<void>;
+}
+
+function render(invoice: InvoiceRow, kind: string) {
+  const amount = invoice.amountKobo.toLocaleString("en-NG");
+  const subject = kind === "reminder" ? `Reminder: ${invoice.number} is overdue` : `Invoice ${invoice.number}`;
+  return { to: invoice.customerEmail, subject, text: `Amount due: ${amount} kobo, by ${invoice.dueOn}` };
+}
+
+async function deliver(name: string, job: DeliveryJob, context: JobContext<DeliveryJob>, deps: WorkerDeps) {
+  const log = logger(name);
+  const delivery = await deps.ledger.get(job.deliveryId);
+  if (!delivery || delivery.status !== "running") {
+    log.info("nothing to do", { delivery: job.deliveryId });
+    return;
+  }
+  const { rows } = await deps.db.query<InvoiceRow>(
+    `select number, customer_email as "customerEmail", amount_kobo as "amountKobo", due_on::text as "dueOn"
+     from invoices where id = $1`, [delivery.invoiceId]);
+  const mail = render(rows[0]!, delivery.kind);
+  log.info("sending", { delivery: delivery.id, attempt: context.attemptNumber });
+  const started = performance.now();
+  let result;
+  try {
+    result = await deps.mailer.send(`delivery-${delivery.id}`, mail, context.signal);
+  } catch (error) {
+    if (!isPermanent(error)) throw error;
+    await deps.ledger.markDead(delivery.id, (error as Error).message);
+    obs.metrics.counter("deliveries.dead", { reason: "rejected" }).increment();
+    log.warn("provider rejected the e-mail, not retrying", { delivery: delivery.id });
+    return;
+  }
+  await deps.afterSend?.(delivery.id);
+  if (await deps.ledger.markSent(delivery.id, result.id)) {
+    obs.metrics.counter("deliveries.sent", { kind: delivery.kind }).increment();
+    obs.metrics.histogram("deliveries.duration_ms").record(performance.now() - started);
+    log.info(result.replayed ? "sent (provider replayed)" : "sent", { delivery: delivery.id, message: result.id });
+    await deps.bus.publishEvent({ type: "invoice.delivered", payload: { deliveryId: delivery.id, kind: delivery.kind } });
+  }
+}
+
+/** One worker process: its own in-memory queue and worker, fed from the ledger. */
+export function createWorkerProcess(name: string, deps: WorkerDeps) {
+  const queue = createInMemoryQueue<DeliveryJob>(createQueueName("deliveries"), {
+    autoProcess: false,
+    closeTimeout: 200,
+    contextCarriers: [correlationCarrier],
+    defaultJobOptions: { attempts: 4, backoff: createExponentialBackoff(20, { jitter: "none" }), timeout: 5_000 },
+  });
+  queue.process("deliver", (job, context) => deliver(name, job.data, context, deps));
+  queue.events?.on("job:failed", ({ job, error }) => {
+    logger(name).warn("attempt failed", { delivery: (job.data as DeliveryJob).deliveryId, error: error.message });
+  });
+  queue.events?.on("job:dead-lettered", ({ job, error, reason: why }) => {
+    const reason = `${why ?? error.message} (after ${job.attempt} attempts)`;
+    obs.metrics.counter("deliveries.dead", { reason: "retries-exhausted" }).increment();
+    logger(name).error("gave up", { delivery: (job.data as DeliveryJob).deliveryId, error: reason });
+    deps.ledger.markDead((job.data as DeliveryJob).deliveryId, reason).catch((failure: unknown) => {
+      logger(name).error("could not record the dead delivery; its lease will bring it back", { error: String(failure) });
+    });
+  });
+  const worker = createWorker(name, queue, { concurrency: 5, pollInterval: 10 });
+
+  return {
+    name,
+    queue,
+    start: () => worker.start(),
+    /** Moves due deliveries from the ledger into this process's queue. */
+    async dispatch(now = new Date()): Promise<number> {
+      const claimed = await deps.ledger.claimDue(name, now, LEASE_MS, MAX_CLAIMS);
+      for (const row of claimed) {
+        await withCorrelation(row.correlationId, () => queue.add("deliver", { deliveryId: row.id }));
+      }
+      return claimed.length;
+    },
+    /** Graceful shutdown: running deliveries finish first. */
+    async stop(): Promise<void> {
+      await worker.stop();
+      await queue.close();
+    },
+    /** Simulates `kill -9` for the demos: this process stops dead and forgets its in-memory queue. */
+    async kill(): Promise<void> {
+      await worker.forceStop();
+      await queue.close();
+    },
+  };
+}
+export type WorkerProcess = ReturnType<typeof createWorkerProcess>;
+```
+
+Three details carry a lot of weight. `afterSend` is a test hook between "the provider accepted" and "we recorded it", the most dangerous moment in the whole pipeline; the crash demo uses it. `job:dead-lettered` fires when the queue gives up after the last attempt, and turns that into a dead row in the ledger with the real reason. If the database is down at that moment, the error is logged and the row stays `running`, and its lease brings it back later: nothing is lost because one write failed. And `InvoiceRow.amountKobo` is typed `number`, although the column allows `null`: the type is a promise the old imported data does not keep, which is exactly how poison messages are born.
+
+## The API and the happy path
+
+The route does two fast things: it records the delivery and answers `202 Accepted` with the delivery id, which the client can poll at `GET /deliveries/:id`. `ctx.request.id` is the incoming `x-request-id` when it is a safe value, or a fresh id otherwise ([microservices](https://zudojs.oyinlola.site/learn/zudo-microservices#http) showed the rules); it becomes the correlation id.
+
+api.ts
+
+```ts
+import { randomUUID } from "node:crypto";
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter, notFound } from "@zudojs/http";
+import type { Ledger } from "./ledger.js";
+import { logger, withCorrelation } from "./telemetry.js";
+
+export async function startApi(ledger: Ledger) {
+  const router = createRouter();
+  const idParam = (value: string | undefined) => {
+    const id = Number(value);
+    if (!Number.isSafeInteger(id) || id < 1) throw notFound("Not found");
+    return id;
+  };
+
+  router.post("/invoices/:id/send", async (ctx) => {
+    const correlationId = ctx.request.id ?? randomUUID();
+    return withCorrelation(correlationId, async () => {
+      const invoiceId = idParam(ctx.params.id);
+      const requested = await ledger.request(invoiceId, "invoice", `invoice:${invoiceId}`, correlationId);
+      if (!requested) throw notFound("Invoice not found");
+      const { delivery, created } = requested;
+      logger("api").info(created ? "delivery requested" : "already requested", { delivery: delivery.id, invoice: invoiceId });
+      return createResponseContext().setStatus(202).json({ deliveryId: delivery.id, status: delivery.status });
+    });
+  });
+  router.get("/deliveries/:id", async (ctx) => {
+    const delivery = await ledger.get(idParam(ctx.params.id));
+    if (!delivery) throw notFound("Not found");
+    return createResponseContext().json({ deliveryId: delivery.id, status: delivery.status });
+  });
+
+  const server = createHttpServer({
+    adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+    handler: async (request) => (await router.dispatch(request)).response,
+  });
+  await server.start();
+  return { url: `http://127.0.0.1:${server.address?.port}`, stop: () => server.stop() };
+}
+```
+
+`startSystem` wires everything like a server's startup code: the database, the provider, the API, one worker process, and a scheduler from [scheduled tasks](https://zudojs.oyinlola.site/learn/zudo-scheduler) that runs the dispatcher every 20 milliseconds with `overlap: "skip"`. (A real dispatcher polls every second or so, or is woken by PostgreSQL's `LISTEN/NOTIFY`.) The dispatcher starts only when the caller says so, which lets the demos and tests arrange a situation first. `waitFor` polls for a condition instead of guessing a delay:
+
+wait.ts
+
+```ts
+/** Polls until `check` is true, so demos wait for results instead of guessing a delay. */
+export async function waitFor(check: () => Promise<boolean>, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error("waitFor timed out");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+```
+
+system.ts
+
+```ts
+import type { PGlite } from "@electric-sql/pglite";
+import { createEventBus } from "@zudojs/events";
+import { Scheduler } from "@zudojs/scheduler";
+import { startApi } from "./api.js";
+import { createDatabase } from "./db.js";
+import { createLedger } from "./ledger.js";
+import { createMailer } from "./mailer.js";
+import { startMailProvider } from "./provider.js";
+import { logger } from "./telemetry.js";
+import { createWorkerProcess } from "./worker.js";
+import type { WorkerDeps } from "./worker.js";
+
+/** Wires the whole system: database, API, mail provider, one worker process and its dispatcher. */
+export async function startSystem(options: { providerDelayMs?: number; seed?: (db: PGlite) => Promise<void> } = {}) {
+  const db = await createDatabase();
+  await options.seed?.(db);
+  const ledger = createLedger(db);
+  const provider = await startMailProvider({ delayMs: options.providerDelayMs });
+  const bus = createEventBus();
+  bus.on("invoice.delivered", (event) => logger("audit").info(event.type, event.payload as Record<string, unknown>));
+  const api = await startApi(ledger);
+  const deps: WorkerDeps = { db, ledger, mailer: createMailer(provider.url), bus };
+  const worker = createWorkerProcess("worker-a", deps);
+  await worker.start();
+
+  const scheduler = new Scheduler();
+  scheduler.define({ id: "dispatch", name: "Move due deliveries into the queue", handler: async () => { await worker.dispatch(); } });
+  const dispatching = scheduler.every("20ms", "dispatch", { overlap: "skip" });
+  await dispatching.pause();
+  scheduler.start();
+
+  return {
+    db, ledger, provider, api, worker, deps,
+    /** Starts or pauses the dispatcher, which moves due deliveries into the worker. */
+    startDispatching: () => dispatching.resume(),
+    pauseDispatching: () => dispatching.pause(),
+    /** True when no delivery is waiting or running any more. */
+    async settled(): Promise<boolean> {
+      return (await db.query("select 1 from deliveries where status in ('queued', 'running')")).rows.length === 0;
+    },
+    async stop(): Promise<void> {
+      await scheduler.stop();
+      await worker.stop();
+      await api.stop();
+      await provider.stop();
+      await db.close();
+    },
+  };
+}
+```
+
+Now the story from the brief: the provider will fail the first two calls, and the user clicks "Send" twice, with two different request ids:
+
+story.tsNode.js only
+
+```ts
+import { startSystem } from "./system.js";
+import { logLines, obs } from "./telemetry.js";
+import { waitFor } from "./wait.js";
+
+const system = await startSystem();
+system.provider.failNext(2);
+
+for (const requestId of ["req-41", "req-42"]) {
+  const response = await fetch(`${system.api.url}/invoices/1/send`, { method: "POST", headers: { "x-request-id": requestId } });
+  console.log(requestId, response.status, await response.text());
+}
+await system.startDispatching();
+await waitFor(system.settled);
+const status = await fetch(`${system.api.url}/deliveries/1`);
+console.log("GET /deliveries/1", status.status, await status.text());
+console.log("inbox:", system.provider.inbox());
+
+await system.stop();
+await obs.shutdown();
+console.log(logLines.join("\n"));
+```
+
+Output of `npx tsx story.ts`
+
+```ts
+req-41 202 {"deliveryId":1,"status":"queued"}
+req-42 202 {"deliveryId":1,"status":"queued"}
+GET /deliveries/1 200 {"deliveryId":1,"status":"sent"}
+inbox: [
+  {
+    id: 'msg_1',
+    to: 'accounts@mamaput.ng',
+    subject: 'Invoice INV-0001'
+  }
+]
+info  invoicehub.api       delivery requested corr=req-41 delivery=1 invoice=1
+info  invoicehub.api       already requested corr=req-42 delivery=1 invoice=1
+info  invoicehub.worker-a  sending corr=req-41 delivery=1 attempt=1
+warn  invoicehub.worker-a  attempt failed corr=req-41 delivery=1 error=HTTP request failed with status 503.
+info  invoicehub.worker-a  sending corr=req-41 delivery=1 attempt=2
+warn  invoicehub.worker-a  attempt failed corr=req-41 delivery=1 error=HTTP request failed with status 503.
+info  invoicehub.worker-a  sending corr=req-41 delivery=1 attempt=3
+info  invoicehub.worker-a  sent corr=req-41 delivery=1 message=msg_1
+info  invoicehub.audit     invoice.delivered corr=req-41 deliveryId=1 kind=invoice
+```
+
+Both clicks got `202` at once, with the same delivery id: the second one found `invoice:1` already recorded, and the log says "already requested". The first two attempts met the provider's 503s; the queue retried after 20 and 40 milliseconds, and the third attempt got through. The customer's inbox holds one e-mail. And every line of the story, from the API to the audit handler of the event, carries `corr=req-41`, the id of the request that asked for it. That is support's one search.
+
+## A worker dies mid-job
+
+Now the nightmare from the brief: worker A sends the e-mail, and the process is killed before it records "sent". The `afterSend` hook makes that happen at exactly the worst moment: it never returns, and then `kill()` stops the process's worker and throws its in-memory queue away, like `kill -9` would. Worker B, on another server, then tries to pick up the work:
+
+crash.tsNode.js only
+
+```ts
+import { createEventBus } from "@zudojs/events";
+import { createDatabase } from "./db.js";
+import { createLedger } from "./ledger.js";
+import { createMailer } from "./mailer.js";
+import { startMailProvider } from "./provider.js";
+import { obs } from "./telemetry.js";
+import { waitFor } from "./wait.js";
+import { createWorkerProcess, LEASE_MS } from "./worker.js";
+
+const db = await createDatabase();
+const ledger = createLedger(db);
+const provider = await startMailProvider();
+const deps = { db, ledger, mailer: createMailer(provider.url), bus: createEventBus() };
+
+let killed = false;
+const workerA = createWorkerProcess("worker-a", {
+  ...deps,
+  afterSend: async () => {
+    killed = true;
+    await new Promise(() => {});
+  },
+});
+await workerA.start();
+await ledger.request(2, "invoice", "invoice:2", "req-77");
+await workerA.dispatch();
+await waitFor(async () => killed);
+console.log("worker-a died after the provider accepted the e-mail");
+await workerA.kill();
+
+console.log("ledger:", await ledger.get(1));
+const workerB = createWorkerProcess("worker-b", deps);
+await workerB.start();
+console.log("worker-b, right away, claims:", await workerB.dispatch());
+const aMinuteLater = new Date(Date.now() + LEASE_MS + 1_000);
+console.log("worker-b, a minute later, claims:", await workerB.dispatch(aMinuteLater));
+await waitFor(async () => (await ledger.get(1))?.status === "sent");
+console.log("ledger:", await ledger.get(1));
+console.log("inbox:", provider.inbox().map((mail) => `${mail.id} to ${mail.to}`));
+
+await workerB.stop();
+await provider.stop();
+await obs.shutdown();
+await db.close();
+```
+
+Output of `npx tsx crash.ts`
+
+```ts
+worker-a died after the provider accepted the e-mail
+ledger: {
+  id: 1,
+  invoiceId: 2,
+  kind: 'invoice',
+  status: 'running',
+  claims: 1,
+  correlationId: 'req-77',
+  providerId: null,
+  lastError: null
+}
+worker-b, right away, claims: 0
+worker-b, a minute later, claims: 1
+ledger: {
+  id: 1,
+  invoiceId: 2,
+  kind: 'invoice',
+  status: 'sent',
+  claims: 2,
+  correlationId: 'req-77',
+  providerId: 'msg_1',
+  lastError: null
+}
+inbox: [ 'msg_1 to finance@gracehotel.ng' ]
+```
+
+Read it in order. After the crash, the ledger row is still `running`, with one claim: the database knows the work was started and not finished, and it still has the correlation id. Worker B's first dispatch claims nothing, because worker A's lease has not run out; a slow worker is not a dead one, and taking its work early would run it twice at the same time. A minute later the lease has expired, worker B claims the row (two claims now), and calls the provider with the same key, `delivery-1`. The provider replays its first answer, `msg_1`, instead of sending again, and the inbox still holds one e-mail.
+
+How long should a lease be? Longer than a job can legitimately take, with all its retries and backoff, or a slow-but-alive worker loses its lease and the job runs twice at once. Shorter means faster recovery after a crash. Workers with long jobs renew their lease while they run (a "heartbeat" that pushes `locked_until` forward). InvoiceHub's jobs take seconds, so one minute is plenty.
+
+### A message that kills every worker
+
+Some poison does not throw: it crashes the process, for example by running it out of memory. Then no `catch` ever runs and the queue never counts an attempt. The only thing that notices is the ledger's claim counter. This demo plays four workers that each claim the same row and die, with the clock moving one lease forward each time:
+
+crash-loop.tsNode.js only
+
+```ts
+import { createDatabase } from "./db.js";
+import { createLedger } from "./ledger.js";
+import { LEASE_MS, MAX_CLAIMS } from "./worker.js";
+
+const db = await createDatabase();
+const ledger = createLedger(db);
+await ledger.request(2, "invoice", "invoice:2", "req-9");
+
+let now = Date.parse("2026-10-05T09:00:00Z");
+for (let round = 1; round <= 4; round++) {
+  const claimed = await ledger.claimDue(`worker-${round}`, new Date(now), LEASE_MS, MAX_CLAIMS);
+  const row = await ledger.get(1);
+  console.log(`worker-${round} claimed ${claimed.length}: ${row?.status}, claims=${row?.claims}${row?.lastError ? `, ${row.lastError}` : ""}`);
+  now += LEASE_MS + 1_000;
+}
+await db.close();
+```
+
+Output of `npx tsx crash-loop.ts`
+
+```ts
+worker-1 claimed 1: running, claims=1
+worker-2 claimed 1: running, claims=2
+worker-3 claimed 1: running, claims=3
+worker-4 claimed 0: dead, claims=3, crashed 3 workers
+```
+
+After three claims without a finish, the fourth dispatcher retires the row as dead instead of handing it to a fourth worker. Without the cap, one bad invoice would crash a worker every minute, forever, and take whatever else those workers were doing down with it.
+
+## Poison, concurrency and metrics
+
+Fourteen invoices now go out together: the ten good ones added here, the two good seed invoices, and the two broken ones. The provider takes 100 milliseconds per e-mail. The brief asked for three things at once: at most 5 e-mails at the provider, the broken invoices must not hold up the rest, and the numbers must be visible.
+
+poison.tsNode.js only
+
+```ts
+import { createEventBus } from "@zudojs/events";
+import { Scheduler } from "@zudojs/scheduler";
+import { createDatabase } from "./db.js";
+import { createLedger } from "./ledger.js";
+import { createMailer } from "./mailer.js";
+import { startMailProvider } from "./provider.js";
+import { obs } from "./telemetry.js";
+import { waitFor } from "./wait.js";
+import { createWorkerProcess } from "./worker.js";
+
+const db = await createDatabase();
+await db.query(`insert into invoices (number, customer_email, amount_kobo, due_on)
+  select 'INV-' || lpad(n::text, 4, '0'), 'buyer' || n || '@example.ng', 100000 * n, '2026-10-30'
+  from generate_series(5, 14) as n`);
+const ledger = createLedger(db);
+const provider = await startMailProvider({ delayMs: 100 });
+const worker = createWorkerProcess("worker-a", { db, ledger, mailer: createMailer(provider.url), bus: createEventBus() });
+await worker.start();
+
+for (let id = 1; id <= 14; id++) await ledger.request(id, "invoice", `invoice:${id}`, `req-${id}`);
+const scheduler = new Scheduler();
+scheduler.define({ id: "dispatch", name: "Move due deliveries into the queue", handler: async () => { await worker.dispatch(); } });
+scheduler.every("20ms", "dispatch", { overlap: "skip" });
+scheduler.start();
+
+const settled = async () => (await db.query("select 1 from deliveries where status in ('queued', 'running')")).rows.length === 0;
+await waitFor(settled);
+await scheduler.stop();
+
+console.log((await db.query("select status, count(*)::int as n from deliveries group by status order by status")).rows);
+for (const row of (await db.query<{ id: number; last_error: string }>(
+  "select id, last_error from deliveries where status = 'dead' order by id")).rows) {
+  console.log(`dead: delivery ${row.id}: ${row.last_error}`);
+}
+console.log("never more than 5 at the provider at once:", provider.mostAtOnce() <= 5);
+const stats = await worker.queue.getStats();
+console.log("queue:", { succeeded: stats.succeeded, retried: stats.retried, deadLettered: stats.deadLettered });
+for (const series of obs.metrics.getAll()) {
+  const value = typeof series.value === "number" ? series.value : `count=${series.value.count}`;
+  console.log("metric", series.name, JSON.stringify(series.labels ?? {}), value);
+}
+
+await worker.stop();
+await provider.stop();
+await obs.shutdown();
+await db.close();
+```
+
+Output of `npx tsx poison.ts`
+
+```json
+[ { status: 'dead', n: 2 }, { status: 'sent', n: 12 } ]
+dead: delivery 3: HTTP request failed with status 422.
+dead: delivery 4: Cannot read properties of null (reading 'toLocaleString') (after 4 attempts)
+never more than 5 at the provider at once: true
+queue: { succeeded: 13, retried: 3, deadLettered: 1 }
+metric deliveries.sent {"kind":"invoice"} 12
+metric deliveries.duration_ms {} count=12
+metric deliveries.dead {"reason":"rejected"} 1
+metric deliveries.dead {"reason":"retries-exhausted"} 1
+```
+
+- **Twelve sent, two dead**, and the dead rows say why in words a person can act on.
+- **Delivery 3** was refused with a 422. `isPermanent` recognised it, so it was marked dead after one attempt, with no retries.
+- **Delivery 4** threw a `TypeError` in our own rendering code on every attempt. The queue cannot know that a bug is not temporary, so it used all 4 attempts (the 3 retries in the stats), then dead-lettered it, and the event handler wrote the reason to the ledger. The other twelve were delivered while it was failing: with 5 slots, one bad job only occupies one of them.
+- **Never more than 5 at once** at the provider: the worker's `concurrency`. (How close it gets to 5 depends on timing, so the demo checks the limit, not an exact count.)
+- The **metrics** come from [the observability lesson](https://zudojs.oyinlola.site/learn/zudo-observability#metrics): a counter per outcome with a small, fixed set of labels, and a histogram of delivery durations. The number to alert on is `deliveries.dead`; a dead-letter queue that nobody watches is just a slower way to lose data.
+
+## Weekday reminders
+
+The reminder rule, "every weekday at 08:00 UTC, one reminder per overdue invoice", is split in two, as [the scheduler lesson](https://zudojs.oyinlola.site/learn/zudo-scheduler#production) recommended: the scheduled handler only *records* reminder deliveries, and the pipeline you already built sends them, with all its retries, leases and metrics. The dedupe key includes the day:
+
+reminders.ts
+
+```ts
+import type { PGlite } from "@electric-sql/pglite";
+import type { Ledger } from "./ledger.js";
+
+/** Records one reminder per overdue invoice for `day`. Safe to run twice: the dedupe key is per day. */
+export async function enqueueReminders(db: PGlite, ledger: Ledger, day: Date): Promise<number> {
+  const date = day.toISOString().slice(0, 10);
+  const { rows } = await db.query<{ id: number }>(
+    "select id from invoices where status = 'sent' and due_on < $1::date order by id", [date]);
+  let created = 0;
+  for (const invoice of rows) {
+    const result = await ledger.request(invoice.id, "reminder", `reminder:${invoice.id}:${date}`, `cron-${date}`);
+    if (result?.created) created += 1;
+  }
+  return created;
+}
+```
+
+The demo checks the cron expression with a fixed clock (Friday 2 October 2026, 12:00 UTC), then plays two servers whose schedulers both fire on Monday at 08:00, and the next day's run:
+
+schedule.tsNode.js only
+
+```ts
+import { Scheduler } from "@zudojs/scheduler";
+import type { Clock } from "@zudojs/scheduler";
+import { createDatabase } from "./db.js";
+import { createLedger } from "./ledger.js";
+import { enqueueReminders } from "./reminders.js";
+
+const db = await createDatabase();
+const ledger = createLedger(db);
+await db.query("update invoices set status = 'sent' where id in (1, 2)");
+
+const friday = new Date("2026-10-02T12:00:00Z");
+const clock: Clock = { now: () => new Date(friday), nowMs: () => friday.getTime() };
+const scheduler = new Scheduler({ clock });
+scheduler.define({
+  id: "enqueue-reminders",
+  name: "Record reminders for overdue invoices",
+  handler: async (ctx) => { await enqueueReminders(db, ledger, ctx.scheduledAt); },
+});
+const handle = scheduler.cron("0 8 * * 1-5", "enqueue-reminders", { timezone: "UTC", overlap: "skip" });
+console.log("next run:", handle.nextRun()?.toISOString());
+
+const monday = new Date("2026-10-05T08:00:00Z");
+console.log("server A created:", await enqueueReminders(db, ledger, monday));
+console.log("server B created:", await enqueueReminders(db, ledger, monday));
+console.log("next day created:", await enqueueReminders(db, ledger, new Date("2026-10-06T08:00:00Z")));
+console.log((await db.query("select dedupe_key, status from deliveries order by id")).rows);
+await db.close();
+```
+
+Output of `npx tsx schedule.ts`
+
+```ts
+next run: 2026-10-05T08:00:00.000Z
+server A created: 1
+server B created: 0
+next day created: 1
+[
+  { dedupe_key: 'reminder:1:2026-10-05', status: 'queued' },
+  { dedupe_key: 'reminder:1:2026-10-06', status: 'queued' }
+]
+```
+
+The next run skips the weekend. Of the two sent invoices only INV-0001 is overdue (due 1 October), so server A records one reminder and server B, firing at the same moment, records none: `reminder:1:2026-10-05` already exists. Tuesday is a new key and a new reminder. The handler uses `ctx.scheduledAt`, the time the run was *due*, not the current time, so a run that starts a few seconds late still counts for the right day.
+
+## The test suite
+
+The demos show one run each. The suite pins every promise of the brief on one system that is reset before each test (the ledger is emptied, the provider forgets its messages, the dispatcher is paused), with the helper from [Testing ZudoJS applications](https://zudojs.oyinlola.site/learn/zudo-testing-apps#setup) that runs Vitest from code (on your computer: `npx vitest run`):
+
+vitest.config.ts
+
+```ts
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({ test: { include: ["tests/**/*.test.ts"], testTimeout: 30_000, hookTimeout: 60_000 } });
+```
+
+vitest-run.ts
+
+```ts
+import { startVitest } from "vitest/node";
+
+/** Runs test files with Vitest and prints one line per test. */
+export async function runTests(...files: string[]): Promise<void> {
+  const vitest = await startVitest("test", files, { watch: false, reporters: [] });
+  for (const file of vitest.state.getTestModules()) {
+    for (const error of file.errors()) console.log(`× ${file.relativeModuleId}: ${error.message}`);
+    for (const test of file.children.allTests()) {
+      const { state, errors = [] } = test.result();
+      console.log(`${state === "passed" ? "✓" : "×"} ${test.fullName}`);
+      for (const error of errors) console.log(`    ${error.message}`);
+    }
+  }
+  await vitest.close();
+}
+```
+
+tests/delivery.test.ts
+
+```ts
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { enqueueReminders } from "../reminders.js";
+import { startSystem } from "../system.js";
+import { waitFor } from "../wait.js";
+import { createWorkerProcess, LEASE_MS, MAX_CLAIMS } from "../worker.js";
+
+let system: Awaited<ReturnType<typeof startSystem>>;
+beforeAll(async () => { system = await startSystem(); });
+afterAll(() => system.stop());
+beforeEach(async () => {
+  await system.pauseDispatching();
+  await system.db.exec("truncate deliveries restart identity; update invoices set status = 'draft'");
+  system.provider.reset();
+});
+
+const send = (id: number) => fetch(`${system.api.url}/invoices/${id}/send`, { method: "POST", headers: { "x-request-id": `req-${id}` } });
+const statusOfInvoice = async (invoiceId: number) =>
+  (await system.db.query<{ status: string }>("select status from deliveries where invoice_id = $1", [invoiceId])).rows[0]?.status;
+
+describe("invoice delivery", () => {
+  it("answers 202 before any e-mail is sent, and sends one e-mail however often the user clicks", async () => {
+    const answers = await Promise.all([send(1), send(1), send(1)]);
+    expect(answers.map((a) => a.status)).toEqual([202, 202, 202]);
+    expect(system.provider.inbox()).toHaveLength(0);
+    await system.startDispatching();
+    await waitFor(system.settled);
+    expect(system.provider.inbox()).toHaveLength(1);
+  });
+
+  it("rides out a provider outage with retries", async () => {
+    const before = (await system.worker.queue.getStats()).retried;
+    system.provider.failNext(3);
+    await send(1);
+    await system.startDispatching();
+    await waitFor(system.settled);
+    expect(await statusOfInvoice(1)).toBe("sent");
+    expect((await system.worker.queue.getStats()).retried - before).toBe(3);
+  });
+
+  it("recovers a worker that died after the provider accepted, without a second e-mail", async () => {
+    let died = false;
+    const doomed = createWorkerProcess("doomed", { ...system.deps, afterSend: async () => { died = true; await new Promise(() => {}); } });
+    await doomed.start();
+    await send(2);
+    await doomed.dispatch();
+    await waitFor(async () => died);
+    await doomed.kill();
+    expect(await statusOfInvoice(2)).toBe("running");
+    await system.worker.dispatch(new Date(Date.now() + LEASE_MS + 1_000));
+    await waitFor(async () => (await statusOfInvoice(2)) === "sent");
+    expect(system.provider.inbox()).toHaveLength(1);
+  });
+
+  it("dead-letters poison invoices and still delivers the others", async () => {
+    for (const id of [3, 4, 1, 2]) await send(id);
+    await system.startDispatching();
+    await waitFor(system.settled);
+    expect(await Promise.all([1, 2, 3, 4].map(statusOfInvoice))).toEqual(["sent", "sent", "dead", "dead"]);
+    expect(system.provider.inbox().map((mail) => mail.subject).sort()).toEqual(["Invoice INV-0001", "Invoice INV-0002"]);
+  });
+
+  it("gives up on a delivery that crashes every worker that claims it", async () => {
+    await send(2);
+    let now = Date.now();
+    for (let round = 1; round <= 4; round++) {
+      await system.ledger.claimDue(`worker-${round}`, new Date(now), LEASE_MS, MAX_CLAIMS);
+      now += LEASE_MS + 1_000;
+    }
+    expect(await system.ledger.get(1)).toMatchObject({ status: "dead", claims: 3, lastError: "crashed 3 workers" });
+  });
+
+  it("records one reminder per overdue invoice per day, even when two schedulers fire", async () => {
+    await system.db.query("update invoices set status = 'sent' where id in (1, 2)");
+    const monday = new Date("2026-10-05T08:00:00Z");
+    expect(await enqueueReminders(system.db, system.ledger, monday)).toBe(1);
+    expect(await enqueueReminders(system.db, system.ledger, monday)).toBe(0);
+  });
+});
+```
+
+run-tests.tsNode.js only
+
+```ts
+import { runTests } from "./vitest-run.js";
+await runTests("tests/delivery.test.ts");
+```
+
+Output of `npx tsx run-tests.ts`
+
+```ts
+✓ invoice delivery > answers 202 before any e-mail is sent, and sends one e-mail however often the user clicks
+✓ invoice delivery > rides out a provider outage with retries
+✓ invoice delivery > recovers a worker that died after the provider accepted, without a second e-mail
+✓ invoice delivery > dead-letters poison invoices and still delivers the others
+✓ invoice delivery > gives up on a delivery that crashes every worker that claims it
+✓ invoice delivery > records one reminder per overdue invoice per day, even when two schedulers fire
+```
+
+What makes these tests trustworthy:
+
+- **The first test checks the inbox before the dispatcher starts.** An empty inbox after three `202`s proves the route really handed the work off, and the three clicks were sent at the same moment with `Promise.all`, not one after another.
+- **The outage test counts retries** (`retried` is exactly 3), so a change that quietly stops retrying, or retries too much, fails.
+- **The crash test kills a real worker at the worst moment** and moves the clock instead of sleeping for a minute, and then counts e-mails at the provider, which is what the customer sees.
+- **The poison test sends the broken invoices first**, so they are at the front of the line.
+
+Break things on purpose to see them fail. Make the provider key unique per attempt, `\`delivery-${delivery.id}-${Date.now()}\``, and the crash test fails with `expected … to have a length of 1 but got 2`: two e-mails. Remove `on conflict (dedupe_key) do nothing`, and the first test gets `[ 202, 500, 500 ]` while the reminder test hits the unique constraint: the second click no longer finds the first delivery.
+
+## Production concerns
+
+- **The queue's store.** The in-memory queue here lives inside each worker process, fed from the ledger. That design survives crashes because the ledger is durable. If you use a queue server instead (Redis, a managed queue), keep the ledger anyway for anything a customer can ask about, or at least keep the idempotency key end to end.
+- **Lease and timeout budgets.** The job timeout times the attempts, plus the backoff between them, must fit inside the lease. Write the numbers down next to each other in the configuration so a change to one makes you look at the other.
+- **Watch the lag, not just the errors.** "Oldest queued delivery" is the metric that tells you workers are stuck or too few; a healthy error rate means nothing if the line is two hours long. The first exercise builds it.
+- **Replays need a person.** A dead delivery is a decision for a human: fix the data or the bug, then replay it. Log who replayed what. The second exercise adds `replay`.
+- **Graceful shutdown.** On `SIGTERM`, stop the dispatcher first (no new claims), then `worker.stop()` so running deliveries finish, as in [the queue lesson](https://zudojs.oyinlola.site/learn/zudo-queue#workers). Rows that were claimed but not started are picked up by another server when their lease runs out; release them explicitly on shutdown if a minute of delay matters.
+- **Tenants and secrets in jobs.** In the multi-tenant InvoiceHub, the ledger row also stores the organization id, and the processor runs inside `tenantContext.run(org, …)`, restored by a context carrier exactly like the correlation id. Jobs carry ids, never secrets or whole records ([what goes in a job](https://zudojs.oyinlola.site/learn/zudo-queue#first-job)).
+- **Fairness.** One organization sending 10,000 reminders should not delay another's single invoice. Claim in round-robin order per organization, or give big senders their own lower-priority lane.
+- **Keep history bounded.** Move `sent` rows older than, say, 90 days to an archive table, or the ledger's index grows forever.
+
+## Practice
+
+TRY IT YOURSELF
+
+### Measure the queue lag
+
+Write `oldestWaitingSeconds(db, now)`, which returns how many seconds the oldest delivery that is still `queued` or `running` has been waiting (0 when none is). Give two deliveries fixed creation times, and print the lag before and after the older one is sent.
+
+**Show a solution**
+
+ex-lag.tsNode.js only
+
+```ts
+import type { PGlite } from "@electric-sql/pglite";
+import { createDatabase } from "./db.js";
+import { createLedger } from "./ledger.js";
+
+async function oldestWaitingSeconds(db: PGlite, now: Date): Promise<number> {
+  const { rows } = await db.query<{ seconds: number | null }>(
+    `select extract(epoch from ($1::timestamptz - min(created_at)))::int as seconds
+     from deliveries where status in ('queued', 'running')`, [now]);
+  return rows[0]?.seconds ?? 0;
+}
+
+const db = await createDatabase();
+const ledger = createLedger(db);
+await ledger.request(1, "invoice", "invoice:1", "req-1");
+await ledger.request(2, "invoice", "invoice:2", "req-2");
+await db.query("update deliveries set created_at = '2026-10-05T09:00:00Z' where id = 1");
+await db.query("update deliveries set created_at = '2026-10-05T09:04:30Z' where id = 2");
+
+const now = new Date("2026-10-05T09:05:00Z");
+console.log("oldest waiting:", await oldestWaitingSeconds(db, now), "s");
+await db.query("update deliveries set status = 'sent' where id = 1");
+console.log("oldest waiting:", await oldestWaitingSeconds(db, now), "s");
+await db.close();
+```
+
+Output of `npx tsx ex-lag.ts`
+
+```ts
+oldest waiting: 300 s
+oldest waiting: 30 s
+```
+
+Export it as a gauge every few seconds, and alert when it passes a threshold that matters to the business, for example five minutes for invoices. The clock is a parameter, as in `claimDue`, so the test does not depend on when it runs.
+
+TRY IT YOURSELF
+
+### Replay a dead delivery
+
+INV-0004 went dead because its amount was missing. Somebody fixes the amount. Use the ledger's `replay` to put the delivery back in line, show that replaying twice only works once, and show that a dispatcher claims it again with a fresh claim count.
+
+**Show a solution**
+
+ex-replay.tsNode.js only
+
+```ts
+import { createDatabase } from "./db.js";
+import { createLedger } from "./ledger.js";
+import { LEASE_MS, MAX_CLAIMS } from "./worker.js";
+
+const db = await createDatabase();
+const ledger = createLedger(db);
+await ledger.request(4, "invoice", "invoice:4", "req-4");
+await db.query("update deliveries set status = 'dead', last_error = 'amount missing' where id = 1");
+
+console.log("replay before the fix:", (await ledger.get(1))?.status);
+await db.query("update invoices set amount_kobo = 650000 where id = 4");
+console.log("replayed:", await ledger.replay(1), await ledger.replay(1));
+const claimed = await ledger.claimDue("worker-a", new Date(), LEASE_MS, MAX_CLAIMS);
+console.log("claimed:", claimed.map((row) => `${row.id} claims=${row.claims}`));
+await db.close();
+```
+
+Output of `npx tsx ex-replay.ts`
+
+```ts
+replay before the fix: dead
+replayed: true false
+claimed: [ '1 claims=1' ]
+```
+
+`replay` only touches dead rows (`where status = 'dead'`), so a double click on "replay" in an admin page cannot restart a delivery that is running. Resetting `claims` gives it the full crash budget again; the key stays `delivery-1`, so if the first attempt did reach the provider after all, it is still not sent twice.
+
+TRY IT YOURSELF
+
+### The database blinks
+
+The provider has just accepted delivery 7, and the database goes down for 30 seconds, so `markSent` throws. Walk through what happens next, step by step, until the delivery is `sent`. Does the customer get a second e-mail? Which line of `worker.ts` would turn this into a lost delivery if it were written carelessly?
+
+**Show a solution**
+
+The processor throws, so the queue retries with backoff. Each retry loads the delivery, which also fails while the database is down, so all 4 attempts fail within a fraction of a second and the job is dead-lettered in memory. The `job:dead-lettered` handler tries `markDead`, which fails too, and is logged. The ledger row is still `running` with its lease. When the lease expires, a dispatcher claims it again (claim 2), the processor calls the provider with the same key, the provider replays `msg_7`, and `markSent` now works. One e-mail. The careless version is a `void deps.ledger.markDead(...)` without `.catch`: its rejection would be unhandled, and Node.js ends the whole process on an unhandled rejection, taking every other running delivery with it. A catch-all `try { … } catch {}` around `markSent` that ignored the error would be worse: the job would count as completed, and nothing would ever retry it.
+
+## Summary
+
+- The route records the work and answers `202`. The record is a ledger row written in the same transaction as the business change; the queue is only how the work gets done.
+- Workers claim rows with a lease. A dead worker's lease runs out and another worker takes over; a claim counter retires a message that crashes every worker.
+- Every step is safe to repeat: a unique dedupe key per intent, a processor that checks the state first, and an idempotency key that reaches the provider, so at-least-once delivery has an exactly-once effect.
+- Retry only temporary failures, with exponential backoff and a cap. A permanent failure is recorded as dead at once; a dead delivery is replayed by a person after the cause is fixed.
+- Concurrency protects what the jobs call. One poison message holds one slot, not the line.
+- A correlation id travels in the ledger row and a context carrier, so every log line of one invoice shares it. Count outcomes, and alert on dead deliveries and on the age of the oldest waiting one.
+- Scheduled work only records jobs, keyed by the day it was due, so two servers firing at once still do it once.
+
+Next, [Use case: a microservice platform](https://zudojs.oyinlola.site/learn/usecase-microservices) splits InvoiceHub's neighbour, a small shop, into services that call each other over RPC, react to each other's events and share work through queues, and follows one request across all of them.
+
+## Test yourself
+
+Five questions, picked at random from this lesson's question bank. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it in the terminal. Get 4 of 5 right to pass. If you don't, read the explanations and try again: you get 5 different questions.

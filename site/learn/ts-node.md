@@ -1,0 +1,1212 @@
+---
+title: "TypeScript on Node.js — ZudoJS Academy"
+description: "Type Node.js with @types/node: typed env vars, files, HTTP, buffers, streams, events, child processes and signals, so the compiler catches server bugs early."
+source: https://zudojs.oyinlola.site/learn/ts-node
+---
+
+LEVEL 7 · LESSON 7 OF 15
+
+TypeScript on the server Core
+
+# TypeScript on Node.js
+
+Type Node.js with @types/node: typed env vars, files, HTTP, buffers, streams, events, child processes and signals, so the compiler catches server bugs early.
+
+- **50 min** to read and try
+- **You need:** The TypeScript lessons, plus Streams and buffers and Events, processes and workers
+- **You build:** A typed toolkit for a shop server - a checked config loader, safe file reads, typed HTTP helpers, a streamed order report, typed events and a worker that shuts down cleanly
+
+  [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain where Node.js types come from and set up @types/node to match your runtime
+- Turn process.env into a checked, typed and frozen config object instead of trusting string
+- undefined
+- Narrow the loose types Node.js hands you - request headers, fs errors, stream chunks, server addresses - without lying with as
+- Type an EventEmitter's events and a pipeline of async generator stages
+- Spawn a typed child process, handle its exit code and signal, and stop it cleanly with SIGTERM
+
+## The bug the compiler could have caught
+
+A payments team moves its Node.js server from JavaScript to TypeScript. The first night in production, the server crashes at 2 a.m. The log says `Cannot read properties of undefined (reading 'length')`. The cause: someone told TypeScript that `process.env.TOKEN_SECRET` is always a `string`, the new server was started without it, and the first log-in request touched `secret.length`.
+
+TypeScript did its job exactly as it was told. The problem is what it was told. Node.js hands your program many values whose real type is looser than it looks:
+
+- every environment variable is a `string`, or missing;
+- `readFile` gives you bytes, not text, unless you ask for an encoding;
+- a request header can be missing, a single value, or several values joined into one string;
+- a stream chunk is typed `any`, whatever it really is;
+- an error thrown by `fs` carries a `code` like `"ENOENT"` that a plain `Error` does not have.
+
+You used all of these APIs from JavaScript in [Files, paths and your computer](https://zudojs.oyinlola.site/learn/node-apis), [Streams and buffers](https://zudojs.oyinlola.site/learn/node-streams) and [Events, processes and workers](https://zudojs.oyinlola.site/learn/node-events-processes). This lesson does not teach them again. It teaches their **types**: where they come from, what they promise, where they are too loose, and how to narrow them honestly. The BookStore API, which starts in [the next lesson](https://zudojs.oyinlola.site/learn/bookstore-http), is built from these same pieces: a checked config, guarded request bodies and typed errors.
+
+Almost every example needs Node.js, so they are marked *Node.js only*. Run them with `npx tsx file.ts` in a folder set up as in [Why TypeScript exists](https://zudojs.oyinlola.site/learn/ts-setup).
+
+## Where Node's types come from
+
+Node.js is written in C++ and JavaScript. It ships no TypeScript types. The types live in a separate npm package, `@types/node`, written by volunteers in the **DefinitelyTyped** project. It is a set of **declaration files** (`.d.ts`): files that only describe what exists (functions, their parameters and return types) and contain no code that runs.
+
+Without that package, TypeScript knows nothing about Node.js. Here is a project whose `tsconfig.json` says `"types": []`, "load no global type packages":
+
+tsconfig.json
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": []
+  }
+}
+```
+
+server.tsNode.js only
+
+```ts
+import { readFile } from "node:fs/promises";
+
+const port = process.env["PORT"] ?? "3000";
+console.log(port, await readFile("prices.json", "utf8"));
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+server.ts:1:26 - error TS2591: Cannot find name 'node:fs/promises'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+
+1 import { readFile } from "node:fs/promises";
+                           ~~~~~~~~~~~~~~~~~~
+
+server.ts:3:14 - error TS2591: Cannot find name 'process'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+
+3 const port = process.env["PORT"] ?? "3000";
+               ~~~~~~~
+
+
+Found 2 errors in the same file, starting at: server.ts:1
+```
+
+Both errors say the same thing: TypeScript has never heard of `node:fs/promises` or `process`. The error message even tells you the fix. Install the package as a development dependency, because types are only needed while you write and check code, never while it runs:
+
+Terminal on your computer
+
+```bash
+$ npm install -D typescript tsx @types/node@24
+```
+
+And keep `"types": ["node"]` in `tsconfig.json`, as every project in this course does. Two details matter in real projects:
+
+- **Match the major version to your runtime.** `@types/node@24` describes Node.js 24. The newest `@types/node` may describe functions your Node.js does not have yet: the code type-checks and then crashes with `is not a function`. Pin the major version you deploy on.
+- **Use the `node:` prefix** for built-in modules (`node:fs`, `node:http`). It makes clear the module is part of Node.js, and no npm package with the same name can take its place.
+
+> NOTE
+>
+> The types describe Node.js; they do not check it. If a type in `@types/node` is wrong, the compiler believes the wrong type. This is rare for common APIs, but it is why you still test your code.
+
+## Typed environment variables
+
+In `@types/node`, `process.env` has the type `NodeJS.ProcessEnv`: an object where every key is `string | undefined`. That is the honest type. An environment variable is always text, and any of them can be missing:
+
+env-types.tsNode.js only
+
+```ts
+const secret: string = process.env["TOKEN_SECRET"];
+const port: number = process.env["PORT"];
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+env-types.ts:1:7 - error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+
+1 const secret: string = process.env["TOKEN_SECRET"];
+        ~~~~~~
+
+env-types.ts:2:7 - error TS2322: Type 'string | undefined' is not assignable to type 'number'.
+  Type 'undefined' is not assignable to type 'number'.
+
+2 const port: number = process.env["PORT"];
+        ~~~~
+
+
+Found 2 errors in the same file, starting at: env-types.ts:1
+```
+
+### The tempting fix that lies
+
+You can make the errors disappear by **declaration merging**: adding your own properties to the `ProcessEnv` interface from `@types/node`. Many tutorials show this. Look at what it does:
+
+env-lie.tsNode.js only
+
+```ts
+declare global {
+  namespace NodeJS {
+    interface ProcessEnv {
+      readonly TOKEN_SECRET: string;
+    }
+  }
+}
+
+const secret = process.env.TOKEN_SECRET;
+try {
+  console.log("secret length:", secret.length);
+} catch (error) {
+  console.log(error instanceof Error ? error.message : error);
+}
+```
+
+Output of `npx tsx env-lie.ts`
+
+```ts
+Cannot read properties of undefined (reading 'length')
+```
+
+It type-checks, and it crashes: this is the 2 a.m. bug from the start of the lesson. The declaration is a **promise you made to the compiler**, and nothing checks that the promise holds when the server starts. Types cannot check outside data ([TypeScript and JavaScript together](https://zudojs.oyinlola.site/learn/ts-runtime)); only code that runs can.
+
+### Parse once, at startup
+
+The honest solution: one function reads the raw strings, checks every one, and returns a typed, frozen object. It reports **all** problems at once, so an operator fixes the deployment in one go instead of restarting five times:
+
+src/config.tsNode.js only
+
+```ts
+export type NodeEnv = "development" | "test" | "production";
+
+export interface Config {
+  readonly nodeEnv: NodeEnv;
+  readonly port: number;
+  readonly tokenSecret: string;
+  readonly databaseUrl: string | undefined;
+}
+
+export type Env = Readonly<Record<string, string | undefined>>;
+
+const NODE_ENVS: readonly NodeEnv[] = ["development", "test", "production"];
+
+function isNodeEnv(value: string): value is NodeEnv {
+  return (NODE_ENVS as readonly string[]).includes(value);
+}
+
+export class ConfigError extends Error {
+  readonly problems: readonly string[];
+
+  constructor(problems: readonly string[]) {
+    super(`Invalid configuration:\n- ${problems.join("\n- ")}`);
+    this.name = "ConfigError";
+    this.problems = problems;
+  }
+}
+
+export function loadConfig(env: Env): Config {
+  const problems: string[] = [];
+
+  const rawNodeEnv = env["NODE_ENV"] ?? "development";
+  let nodeEnv: NodeEnv = "development";
+  if (isNodeEnv(rawNodeEnv)) nodeEnv = rawNodeEnv;
+  else problems.push(`NODE_ENV must be one of ${NODE_ENVS.join(", ")}, got "${rawNodeEnv}"`);
+
+  const rawPort = env["PORT"] ?? "3000";
+  const port = Number(rawPort);
+  if (!/^\d{1,5}$/.test(rawPort) || port > 65535) {
+    problems.push(`PORT must be a whole number from 0 to 65535, got "${rawPort}"`);
+  }
+
+  const tokenSecret = env["TOKEN_SECRET"] ?? "";
+  if (tokenSecret.length < 32) problems.push("TOKEN_SECRET must be at least 32 characters");
+
+  const databaseUrl = env["DATABASE_URL"];
+  if (nodeEnv === "production" && databaseUrl === undefined) {
+    problems.push("DATABASE_URL is required when NODE_ENV is production");
+  }
+
+  if (problems.length > 0) throw new ConfigError(problems);
+  return Object.freeze({ nodeEnv, port, tokenSecret, databaseUrl });
+}
+
+export function describeConfig(config: Config): string {
+  const db = config.databaseUrl === undefined ? "in-memory" : "set";
+  return `env=${config.nodeEnv} port=${config.port} secret=[${config.tokenSecret.length} chars] database=${db}`;
+}
+```
+
+- `loadConfig` takes the environment as a parameter, typed `Env`. The server passes `process.env`, which fits that type; a test passes a plain object.
+- `isNodeEnv` is a **type guard**: after `if (isNodeEnv(rawNodeEnv))`, TypeScript knows the string is one of the three literal values, so `nodeEnv` can have the narrow type `NodeEnv`. Later code can `switch` on it and the compiler checks every case.
+- `/^\d{1,5}$/` refuses `"80.5"`, `"-1"`, `" 80"` and `""`, which `Number()` would happily turn into numbers.
+- `describeConfig` is what you log at startup. It never prints the secret itself, only its length. A config object is exactly the kind of thing someone logs "just to debug", and logs are read by many more people than your secrets should be.
+
+Node.js 24 can read `.env` files itself: `node --env-file=.env` on the command line, or `parseEnv` from `node:util` in code. Both only produce strings; checking them is still your job. Try three environments:
+
+try-config.tsNode.js only
+
+```ts
+import { parseEnv } from "node:util";
+
+import { ConfigError, describeConfig, loadConfig } from "./src/config.js";
+
+const files = [
+  "PORT=8080\nTOKEN_SECRET=0123456789abcdef0123456789abcdef\n",
+  "NODE_ENV=staging\nPORT=80.5\nTOKEN_SECRET=secret\n",
+  "NODE_ENV=production\nTOKEN_SECRET=0123456789abcdef0123456789abcdef\n",
+];
+
+for (const text of files) {
+  try {
+    console.log("started:", describeConfig(loadConfig(parseEnv(text))));
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    console.log(error.message);
+  }
+}
+```
+
+Output of `npx tsx try-config.ts`
+
+```ts
+started: env=development port=8080 secret=[32 chars] database=in-memory
+Invalid configuration:
+- NODE_ENV must be one of development, test, production, got "staging"
+- PORT must be a whole number from 0 to 65535, got "80.5"
+- TOKEN_SECRET must be at least 32 characters
+Invalid configuration:
+- DATABASE_URL is required when NODE_ENV is production
+```
+
+The second file has three problems, and all three are reported. The third is a production server with no database: better to refuse to start than to start with an empty in-memory database and lose every order at the next restart.
+
+> NEVER USE A REAL SECRET IN CODE
+>
+> The 32-character values above are placeholders for the example. Real secrets come from the server's environment or a secret manager, are generated randomly ([Cryptography with node:crypto](https://zudojs.oyinlola.site/learn/node-crypto#random)), and are never committed.
+
+## Files: overloads and error codes
+
+`readFile` has several **overloads**: several signatures for one function, where the arguments decide the return type. Without an encoding you get a `Buffer` (bytes). With `"utf8"` you get a `string`:
+
+read-overloads.tsNode.js only
+
+```ts
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const dir = await mkdtemp(join(tmpdir(), "shop-"));
+const file = join(dir, "price.txt");
+await writeFile(file, "₦45,000");
+
+const bytes = await readFile(file);
+const text = await readFile(file, "utf8");
+console.log(Buffer.isBuffer(bytes), bytes.length);
+console.log(typeof text, text.length, text);
+
+await rm(dir, { recursive: true });
+```
+
+Output of `npx tsx read-overloads.ts`
+
+```ts
+true 9
+string 7 ₦45,000
+```
+
+The same file is 9 bytes but 7 characters: `₦` takes 3 bytes in UTF-8 ([Streams and buffers](https://zudojs.oyinlola.site/learn/node-streams#buffers)). If you forget the encoding and treat the result as text, the compiler stops you, because the overload returned a buffer type:
+
+read-mistake.tsNode.js only
+
+```ts
+import { readFile } from "node:fs/promises";
+
+const price = await readFile("price.txt");
+console.log(price.toUpperCase());
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+read-mistake.ts:4:19 - error TS2339: Property 'toUpperCase' does not exist on type 'NonSharedBuffer'.
+
+4 console.log(price.toUpperCase());
+                    ~~~~~~~~~~~
+
+
+Found 1 error in read-mistake.ts:4
+```
+
+`NonSharedBuffer` is how the current `@types/node` names a `Buffer` whose memory is a normal `ArrayBuffer`. In your editor, hover over `price` to see it.
+
+### Errors with a code
+
+A missing file is often not an error at all: a first run has no saved cart yet. `fs` tells you *why* it failed with a `code` property: `ENOENT` (no such file), `EACCES` (no permission), `EISDIR` (it is a folder). But the catch variable is `unknown` ([Typed error handling](https://zudojs.oyinlola.site/learn/ts-errors)), and a plain `Error` has no `code`. `@types/node` has the right type, `NodeJS.ErrnoException`; you only need a guard that proves it:
+
+src/files.tsNode.js only
+
+```ts
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
+
+export function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && typeof error.code === "string";
+}
+
+export async function readTextIfExists(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+export type Guard<T> = (value: unknown) => value is T;
+
+export async function readJsonFile<T>(path: string, isT: Guard<T>): Promise<T | undefined> {
+  const text = await readTextIfExists(path);
+  if (text === undefined) return undefined;
+  const data: unknown = JSON.parse(text);
+  if (!isT(data)) throw new Error(`${basename(path)} does not have the expected shape`);
+  return data;
+}
+```
+
+- Only `ENOENT` becomes `undefined`. Every other error is thrown again: a permission problem must not look like "no file yet", or your program would quietly start over with empty data.
+- `JSON.parse` returns `any`, which would switch type checking off. Assigning it to `const data: unknown` switches it back on: nothing can use `data` until the guard has proved its shape.
+- `readJsonFile` is generic: the guard you pass decides `T`, so the result is typed without a single `as`.
+
+try-files.tsNode.js only
+
+```ts
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { readJsonFile } from "./src/files.js";
+
+interface StockLevel {
+  readonly sku: string;
+  readonly quantity: number;
+}
+
+function isStockList(value: unknown): value is StockLevel[] {
+  return Array.isArray(value) && value.every((item: unknown) =>
+    typeof item === "object" && item !== null
+    && "sku" in item && typeof item.sku === "string"
+    && "quantity" in item && Number.isInteger(item.quantity));
+}
+
+const dir = await mkdtemp(join(tmpdir(), "stock-"));
+await writeFile(join(dir, "good.json"), '[{"sku":"RICE-5KG","quantity":12}]');
+await writeFile(join(dir, "bad.json"), '[{"sku":"RICE-5KG","quantity":"twelve"}]');
+
+for (const name of ["missing.json", "good.json", "bad.json"]) {
+  try {
+    const stock = await readJsonFile(join(dir, name), isStockList);
+    console.log(name, "->", stock === undefined ? "no file yet" : stock);
+  } catch (error) {
+    console.log(name, "->", error instanceof Error ? error.message : error);
+  }
+}
+await rm(dir, { recursive: true });
+```
+
+Output of `npx tsx try-files.ts`
+
+```ts
+missing.json -> no file yet
+good.json -> [ { sku: 'RICE-5KG', quantity: 12 } ]
+bad.json -> bad.json does not have the expected shape
+```
+
+Inside the loop, `stock` has the type `StockLevel[] | undefined`. The type came from the guard, and the guard really checked the data.
+
+## HTTP: what the types say about a request
+
+REASON IT OUT
+
+### What can be missing in a request?
+
+Your server gets an `IncomingMessage` for every request. Before looking at its types, think about where each part comes from and whether you can trust it:
+
+- Is there always a method and a URL? Who wrote them?
+- A client sends `Idempotency-Key` twice in one request. What should `req.headers["idempotency-key"]` be?
+- What is the type of a body chunk, and how big can the whole body be?
+- After `server.listen(0)`, what can `server.address()` return?
+
+**Show the reasoning**
+
+The method and URL come from the client's first line of bytes. For a server, Node.js always fills them in, but `IncomingMessage` is also used for *responses* in the HTTP client, where they do not exist. So `@types/node` types them as `string | undefined`, and you need a fallback.
+
+Headers are typed `IncomingHttpHeaders`: known headers have their own types, and any other name is `string | string[] | undefined`. For most headers, Node.js joins repeated values into one string, so two `Idempotency-Key` lines arrive in `req.headers` as `"t-1, t-2"`, which looks like one odd key. Only a few headers (such as `set-cookie`) become arrays. And every header can be missing. When you need exactly one value, read `req.headersDistinct`: it keeps every value separately, typed `NodeJS.Dict<string[]>` (each name maps to `string[] | undefined`), so you can count them.
+
+A body chunk from `for await (const chunk of req)` is typed `any`: streams can carry anything. For a request it is a `Buffer`, and the whole body can be as big as the client likes, so you count bytes and stop at a limit.
+
+`server.address()` returns `AddressInfo | string | null`: an object for a TCP port, a string for a Unix socket path, and `null` before the server listens. Writing `as AddressInfo` hides two of those cases.
+
+Here are small helpers that turn those loose types into safe ones. Each narrows with a check instead of an `as`:
+
+src/http.tsNode.js only
+
+```ts
+import { once } from "node:events";
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
+
+export class HttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
+
+export function singleHeader(req: IncomingMessage, name: string): string | undefined {
+  const values = req.headersDistinct[name];
+  return values?.length === 1 ? values[0] : undefined;
+}
+
+export async function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    if (!Buffer.isBuffer(chunk)) throw new TypeError("expected the body as bytes");
+    size += chunk.length;
+    if (size > maxBytes) throw new HttpError(413, `body is larger than ${maxBytes} bytes`);
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+export function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  const text = JSON.stringify(body);
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(text) });
+  res.end(text);
+}
+
+export async function listenOnFreePort(server: Server): Promise<number> {
+  server.listen(0);
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("expected a TCP address");
+  return address.port;
+}
+```
+
+- `Buffer.isBuffer(chunk)` is a type guard, so after it `chunk` is a `Buffer` instead of `any`. If a stream ever sends something else, you get a clear error instead of nonsense.
+- `singleHeader` accepts exactly one value. For a security-relevant header such as an idempotency key or a signature, two values are suspicious, and "missing" is the safe answer. With `req.headers` you could not even tell that there were two.
+- `content-length` uses `Buffer.byteLength`, not `text.length`: a header counts bytes, and `"₦"` is one character but three bytes.
+
+Now a tiny transfer endpoint. The parameters of the callback need no annotations: `createServer`'s type tells TypeScript that `req` is an `IncomingMessage` and `res` a `ServerResponse`:
+
+try-http.tsNode.js only
+
+```ts
+import { createServer } from "node:http";
+
+import { HttpError, listenOnFreePort, readBody, sendJson, singleHeader } from "./src/http.js";
+
+interface TransferRequest {
+  readonly toAccount: string;
+  readonly amountKobo: number;
+}
+
+function parseTransfer(text: string): TransferRequest {
+  const data: unknown = JSON.parse(text);
+  if (typeof data !== "object" || data === null) throw new HttpError(400, "send a JSON object");
+  if (!("toAccount" in data) || typeof data.toAccount !== "string" || !/^\d{10}$/.test(data.toAccount)) {
+    throw new HttpError(400, "toAccount must be a 10-digit account number");
+  }
+  if (!("amountKobo" in data) || !Number.isSafeInteger(data.amountKobo) || Number(data.amountKobo) <= 0) {
+    throw new HttpError(400, "amountKobo must be a positive whole number");
+  }
+  return { toAccount: data.toAccount, amountKobo: Number(data.amountKobo) };
+}
+
+const server = createServer(async (req, res) => {
+  const method = req.method ?? "GET";
+  const { pathname } = new URL(req.url ?? "/", "http://localhost");
+  try {
+    if (method !== "POST" || pathname !== "/transfers") throw new HttpError(404, "no such route");
+    const key = singleHeader(req, "idempotency-key");
+    if (key === undefined) throw new HttpError(400, "send exactly one Idempotency-Key header");
+    const transfer = parseTransfer(await readBody(req, 1_000));
+    sendJson(res, 202, { accepted: transfer, key });
+  } catch (error) {
+    if (error instanceof HttpError) sendJson(res, error.status, { error: error.message });
+    else if (error instanceof SyntaxError) sendJson(res, 400, { error: "body is not valid JSON" });
+    else sendJson(res, 500, { error: "internal error" });
+  }
+});
+
+const port = await listenOnFreePort(server);
+async function post(headers: Record<string, string>, body: string): Promise<void> {
+  const response = await fetch(`http://localhost:${port}/transfers`, { method: "POST", headers, body });
+  console.log(response.status, await response.text());
+}
+
+await post({ "idempotency-key": "t-1001" }, '{"toAccount":"0123456789","amountKobo":1000000}');
+await post({}, '{"toAccount":"0123456789","amountKobo":1000000}');
+await post({ "idempotency-key": "t-1002" }, '{"toAccount":"12","amountKobo":-5}');
+await post({ "idempotency-key": "t-1003" }, "{not json");
+await post({ "idempotency-key": "t-1004" }, JSON.stringify({ toAccount: "0123456789", note: "x".repeat(2_000) }));
+server.close();
+```
+
+Output of `npx tsx try-http.ts`
+
+```ts
+202 {"accepted":{"toAccount":"0123456789","amountKobo":1000000},"key":"t-1001"}
+400 {"error":"send exactly one Idempotency-Key header"}
+400 {"error":"toAccount must be a 10-digit account number"}
+400 {"error":"body is not valid JSON"}
+413 {"error":"body is larger than 1000 bytes"}
+```
+
+`parseTransfer` uses the narrowing you learned in [Narrowing](https://zudojs.oyinlola.site/learn/ts-narrowing): after `"toAccount" in data` and `typeof data.toAccount === "string"`, TypeScript lets you read `data.toAccount` as a string. The oversized body stopped at 1,000 bytes with a 413. Real APIs check bodies with a schema library instead of by hand; [Runtime validation](https://zudojs.oyinlola.site/learn/ts-validation) shows how.
+
+## Buffers and Uint8Array
+
+A `Buffer` is a Node.js subclass of the standard `Uint8Array`, the browser's type for raw bytes. So every function that asks for a `Uint8Array` accepts a `Buffer`. The other way round is where bugs hide: standard APIs such as `TextEncoder`, `fetch`'s `arrayBuffer()` and Web Crypto give you plain `Uint8Array`s, which do not have `Buffer`'s methods. In JavaScript, this bug runs quietly:
+
+bytes.tsNode.js only
+
+```ts
+const encoded = new TextEncoder().encode("₦500");
+
+const wrong = (encoded as unknown as Buffer).toString("hex");
+const right = Buffer.from(encoded).toString("hex");
+
+console.log(encoded instanceof Buffer, encoded.length);
+console.log("wrong:", wrong);
+console.log("right:", right);
+```
+
+Output of `npx tsx bytes.ts`
+
+```ts
+false 6
+wrong: 226,130,166,53,48,48
+right: e282a6353030
+```
+
+`Uint8Array.prototype.toString` ignores its argument and joins the numbers with commas, so the "hex" string was not hex at all. It took a double cast, `as unknown as Buffer`, to get it past the compiler. Without that lie, TypeScript refuses the call:
+
+bytes-mistake.tsNode.js only
+
+```ts
+const encoded = new TextEncoder().encode("₦500");
+console.log(encoded.toString("hex"));
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+bytes-mistake.ts:2:30 - error TS2554: Expected 0 arguments, but got 1.
+
+2 console.log(encoded.toString("hex"));
+                               ~~~~~
+
+
+Found 1 error in bytes-mistake.ts:2
+```
+
+The rule: accept `Uint8Array` in your own function parameters (it works for both), and call `Buffer.from(bytes)` when you need a `Buffer` method. `Buffer.from` on a `Uint8Array` copies the bytes; that is cheap for small values.
+
+## Streams with typed stages
+
+A stream's chunks are typed `any`, because a stream can carry bytes, strings or objects. The cleanest way to get types back is `pipeline` from `node:stream/promises` with **async generator functions** as the stages. Each stage declares what it takes (`AsyncIterable<string>`) and what it produces (`AsyncGenerator<OrderLine>`), and TypeScript checks that each stage fits the next. You met generators in [Generators](https://zudojs.oyinlola.site/learn/js-generators) and typed async iteration in [Async TypeScript](https://zudojs.oyinlola.site/learn/ts-async#async-iteration).
+
+The job: a daily export of orders, one per line as `id;customer;amountKobo`, too big to load at once. Sum it per customer:
+
+src/report.tsNode.js only
+
+```ts
+export interface OrderLine {
+  readonly id: number;
+  readonly customer: string;
+  readonly amountKobo: number;
+}
+
+export async function* toLines(chunks: AsyncIterable<string>): AsyncGenerator<string> {
+  let rest = "";
+  for await (const chunk of chunks) {
+    rest += chunk;
+    const lines = rest.split("\n");
+    rest = lines.pop() ?? "";
+    yield* lines;
+  }
+  if (rest !== "") yield rest;
+}
+
+export async function* toOrders(lines: AsyncIterable<string>): AsyncGenerator<OrderLine> {
+  for await (const line of lines) {
+    const [id, customer, amount] = line.split(";");
+    if (id === undefined || customer === undefined || amount === undefined) continue;
+    yield { id: Number(id), customer, amountKobo: Number(amount) };
+  }
+}
+
+export async function totalsByCustomer(orders: AsyncIterable<OrderLine>): Promise<Map<string, number>> {
+  const totals = new Map<string, number>();
+  for await (const order of orders) {
+    totals.set(order.customer, (totals.get(order.customer) ?? 0) + order.amountKobo);
+  }
+  return totals;
+}
+```
+
+`pipeline` returns whatever the last stage returns, typed, here a `Map<string, number>`. The file is read in tiny 8-byte chunks on purpose, so you can see what chunking does:
+
+try-report.tsNode.js only
+
+```ts
+import { createReadStream } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pipeline } from "node:stream/promises";
+
+import { toLines, toOrders, totalsByCustomer } from "./src/report.js";
+
+const dir = await mkdtemp(join(tmpdir(), "report-"));
+const file = join(dir, "orders.txt");
+await writeFile(file, "1;Chịọma;1250000\n2;Ṣeun;300000\n3;Chịọma;450000\n4;Ṣeun;99900\n");
+
+const naira = (kobo: number) => `₦${(kobo / 100).toFixed(2)}`;
+
+const bytes = await pipeline(createReadStream(file, { highWaterMark: 8 }), toLines, toOrders, totalsByCustomer);
+console.log("bytes: ", [...bytes].map(([name, kobo]) => `${name} ${naira(kobo)}`));
+
+const text = await pipeline(createReadStream(file, { highWaterMark: 8, encoding: "utf8" }), toLines, toOrders, totalsByCustomer);
+console.log("utf8:  ", [...text].map(([name, kobo]) => `${name} ${naira(kobo)}`));
+
+await rm(dir, { recursive: true });
+```
+
+Output of `npx tsx try-report.ts`
+
+```ts
+bytes:  [
+  'Chị���ma ₦12500.00',
+  '���eun ₦3000.00',
+  'Chịọma ₦4500.00',
+  'Ṣeun ₦999.00'
+]
+utf8:   [ 'Chịọma ₦17000.00', 'Ṣeun ₦3999.00' ]
+```
+
+The first run is wrong, and the compiler did not notice. `toLines` says it takes strings, but a file stream without an encoding yields `Buffer`s, and since chunks are `any` nothing checked the claim. `rest += chunk` then turned each 8-byte buffer into text *on its own*. Names like `Chịọma` and `Ṣeun` contain letters that take more than one byte, and wherever a chunk boundary cut one in half, each half became `�`, the replacement character. So one customer's orders were split across several broken "names".
+
+With `encoding: "utf8"` the stream decodes across chunk boundaries and really yields strings. The lesson is about types as much as about bytes: at the edges where a type is `any`, **your annotation is a claim, not a check**. Make the claim true at the source (here, by asking the stream for strings), or check it (as `readBody` did with `Buffer.isBuffer`).
+
+## Typed events
+
+`EventEmitter` accepts a type parameter: a map from each event name to the tuple of arguments it carries. With it, `on` knows the listener's parameters, and `emit` refuses a wrong name or a wrong payload:
+
+typed-events.tsNode.js only
+
+```ts
+import { EventEmitter } from "node:events";
+
+interface Payment {
+  readonly orderId: number;
+  readonly amountKobo: number;
+}
+
+interface ShopEvents {
+  "payment.received": [payment: Payment];
+  "payment.refunded": [orderId: number, reason: string];
+}
+
+const shop = new EventEmitter<ShopEvents>();
+
+shop.on("payment.received", (payment) => {
+  console.log(`stock: reserve items for order ${payment.orderId}`);
+});
+shop.on("payment.received", (payment) => {
+  console.log(`receipt: ₦${(payment.amountKobo / 100).toLocaleString("en-US")} for order ${payment.orderId}`);
+});
+shop.on("payment.refunded", (orderId, reason) => {
+  console.log(`refund: order ${orderId} (${reason})`);
+});
+
+shop.emit("payment.received", { orderId: 1001, amountKobo: 4_500_000 });
+shop.emit("payment.refunded", 1001, "out of stock");
+console.log("listeners:", shop.listenerCount("payment.received"));
+```
+
+Output of `npx tsx typed-events.ts`
+
+```ts
+stock: reserve items for order 1001
+receipt: ₦45,000 for order 1001
+refund: order 1001 (out of stock)
+listeners: 2
+```
+
+No listener has a type annotation: `payment`, `orderId` and `reason` all get their types from `ShopEvents`. The names in the tuple (`payment:`, `orderId:`) are only labels for your editor. Now two mistakes that JavaScript would let through until a customer's receipt said "₦NaN". Look closely at which one the compiler reports:
+
+typed-events-mistake.tsNode.js only
+
+```ts
+import { EventEmitter } from "node:events";
+
+interface ShopEvents {
+  "payment.received": [payment: { orderId: number; amountKobo: number }];
+}
+
+const shop = new EventEmitter<ShopEvents>();
+shop.emit("payment.recieved", { orderId: 1001, amountKobo: 4_500_000 });
+shop.emit("payment.received", { orderId: 1001, amount: 45_000 });
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+typed-events-mistake.ts:9:48 - error TS2353: Object literal may only specify known properties, and 'amount' does not exist in type '{ orderId: number; amountKobo: number; }'.
+
+9 shop.emit("payment.received", { orderId: 1001, amount: 45_000 });
+                                                 ~~~~~~
+
+
+Found 1 error in typed-events-mistake.ts:9
+```
+
+The wrong payload on line 9 is caught. The misspelt name on line 8, `"payment.recieved"`, is **not**. That is on purpose in `@types/node`: an emitter may also carry events that are not in the map, and those get `any[]` arguments. So the most common event bug, an emit that goes nowhere because of a typo, still compiles. Always read what a type really promises before you rely on it.
+
+### A strict emitter
+
+When you want every name checked, wrap the emitter in a small class whose methods only accept the keys of your map. `#inner` is a private field ([Classes in TypeScript](https://zudojs.oyinlola.site/learn/ts-classes)), so nobody can reach around the checks:
+
+src/strict-emitter.tsNode.js only
+
+```ts
+import { EventEmitter } from "node:events";
+
+export class StrictEmitter<Events extends { [K in keyof Events]: unknown[] }> {
+  readonly #inner = new EventEmitter();
+
+  on<K extends keyof Events & string>(name: K, listener: (...args: Events[K]) => void): this {
+    this.#inner.on(name, listener);
+    return this;
+  }
+
+  emit<K extends keyof Events & string>(name: K, ...args: Events[K]): boolean {
+    return this.#inner.emit(name, ...args);
+  }
+}
+```
+
+bus-mistake.tsNode.js only
+
+```ts
+import { StrictEmitter } from "./src/strict-emitter.js";
+
+interface ShopEvents {
+  "payment.received": [payment: { orderId: number; amountKobo: number }];
+}
+
+const shop = new StrictEmitter<ShopEvents>();
+shop.on("payment.received", (payment) => console.log(payment.orderId));
+shop.emit("payment.recieved", { orderId: 1001, amountKobo: 4_500_000 });
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+bus-mistake.ts:9:11 - error TS2345: Argument of type '"payment.recieved"' is not assignable to parameter of type '"payment.received"'.
+
+9 shop.emit("payment.recieved", { orderId: 1001, amountKobo: 4_500_000 });
+            ~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in bus-mistake.ts:9
+```
+
+Now the typo is a compile error, and the message names the event you meant. [A type-safe event system](https://zudojs.oyinlola.site/learn/ts-typed-events) builds a complete typed event bus on this idea.
+
+## Child processes and signals
+
+The `child_process` types follow your options. `promisify(execFile)` gives you `{ stdout: string; stderr: string }`, because the default encoding is UTF-8. When the program fails, the promise rejects with an error that also carries the exit `code` and the output. The catch variable is `unknown`, so you narrow it with a guard again:
+
+run-child.tsNode.js only
+
+```ts
+import { execFile } from "node:child_process";
+import type { ExecFileException } from "node:child_process";
+import { promisify } from "node:util";
+
+const run = promisify(execFile);
+
+type ChildFailure = ExecFileException & { readonly stdout: string; readonly stderr: string };
+
+function isChildFailure(error: unknown): error is ChildFailure {
+  return error instanceof Error && "stderr" in error && typeof error.stderr === "string";
+}
+
+const ok = await run(process.execPath, ["-e", "console.log(12500 * 3)"]);
+console.log("stdout:", ok.stdout.trim());
+
+try {
+  await run(process.execPath, ["-e", "console.error('printer offline'); process.exit(3)"]);
+} catch (error) {
+  if (!isChildFailure(error)) throw error;
+  console.log("exit code:", error.code, "stderr:", error.stderr.trim());
+}
+```
+
+Output of `npx tsx run-child.ts`
+
+```ts
+stdout: 37500
+exit code: 3 stderr: printer offline
+```
+
+`process.execPath` is the path of the Node.js that is running your program, so the child uses the same version. The arguments go in an array, never glued into a command string: [Events, processes and workers](https://zudojs.oyinlola.site/learn/node-events-processes#child-processes) showed the shell injection that array prevents.
+
+### Signals are a union of names
+
+A **signal** is a short message the operating system delivers to a process. `SIGTERM` means "please stop" (sent by `kill`, Docker and Kubernetes when they shut you down), `SIGINT` is Ctrl + C. In `@types/node`, `NodeJS.Signals` is a union of every valid name, so a typo is caught:
+
+signals-mistake.tsNode.js only
+
+```ts
+const SHUTDOWN_SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERN"];
+
+for (const signal of SHUTDOWN_SIGNALS) {
+  process.once(signal, () => console.log(`stopping on ${signal}`));
+}
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+signals-mistake.ts:1:64 - error TS2820: Type '"SIGTERN"' is not assignable to type 'Signals'. Did you mean '"SIGTERM"'?
+
+1 const SHUTDOWN_SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERN"];
+                                                                 ~~~~~~~~~
+
+
+Found 1 error in signals-mistake.ts:1
+```
+
+Now a real graceful stop between two typed processes. The worker pays out transfers. When it gets `SIGTERM` it takes no new work, finishes the payout in flight, and exits by itself:
+
+payout-worker.tsNode.js only
+
+```ts
+const inFlight = new Set<number>([7]);
+const keepAlive = setInterval(() => {}, 1_000);
+
+process.once("SIGTERM", (signal: NodeJS.Signals) => {
+  console.log(`${signal}: no new payouts, finishing ${inFlight.size}`);
+  setTimeout(() => {
+    for (const id of inFlight) console.log(`payout ${id} sent`);
+    inFlight.clear();
+    clearInterval(keepAlive);
+  }, 100);
+});
+
+console.log("ready");
+```
+
+`setInterval` only keeps the process alive, as a real worker's open connections would. Once it is cleared and nothing else is pending, Node.js exits with code 0. The supervisor starts the worker, waits for `ready`, sends `SIGTERM` and reports how it ended:
+
+supervise.tsNode.js only
+
+```ts
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
+
+const worker = spawn(process.execPath, ["--import", "tsx", "payout-worker.ts"], {
+  stdio: ["ignore", "pipe", "inherit"],
+});
+
+createInterface({ input: worker.stdout }).on("line", (line) => {
+  console.log(`worker | ${line}`);
+  if (line === "ready") worker.kill("SIGTERM");
+});
+
+const [code, signal] = (await once(worker, "close")) as [number | null, NodeJS.Signals | null];
+console.log("exit code:", code, "signal:", signal);
+```
+
+Output of `npx tsx supervise.ts`
+
+```ts
+worker | ready
+worker | SIGTERM: no new payouts, finishing 1
+worker | payout 7 sent
+exit code: 0 signal: null
+```
+
+- Because of `stdio: ["ignore", "pipe", "inherit"]`, the type of `worker.stdout` is `Readable`, not `Readable | null`: `@types/node` reads your options. With `"inherit"` in that position it would be `null`.
+- `--import tsx` lets the child run a `.ts` file through tsx, like `npx tsx` does.
+- `once(worker, "close")` returns `Promise<any[]>`; `node:events` cannot know the arguments of `"close"`. The `as` here states what the Node.js documentation promises: an exit code or `null`, and a signal name or `null`. Keep such casts at one place, with the documentation's guarantee behind them.
+- Exit code 0 and signal `null` mean the worker finished its payout and left on its own. Had it ignored `SIGTERM`, the platform would eventually send `SIGKILL`, and the result would be code `null`, signal `"SIGKILL"`: payout 7 cut off halfway.
+
+## Testing typed Node code
+
+Because `loadConfig` takes the environment as a parameter, testing it needs no real environment variables at all. The test runner from [Testing fundamentals](https://zudojs.oyinlola.site/learn/testing-basics) runs TypeScript through tsx (`tsx --test tests/*.test.ts`, or `node --import tsx --test`):
+
+tests/config.test.tsNode.js only
+
+```ts
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { ConfigError, loadConfig } from "../src/config.js";
+
+const SECRET = "s".repeat(32);
+
+describe("loadConfig", () => {
+  it("uses safe defaults for development", () => {
+    const config = loadConfig({ TOKEN_SECRET: SECRET });
+    assert.equal(config.port, 3000);
+    assert.equal(config.nodeEnv, "development");
+    assert.equal(Object.isFrozen(config), true);
+  });
+
+  it("reports every problem at once", () => {
+    assert.throws(() => loadConfig({ NODE_ENV: "prod", PORT: "-1" }), (error: unknown) => {
+      assert.ok(error instanceof ConfigError);
+      assert.equal(error.problems.length, 3);
+      return true;
+    });
+  });
+
+  it("requires a database in production", () => {
+    assert.throws(() => loadConfig({ NODE_ENV: "production", TOKEN_SECRET: SECRET }), /DATABASE_URL/);
+  });
+});
+```
+
+Output of `npx tsx tests/config.test.ts`
+
+```ts
+▶ loadConfig
+  ✔ uses safe defaults for development (1.430006ms)
+  ✔ reports every problem at once (1.001718ms)
+  ✔ requires a database in production (0.285304ms)
+✔ loadConfig (4.647699ms)
+ℹ tests 3
+ℹ suites 1
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 91.923363
+```
+
+What to test in code like this: the defaults, each rule's failure, and the dangerous combinations (production without a database). The type checker covers the rest: `config.port` can only be a number, so no test needs to check that it is not a string.
+
+## Running TypeScript on a server
+
+You have three ways to run the TypeScript you wrote on a server. They differ in what they check:
+
+| Way | How | Checks types? |
+| --- | --- | --- |
+| Compile first | `tsc` writes `.js` files, the server runs `node dist/server.js` | Yes, at build time |
+| tsx | `tsx src/server.ts` strips types on the fly with esbuild | No |
+| Node.js itself | `node src/server.ts`: Node.js 24 strips types by default | No |
+
+Node.js 24 runs a `.ts` file directly by deleting the type annotations, without compiling anything. That only works for syntax that *can* simply be deleted. An `enum` or a constructor parameter property (`constructor(readonly status: number)`) generates JavaScript code, so plain Node.js refuses it. Here is the official Node.js 24 build running two files:
+
+Terminal on your computer
+
+```bash
+$ node src/price.ts
+₦45,000
+$ node src/status.ts
+~/project/src/status.ts:1
+  > enum Status {
+      Pending,
+      Paid,
+  > }
+
+SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]: TypeScript enum is not supported in strip-only mode
+    at parseTypeScript (node:internal/modules/typescript:68:40)
+    …
+  code: 'ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX'
+}
+
+Node.js v24.19.0
+```
+
+If you plan to run with plain Node.js, turn on `"erasableSyntaxOnly": true` in `tsconfig.json`: then `tsc` reports enums and parameter properties while you write them, instead of Node.js at startup. (The `HttpError` class in this lesson uses a parameter property, so it runs with tsx but not with plain `node`.) Relative imports must then also name the real `.ts` file, which needs `allowImportingTsExtensions` or `rewriteRelativeImportExtensions`; [tsconfig in depth](https://zudojs.oyinlola.site/learn/ts-tsconfig) explains both.
+
+Whichever way you run, three rules keep production safe:
+
+- **tsx and Node.js never check types.** Run `tsc --noEmit` in CI on every pull request, and block the merge when it fails.
+- **Pin `@types/node` to your Node.js major version**, and upgrade both together.
+- **Parse every outside value at the edge**: environment, files, requests, child output. Inside that edge your types are true; outside it they are hopes.
+
+## Practice
+
+TRY IT YOURSELF
+
+### A typed upload limit
+
+Add a setting `MAX_UPLOAD_MB` to a config loader: optional, default `10`, a whole number from 1 to 100. The typed result should hold `maxUploadBytes`, already converted to bytes. Try the default, `"25"`, `"0"` and `"2.5"`.
+
+**Show a solution**
+
+upload-config.tsNode.js only
+
+```ts
+type Env = Readonly<Record<string, string | undefined>>;
+
+interface UploadConfig {
+  readonly maxUploadBytes: number;
+}
+
+function loadUploadConfig(env: Env): UploadConfig {
+  const raw = env["MAX_UPLOAD_MB"] ?? "10";
+  const mb = Number(raw);
+  if (!/^\d{1,3}$/.test(raw) || mb < 1 || mb > 100) {
+    throw new Error(`MAX_UPLOAD_MB must be a whole number from 1 to 100, got "${raw}"`);
+  }
+  return Object.freeze({ maxUploadBytes: mb * 1024 * 1024 });
+}
+
+for (const env of [{}, { MAX_UPLOAD_MB: "25" }, { MAX_UPLOAD_MB: "0" }, { MAX_UPLOAD_MB: "2.5" }]) {
+  try {
+    console.log(loadUploadConfig(env));
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+```
+
+Output of `npx tsx upload-config.ts`
+
+```json
+{ maxUploadBytes: 10485760 }
+{ maxUploadBytes: 26214400 }
+MAX_UPLOAD_MB must be a whole number from 1 to 100, got "0"
+MAX_UPLOAD_MB must be a whole number from 1 to 100, got "2.5"
+```
+
+Converting to bytes once, in the loader, means no other code ever multiplies by 1024 and gets it wrong. The name `maxUploadBytes` says the unit, so nobody compares it with a megabyte count.
+
+TRY IT YOURSELF
+
+### Low-balance events
+
+Write a `BankAccount` class that extends `EventEmitter<AccountEvents>`. `withdraw(kobo)` refuses to go below zero, and emits `"low-balance"` with the new balance when it drops under ₦5,000. Listen for it and withdraw twice from ₦12,000.
+
+**Show a solution**
+
+bank-events.tsNode.js only
+
+```ts
+import { EventEmitter } from "node:events";
+
+interface AccountEvents {
+  "low-balance": [balanceKobo: number];
+}
+
+class BankAccount extends EventEmitter<AccountEvents> {
+  constructor(private balanceKobo: number) {
+    super();
+  }
+
+  withdraw(kobo: number): number {
+    if (!Number.isSafeInteger(kobo) || kobo <= 0) throw new RangeError("amount must be a positive whole number of kobo");
+    if (kobo > this.balanceKobo) throw new RangeError("insufficient funds");
+    this.balanceKobo -= kobo;
+    if (this.balanceKobo < 500_000) this.emit("low-balance", this.balanceKobo);
+    return this.balanceKobo;
+  }
+}
+
+const account = new BankAccount(1_200_000);
+account.on("low-balance", (balance) => console.log(`warning: only ₦${balance / 100} left`));
+
+console.log("after ₦4,000:", account.withdraw(400_000) / 100);
+console.log("after ₦5,000:", account.withdraw(500_000) / 100);
+try {
+  account.withdraw(900_000);
+} catch (error) {
+  console.log(error instanceof Error ? error.message : error);
+}
+```
+
+Output of `npx tsx bank-events.ts`
+
+```ts
+after ₦4,000: 8000
+warning: only ₦3000 left
+after ₦5,000: 3000
+insufficient funds
+```
+
+`extends EventEmitter<AccountEvents>` types `this.emit` inside the class and `account.on` outside it with the same map.
+
+TRY IT YOURSELF
+
+### Create the file on first run
+
+Using the ENOENT guard, write `loadCart(path)`: when the file is missing, it writes an empty cart `{"items":[]}` and returns it; any other error is thrown. Call it twice on a fresh folder.
+
+**Show a solution**
+
+cart-first-run.tsNode.js only
+
+```ts
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+interface Cart {
+  readonly items: readonly { readonly sku: string; readonly quantity: number }[];
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && typeof error.code === "string";
+}
+
+async function loadCart(path: string): Promise<{ cart: Cart; created: boolean }> {
+  try {
+    const cart = JSON.parse(await readFile(path, "utf8")) as Cart;
+    return { cart, created: false };
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
+    const cart: Cart = { items: [] };
+    await writeFile(path, JSON.stringify(cart), { flag: "wx" });
+    return { cart, created: true };
+  }
+}
+
+const dir = await mkdtemp(join(tmpdir(), "cart-"));
+console.log(await loadCart(join(dir, "cart.json")));
+console.log(await loadCart(join(dir, "cart.json")));
+await rm(dir, { recursive: true });
+```
+
+Output of `npx tsx cart-first-run.ts`
+
+```json
+{ cart: { items: [] }, created: true }
+{ cart: { items: [] }, created: false }
+```
+
+The `as Cart` is acceptable only because this program wrote the file itself; for a file other people can edit, use a guard as `readJsonFile` does. `flag: "wx"` makes the write fail if another process created the file a moment earlier, instead of overwriting it.
+
+## Recap
+
+- Node.js types come from `@types/node`: declaration files you install with `-D`, enable with `"types": ["node"]`, and pin to your Node.js major version.
+- `process.env` values are `string | undefined`. Declaration merging hides that without checking it; parse the environment once into a checked, frozen `Config`, report every problem, and never log the secrets.
+- Overloads pick return types from arguments (`readFile` with and without an encoding). `fs` errors become `NodeJS.ErrnoException` through a guard, and only `ENOENT` means "no file yet".
+- Request parts are loose on purpose: method and URL may be `undefined`, repeated headers are joined (use `headersDistinct`), chunks are `any`, `server.address()` has three cases. Narrow each with a check.
+- Where a type is `any` (stream chunks, `events.once`), your annotation is a claim. Make it true at the source or check it.
+- `EventEmitter<Events>` types every listener and emit; `NodeJS.Signals` catches signal typos; `child_process` types follow your options.
+- tsx and Node.js 24 strip types without checking them, so `tsc --noEmit` runs in CI.
+
+Next: [BookStore API: HTTP and routing](https://zudojs.oyinlola.site/learn/bookstore-http), a whole typed backend built from these pieces, with no framework.
+
+## Test yourself
+
+Five questions, picked at random from this lesson's question bank. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it in the terminal. Get 4 of 5 right to pass. If you don't, read the explanations and try again: you get 5 different questions.

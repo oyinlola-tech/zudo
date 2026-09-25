@@ -1,26 +1,37 @@
 ---
-title: "HTTP in depth"
-description: "See the exact bytes of an HTTP request and response, then learn the parts every backend developer uses daily: headers, cookies, content types, methods and status codes."
+title: "HTTP in depth — ZudoJS Academy"
+description: "See the exact bytes of an HTTP request and response, then learn the headers, content types, cookies, methods and status codes every backend relies on."
 source: https://zudojs.oyinlola.site/learn/http-deep
 ---
 
-LESSON 25 OF 84
+LEVEL 7 · LESSON 1 OF 15
 
-Backend fundamentals Foundation
+HTTP and REST Core
 
 # HTTP in depth
 
-See the exact bytes of an HTTP request and response, then learn the parts every backend developer uses daily: headers, cookies, content types, methods and status codes.
+See the exact bytes of an HTTP request and response, then learn the headers, content types, cookies, methods and status codes every backend relies on.
 
 - **40 min** to read and try
-- **You need:** The Task API from the node-task-api lesson
+- **You need:** An HTTP server with no framework, and Build a plain Node.js Task API
 - **You build:** A small server that checks content types, reads JSON safely and sets a secure session cookie
 
   [Test yourself](#test)
 
+BY THE END OF THIS LESSON YOU CAN
+
+- Read a raw HTTP request and response and name every part
+- Watch any API conversation with curl -v
+- Check Content-Type, parse JSON safely and answer 415 or 400 when the body is wrong
+- Set a session cookie with HttpOnly, Secure, SameSite and Max-Age, and keep only a random id in it
+- Decide from safety and idempotency whether a request may be retried
+- Choose the right status code, including 401 vs 403 and 404 vs 405
+
 ## What a request really looks like
 
-In [the node:http lesson](https://zudojs.oyinlola.site/learn/node-http) you wrote a server, and `node:http` handed you a neat `req` object. Under that object there is only text, sent over a network connection. That text follows a set of rules called **HTTP** (HyperText Transfer Protocol). A **protocol** is an agreement about who says what, and in which format.
+In [An HTTP server with no framework](https://zudojs.oyinlola.site/learn/node-http) you wrote a server, and `node:http` handed you a neat `req` object. Under that object there is only text, sent over a network connection. That text follows a set of rules called **HTTP** (HyperText Transfer Protocol). A **protocol** is an agreement about who says what, and in which format.
+
+This course starts with the parts every backend shares, whatever language it is written in: HTTP, REST design and SQL. So the first lessons use short, plain JavaScript examples that you can read at a glance. From [TypeScript on Node.js](https://zudojs.oyinlola.site/learn/ts-node) on, everything is typed, and you build the BookStore API in TypeScript.
 
 To see the text itself, skip `node:http` and use `node:net`, which gives you the raw connection. This server prints every byte it receives, then answers by writing an HTTP response by hand. `fetch` plays the client:
 
@@ -306,7 +317,17 @@ Read the four answers:
 - **400 Bad Request** again: the JSON is fine, but a title must be text. The `; charset=utf-8` part was accepted because the server compares only the part before the semicolon.
 - **201 Created**: everything is valid, and the title was trimmed.
 
-The body is read with `for await` because it arrives in pieces over the connection, as you saw with streams in [the streams lesson](https://zudojs.oyinlola.site/learn/node-streams). A real server also limits how many bytes it reads, so nobody can send a gigabyte of "JSON".
+The body is read with `for await` because it arrives in pieces over the connection, as you saw in [Streams and buffers](https://zudojs.oyinlola.site/learn/node-streams). A real server also limits how many bytes it reads, so nobody can send a gigabyte of "JSON".
+
+### Headers that control caching
+
+Browsers, proxies and CDNs keep copies of responses to avoid asking again. The server decides what they may keep with the `Cache-Control` response header:
+
+- `Cache-Control: no-store`: never keep a copy. Use it for anything personal, such as an account page or an API answer with a user's orders.
+- `Cache-Control: private, max-age=60`: only the user's own browser may keep it, for 60 seconds.
+- `Cache-Control: public, max-age=86400`: anyone, including a shared CDN, may keep it for a day. Right for a logo or a product photo.
+
+With an `ETag` header (a version label for the response), a browser can later ask "has it changed?" by sending that label back in `If-None-Match`. If it has not, the server answers **304 Not Modified** with no body, and the browser reuses its copy. [Caching](https://zudojs.oyinlola.site/learn/backend-caching), later in this course, builds caches inside your own server.
 
 ## Cookies
 
@@ -317,9 +338,9 @@ The server sets a cookie with a `Set-Cookie` response header. The browser sends 
 | Attribute | What it does |
 | --- | --- |
 | `HttpOnly` | JavaScript on the page cannot read the cookie. If an attacker manages to run a script on your site, it still cannot steal the session. |
-| `Secure` | The browser sends the cookie only over HTTPS, never over plain HTTP where anyone on the network could read it. |
+| `Secure` | The browser sends the cookie only over HTTPS, never over plain HTTP where anyone on the network could read it. (Browsers make an exception for `http://localhost`, so it works while you develop.) |
 | `SameSite=Lax` | The browser does not send the cookie with most requests started by other sites. This blocks many cross-site request forgery (CSRF) attacks. `Strict` is even tighter; `None` turns the protection off and needs `Secure`. |
-| `Max-Age=3600` | The cookie expires after 3600 seconds. Without it, the cookie disappears when the browser closes. |
+| `Max-Age=3600` | The cookie expires after 3600 seconds. Without it (or an `Expires` date), it is a *session cookie*, which the browser drops when it closes. |
 | `Path=/` | Send the cookie for every path on the site. |
 
 Writing and reading these headers is plain string work, so it runs in the browser too:
@@ -415,7 +436,7 @@ The id is different on every run. **204 No Content** means "it worked and there 
 
 > A cookie is not a place for data
 >
-> Never put a user id, a role or anything you trust into a cookie as plain text: the user can edit their own cookies. Send a long random id and look it up on the server, as above. The [ZudoJS authentication lesson](https://zudojs.oyinlola.site/learn/zudo-auth) comes back to sessions and tokens with ready-made, tested code.
+> Never put a user id, a role or anything you trust into a cookie as plain text: the user can edit their own cookies. Send a long random id and look it up on the server, as above. [Authentication](https://zudojs.oyinlola.site/learn/sec-authentication), in the Security course, comes back to sessions and tokens in depth, and `@zudojs/auth` provides ready-made, tested code for them.
 
 ## Methods: safe and idempotent
 
@@ -470,6 +491,25 @@ after two PUTs: [
 ```
 
 That is why a browser warns you before it resends a form (a `POST`), but reloads a normal page (a `GET`) without asking. Never change data in a `GET` handler: a link preview or a search engine could trigger it.
+
+REASON IT OUT
+
+### The answer never arrived
+
+A mobile app sends a request, the train enters a tunnel, and the connection drops before the response arrives. The app does not know whether the server did the work. For each request, decide: may the app simply send it again?
+
+- `GET /tasks/7`
+- `PUT /tasks/7` with `{"title": "Buy oat milk", "done": true}`
+- `DELETE /tasks/7`. The first attempt did delete it; what does the retry answer?
+- `POST /transfers` with `{"to": "0123456789", "amountKobo": 500000}`
+
+**Show the reasoning**
+
+`GET` is safe: it changed nothing, so repeating it is harmless. `PUT` is idempotent: the second one sets the task to the same state again, so the result is the same whether the first one arrived or not.
+
+`DELETE` is idempotent too, but look closely at what that means. The retry probably answers **404 Not Found**, because the task is already gone. Idempotency is about the *state of the server* (after one or two deletes, task 7 is gone either way), not about getting the same status code back. A client that retries a `DELETE` should treat 404 as "done".
+
+`POST /transfers` is neither safe nor idempotent. If the first request arrived, a retry sends ₦5,000 a second time. The app must not retry it blindly. The standard fix is an **idempotency key**: the client sends a unique id with the request, and the server remembers which ids it has already carried out. [Idempotency and safe retries](https://zudojs.oyinlola.site/learn/api-idempotency) builds that.
 
 ## Status codes
 
@@ -622,7 +662,10 @@ For each situation, pick a status code: (a) a task was created; (b) `DELETE /tas
 - `Content-Type` names the body's format. Check it, parse JSON inside `try`/`catch`, and validate every field.
 - Cookies carry a random session id, never trusted data. Set `HttpOnly`, `Secure`, `SameSite=Lax` and a `Max-Age`.
 - GET, HEAD and OPTIONS are safe. PUT and DELETE are idempotent. POST is neither.
+- `Cache-Control` tells browsers and CDNs what they may keep: `no-store` for personal data, `max-age` for the rest.
 - 2xx success, 3xx look elsewhere, 4xx the client's mistake, 5xx the server's.
+
+Next: [Designing a REST API](https://zudojs.oyinlola.site/learn/rest-design), where you turn these building blocks into an API that other developers can guess.
 
 ## Test yourself
 

@@ -1,26 +1,34 @@
 ---
-title: "\"BookStore API: HTTP and routing\""
-description: "Start a TypeScript backend with no framework at all. Set up the folder, read configuration from the environment, write a small typed router, JSON helpers and error responses, and serve books and authors over HTTP."
+title: "\"BookStore API: HTTP and routing\" — ZudoJS Academy"
+description: "Start a TypeScript backend with no framework: a project folder, checked configuration, a typed router, JSON helpers and error responses for books and authors."
 source: https://zudojs.oyinlola.site/learn/bookstore-http
 ---
 
-LESSON 41 OF 84
+LEVEL 7 · LESSON 8 OF 15
 
-Project: a TypeScript backend Core
+TypeScript on the server Core
 
 # "BookStore API: HTTP and routing"
 
-Start a TypeScript backend with no framework at all. Set up the folder, read configuration from the environment, write a small typed router, JSON helpers and error responses, and serve books and authors over HTTP.
+Start a TypeScript backend with no framework: a project folder, checked configuration, a typed router, JSON helpers and error responses for books and authors.
 
 - **45 min** to read and try
-- **You need:** The TypeScript lessons, plus "An HTTP server with no framework" and "Designing a REST API"
+- **You need:** TypeScript on Node.js, HTTP in depth and Designing a REST API
 - **You build:** A BookStore API on node:http and tsx that serves authors and books as JSON
 
   [Test yourself](#test)
 
+BY THE END OF THIS LESSON YOU CAN
+
+- Set up a TypeScript backend project with tsx, @types/node and a strict tsconfig
+- Load and check configuration from the environment once, and fail fast on a bad value
+- Write a typed router that tells 404 from 405 with a discriminated union
+- Read JSON bodies with a size limit and turn every failure into a status code and a JSON body
+- Keep node:http at the edge, so handlers take and return plain, testable objects
+
 ## The project
 
-For the next three lessons you build one backend from scratch: a **BookStore API**. It is written in TypeScript, and it uses no framework, only Node.js itself. In [An HTTP server with no framework](https://zudojs.oyinlola.site/learn/node-http) you wrote a small server in plain JavaScript. This one is bigger, typed, and split into files the way a real project is.
+For the next three lessons you build one backend from scratch: a **BookStore API**. It is written in TypeScript, and it uses no framework, only Node.js itself. In [An HTTP server with no framework](https://zudojs.oyinlola.site/learn/node-http) you wrote a small server in plain JavaScript, and in [TypeScript on Node.js](https://zudojs.oyinlola.site/learn/ts-node) you learned what Node's types promise and how to narrow them. Here those pieces come together in a bigger server, split into files the way a real project is.
 
 The API has four **resources**, the "things" a REST API is about (you designed URLs like these in [Designing a REST API](https://zudojs.oyinlola.site/learn/rest-design)):
 
@@ -28,10 +36,10 @@ The API has four **resources**, the "things" a REST API is about (you designed U
 | --- | --- | --- |
 | authors | `GET /authors`, `POST /authors` | this lesson |
 | books | `GET /books`, `GET /books/:id`, `POST /books` | this lesson (`POST` in the next) |
-| orders | `GET /orders`, `POST /orders` | [validation and PostgreSQL](https://zudojs.oyinlola.site/learn/bookstore-data) |
-| users | `POST /users`, `POST /sessions` (log in) | [authentication and tests](https://zudojs.oyinlola.site/learn/bookstore-auth) |
+| orders | `GET /orders`, `POST /orders` | [BookStore API: validation and PostgreSQL](https://zudojs.oyinlola.site/learn/bookstore-data) |
+| users | `POST /users`, `POST /sessions` (log in) | [BookStore API: authentication and tests](https://zudojs.oyinlola.site/learn/bookstore-auth) |
 
-Why no framework? Because you will write, by hand, every job a framework does for you. At the end of the third lesson you will look back at the code and list what hurt. That list is the reason frameworks, and ZudoJS, exist.
+Why no framework? Because you will write, by hand, every job a framework does for you. At the end of the third lesson you will look back at the code and list what hurts. [Type-safe API layers](https://zudojs.oyinlola.site/learn/ts-api-layers) then refactors the BookStore into typed layers, which fixes part of that list. The rest of the list is the reason frameworks, and ZudoJS, exist.
 
 ## Set up the folder
 
@@ -46,7 +54,7 @@ $ npm init -y
 Wrote to ~/bookstore/package.json:
 …
 $ npm pkg set type=module
-$ npm install -D typescript tsx @types/node
+$ npm install -D typescript tsx @types/node@24
 
 added 7 packages, and audited 8 packages in 7s
 
@@ -57,7 +65,7 @@ npm warn install-scripts
 npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
 ```
 
-`npm pkg set type=module` tells Node.js that the `.js` files are ES modules, so `import` works. The esbuild warning is harmless; you saw it in [npm and packages](https://zudojs.oyinlola.site/learn/npm-packages). Now open `package.json` and give it three scripts. Your version numbers may be higher:
+`npm pkg set type=module` tells Node.js that the `.js` files are ES modules, so `import` works. The esbuild warning is harmless; you saw it in [npm and packages](https://zudojs.oyinlola.site/learn/npm-packages). `@types/node@24` pins Node's types to the Node.js version you run, as [TypeScript on Node.js](https://zudojs.oyinlola.site/learn/ts-node#types-node) recommended. Now open `package.json` and give it three scripts. Your version numbers may be higher:
 
 package.json
 
@@ -73,7 +81,7 @@ package.json
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/node": "^26.6.2",
+    "@types/node": "^24.13.6",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }
@@ -124,9 +132,9 @@ bookstore/
 
 ## Configuration from the environment
 
-**Configuration** is every value that can change between your laptop and a server: the port, the database, secrets. You never write those into the code. They come from **environment variables**, which Node.js gives you in `process.env` (you met it in [What Node.js is](https://zudojs.oyinlola.site/learn/node-runtime)).
+**Configuration** is every value that can change between your laptop and a server: the port, the database, secrets. You never write those into the code. They come from **environment variables**, which Node.js gives you in `process.env`.
 
-Environment variables are always strings, or missing. So one module reads them, checks them once at startup, and turns them into a typed object. Everything else uses that object:
+Environment variables are always strings, or missing. So, as in [TypeScript on Node.js](https://zudojs.oyinlola.site/learn/ts-node#env), one module reads them, checks them once at startup, and turns them into a typed object. Everything else uses that object. The BookStore needs only a port for now:
 
 src/config.ts
 
@@ -140,7 +148,7 @@ type Env = Readonly<Record<string, string | undefined>>;
 export function loadConfig(env: Env): Config {
   const raw = env["PORT"] ?? "3000";
   const port = Number(raw);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  if (!/^\d{1,5}$/.test(raw) || port > 65535) {
     throw new Error(`PORT must be a whole number from 0 to 65535, got "${raw}"`);
   }
   return { port };
@@ -172,7 +180,7 @@ Output of `npx tsx try-config.ts` and of the browser terminal
 PORT must be a whole number from 0 to 65535, got "eighty"
 ```
 
-No `PORT` means the default, 3000. A bad value stops the program with a clear message. This is called **failing fast**: better to refuse to start than to start with a broken setting and fail later in a confusing way.
+No `PORT` means the default, 3000. A bad value stops the program with a clear message. The pattern `/^\d{1,5}$/` accepts only digits, because `Number()` alone would also accept `""`, `" 80"` and `"8e3"`. This is called **failing fast**: better to refuse to start than to start with a broken setting and fail later in a confusing way.
 
 ## Requests and responses as plain data
 
@@ -305,6 +313,25 @@ Inside each `if`, TypeScript knows which case it has: `match.params` only exists
 
 ## Errors and JSON
 
+REASON IT OUT
+
+### Which errors may the client see?
+
+A request can fail in very different ways. For each one, decide what the client should receive, and what only the server's log should see:
+
+- The client asks for `/books/99`, and there is no book 99.
+- The client sends `{"name": 42}` to `POST /authors`.
+- A handler has a bug and reads a property of `undefined`.
+- Later, the database refuses a query, and its error message contains the table name and part of the SQL.
+
+**Show the reasoning**
+
+The first two are **expected** failures: your code detected them on purpose. The client caused them and can fix them, so it gets a specific status (404, 400) and a message written for it.
+
+The last two are **unexpected**: bugs or broken infrastructure. The client cannot fix them, and the details (a stack trace, a table name, a piece of SQL) tell an attacker how your code is built. The client gets a plain 500 with a generic message; the full error goes to the server's log, where you can read it.
+
+So the code needs a way to tell the two apart. Errors you throw on purpose get their own class; anything else is treated as a bug.
+
 Every answer, even a failure, is a status code and a JSON body. An `HttpError` carries both, so any code can `throw` one and one function turns it into a response:
 
 src/http/errors.tsNode.js only
@@ -351,9 +378,10 @@ export async function readJson(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
-    size += (chunk as Buffer).length;
+    if (!Buffer.isBuffer(chunk)) throw new TypeError("expected the body as bytes");
+    size += chunk.length;
     if (size > MAX_BODY_BYTES) throw new HttpError(413, "body_too_large", "The body is too large");
-    chunks.push(chunk as Buffer);
+    chunks.push(chunk);
   }
   if (size === 0) return undefined;
   if (!request.headers["content-type"]?.startsWith("application/json")) {
@@ -382,7 +410,7 @@ Three safety checks hide in `readJson`, and each has its own status code ([HTTP 
 - **415 Unsupported Media Type**: a body that is not labelled as JSON is refused.
 - **400 Bad Request**: `JSON.parse` throws on broken JSON, and that becomes a clear error instead of a crash.
 
-A request stream gives `Buffer` chunks, but its type says `any`, so `chunk as Buffer` tells TypeScript what they are.
+A request stream gives `Buffer` chunks, but its type says `any`. `Buffer.isBuffer` proves it instead of claiming it with `as`, exactly as `readBody` did in [TypeScript on Node.js](https://zudojs.oyinlola.site/learn/ts-node#http). If it ever fails, that is a bug in the server, so it throws a plain `TypeError`, which becomes a 500.
 
 ## Routes for authors and books
 
@@ -581,20 +609,21 @@ server.listen(config.port, () => {
 });
 ```
 
-To check the whole thing, this script starts the app on **port 0**, which means "any free port, you choose". Then it sends real requests with `fetch`, prints the answers, and closes the server:
+To check the whole thing, this script starts the app on **port 0**, which means "any free port, you choose". Then it sends real requests with `fetch`, prints the answers, and closes the server. `server.address()` can return `null` or a string as well as a port ([TypeScript on Node.js](https://zudojs.oyinlola.site/learn/ts-node#http)), so the script checks before it reads `port`:
 
 try-server.tsNode.js only
 
 ```ts
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
 
 import { createApp } from "./src/app.js";
 import { createRouter } from "./src/routes/index.js";
 
 const server = createApp(createRouter()).listen(0);
 await once(server, "listening");
-const { port } = server.address() as AddressInfo;
+const address = server.address();
+if (address === null || typeof address === "string") throw new Error("expected a TCP address");
+const { port } = address;
 
 async function call(method: string, path: string, body?: unknown): Promise<void> {
   const response = await fetch(`http://localhost:${port}${path}`, {
@@ -686,7 +715,6 @@ try-author-by-id.tsNode.js only
 
 ```ts
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
 
 import { createApp } from "./src/app.js";
 import { HttpError } from "./src/http/errors.js";
@@ -702,7 +730,9 @@ const router = createRouter().add("GET", "/authors/:id", (request) => {
 
 const server = createApp(router).listen(0);
 await once(server, "listening");
-const { port } = server.address() as AddressInfo;
+const address = server.address();
+if (address === null || typeof address === "string") throw new Error("expected a TCP address");
+const { port } = address;
 for (const path of ["/authors/2", "/authors/9", "/authors/abc"]) {
   const response = await fetch(`http://localhost:${port}${path}`);
   console.log(path, response.status, await response.text());
@@ -755,7 +785,7 @@ The server refuses to start and says exactly which setting is wrong. If it quiet
 - The router matches method and path patterns like `/books/:id`, and tells 404 apart from 405.
 - Every failure is a status code and a JSON body. Bodies are size-limited and must be JSON. Unknown errors become a generic 500.
 
-Next, the data moves into PostgreSQL, and every request body gets checked properly.
+Next: [BookStore API: validation and PostgreSQL](https://zudojs.oyinlola.site/learn/bookstore-data), where the data moves into PostgreSQL and every request body gets checked properly.
 
 ## Test yourself
 

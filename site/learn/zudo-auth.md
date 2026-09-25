@@ -1,22 +1,31 @@
 ---
-title: "Authentication"
-description: "Let users log in to the Task API. Hash passwords, issue and check JWTs, keep server-side sessions with a real logout, protect routes in @zudojs/http, and stop password guessing with lockouts and rate limits, using @zudojs/auth and @zudojs/crypto."
+title: "Authentication — ZudoJS Academy"
+description: "Let users log in to the Task API: hash passwords, issue JWTs, keep sessions with real logout, protect routes, and stop guessing with lockouts and limits."
 source: https://zudojs.oyinlola.site/learn/zudo-auth
 ---
 
-LESSON 59 OF 84
+LEVEL 13 · LESSON 7 OF 12
 
-Users and security Core
+Security and identity Core
 
 # Authentication
 
-Let users log in to the Task API. Hash passwords, issue and check JWTs, keep server-side sessions with a real logout, protect routes in @zudojs/http, and stop password guessing with lockouts and rate limits, using @zudojs/auth and @zudojs/crypto.
+Let users log in to the Task API: hash passwords, issue JWTs, keep sessions with real logout, protect routes, and stop guessing with lockouts and limits.
 
 - **55 min** to read and try
 - **You need:** The Task API project, and the lessons on routes and middleware
 - **You build:** A Task API where users log in, get a token, and see only their own tasks
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Hash and verify passwords with hashPassword and verifyPassword, and upgrade a hash with needsRehash
+- Issue and verify JWT access tokens tied to a server-side session
+- End one session with logout and every session of a user with logoutAll
+- Rotate refresh tokens and revoke every session on a detected replay
+- Protect routes with a bearer-token middleware that never trusts the request body for ownership
+- Stop password guessing with per-account lockouts and a per-IP rate limit
 
 ## Who is calling?
 
@@ -632,6 +641,18 @@ new token -> 401 Session is no longer active
 ```
 
 The replay is refused with a `TokenRevokedError`: status 401 and code `ERR_TOKEN_REVOKED`, because the client has to log in again. Even the new, honest token died. That is on purpose: the server cannot tell whether the thief or the user made the first refresh, so it logs everyone out and the real user simply logs in again.
+
+REASON IT OUT
+
+### A stolen refresh token gets used once, by the thief, before the real user ever tries. What should happen next?
+
+Trace it: a thief copies Ada's refresh token from a badly stored cookie. The thief calls `auth.refresh` first and gets a fresh pair. An hour later Ada's own client, still holding the old refresh token, tries to refresh too. The service sees a token that has already been used. It cannot ask the token who used it. What are its choices, and why end every session instead of just rejecting the second call?
+
+**Show the reasoning**
+
+Rejecting only the second call and moving on would leave the thief's fresh session alive and Ada logged out — the attacker keeps access, the victim loses it, and nobody sees an alert. The service has exactly one reliable signal here: *this refresh token was already redeemed once*, which can only happen if two parties have had it. It cannot tell which of the two calls was legitimate, so treating the situation as a compromise and revoking every session tied to that user is the only response that cannot leave the attacker holding a valid session.
+
+The cost is real: Ada is logged out everywhere and has to log in again, even though her own client did nothing wrong. That is the trade a single-use, rotating refresh token makes on purpose — a false alarm costs one login; a token that could be silently reused by an attacker costs the account. It is also why the standalone `refreshAccessToken` below is dangerous for real users: without a revocation store, there is no way to detect the reuse in the first place.
 
 > COMMON MISTAKE
 >

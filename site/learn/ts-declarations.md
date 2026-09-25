@@ -1,0 +1,1237 @@
+---
+title: "Declaration files — ZudoJS Academy"
+description: "Type an untyped JavaScript naira formatter with a .d.ts file, declare modules and globals, augment interfaces, install @types and generate declarations."
+source: https://zudojs.oyinlola.site/learn/ts-declarations
+---
+
+LEVEL 6 · LESSON 17 OF 22
+
+Libraries and large projects Advanced
+
+# Declaration files
+
+Type an untyped JavaScript naira formatter with a .d.ts file, declare modules and globals, augment interfaces, install @types and generate declarations.
+
+- **55 min** to read and try
+- **You need:** What the TypeScript compiler does, Modules in TypeScript, npm and packages, and the Advanced TypeScript lessons so far
+- **You build:** Hand-written and generated declarations for a naira formatting library, a declaration for the untyped ms package, typed environment variables and a coupon field added to a cart interface
+
+  [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain what a .d.ts file is, how the compiler finds one, and why nothing checks it against the JavaScript
+- Write a declaration file for an untyped JavaScript module, including options, overloads and a default export
+- Declare a bare package with declare module, and choose between a hand-written declaration and an @types package
+- Add global declarations and augment existing interfaces in other modules safely
+- Generate declarations from TypeScript and from JSDoc-annotated JavaScript, and know what isolatedDeclarations demands
+
+## ₦2,500 became ₦25
+
+A shop's checkout has used the same money formatter for years. A developer wrote it in plain JavaScript long before the team adopted TypeScript, and it lives in the repository as `vendor/naira-format/index.js`. It takes an amount in **kobo** (₦1 is 100 kobo, and money is stored in whole kobo so that no fractions of a naira get lost):
+
+vendor/naira-format/index.js
+
+```ts
+export const CURRENCY = "NGN";
+
+export function formatNaira(kobo, options = {}) {
+  const { symbol = true, decimals = 2 } = options;
+  const text = (kobo / 100).toLocaleString("en-NG", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+  return symbol ? `₦${text}` : text;
+}
+
+export function parseNaira(text) {
+  const cleaned = text.replace(/[₦,\s]/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
+  return Math.round(Number(cleaned) * 100);
+}
+
+export default formatNaira;
+```
+
+When the new TypeScript checkout imports it, `tsc` complains straight away:
+
+Terminal on your computer
+
+```bash
+$ npx tsc --noEmit
+checkout.ts:1:29 - error TS7016: Could not find a declaration file for module './vendor/naira-format/index.js'. '/home/you/naira-shop/vendor/naira-format/index.js' implicitly has an 'any' type.
+
+1 import { formatNaira } from "./vendor/naira-format/index.js";
+                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in checkout.ts:1
+```
+
+The compiler can see that the file exists, but it cannot see any types in it: the project does not type-check JavaScript files. Under `strict`, it refuses to treat the whole module as `any` silently. Someone in a hurry makes the red line go away with `// @ts-ignore`, and ships the price label that reads the amount from a form field:
+
+checkout.ts
+
+```ts
+// @ts-ignore -- the formatter has no types
+import { formatNaira } from "./vendor/naira-format/index.js";
+
+const priceFromForm = "2500";
+console.log(`Total: ${formatNaira(priceFromForm)}`);
+```
+
+Output of `npx tsx checkout.ts` and of the browser terminal
+
+```ts
+Total: ₦25.00
+```
+
+The form gave naira as text. The formatter expects kobo as a number. JavaScript turned `"2500" / 100` into `25` without a word, and a ₦2,500 order was shown as ₦25. TypeScript would have caught this in a second if it had known what `formatNaira` accepts. `@ts-ignore` did not add that knowledge; it switched the checking off, and every value coming out of the library became `any`.
+
+This lesson is about giving the compiler that knowledge for code it cannot read: **declaration files**. You will write one by hand for the formatter, declare a real untyped npm package, install community types, add global names, extend other people's interfaces, and finally generate declarations instead of writing them.
+
+## What a declaration file is
+
+A **declaration file** is a file ending in `.d.ts` that contains only types: the names a module exports and the shape of each one, with no function bodies and no values. It answers one question for the compiler: "what is in this JavaScript, and how may it be used?" You already met the output kind in [What the TypeScript compiler does](https://zudojs.oyinlola.site/learn/ts-compiler#emit-files): `tsc --declaration` writes one next to every `.js` file it emits. Every package you have installed with types works the same way.
+
+Declaration files come from three places:
+
+| Source | Example | Who keeps it in step with the JavaScript |
+| --- | --- | --- |
+| Generated by `tsc` from TypeScript (or from JSDoc in JavaScript) | Every `@zudojs/*` package's `dist/index.d.ts` | The compiler, on every build |
+| Published separately in an `@types/*` package | `@types/node`, `@types/ms` | Volunteers at DefinitelyTyped |
+| Written by hand, in your own project | `vendor/naira-format/index.d.ts` | You |
+
+The keyword that makes a declaration is `declare`. It means "this exists at runtime; I am only telling you its type". A `declare` statement produces no JavaScript at all, and inside a `.d.ts` file everything is implicitly a declaration. The part of a program where only declarations are allowed is called an **ambient context**, and an ambient context may not contain code. Try to sneak a function body into one and the compiler refuses, but only if it is allowed to look:
+
+tsconfig.json
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": false,
+    "types": ["node"],
+    "noEmit": true,
+    "verbatimModuleSyntax": true
+  }
+}
+```
+
+money.d.ts
+
+```ts
+export declare const VAT_RATE: number;
+
+export declare function addVat(kobo: number): number {
+  return Math.round(kobo * 1.075);
+}
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+money.d.ts:3:54 - error TS1183: An implementation cannot be declared in ambient contexts.
+
+3 export declare function addVat(kobo: number): number {
+                                                       ~
+
+
+Found 1 error in money.d.ts:3
+```
+
+Look at `"skipLibCheck": false` in that `tsconfig.json`. The course's usual setting is `true`, and with it the compiler **skips type-checking every `.d.ts` file**, not just the ones in `node_modules`. That makes big projects faster (you will measure how much in [Compiler performance](https://zudojs.oyinlola.site/learn/ts-performance)), but it also means mistakes inside your *own* declaration files go unreported. While you write declarations, check them once with `npx tsc --noEmit --skipLibCheck false`.
+
+### How the compiler finds a declaration
+
+For a relative import such as `"./vendor/naira-format/index.js"`, the compiler looks for a declaration file with the same name next to the JavaScript file: `index.d.ts` beside `index.js`. (For `.mjs` it looks for `.d.mts`, for `.cjs` it looks for `.d.cts`.) If it finds one, it uses the types in it and never opens the JavaScript. For a package name such as `"ms"`, it follows the package's `package.json` (`"exports"` with a `"types"` condition, or a top-level `"types"` field), then falls back to `node_modules/@types/ms`. You will use both routes in this lesson, and [Debugging TypeScript](https://zudojs.oyinlola.site/learn/ts-debugging) shows how to watch the search step by step.
+
+## Before you write a single type
+
+REASON IT OUT
+
+### What does naira-format really accept?
+
+A declaration file is a description of JavaScript that already exists. Get the description wrong and the compiler will enforce the wrong rules with total confidence. Read the formatter's code above and answer, before looking at any types:
+
+1. What does `formatNaira` do with `2500.5`, a kobo amount with a fraction? With a negative amount?
+2. What happens if you pass `formatNaira` a `bigint`, such as `250000n`?
+3. What does `parseNaira` return for text that is not an amount, like `"two thousand"`? For `"-5"`?
+4. What happens if `parseNaira` receives a number instead of text?
+5. Which of these facts can a type express, and which can only be documented or checked at runtime?
+
+**Show the reasoning**
+
+Run the library on those inputs rather than guessing. A plain `.js` file is the right tool for probing: it runs without any types getting in the way.
+
+probe.js
+
+```ts
+import { formatNaira, parseNaira } from "./vendor/naira-format/index.js";
+
+console.log(formatNaira(2500.5), formatNaira(-150000));
+for (const input of [250000n, 1250]) {
+  try {
+    console.log(input, formatNaira(input), parseNaira(input));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+console.log(parseNaira("two thousand"), parseNaira("-5"), parseNaira(" ₦ 1,250.50 "));
+```
+
+Output of `node probe.js` and of the browser terminal
+
+```ts
+₦25.01 ₦-1,500.00
+Cannot mix BigInt and other types, use explicit conversions
+text.replace is not a function
+null null 125050
+```
+
+1. A fraction of a kobo is rounded into the display (`₦25.01`), so the caller should only pass whole kobo. A negative amount prints as `₦-1,500.00`, which is ugly but does not crash.
+2. A `bigint` throws: `250000n / 100` mixes a bigint with a number. The declaration must say `number`, not `number | bigint`.
+3. `null` for anything that is not a positive amount with at most two decimals, including negative text. The return type must be `number | null`, so that callers are forced to handle the `null`.
+4. It throws a `TypeError`. The parameter must be `string`.
+5. Types can say `number` vs `string` vs `bigint` and "may be null". They cannot say "a whole number of kobo" (a [branded type](https://zudojs.oyinlola.site/learn/ts-branded-types) can get close) or "not negative". Those go in the documentation comment, and in a runtime check at the edge of your program.
+
+## Typing the naira formatter
+
+Now write the description. Create `vendor/naira-format/index.d.ts` beside the JavaScript file:
+
+vendor/naira-format/index.d.ts
+
+```ts
+/** The currency every function in this library works in. */
+export declare const CURRENCY: "NGN";
+
+export interface FormatOptions {
+  /** Put the ₦ sign in front. Default: true. */
+  symbol?: boolean;
+  /** Digits after the decimal point. Default: 2. */
+  decimals?: number;
+}
+
+/**
+ * Formats an amount of kobo (₦1 = 100 kobo) as naira text.
+ * Pass whole kobo: fractions are rounded into the display.
+ */
+export declare function formatNaira(kobo: number, options?: FormatOptions): string;
+
+/** Reads text such as "₦1,250.50" back into kobo, or returns null if it is not an amount. */
+export declare function parseNaira(text: string): number | null;
+
+export default formatNaira;
+```
+
+Line by line:
+
+- `export declare const CURRENCY: "NGN"`: the value exists in the JavaScript; its type is the literal `"NGN"`, which is more precise than `string` and true, because the JavaScript assigns a constant.
+- `export interface FormatOptions`: an interface needs no `declare`, because it is a type and has no runtime part anyway. Exporting it lets callers write their own option objects with the right type.
+- The functions have signatures and no bodies. `options?` matches the JavaScript default `options = {}`.
+- `export default formatNaira` says the default export is that same function, which is what the JavaScript does.
+- The `/** … */` comments are **JSDoc** comments. Editors show them when you hover over a name, so the rule "pass whole kobo" appears exactly where a caller needs it.
+
+Take the `@ts-ignore` out of the checkout and run the checker:
+
+checkout.ts
+
+```ts
+import { formatNaira } from "./vendor/naira-format/index.js";
+
+const priceFromForm = "2500";
+console.log(`Total: ${formatNaira(priceFromForm)}`);
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+checkout.ts:4:35 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+
+4 console.log(`Total: ${formatNaira(priceFromForm)}`);
+                                    ~~~~~~~~~~~~~
+
+
+Found 1 error in checkout.ts:4
+```
+
+That is the bug from the first section, found before anything ran. The fix is to convert the form text on purpose, with the library's own parser, and to deal with the `null` it can return:
+
+checkout.ts
+
+```ts
+import formatNaira, { CURRENCY, parseNaira, type FormatOptions } from "./vendor/naira-format/index.js";
+
+function priceLabel(fromForm: string, options?: FormatOptions): string {
+  const kobo = parseNaira(fromForm);
+  if (kobo === null) return `Invalid amount: "${fromForm}"`;
+  return `Total: ${formatNaira(kobo, options)} (${CURRENCY})`;
+}
+
+console.log(priceLabel("2500"));
+console.log(priceLabel("₦1,250,000.50", { decimals: 0 }));
+console.log(priceLabel("two thousand"));
+```
+
+Output of `npx tsx checkout.ts` and of the browser terminal
+
+```ts
+Total: ₦2,500.00 (NGN)
+Total: ₦1,250,001 (NGN)
+Invalid amount: "two thousand"
+```
+
+Every import works: the default import, the named ones, and `type FormatOptions`, which exists only in the declaration file. If you forget the `kobo === null` check, the compiler now reports `'kobo' is possibly 'null'` (TS18047), because the declaration said `number | null`.
+
+## Declarations are promises nobody checks
+
+The compiler read `index.d.ts` and never opened `index.js`. That is the whole point of a declaration file, and also its danger: **nothing compares a hand-written declaration with the JavaScript it describes**. Suppose a teammate wants to format big totals and "improves" the declaration without touching the code:
+
+vendor/naira-format/index.d.ts
+
+```ts
+export declare function formatNaira(kobo: number | bigint): string;
+```
+
+vendor/naira-format/index.js
+
+```ts
+export function formatNaira(kobo) {
+  return `₦${(kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`;
+}
+```
+
+report.ts
+
+```ts
+import { formatNaira } from "./vendor/naira-format/index.js";
+
+const yearlyRevenue = 9_007_199_254_740_993n;
+try {
+  console.log(formatNaira(yearlyRevenue));
+} catch (error) {
+  console.log(`${(error as Error).name}: ${(error as Error).message}`);
+}
+```
+
+Output of `npx tsx report.ts` and of the browser terminal
+
+```ts
+TypeError: Cannot mix BigInt and other types, use explicit conversions
+```
+
+The type check passed. The program crashed. The same thing happens with any `@types` package that has fallen behind its library, or was never quite right. Three habits keep declarations honest:
+
+- **Describe what the code does, not what you wish it did.** If you need bigint support, change the JavaScript first, then the declaration.
+- **Test the JavaScript through the declaration.** A small test file that calls every declared function with the declared types, and checks the results at runtime, fails the moment the two disagree. You will write these in [Testing TypeScript](https://zudojs.oyinlola.site/learn/ts-testing).
+- **Prefer generated declarations.** When the source is TypeScript, or JavaScript with JSDoc types, let the compiler write the `.d.ts`. The [last part of this lesson](#generating) shows how.
+
+## Untyped npm packages: declare module
+
+The formatter lives in your repository, so you could put its declaration file right beside it. A package in `node_modules` is different: you must never edit files there, because the next `npm install` replaces them. Take `ms`, a small, very popular package that converts durations such as `"2h"` into milliseconds. It ships no types:
+
+session.tsNode.js only
+
+```ts
+import ms from "ms";
+
+const sessionLength = ms("2h");
+console.log(sessionLength);
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+session.ts:1:16 - error TS7016: Could not find a declaration file for module 'ms'. 'node_modules/ms/index.js' implicitly has an 'any' type.
+  Try `npm i --save-dev @types/ms` if it exists or add a new declaration (.d.ts) file containing `declare module 'ms';`
+
+1 import ms from "ms";
+                 ~~~~
+
+
+Found 1 error in session.ts:1
+```
+
+The message offers two ways out. The second one is an **ambient module declaration**: a `declare module "name" { … }` block in any `.d.ts` file of your project, which says "whenever someone imports `"name"`, these are its types". The file can live anywhere the compiler includes; a `types/` folder is the usual home.
+
+### The shorthand, and why it is a trap
+
+The quickest version has no body at all:
+
+types/ms.d.ts
+
+```ts
+declare module "ms";
+```
+
+session.tsNode.js only
+
+```ts
+import ms from "ms";
+
+const retryAfter = ms("two hours");
+console.log(retryAfter, typeof retryAfter);
+```
+
+Output of `npx tsx session.ts`
+
+```ts
+undefined undefined
+```
+
+This is a **shorthand ambient module**: every import from it is `any`. The error goes away and so does all checking. `ms` quietly returns `undefined` for text it does not understand, and nothing warned you. The shorthand is acceptable for one afternoon while you migrate a large JavaScript project; it is not a fix.
+
+### A real declaration for a CommonJS package
+
+Before writing the body, look at how `ms` exports itself. Its `index.js` is CommonJS and ends with `module.exports = function (val, options) { … }`: the module *is* the function. That shape is written `export =` in a declaration, and an ES module imports it as the default export. Two **overloads** (several signatures for one function, covered in [Advanced functions](https://zudojs.oyinlola.site/learn/ts-advanced-functions)) describe its two jobs:
+
+types/ms.d.ts
+
+```ts
+declare module "ms" {
+  interface FormatOptions {
+    /** "2 hours" instead of "2h". */
+    long?: boolean;
+  }
+
+  /** Parses a duration such as "2h" or "1.5d" into milliseconds (undefined if it cannot). */
+  function ms(value: string): number | undefined;
+  /** Formats milliseconds as a short duration such as "2h". */
+  function ms(value: number, options?: FormatOptions): string;
+
+  export = ms;
+}
+```
+
+session.tsNode.js only
+
+```ts
+import ms from "ms";
+
+const sessionLength = ms("2h");
+if (sessionLength === undefined) throw new Error("bad duration");
+
+console.log(sessionLength, ms(sessionLength), ms(90_000, { long: true }));
+console.log(ms("two hours"));
+```
+
+Output of `npx tsx session.ts`
+
+```ts
+7200000 2h 2 minutes
+undefined
+```
+
+Notice `number | undefined` on the parsing overload. That was the result of reading the code and running it on bad text, exactly as in the reasoning above. Now a careless caller is stopped:
+
+limits.tsNode.js only
+
+```ts
+import ms from "ms";
+
+const lockoutMs: number = ms("15m");
+const label: number = ms(900_000);
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+limits.ts:3:7 - error TS2322: Type 'number | undefined' is not assignable to type 'number'.
+  Type 'undefined' is not assignable to type 'number'.
+
+3 const lockoutMs: number = ms("15m");
+        ~~~~~~~~~
+
+limits.ts:4:7 - error TS2322: Type 'string' is not assignable to type 'number'.
+
+4 const label: number = ms(900_000);
+        ~~~~~
+
+
+Found 2 errors in the same file, starting at: limits.ts:3
+```
+
+> NOTE
+>
+> A `declare module "ms"` block only works in a file that is itself a *script*, that is, a `.d.ts` file with no top-level `import` or `export`. Inside a module file, the same syntax means something else: an augmentation of an existing module, which you will meet [below](#augmentation).
+
+## @types packages and DefinitelyTyped
+
+The error's first suggestion was `npm i --save-dev @types/ms`. **DefinitelyTyped** is a large community repository of hand-written declarations for JavaScript packages that do not ship their own. Each one is published to npm as `@types/<package>`. The compiler looks in `node_modules/@types` automatically, so installing is all you do. In a fresh project, with no declaration of your own:
+
+Terminal on your computer
+
+```bash
+$ npm install ms
+$ npm install -D @types/ms
+$ npx tsc --noEmit
+app.ts:4:23 - error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Argument of type '"two hours"' is not assignable to parameter of type 'StringValue'.
+
+4 const retryAfter = ms("two hours");
+                        ~~~~~~~~~~~
+
+  node_modules/@types/ms/index.d.ts:16:18 - The last overload is declared here.
+    16 declare function ms(value: ms.StringValue): number;
+                        ~~
+
+
+Found 1 error in app.ts:4
+```
+
+The community declaration is stricter than the one you wrote. It uses a [template literal type](https://zudojs.oyinlola.site/learn/ts-template-literals) called `StringValue`, roughly `\`${number}${Unit}\``, so `"two hours"` is rejected at compile time instead of turning into `undefined` at runtime. Having rejected nonsense text, it declares the result as plain `number`. Reading an `@types` file is a good way to learn declaration techniques.
+
+To see which declaration file the compiler actually picked for an import, ask it to explain why every file is part of the program:
+
+Terminal on your computer
+
+```bash
+$ npx tsc --noEmit --explainFiles | grep -A2 "@types/ms"
+node_modules/@types/ms/index.d.ts
+   Imported via "ms" from file 'app.ts' with packageId '@types/ms/index.d.ts@2.1.0'
+   File is CommonJS module because 'node_modules/@types/ms/package.json' does not have field "type"
+```
+
+Some practical rules for `@types`:
+
+- **Install them as dev dependencies** (`-D`), since only the compiler uses them. The exception is a library whose own published `.d.ts` files mention those types; then its users need them too, and they go in `dependencies`.
+- **Match the versions.** `@types/ms@2.1.x` describes `ms@2.1.x`. The major and minor numbers of an `@types` package follow the library's; the patch number is the declarations' own.
+- **Remove your own declaration** once you install one. If a hand-written `declare module "ms"` is still in `types/`, the compiler uses it before the installed one, and you keep your weaker types without noticing.
+- **Check whether the library already ships types.** Many do: `zod`, `vitest` and every `@zudojs/*` package include their `.d.ts` files. `npm view <package> types exports` shows the fields, and a `@types` package for a library that ships its own is at best useless and at worst out of date.
+- **The `types` compiler option limits global types.** The course's `tsconfig.json` has `"types": ["node"]`: only `@types/node` may add *global* names (such as `process`). Packages you `import` are found regardless. If a test framework's globals such as `describe` are "not found", this list is usually why.
+
+| The package… | Do this |
+| --- | --- |
+| ships its own `.d.ts` (has `"types"` in package.json or in `"exports"`) | Nothing. Import it. |
+| has an `@types/` package | `npm install -D @types/name`, matching the library's major version |
+| has neither | Write `types/name.d.ts` with `declare module "name" { … }`, only for the parts you use. Consider contributing it to DefinitelyTyped. |
+| is your own JavaScript | A sibling `.d.ts`, or JSDoc types plus generated declarations (below) |
+
+## Global declarations
+
+Most code arrives through imports, but some names simply exist: `process` in Node.js, `window` in a browser, or a constant that a build tool writes into your code. A **global declaration** tells the compiler about a name that is available everywhere without an import.
+
+### Script files declare globals
+
+A `.d.ts` file with no top-level `import` or `export` is a **script**, and everything it declares is global. Suppose the build pipeline injects the release version as `APP_VERSION` (bundlers have a `define` option that replaces a name with a value in the output):
+
+types/build.d.ts
+
+```ts
+/** Injected by the build: the release being run, such as "2026.9.1". */
+declare const APP_VERSION: string;
+
+interface ShopSettings {
+  vatRate: number;
+  currency: "NGN";
+}
+```
+
+footer.tsNode.js only
+
+```ts
+const settings: ShopSettings = { vatRate: 0.075, currency: "NGN" };
+
+try {
+  console.log(`Version ${APP_VERSION}, VAT ${settings.vatRate * 100}%`);
+} catch (error) {
+  console.log((error as Error).message);
+}
+```
+
+Output of `npx tsx footer.ts`
+
+```ts
+APP_VERSION is not defined
+```
+
+It type-checks, because the declaration says `APP_VERSION` exists. It fails when run with `tsx`, because nothing defined it: only the production build replaces the name. A global declaration is the most dangerous kind of promise, since it is true in some environments and false in others. Keep them few, and make sure every environment that runs the code (tests included) really provides them.
+
+### declare global inside a module
+
+Once a file has an `import` or `export`, it is a module and its declarations are local. To add globals from a module, wrap them in `declare global { … }`. The best-known use is typing environment variables. `@types/node` declares `process.env` with the interface `NodeJS.ProcessEnv`, where every variable is `string | undefined`. Because interfaces with the same name **merge** (their members are combined), you can add your own variables to it:
+
+types/env.d.ts
+
+```ts
+declare global {
+  namespace NodeJS {
+    interface ProcessEnv {
+      NODE_ENV: "development" | "production" | "test";
+      PAYSTACK_SECRET_KEY: string;
+    }
+  }
+}
+
+export {};
+```
+
+`export {}` exports nothing; it is there only to make the file a module, which `declare global` requires. Now the compiler believes you:
+
+payments.tsNode.js only
+
+```ts
+const mode = process.env.NODE_ENV;
+const secret: string = process.env.PAYSTACK_SECRET_KEY;
+
+console.log(mode === "production" ? "live keys" : "test keys");
+console.log(typeof secret);
+try {
+  console.log(`key starts with ${secret.slice(0, 7)}`);
+} catch (error) {
+  console.log((error as Error).message);
+}
+```
+
+Output of `npx tsx payments.ts`
+
+```ts
+test keys
+undefined
+Cannot read properties of undefined (reading 'slice')
+```
+
+Every line compiled, and the secret was `undefined`, because this terminal never set `PAYSTACK_SECRET_KEY`. Declaring an environment variable as `string` is the same kind of promise as `as string`: it moves the failure from a clear error at startup to a confusing one deep inside a payment. The safer design keeps `ProcessEnv` as it is (`string | undefined`), reads the variables once, checks them, and hands the rest of the program a typed object. [What the TypeScript compiler does](https://zudojs.oyinlola.site/learn/ts-compiler#runtime) built such a reader, and [Runtime validation](https://zudojs.oyinlola.site/learn/ts-validation) does it with schemas. Augment `ProcessEnv` only for the literal types of variables that the platform itself guarantees.
+
+> GLOBALS ARE VAR
+>
+> To declare a global *variable* that code really assigns (for example `globalThis.requestCount = 0` in a test setup file), write `var requestCount: number;` inside `declare global`. Only `var` adds a property to `globalThis`; `let` and `const` do not, so `globalThis.requestCount` would be an error.
+
+## Module augmentation: adding to someone else's interface
+
+Sometimes the types exist and are right, but your application adds something to an object that the library's types do not know about. The classic case is an authentication step that attaches the logged-in user to the incoming request. Node's `IncomingMessage` has no `user` property, so every later handler would need an assertion. **Module augmentation** reopens a module's declarations from outside and merges new members into its interfaces:
+
+auth.tsNode.js only
+
+```ts
+import { IncomingMessage } from "node:http";
+import { Socket } from "node:net";
+
+declare module "node:http" {
+  interface IncomingMessage {
+    user?: { id: string; role: "customer" | "admin" };
+  }
+}
+
+export function authenticate(req: IncomingMessage): void {
+  if (req.headers.authorization === "Bearer ada-token") {
+    req.user = { id: "u_1", role: "admin" };
+  }
+}
+
+const req = new IncomingMessage(new Socket());
+req.headers.authorization = "Bearer ada-token";
+authenticate(req);
+console.log(req.user?.role);
+```
+
+Output of `npx tsx auth.ts`
+
+```ts
+admin
+```
+
+Inside a module file, `declare module "node:http" { … }` does not declare a new module; it adds to the existing one. The `interface IncomingMessage` inside merges with Node's, so `req.user` is known everywhere in the project, typed as optional because unauthenticated requests do not have it. Frameworks use this pattern on purpose: Express users augment `Request`, and Vitest users augment its `Assertion` interface to type custom matchers (you will do that in [Testing TypeScript](https://zudojs.oyinlola.site/learn/ts-testing)).
+
+It works for your own modules too. A shop's cart module knows nothing about coupons; a separate coupons feature adds the field it needs:
+
+cart.ts
+
+```ts
+export interface Cart {
+  id: string;
+  items: { sku: string; kobo: number; quantity: number }[];
+}
+
+export function subtotal(cart: Cart): number {
+  return cart.items.reduce((sum, item) => sum + item.kobo * item.quantity, 0);
+}
+```
+
+coupons.ts
+
+```ts
+import { subtotal, type Cart } from "./cart.js";
+
+declare module "./cart.js" {
+  interface Cart {
+    coupon?: { code: string; percentOff: number };
+  }
+}
+
+export function applyCoupon(cart: Cart, code: string, percentOff: number): Cart {
+  return { ...cart, coupon: { code, percentOff } };
+}
+
+export function total(cart: Cart): number {
+  const gross = subtotal(cart);
+  return cart.coupon ? Math.round(gross * (1 - cart.coupon.percentOff / 100)) : gross;
+}
+```
+
+checkout.ts
+
+```ts
+import type { Cart } from "./cart.js";
+import { applyCoupon, total } from "./coupons.js";
+
+const cart: Cart = { id: "C-1", items: [{ sku: "RICE-5KG", kobo: 1_250_000, quantity: 2 }] };
+const discounted = applyCoupon(cart, "SALLAH10", 10);
+console.log(total(cart), total(discounted), discounted.coupon?.code);
+```
+
+Output of `npx tsx checkout.ts` and of the browser terminal
+
+```ts
+2500000 2250000 SALLAH10
+```
+
+Should you do this with your own code? Usually not: if you own `cart.ts`, add the field there. Augmentation is for code you cannot edit, or for a plugin system where the core deliberately stays ignorant of its plugins.
+
+### What augmentation cannot do
+
+These experiments start from a fresh copy of the cart module, without the coupons file:
+
+cart.ts
+
+```ts
+export interface Cart {
+  id: string;
+  items: { sku: string; kobo: number; quantity: number }[];
+}
+```
+
+The module name must resolve to a real module, exactly as in an import. A typo is reported:
+
+gift-wrap.ts
+
+```ts
+declare module "./carts.js" {
+  interface Cart {
+    giftWrap?: boolean;
+  }
+}
+
+export {};
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+gift-wrap.ts:1:16 - error TS2664: Invalid module name in augmentation, module './carts.js' cannot be found.
+
+1 declare module "./carts.js" {
+                 ~~~~~~~~~~~~
+
+
+Found 1 error in gift-wrap.ts:1
+```
+
+Only **interfaces** (and namespaces) merge. A `type` alias with the same name is a second, conflicting declaration:
+
+gift-wrap.ts
+
+```ts
+declare module "./cart.js" {
+  type Cart = { giftWrap?: boolean };
+}
+
+export {};
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+cart.ts:1:18 - error TS2300: Duplicate identifier 'Cart'.
+
+1 export interface Cart {
+                   ~~~~
+
+  gift-wrap.ts:2:8 - 'Cart' was also declared here.
+    2   type Cart = { giftWrap?: boolean };
+             ~~~~
+
+gift-wrap.ts:2:8 - error TS2300: Duplicate identifier 'Cart'.
+
+2   type Cart = { giftWrap?: boolean };
+         ~~~~
+
+  cart.ts:1:18 - 'Cart' was also declared here.
+    1 export interface Cart {
+                       ~~~~
+
+
+Found 2 errors in 2 files.
+
+Errors  Files
+     1  cart.ts:1
+     1  gift-wrap.ts:2
+```
+
+This is one practical reason libraries export interfaces rather than type aliases for their extension points. The worst failure is the one the compiler does *not* report. An augmentation can declare a brand-new function, and the compiler takes your word that it exists:
+
+gift-wrap.ts
+
+```ts
+import type { Cart } from "./cart.js";
+
+declare module "./cart.js" {
+  export function giftWrapFee(cart: Cart): number;
+}
+```
+
+receipt.ts
+
+```ts
+import * as carts from "./cart.js";
+
+const cart: carts.Cart = { id: "C-2", items: [] };
+console.log(typeof carts.giftWrapFee);
+try {
+  console.log(carts.giftWrapFee(cart));
+} catch (error) {
+  console.log((error as Error).message);
+}
+```
+
+Output of `npx tsx receipt.ts` and of the browser terminal
+
+```ts
+undefined
+carts.giftWrapFee is not a function
+```
+
+Augmentation changes types, never values. Adding a property to an interface is fine when some code really sets it (like `authenticate` above). Declaring a function that no JavaScript defines is a lie with a delay.
+
+## Generating declarations instead of writing them
+
+Hand-written declarations drift away from the code. The robust answer is to let `tsc` produce them from something it can check.
+
+### From TypeScript
+
+If the library is written in TypeScript, turn on `declaration` and `tsc` writes a `.d.ts` for every file, with inferred types spelled out:
+
+money.ts
+
+```ts
+export const VAT_RATE = 0.075;
+
+export function addVat(kobo: number) {
+  return Math.round(kobo * (1 + VAT_RATE));
+}
+
+export function splitBill(kobo: number, people: number) {
+  const share = Math.floor(kobo / people);
+  return { share, remainder: kobo - share * people };
+}
+
+export const currencies = ["NGN", "USD"] as const;
+```
+
+Terminal on your computer
+
+```bash
+$ npx tsc --noEmit false --outDir dist --declaration
+```
+
+dist/money.d.ts
+
+```ts
+export declare const VAT_RATE = 0.075;
+export declare function addVat(kobo: number): number;
+export declare function splitBill(kobo: number, people: number): {
+    share: number;
+    remainder: number;
+};
+export declare const currencies: readonly ["NGN", "USD"];
+```
+
+The compiler wrote the return types it inferred, including the object shape of `splitBill`. Because this file is produced on every build, it cannot drift. Add `"declarationMap": true` as well, and editors can jump from a user's "go to definition" straight into your `.ts` source instead of the `.d.ts`; [Publishing TypeScript packages](https://zudojs.oyinlola.site/learn/ts-publishing) sets this up for a real package.
+
+### From JavaScript with JSDoc types
+
+You do not have to rewrite the naira formatter in TypeScript to get generated declarations. The compiler understands types written in **JSDoc comments**: `@param`, `@returns`, `@typedef` and `@type`. Turn on `allowJs` (read JavaScript files) and `checkJs` (type-check them), and the JavaScript itself becomes the source of truth:
+
+tsconfig.json
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true
+  }
+}
+```
+
+naira.js
+
+```ts
+/**
+ * @typedef {object} FormatOptions
+ * @property {boolean} [symbol] Put the ₦ sign in front. Default: true.
+ * @property {number} [decimals] Digits after the decimal point. Default: 2.
+ */
+
+export const CURRENCY = /** @type {const} */ ("NGN");
+
+/**
+ * Formats an amount of kobo (₦1 = 100 kobo) as naira text.
+ * @param {number} kobo
+ * @param {FormatOptions} [options]
+ * @returns {string}
+ */
+export function formatNaira(kobo, options = {}) {
+  const { symbol = true, decimals = 2 } = options;
+  const text = (kobo / 100).toLocaleString("en-NG", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+  return symbol ? `₦${text}` : text;
+}
+
+/**
+ * Reads text such as "₦1,250.50" back into kobo, or returns null if it is not an amount.
+ * @param {string} text
+ * @returns {number | null}
+ */
+export function parseNaira(text) {
+  const cleaned = text.replace(/[₦,\s]/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
+  return Math.round(Number(cleaned) * 100);
+}
+
+export default formatNaira;
+```
+
+TypeScript code can now import `./naira.js` directly and gets full types, with no `.d.ts` at all:
+
+invoice.ts
+
+```ts
+import { formatNaira, parseNaira } from "./naira.js";
+
+const kobo = parseNaira("₦45,000");
+console.log(formatNaira(kobo));
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+invoice.ts:4:25 - error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number'.
+  Type 'null' is not assignable to type 'number'.
+
+4 console.log(formatNaira(kobo));
+                          ~~~~
+
+
+Found 1 error in invoice.ts:4
+```
+
+And users of the library in other projects get a generated declaration file. Build with `declaration` and `emitDeclarationOnly` (write only `.d.ts` files, since the JavaScript already exists):
+
+Terminal on your computer
+
+```bash
+$ npx tsc --noEmit false --declaration --emitDeclarationOnly --outDir types
+```
+
+types/naira.d.ts
+
+```ts
+/**
+ * @typedef {object} FormatOptions
+ * @property {boolean} [symbol] Put the ₦ sign in front. Default: true.
+ * @property {number} [decimals] Digits after the decimal point. Default: 2.
+ */
+export type FormatOptions = {
+    /**
+     * Put the ₦ sign in front. Default: true.
+     */
+    symbol?: boolean;
+    /**
+     * Digits after the decimal point. Default: 2.
+     */
+    decimals?: number;
+};
+export declare const CURRENCY: "NGN";
+/**
+ * Formats an amount of kobo (₦1 = 100 kobo) as naira text.
+ * @param {number} kobo
+ * @param {FormatOptions} [options]
+ * @returns {string}
+ */
+export declare function formatNaira(kobo: number, options?: FormatOptions): string;
+/**
+ * Reads text such as "₦1,250.50" back into kobo, or returns null if it is not an amount.
+ * @param {string} text
+ * @returns {number | null}
+ */
+export declare function parseNaira(text: string): number | null;
+export default formatNaira;
+```
+
+Compare it with the one you wrote by hand: the same signatures, the same `number | null`, and the documentation carried along. The difference is that `checkJs` now also checks the function *bodies* against those comments, so the declaration and the code can no longer disagree. This is how many older JavaScript libraries add types without a rewrite.
+
+### isolatedDeclarations: declarations without the type checker
+
+To write `splitBill`'s return type, `tsc` had to type-check the function body. For a big monorepo that is slow, and it means one package's declarations wait for the whole check. The `isolatedDeclarations` option demands that every exported function, constant and class has types written out wherever the compiler would otherwise have to infer them, so that any tool can produce the `.d.ts` from one file at a time, without a type checker:
+
+tsconfig.json
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "noEmit": true,
+    "verbatimModuleSyntax": true,
+    "declaration": true,
+    "isolatedDeclarations": true
+  }
+}
+```
+
+money.ts
+
+```ts
+export function addVat(kobo: number) {
+  return Math.round(kobo * 1.075);
+}
+
+export function splitBill(kobo: number, people: number): { share: number; remainder: number } {
+  const share = Math.floor(kobo / people);
+  return { share, remainder: kobo - share * people };
+}
+
+export const VAT_RATE = 0.075;
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+money.ts:2:10 - error TS9013: Expression type can't be inferred with --isolatedDeclarations.
+
+2   return Math.round(kobo * 1.075);
+           ~~~~~~~~~~~~~~~~~~~~~~~~
+
+  money.ts:1:17 - Add a return type to the function declaration.
+    1 export function addVat(kobo: number) {
+                      ~~~~~~
+
+  money.ts:2:10 - Add satisfies and a type assertion to this expression (satisfies T as T) to make the type explicit.
+    2   return Math.round(kobo * 1.075);
+               ~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in money.ts:2
+```
+
+Only `addVat` is reported: its return type must be read from the body. `splitBill` spells its type out, and `VAT_RATE` is a literal whose type is obvious from the text alone. You will see why this matters for build speed in [Compiler performance](https://zudojs.oyinlola.site/learn/ts-performance).
+
+## Testing declarations
+
+A declaration file makes two kinds of claims, and each needs its own test:
+
+- **Type claims**: "`formatNaira` refuses a string", "`parseNaira` may return null". Test them with `// @ts-expect-error` lines that must fail to compile, which you met in [What the TypeScript compiler does](https://zudojs.oyinlola.site/learn/ts-compiler#testing). If a later edit loosens the declaration, the directive becomes unused and `tsc` reports it.
+- **Behaviour claims**: "the JavaScript really accepts what the declaration allows, and returns what it says". Test them by running the JavaScript through the typed import.
+
+naira.contract.ts
+
+```ts
+import formatNaira, { CURRENCY, parseNaira } from "./vendor/naira-format/index.js";
+
+// Type claims: checked by tsc, never executed.
+function typeClaims(): void {
+  // @ts-expect-error: amounts are kobo numbers, never text
+  formatNaira("2500");
+  // @ts-expect-error: the parser reads text, not numbers
+  parseNaira(1250);
+  // @ts-expect-error: the result may be null, so it must be checked first
+  const kobo: number = parseNaira("₦10");
+}
+
+// Behaviour claims: run the JavaScript through the declaration.
+const checks: [string, unknown, unknown][] = [
+  ["format kobo", formatNaira(250_000), "₦2,500.00"],
+  ["no symbol", formatNaira(250_000, { symbol: false }), "2,500.00"],
+  ["parse text", parseNaira("₦2,500.00"), 250_000],
+  ["parse garbage is null", parseNaira("two thousand"), null],
+  ["currency literal", CURRENCY, "NGN"],
+];
+for (const [name, actual, expected] of checks) {
+  console.log(`${actual === expected ? "PASS" : "FAIL"} ${name}`);
+}
+console.log(`${typeof typeClaims} typeClaims: compiled, never called`);
+```
+
+Output of `npx tsx naira.contract.ts` and of the browser terminal
+
+```ts
+PASS format kobo
+PASS no symbol
+PASS parse text
+PASS parse garbage is null
+PASS currency literal
+function typeClaims: compiled, never called
+```
+
+Why are the type claims inside a function that nobody calls? Because a line under `@ts-expect-error` is still ordinary code. The compiler checks it, and then it runs like any other line: `parseNaira(1250)` would throw `text.replace is not a function` and stop the whole test file. Putting type-only lines where they cannot execute keeps the two kinds of test apart. [Testing TypeScript](https://zudojs.oyinlola.site/learn/ts-testing) does the same job more neatly with Vitest's `expectTypeOf`, and runs the behaviour checks as real tests.
+
+## In production
+
+- **Prefer libraries that ship their own types.** Types generated from the library's source are updated in the same release as the code.
+- **Keep hand-written declarations small and local.** Declare only the parts of a package you use, in one `types/` folder, with a comment naming the library version they describe. Delete them when the library or `@types` catches up.
+- **Never use the shorthand `declare module "x";` as a permanent fix,** and treat `@ts-ignore` on an import as a bug report you have not filed yet.
+- **Check your own `.d.ts` files.** With `skipLibCheck: true`, errors in them are invisible. Run `tsc --skipLibCheck false` in CI once in a while, or whenever `types/` changes.
+- **Globals and augmentations are project-wide.** A `declare global` in one file changes the types in every file, including tests. Keep them in a clearly named folder and review them like code.
+- **Type what is true at runtime.** Environment variables, injected constants and request properties are only as real as the code or platform that sets them. When in doubt, keep the honest `| undefined` and check it.
+
+## Practice
+
+TRY IT YOURSELF
+
+### Declare a slug helper
+
+Your shop uses an untyped CommonJS package `slugger` whose whole API is one function: `slugger(text, { separator = "-", maxLength })` returns a lowercase URL slug, and returns an empty string for text with no letters or digits. Write `types/slugger.d.ts` so that `import slugger from "slugger"` is fully typed, and name the one thing about the result that a type cannot express.
+
+**Show a solution**
+
+types/slugger.d.ts
+
+```ts
+declare module "slugger" {
+  interface SlugOptions {
+    /** Put between words. Default: "-". */
+    separator?: string;
+    /** Cut the slug to at most this many characters. */
+    maxLength?: number;
+  }
+
+  /** Turns "Jollof Rice (Large)" into "jollof-rice-large". Returns "" when nothing is left. */
+  function slugger(text: string, options?: SlugOptions): string;
+
+  export = slugger;
+}
+```
+
+`export =` matches `module.exports = slugger`, and a default import picks it up from an ES module. The type says `string`, but it cannot say "may be empty". Document it in the comment, and check for `""` before using a slug as a URL.
+
+TRY IT YOURSELF
+
+### Type the logged-in user once
+
+Several handlers write `(req as any).tenantId`. Replace those assertions with an augmentation of `node:http`'s `IncomingMessage` that adds an optional `tenantId`, and write a function `requireTenant(req)` that returns the tenant id as a `string` or throws.
+
+**Show a solution**
+
+tenant.tsNode.js only
+
+```ts
+import { IncomingMessage } from "node:http";
+import { Socket } from "node:net";
+
+declare module "node:http" {
+  interface IncomingMessage {
+    tenantId?: string;
+  }
+}
+
+export function requireTenant(req: IncomingMessage): string {
+  if (!req.tenantId) throw new Error("No tenant on this request");
+  return req.tenantId;
+}
+
+const req = new IncomingMessage(new Socket());
+try {
+  requireTenant(req);
+} catch (error) {
+  console.log((error as Error).message);
+}
+req.tenantId = "shop-lagos";
+console.log(requireTenant(req));
+```
+
+Output of `npx tsx tenant.ts`
+
+```ts
+No tenant on this request
+shop-lagos
+```
+
+The property is optional, because a request that has not passed the tenant middleware does not have it. `requireTenant` turns "maybe" into "definitely" with a runtime check, so the handlers after it get a plain `string` without any assertion.
+
+TRY IT YOURSELF
+
+### Catch a lying declaration
+
+A teammate "simplified" the formatter's declaration to `export declare function parseNaira(text: string): number;`, and now the compiler lets callers skip the null check. The type check passes everywhere. Write a behaviour check that fails because of this declaration, and say which layer (types or tests) found it.
+
+**Show a solution**
+
+vendor/naira-format/index.js
+
+```ts
+export function parseNaira(text) {
+  const cleaned = text.replace(/[₦,\s]/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
+  return Math.round(Number(cleaned) * 100);
+}
+```
+
+vendor/naira-format/index.d.ts
+
+```ts
+export declare function parseNaira(text: string): number;
+```
+
+parse.contract.ts
+
+```ts
+import { parseNaira } from "./vendor/naira-format/index.js";
+
+for (const input of ["₦2,500", "two thousand", "-5"]) {
+  const result = parseNaira(input);
+  const ok = typeof result === "number";
+  console.log(`${ok ? "PASS" : "FAIL"} parseNaira(${JSON.stringify(input)}) -> ${result} (declared: number)`);
+}
+```
+
+Output of `npx tsx parse.contract.ts` and of the browser terminal
+
+```ts
+PASS parseNaira("₦2,500") -> 250000 (declared: number)
+FAIL parseNaira("two thousand") -> null (declared: number)
+FAIL parseNaira("-5") -> null (declared: number)
+```
+
+The compiler cannot find this: it trusts the declaration, so inside `parse.contract.ts` the variable `result` is typed `number`, and `typeof result === "number"` even looks pointless to a reader. Only running the JavaScript shows the `null`. That is exactly why declaration files need behaviour tests: the test is the one place where the promise meets the real code. The fix is to put `| null` back in the declaration, and the compiler then shows every caller that skipped the check.
+
+## Recap
+
+- A `.d.ts` file describes JavaScript for the compiler: declarations only, no bodies. The compiler finds it beside the `.js` file, through a package's `types`/`exports`, or in `node_modules/@types`.
+- TS7016 means "this JavaScript has no types". Fix it with a declaration, never with `@ts-ignore` or a permanent shorthand `declare module "x";`.
+- Write declarations from what the code really does: read it, run it on bad input, and put `| null` or `| undefined` where the code returns them.
+- `declare module "name" { … export = … }` in a script `.d.ts` types an untyped package; `@types/name` from DefinitelyTyped is the shared version.
+- Script `.d.ts` files and `declare global` add global names; interfaces merge, which is how `ProcessEnv` and module augmentation work. Augmentation changes types, never values.
+- Nothing checks a hand-written declaration against its JavaScript. Generate declarations from TypeScript or JSDoc (`allowJs`, `checkJs`, `declaration`), and test the behaviour through the typed import. `skipLibCheck` hides errors in your own `.d.ts` files.
+
+Next: [Publishing TypeScript packages](https://zudojs.oyinlola.site/learn/ts-publishing), where you ship JavaScript and declarations together so that nobody has to write a `.d.ts` for your library.
+
+## Test yourself
+
+Five questions, picked at random from this lesson's question bank. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it in the terminal. Get 4 of 5 right to pass. If you don't, read the explanations and try again: you get 5 different questions.

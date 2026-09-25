@@ -1,22 +1,30 @@
 ---
-title: "The ZudoJS error system"
-description: "Handle failures the ZudoJS way. Tell expected errors from bugs, use and extend the error classes in @zudojs/errors, choose codes and categories, serialize errors safely for clients and fully for logs, and turn every error in the Task API into the right HTTP response."
+title: "The ZudoJS error system — ZudoJS Academy"
+description: "Handle failures the ZudoJS way: expected errors versus bugs, your own error classes, safe bodies for clients, full logs, and one handler for the Task API."
 source: https://zudojs.oyinlola.site/learn/zudo-errors
 ---
 
-LESSON 55 OF 84
+LEVEL 12 · LESSON 19 OF 19
 
-The ZudoJS core Core
+Configuration, validation and errors Core
 
 # The ZudoJS error system
 
-Handle failures the ZudoJS way. Tell expected errors from bugs, use and extend the error classes in @zudojs/errors, choose codes and categories, serialize errors safely for clients and fully for logs, and turn every error in the Task API into the right HTTP response.
+Handle failures the ZudoJS way: expected errors versus bugs, your own error classes, safe bodies for clients, full logs, and one handler for the Task API.
 
 - **45 min** to read and try
-- **You need:** Schemas and validation in depth
+- **You need:** "Validation rules with @zudojs/validation", and "Schemas and validation in depth"
 - **You build:** One error handler for the Task API that answers every failure with the right status, a stable code, validation details and a request id, and never leaks internals
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Tell expected, operational failures from bugs, and answer each with the right status
+- Read and use the fields every ZudoJS error shares: statusCode, code, category, expose and isOperational
+- Write your own error class with a stable code, and decide what may go in its metadata
+- Serialize an error safely for a client and completely for your logs
+- Give every error in the Task API one consistent, safe response body with a request id
 
 ## Two kinds of failure
 
@@ -130,7 +138,7 @@ TaskAlreadyDoneError [ERR_TASK_ALREADY_DONE]: Task 3 is already done
 ```
 
 - The `code` is your own string. Prefix it (`ERR_`) and keep it stable: clients will write `if (body.error.code === "ERR_TASK_ALREADY_DONE")`.
-- `metadata` holds facts about the failure. It is copied and frozen, so nobody can change it later. Only put in what a client may see, or what the log needs; never a password or a token.
+- `metadata` holds facts about the failure. It is copied and frozen, so nobody can change it later. Look at the last output: for an exposed error such as this 409, `serializePublicError` sends the metadata to the client. So only put there what a client may see. Facts for your logs only belong in the log line, or in the metadata of a 5xx error, which is never exposed. Never a password or a token.
 - `name` was set to the class name for you.
 - 409 Conflict fits: the request clashes with the current state of the task.
 
@@ -219,6 +227,19 @@ NotFoundError  404 ERR_RESOURCE_NOT_FOUND   true
 
 - The **client** needs a code, a safe message, and nothing else. A stack trace, an SQL query or a file path tells an attacker how your system is built.
 - **Your logs** need everything: the stack, the cause, the metadata, so you can find the bug.
+
+REASON IT OUT
+
+### What may the client see?
+
+A request fails because the database refused a query. The error knows the failing SQL, the table name, the database host, a stack trace, and, because someone logged too much, the connection password. Before reading on, decide what the client's response body should contain, what your log should contain, and what should appear in neither. Would your answer change for a 404 whose metadata holds the missing task's id?
+
+**Show the reasoning**
+
+- **The client** of a 500 gets a stable code and a generic message, nothing else. SQL, table names, hosts and stack traces are a map of your system for an attacker, and the client cannot act on them anyway.
+- **Your log** gets everything that helps you fix the bug: the real message, the SQL, the stack and the cause.
+- **Neither** gets the password: logs are copied and read widely, so secrets are redacted even there.
+- A **404** is different: the client made the mistake and needs to know which task was missing, so its message and a `taskId` in its metadata may be sent. That is why exposure depends on the status: 4xx errors are exposed, 5xx errors are not.
 
 `serializePublicError(error)` is for clients. `error.toJSON()` is for logs. Here both look at a database failure whose metadata holds the failing SQL and, by mistake, a password:
 
@@ -412,7 +433,8 @@ export function toErrorResponse(thrown: unknown, requestId: string, report: Erro
 
 - It always answers, so no error is thrown on to a plain 500 any more. A bug still gets a 500, with the generic message from `serializePublicError`.
 - Only bugs are reported. A 404 is not something to fix, and logging every one would bury the real problems. The `report` function is a parameter, so a test can see what would be logged; `logBugs` builds the real one from a logger.
-- The body keeps the field names the generated code already uses, `error` and `code`, and adds the `requestId` (also sent as the `x-request-id` header). For a `SchemaError` it adds the `issues`, shaped like the generated `validationFailed` helper: a `path` and a `message` per problem. Nothing else from the error reaches the client.
+- The body keeps the field names the generated code already uses, `error` and `code`, and adds the `requestId` (also sent as the `x-request-id` header). For a `SchemaError` it adds the `issues`, shaped like the generated `validationFailed` helper: a `path` and a `message` per problem. It takes only `code` and `message` from `serializePublicError`, so an exposed error's metadata does not reach the client either.
+- The title rules from [the last lesson](https://zudojs.oyinlola.site/learn/zudo-validation-rules#task-api) throw `@zudojs/validation`'s `ValidationError`, which `isSchemaValidationError` does not recognise, so their answers carry no `issues` list. Their `message` already names each failing field, as that lesson designed. The broken-task check from the same lesson throws an `InternalServerError`: not operational, so `logBugs` writes it to the log with its `taskId` and failing fields.
 
 In `src/server.ts`, import the two functions instead of `errorResponse`, build the reporter from the runtime's logger, and let `dispatch` return the answer:
 
@@ -599,7 +621,7 @@ Use `normalizeToBaseError` for the status, `serializePublicError` for the messag
 - `serializePublicError` for clients, `toJSON()` for logs, `normalizeToBaseError` for anything thrown. Never send a stack trace.
 - In `@zudojs/http`, one error-handling middleware just before the router catches every error a route throws, and gives it the same body with a request id.
 
-That completes the ZudoJS core: a runtime, a container, routes, middleware, configuration, validation and errors. The next part replaces the in-memory store with a real database.
+That completes ZudoJS fundamentals: the CLI, the core, runtime and lifecycle, dependency injection, routes, middleware, configuration, validation and errors. The next course, ZudoJS application development, replaces the in-memory store with a real database. Next, [Databases with @zudojs/database](https://zudojs.oyinlola.site/learn/zudo-database).
 
 ## Test yourself
 

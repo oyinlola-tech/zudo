@@ -1,22 +1,30 @@
 ---
-title: "Welcome to ZudoJS"
-description: "What ZudoJS is, how its packages are layered, what each of its packages is for, what the zudojs command-line tool does, and the three application shapes it can create. Then run three ZudoJS packages together in your browser."
+title: "Welcome to ZudoJS — ZudoJS Academy"
+description: "Meet ZudoJS: its 38 packages and how they are layered, the zudojs CLI and three application shapes. Then run three of its packages together in your browser."
 source: https://zudojs.oyinlola.site/learn/zudo-welcome
 ---
 
-LESSON 46 OF 84
+LEVEL 12 · LESSON 1 OF 19
 
-Meet ZudoJS Core
+Entering ZudoJS Core
 
 # Welcome to ZudoJS
 
-What ZudoJS is, how its packages are layered, what each of its packages is for, what the zudojs command-line tool does, and the three application shapes it can create. Then run three ZudoJS packages together in your browser.
+Meet ZudoJS: its 38 packages and how they are layered, the zudojs CLI and three application shapes. Then run three of its packages together in your browser.
 
 - **25 min** to read and try
-- **You need:** "What a framework does"
+- **You need:** "What a framework does" and "Backend architecture" from the Software design and architecture course
 - **You build:** A book service that uses three ZudoJS packages together
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain what ZudoJS is and why it is split into small packages
+- Use the shelf rule to say which packages may depend on which
+- Name the package that owns a given job, such as background jobs, permissions or settings
+- Follow one request through the packages that handle it
+- Choose between a monolith, a modular monolith and microservices for a given team and app
 
 ## What ZudoJS is
 
@@ -142,7 +150,7 @@ Press **Run in browser** and change things. What to notice:
 - **The container** creates `BookService` the first time someone asks for the `BOOKS` token, and gives everyone that same instance (`SINGLETON`). No `createRouter` threading objects through by hand.
 - **One error family.** The `SchemaError` thrown by `@zudojs/schema` and the `NotFoundError` you threw both extend `BaseError` from `@zudojs/errors`, so one `instanceof` check reads the status code of either.
 
-The next lesson installs `@zudojs/schema` and `@zudojs/errors` on your computer and explains them in detail. The container gets its own lesson in the ZudoJS core part.
+The next lesson installs `@zudojs/schema` and `@zudojs/errors` on your computer and explains them in detail. The container gets its own lesson later in this course, [Dependency injection with @zudojs/container](https://zudojs.oyinlola.site/learn/zudo-container).
 
 ## The command-line tool
 
@@ -158,7 +166,7 @@ Choosing a dozen packages and wiring them into a project by hand would bring bac
 | `zudojs doctor` | Checks your Node.js, packages and project for problems. |
 | `zudojs info` | Shows the CLI version and the project's ZudoJS packages. |
 
-You will install it and use every one of these in [Create the Task API project](https://zudojs.oyinlola.site/learn/zudo-create-project).
+You will install it and try every one of these in [Create the Task API project](https://zudojs.oyinlola.site/learn/zudo-create-project), and study each command's options and rules in [The ZudoJS CLI in depth](https://zudojs.oyinlola.site/learn/zudo-cli).
 
 ## Three shapes of application
 
@@ -170,7 +178,23 @@ You will install it and use every one of these in [Create the Task API project](
 | **Modular monolith** | Still one deployable application, but split into strict **modules** (say, catalog, orders, users) that talk through clear interfaces instead of reaching into each other's code. | The app has grown and you want clear boundaries, without the cost of running many services. |
 | **Microservices** | Several separate applications, each with its own data, talking over the network, usually behind a **gateway**. | Different parts must scale or be deployed independently, by different teams. It adds a lot of operational work. |
 
-A common and healthy path is monolith → modular monolith → microservices only where needed. The same ZudoJS packages work in all three, and the [Architecture with ZudoJS](https://zudojs.oyinlola.site/learn/zudo-modular-monolith) part of the course walks that path.
+A common and healthy path is monolith → modular monolith → microservices only where needed. The same ZudoJS packages work in all three, and the ZudoJS architecture course walks that path, from [A well-structured monolith](https://zudojs.oyinlola.site/learn/zudo-monolith) to [From monolith to modular monolith](https://zudojs.oyinlola.site/learn/zudo-modular-monolith) and beyond.
+
+REASON IT OUT
+
+### Which shape for this team?
+
+Before reading the answer, pick a shape for each case, and say what would go wrong with the other two:
+
+- Two developers start a booking app for a chain of three hotels.
+- Four years later, twenty developers in four teams work on bookings, payments, housekeeping and reporting in one codebase. Every release needs all four teams to agree.
+- The reporting part runs heavy queries every night that slow bookings down, and it must scale on its own.
+
+**Show the reasoning**
+
+- **Two developers**: a monolith. One process is the easiest to run, debug and deploy. Microservices would give two people the network failures, separate deployments and data copying of a large company, with none of the benefits.
+- **Four teams in one codebase**: a modular monolith. The pain is unclear boundaries, not scaling. Strict modules with clear interfaces let each team own its part while the app stays one deployment. Jumping straight to microservices would turn every function call between teams into a network call.
+- **Reporting that must scale alone**: now one piece has a real reason to be separate. Split *that* module out as a service, and keep the rest together. Microservices where they pay off, not everywhere.
 
 ## Practice
 
@@ -233,7 +257,7 @@ Output of `npx tsx find-by-title.ts` and of the browser terminal
 - The `zudojs` CLI (short name `zudo`) creates, runs, builds, extends and checks projects.
 - Applications can be a monolith, a modular monolith or microservices. Start with a monolith.
 
-Next, you install your first two ZudoJS packages and use them in a Task API service.
+Next, [Your first Zudo code](https://zudojs.oyinlola.site/learn/zudo-first-code) installs your first two ZudoJS packages and uses them in a Task API service.
 
 ## Test yourself
 

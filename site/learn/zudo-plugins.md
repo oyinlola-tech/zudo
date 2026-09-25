@@ -1,22 +1,31 @@
 ---
-title: "Plugins"
-description: "Let other code extend the Task API without editing it. Write plugins, declare dependencies, run their lifecycle, give each one a scoped context, roll back failed starts, read diagnostics and publish a plugin to npm with @zudojs/plugins."
+title: "Plugins — ZudoJS Academy"
+description: "Extend the Task API through a fixed interface without editing it: plugin lifecycle, dependencies, scoped context, rollback and diagnostics with @zudojs/plugins."
 source: https://zudojs.oyinlola.site/learn/zudo-plugins
 ---
 
-LESSON 78 OF 84
+LEVEL 14 · LESSON 17 OF 18
 
-Platform features Advanced
+Platform Advanced
 
 # Plugins
 
-Let other code extend the Task API without editing it. Write plugins, declare dependencies, run their lifecycle, give each one a scoped context, roll back failed starts, read diagnostics and publish a plugin to npm with @zudojs/plugins.
+Extend the Task API through a fixed interface without editing it: plugin lifecycle, dependencies, scoped context, rollback and diagnostics with @zudojs/plugins.
 
 - **45 min** to read and try
 - **You need:** The Task API project and the runtime lesson
 - **You build:** A Task API with an audit-log plugin and a reminder plugin, plus a plugin package ready for npm
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Write a plugin as metadata plus lifecycle hooks and register it with a PluginManager
+- Declare required and optional dependencies with version ranges
+- Use a plugin's scoped context to clean up timers and subscriptions on shutdown
+- Read diagnostics after a failed start rolls itself back
+- Wire plugins to the host's event bus without exposing host metadata to them
+- Package and publish a plugin to npm with @zudojs/plugins as a peer dependency
 
 ## Why plugins
 
@@ -77,7 +86,7 @@ stop: finish work in progress
 dispose: release everything
 ```
 
-`manager.start` runs `install`, `initialize` and `start`. `manager.stop` runs `stop` and `dispose`. Each phase finishes for *all* plugins before the next phase begins. `createPluginContext` describes the host (here `task-api`), and optionally the services it offers to plugins: a `logger`, `config`, a `container` and `events`. Inside a hook, `context.plugin` is the plugin's own metadata.
+`manager.start` runs `install`, `initialize` and `start`. `manager.stop` runs `stop` and `dispose`. Each phase finishes for *all* plugins before the next phase begins. `createPluginContext`'s first argument is metadata, and its second is the services you offer plugins: a `logger`, `config`, a `container` and `events`. Only those services reach plugins. The manager builds its own context per plugin and substitutes each plugin's own metadata for `context.plugin`, so the `{ name: "task-api", version: "0.1.0" }` above only satisfies the function's required first argument — no plugin ever sees it. A plugin has no way to learn the host's name or version through the context.
 
 ## Dependencies and versions
 
@@ -157,9 +166,9 @@ Output of `npx tsx optional.ts`
 start slack
 ```
 
-> optional: true DOES NOT MAKE A DEPENDENCY OPTIONAL
+> optional: true also works, but say it with optionalDependencies
 >
-> The dependency type also has an `optional` field, so TypeScript accepts `dependencies: [{ name: "notifications", optional: true }]`. The manager ignores that field: a missing `notifications` still throws `PluginDependencyError`. Use `optionalDependencies`.
+> The dependency type also has an `optional` field, so `dependencies: [{ name: "notifications", optional: true }]` behaves exactly like listing it under `optionalDependencies`: a missing `notifications` does not throw, and a present one still starts before the plugin that names it. Prefer `optionalDependencies` anyway — it says which dependencies your plugin can live without at a glance, instead of making every reader check each entry's flags.
 
 ## The scoped plugin context
 
@@ -222,6 +231,16 @@ The timer fired twice in 100 ms, and then `stop` released it. Without the cleanu
 ## Failed starts, rollback and diagnostics
 
 What if the Slack plugin cannot reach Slack while the Task API starts? Half-started plugins are dangerous: some timers run, some connections are open, and nothing will ever stop them. So when any hook of `manager.start` throws, the manager **rolls back**: it stops and disposes every plugin it had already brought up, then throws the error to you:
+
+REASON IT OUT
+
+### Slack's start hook throws. What should happen to audit-log, which already started?
+
+audit-log started first because slack depends on it. Slack's `start` then throws. Three options: (1) leave audit-log running and only fail slack, (2) crash the whole Task API process, (3) stop and dispose every plugin that got as far as running, then report the error. Which would you pick, and why?
+
+**Show the reasoning**
+
+Option 3 is what the manager does. Leaving audit-log running (1) is the dangerous choice: the Task API never finished starting, so nothing is watching audit-log's timers or connections, yet they keep running and leaking until the process exits. Crashing the whole process (2) is safe but heavy-handed for a problem in one optional feature, and it throws away audit-log's clean shutdown along with slack's failure. Rolling back (3) gets the safety of (2) — nothing keeps running unsupervised — without needing to kill the process: every plugin that actually finished starting gets a real `stop` and `dispose`, in reverse order, exactly as if you had called `manager.stop` yourself, and only then does the original error reach your code. Slack itself never reached a running state, so it only needs `dispose`, which is why the output below shows audit-log fully stopped while slack goes straight to disposed.
 
 rollback.tsNode.js only
 
@@ -537,6 +556,8 @@ Start: `db`, `cache`, `api`: every plugin starts after everything it depends on.
 - A failed start rolls back everything already started. `diagnostics()` reports state and health.
 - Plugins are trusted code. Capabilities catch mistakes but are not a sandbox.
 - Publish plugins as factory functions, with `@zudojs/plugins` as a peer dependency.
+
+Plugins are trusted code you choose to load. Next, [adapters](https://zudojs.oyinlola.site/learn/zudo-adapters) put an external provider, such as a payment gateway, behind a contract your business logic depends on instead of the provider's own SDK.
 
 ## Test yourself
 

@@ -1,22 +1,31 @@
 ---
-title: "Designing a REST API"
-description: "Turn the Task API into a well-designed REST API: resources and URLs, a written contract, filtering, sorting, offset and cursor pagination, versioning and one consistent error format."
+title: "Designing a REST API — ZudoJS Academy"
+description: "Design the Task API as a REST API: resource URLs, a written contract, filtering and sorting, offset and cursor pages, versions and one error format."
 source: https://zudojs.oyinlola.site/learn/rest-design
 ---
 
-LESSON 26 OF 84
+LEVEL 7 · LESSON 2 OF 15
 
-Backend fundamentals Foundation
+HTTP and REST Core
 
 # Designing a REST API
 
-Turn the Task API into a well-designed REST API: resources and URLs, a written contract, filtering, sorting, offset and cursor pagination, versioning and one consistent error format.
+Design the Task API as a REST API: resource URLs, a written contract, filtering and sorting, offset and cursor pages, versions and one error format.
 
 - **40 min** to read and try
 - **You need:** The HTTP in depth lesson
 - **You build:** A versioned Task API list endpoint with filtering, sorting, pagination and problem-details errors
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Name resources with plural-noun URLs and map CRUD onto HTTP methods
+- Write an API contract before the code
+- Validate query parameters and sort only by allow-listed fields
+- Choose between offset and cursor pagination for a given screen or job
+- Send every error as RFC 9457 problem details
+- Tell additive changes from breaking ones and version an API in its path
 
 ## Resources, not actions
 
@@ -60,11 +69,31 @@ A task looks like `{"id": 7, "title": "Buy milk", "done": false, "createdAt": "2
 
 > TIP
 >
-> Later in the course you will describe this contract in a machine-readable format called OpenAPI, and generate it from your code in the [OpenAPI lesson](https://zudojs.oyinlola.site/learn/zudo-openapi).
+> Later you will write this contract in a machine-readable format called OpenAPI ([API contracts](https://zudojs.oyinlola.site/learn/api-contracts)), and generate it from your ZudoJS code ([OpenAPI documents](https://zudojs.oyinlola.site/learn/zudo-openapi)).
 
 ## Filtering and sorting with query parameters
 
 A list endpoint gets its options from the **query string**, the part of the URL after `?`. `URLSearchParams` reads it for you. Every value arrives as a string (or `null` when missing), and every value comes from outside, so check each one.
+
+REASON IT OUT
+
+### What can a query string contain?
+
+The list endpoint will accept `?done=false&q=milk&sort=-createdAt&limit=20&offset=40`. Before writing the parser, list what a client (or an attacker) could send instead, and what the server should do with each:
+
+- `limit=0`, `limit=500`, `limit=-1`, `limit=abc`, `limit=2.5`
+- `done=yes`
+- `sort=password` or `sort=title; drop table tasks`
+- Two problems in one request
+- No parameters at all
+
+**Show the reasoning**
+
+Every value arrives as text, so each one is converted and checked. `limit` must be a whole number in a range: zero pages are useless, and `limit=500` (or a million) lets one request make the server read and send the whole table, so there is a maximum. `done` accepts exactly `true` or `false`; guessing that `yes` means true invites clients to depend on your guesses.
+
+`sort` is the dangerous one. It names a *field*, and a field name will end up in code or in SQL, where a placeholder cannot protect it. So it is checked against an **allow-list** of sortable fields, and anything else is refused. Refusing is better than silently ignoring: a client that misspelt `createdAt` learns it at once.
+
+When there are several problems, report all of them in one answer, so the client does not fix one, retry and hit the next. And with no parameters at all, every option has a sensible default: the first 20 tasks, in id order.
 
 Sorting needs special care: never sort by whatever field name the client sends. Keep an **allow-list** of fields that may be sorted. A leading minus sign, `sort=-createdAt`, is the usual way to ask for descending order.
 
@@ -249,6 +278,8 @@ No duplicate this time, even though task 8 arrived in the middle. The server ask
 | Fast on huge tables | No | Yes, with an index on the sort column |
 | Good for | Admin tables with page numbers | Feeds, infinite scroll, syncing |
 
+A cursor on a sort column other than the id (newest first, cheapest first) must also carry the id, to break ties. [Pagination and versioning in depth](https://zudojs.oyinlola.site/learn/api-pagination-versioning), in the API engineering course, builds that cursor and measures what large offsets really cost.
+
 ## One error format: problem details
 
 Clients handle errors in code, so every error from your API should have the same shape. You do not have to invent one: **RFC 9457**, "Problem Details for HTTP APIs", is a standard for exactly this. An RFC is an official internet specification. A problem details body is JSON with these fields:
@@ -282,7 +313,7 @@ A **breaking change** is one that can make a working client fail: removing or re
 
 The most common way is a version in the path: `/v1/tasks`, later `/v2/tasks`. It is visible in every log line and easy to route. Some APIs use a header instead, such as `Accept-Version: 2`.
 
-**Additive** changes do not need a new version: a new endpoint, a new optional query parameter, or a new field in a response. That only works if clients ignore fields they do not know, which is another reason to wrap lists in `{"data": ...}` and to write your own clients that way.
+**Additive** changes do not need a new version: a new endpoint, a new optional query parameter, or a new field in a response. That only works if clients ignore fields they do not know, which is another reason to wrap lists in `{"data": ...}` and to write your own clients that way. How to run two versions from one codebase, and how to retire an old one, is part of [Pagination and versioning in depth](https://zudojs.oyinlola.site/learn/api-pagination-versioning#breaking).
 
 ## Build it: the list endpoint
 
@@ -452,6 +483,8 @@ Which pagination would you pick for: (a) an activity feed in a mobile app with i
 - Offset pagination can jump to any page but shifts when data changes. Cursor pagination is stable and fast, but only moves forward.
 - Send every error as RFC 9457 problem details (`application/problem+json`) and never leak internals.
 - Put the version in the path (`/v1`). Additive changes need no new version; breaking changes do.
+
+Next: [How databases work](https://zudojs.oyinlola.site/learn/databases), where the tasks leave the array and move into PostgreSQL.
 
 ## Test yourself
 

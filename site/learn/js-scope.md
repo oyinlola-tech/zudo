@@ -1,22 +1,30 @@
 ---
-title: "Scope and how code runs"
-description: "Learn where a name can be used, how closures remember values, why some names exist before their line runs, and how the call stack and the heap work, so you can read error messages and debug real programs."
+title: "Scope and how code runs — ZudoJS Academy"
+description: "Learn where a name can be used, why some names exist before their line runs, and how the call stack and the heap work, so you can read a stack trace."
 source: https://zudojs.oyinlola.site/learn/js-scope
 ---
 
-LESSON 14 OF 84
+LEVEL 2 · LESSON 13 OF 19
 
-JavaScript fundamentals Foundation
+Scope, closures and recursion Foundation
 
 # Scope and how code runs
 
-Learn where a name can be used, how closures remember values, why some names exist before their line runs, and how the call stack and the heap work, so you can read error messages and debug real programs.
+Learn where a name can be used, why some names exist before their line runs, and how the call stack and the heap work, so you can read a stack trace.
 
 - **40 min** to read and try
 - **You need:** Modern JavaScript, and the lessons before it
-- **You build:** A task store with private state, and the skill to read a stack trace
+- **You build:** A call limiter built with a closure, and the skill to read a stack trace
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Say where a name can be used: module, function or block scope, and why var ignores blocks
+- Predict which variable a name refers to from where the code is written (lexical scope and shadowing)
+- Explain hoisting and the temporal dead zone, and tell "not defined" from "before initialization"
+- Follow the call stack through nested calls and recognise a stack overflow
+- Read a Node.js stack trace from the top and trace a bad value back to its cause
 
 ## What scope is
 
@@ -200,59 +208,6 @@ undefined
 
 Each call to `makeCounter` creates a new `count`. The arrow function it returns keeps that `count` alive, and nobody else can reach it. `nextTaskId` and `nextUserId` each have their own.
 
-### Private state with closures
-
-This is how you hide data in plain JavaScript. Here is a task store where the list and the id counter are private. The only way in is through the functions it returns:
-
-store.js
-
-```ts
-function createTaskStore() {
-  const tasks = [];
-  let nextId = 1;
-
-  return {
-    add(title) {
-      const task = { id: nextId, title, done: false };
-      nextId += 1;
-      tasks.push(task);
-      return task;
-    },
-    complete(id) {
-      const task = tasks.find((t) => t.id === id);
-      if (task) task.done = true;
-      return task;
-    },
-    list() {
-      return tasks.map((t) => ({ ...t }));
-    },
-  };
-}
-
-const store = createTaskStore();
-store.add("Buy milk");
-store.add("Call Ada");
-store.complete(1);
-
-const copy = store.list();
-copy[0].title = "HACKED";
-
-console.log(store.list());
-console.log(store.tasks, store.nextId);
-```
-
-Output of `node store.js` and of the browser terminal
-
-```json
-[
-  { id: 1, title: 'Buy milk', done: true },
-  { id: 2, title: 'Call Ada', done: false }
-]
-undefined undefined
-```
-
-`list` returns copies, so changing the copy did not change the store. And `store.tasks` does not exist: the array is only reachable through the closure. Nobody can set `nextId` back to 1 and create duplicate ids.
-
 ### A closure remembers the variable, not the value
 
 A closure does not take a snapshot. It keeps a link to the variable itself, so it always sees the current value:
@@ -276,6 +231,8 @@ mode is maintenance
 ```
 
 That explains the `var` loop from earlier: all three functions linked to the same single `i`, and read it when it was already 3.
+
+This is all you need about closures for now. [Closures in depth](https://zudojs.oyinlola.site/learn/js-closures), the next lesson, shows the model behind them and puts them to work: private state such as a bank account nobody can edit from outside, function factories, caches, and the memory they keep alive.
 
 ## Hoisting and the temporal dead zone
 
@@ -377,7 +334,7 @@ handleRequest > save > validate
 saved
 ```
 
-JavaScript keeps this stack for you automatically: the example only makes it visible. When `validate` runs, `save` and `handleRequest` are still waiting underneath it for their answers.
+JavaScript keeps this stack for you automatically: the example only makes it visible. When `validate` runs, `save` and `handleRequest` are still waiting underneath it for their answers. [How JavaScript runs](https://zudojs.oyinlola.site/learn/js-execution), in the Advanced JavaScript course, shows how the engine builds and uses these contexts.
 
 ### When the stack overflows
 
@@ -416,48 +373,17 @@ calls before the crash: thousands
 lift off
 ```
 
-`countDown` has no **base case**: a condition where it stops calling itself. It went on past zero into negative numbers, thousands of calls deep, until the stack was full. (The exact number depends on your computer, so the example only checks that it was large.) `countDownFixed` stops at 0, so its stack never grows past four calls.
+`countDown` has no **base case**: a condition where it stops calling itself. It went on past zero into negative numbers, thousands of calls deep, until the stack was full. (The exact number depends on your computer, so the example only checks that it was large.) `countDownFixed` stops at 0, so its stack never grows past four calls. [Recursion](https://zudojs.oyinlola.site/learn/js-recursion), two lessons from now, teaches how to design recursive functions and what to do when data is deeper than the stack.
 
 ## The heap
 
-Local variables live in their execution context on the stack, and disappear when the function returns. Objects, arrays and functions are different. They live in a large area of memory called the **heap**, and a variable only holds a reference to them. You saw this in [Objects and JSON](https://zudojs.oyinlola.site/learn/js-data): two variables can point at one object.
+Local variables live in their execution context on the stack, and disappear when the function returns. Objects, arrays and functions are different. They live in a large area of memory called the **heap**, and a variable only holds a reference to them. That is the model from [Types in depth](https://zudojs.oyinlola.site/learn/js-types-deep#copy-or-share): two variables, or a variable and a function parameter, can point at one object on the heap, and assigning a new object to a parameter only changes that function's own reference.
 
-This explains a common surprise. A function can change the object it receives, but assigning a new value to its parameter changes nothing outside:
-
-heap.js
-
-```ts
-function markDone(task) {
-  task.done = true;
-}
-
-function replace(task) {
-  task = { title: "Something else", done: false };
-}
-
-const task = { title: "Buy milk", done: false };
-
-markDone(task);
-console.log(task);
-
-replace(task);
-console.log(task);
-```
-
-Output of `node heap.js` and of the browser terminal
-
-```json
-{ title: 'Buy milk', done: true }
-{ title: 'Buy milk', done: true }
-```
-
-`markDone` followed the reference to the object on the heap and changed it. `replace` pointed its own local parameter at a new object, which only changed `replace`'s copy of the reference.
-
-You never free heap memory yourself. When no variable, closure or other object can reach an object any more, the **garbage collector** removes it. This is also how a backend leaks memory: a closure or a module-level array that keeps growing (say, a cache that never removes old entries) keeps every object in it reachable forever. Later in the course, `@zudojs/cache` gives you caches with a size limit and expiry times for this reason.
+You never free heap memory yourself. When no variable, closure or other object can reach an object any more, the **garbage collector** removes it. This is also how a backend leaks memory: a closure or a module-level array that keeps growing (say, a cache that never removes old entries) keeps every object in it reachable forever. Later in the academy, `@zudojs/cache` gives you caches with a size limit and expiry times for this reason, and [Memory and garbage collection](https://zudojs.oyinlola.site/learn/js-memory) shows how to find leaks.
 
 ## Reading a stack trace
 
-When an error is not caught, Node.js stops the program and prints the error with a **stack trace**: a copy of the call stack at the moment of the error. This is the most useful debugging information you will get. Create a file `trace.js` in a folder with `"type": "module"` in its `package.json` (as in [Your first program](https://zudojs.oyinlola.site/learn/setup)):
+When an error is not caught, Node.js stops the program and prints the error with a **stack trace**: a copy of the call stack at the moment of the error. This is the most useful debugging information you will get. Create a file `trace.js` in a folder with `"type": "module"` in its `package.json` (as in [Set up your computer](https://zudojs.oyinlola.site/learn/setup#package-json)):
 
 trace.jsNode.js only
 
@@ -479,6 +405,24 @@ function handleRequest(id) {
 console.log(handleRequest(1));
 console.log(handleRequest(2));
 ```
+
+REASON IT OUT
+
+### Before you run it: where will it fail, and why?
+
+Read `trace.js` before running it.
+
+- Which of the two calls will fail, and on which line?
+- Which functions will be on the call stack at that moment, from the top down?
+- Is the line that fails the line that is wrong?
+
+**Show the reasoning**
+
+**The second call fails.** User 1 has an address. User 2 has none, so `user.address` is `undefined`, and reading `.city` from `undefined` throws a `TypeError` on line 8.
+
+**The stack** at that moment, top first: `cityOf` (running line 8), `handleRequest` (waiting at line 12 for `cityOf` to return), and the top level of the file (waiting at line 16). The stack trace prints exactly this list.
+
+**The failing line is not the wrong line.** Line 8 is correct for users with an address. The real question is what the program should do when data is missing, and that decision belongs to whoever wrote the data model or the API. A stack trace tells you where the program noticed the problem; you still have to walk back to where the bad value came from.
 
 Run it:
 
@@ -517,6 +461,22 @@ TRY IT YOURSELF
 ### Predict the output
 
 Without running it, write down what this code prints: `fn()` first, then `level`. Then open the solution and compare.
+
+```ts
+const level = "module";
+
+function outer() {
+  const level = "outer";
+  function inner() {
+    return level;
+  }
+  return inner;
+}
+
+const fn = outer();
+console.log(fn());
+console.log(level);
+```
 
 **Show a solution**
 
@@ -633,11 +593,13 @@ Using `n <= 0` rather than `n === 0` also stops the recursion if someone passes 
 
 - Scope is where a name exists. Names live in module, function or block scope. `var` ignores blocks, so use `let` and `const`.
 - Lexical scope: a function sees the variables around where it is *written*. An inner name with the same spelling shadows the outer one.
-- A closure is a function plus the variables it remembers. Use it for private state, such as a counter or a store.
+- A closure is a function plus the variables it remembers, even after the outer function has returned. It sees the variable's current value, not a snapshot.
 - Declarations are hoisted. Function declarations can be called early, `var` starts as `undefined`, and `let`/`const` throw in the temporal dead zone.
 - Each call gets an execution context on the call stack. Endless recursion overflows it with `RangeError: Maximum call stack size exceeded`.
 - Objects live on the heap and variables hold references. Unreachable objects are garbage collected, and anything reachable forever is a memory leak.
 - Read a stack trace from the top, find the first line in your code, then walk down to where the bad value came from.
+
+Next, [Closures in depth](https://zudojs.oyinlola.site/learn/js-closures): the model behind closures, and the real jobs they do in a backend.
 
 ## Test yourself
 

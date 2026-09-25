@@ -1,22 +1,31 @@
 ---
-title: "Storage abstractions"
-description: "Use @zudojs/storage's driver-independent contracts for databases, files, serialization, locks, connection pools and start-up and shutdown, with a PostgreSQL adapter and local file storage for the Task API."
+title: "Storage abstractions — ZudoJS Academy"
+description: "Use @zudojs/storage's driver-independent contracts for files, serialization, locks and pools, with local file storage and a health report for the Task API."
 source: https://zudojs.oyinlola.site/learn/zudo-storage
 ---
 
-LESSON 57 OF 84
+LEVEL 13 · LESSON 3 OF 12
 
 Data Advanced
 
 # Storage abstractions
 
-Use @zudojs/storage's driver-independent contracts for databases, files, serialization, locks, connection pools and start-up and shutdown, with a PostgreSQL adapter and local file storage for the Task API.
+Use @zudojs/storage's driver-independent contracts for files, serialization, locks and pools, with local file storage and a health report for the Task API.
 
 - **45 min** to read and try
-- **You need:** The Databases with @zudojs/database lesson
+- **You need:** Databases with @zudojs/database, and Data architecture with ZudoJS
 - **You build:** Task attachments on disk, a column-safe task repository, fenced locks and a storage health report
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Write a Database adapter against @zudojs/storage's driver-independent contract
+- Guard a repository's writes with a column allow-list to stop mass assignment
+- Store and retrieve files with LocalObjectStorage without a path-traversal hole
+- Acquire locks with a ttl and use a fencing token to reject a stale holder's write
+- Build a general-purpose ConnectionPool from a factory function and limits
+- Register components with StorageLifecycleManager for ordered start-up, health and shutdown
 
 ## Contracts, not drivers
 
@@ -586,13 +595,25 @@ title: Buy oat milk
 
 The slow worker's write was refused, and the fast worker's change survived.
 
+REASON IT OUT
+
+### The lock already stops two holders at once. Why check the fence too?
+
+A worker calls `acquire`, gets the lock, then pauses (a slow disk, a garbage collection pause, a container that gets descheduled) for longer than the `ttl`. The lock manager cannot tell "the holder crashed" from "the holder is just slow" — it only sees a timer run out. What should happen when the paused worker wakes up and writes, having no idea its lock expired?
+
+**Show the reasoning**
+
+The lock's job is to stop two *concurrent* holders; the `ttl` exists only so a crashed holder cannot lock the resource forever. Those two goals conflict the moment a holder is alive but slower than its own `ttl`: the lock manager, trying to make progress for everyone else, has already handed the lock to someone new. The paused worker still believes it holds the lock — it never got an error, it just kept running — so without a second check it will write anyway, and its stale write can land after the new holder's fresh one.
+
+The fence number is that second check, and it lives with the *data*, not the lock. Each acquire gets a strictly increasing number, and the store refuses any write carrying a number lower than the highest it has already seen. That means correctness no longer depends on getting the `ttl` right: even a lock manager that occasionally hands out two "valid" holders at once cannot cause a lost update, because the second check is on the resource itself, not on trusting whoever currently thinks it holds the lock.
+
 > IN MEMORY MEANS ONE PROCESS
 >
 > An `InMemoryLockManager` only knows about locks in its own process. As soon as you run two copies of your server, each has its own locks and they protect nothing. For several servers, use a lock the servers share: PostgreSQL advisory locks through `createLockManager` from [@zudojs/database](https://zudojs.oyinlola.site/learn/zudo-database), or a `LockManager` you write over Redis.
 
 ## Connection pools
 
-You met pools at the end of the last lesson: a few database connections, opened once, lent out one at a time. `ConnectionPool` is a general-purpose pool. You give it a **factory**, a function that opens one connection, and limits. To see it lend and take back, this example gives each "connection" a name and runs its queries on one shared PGlite:
+You met pools at the end of [the database lesson](https://zudojs.oyinlola.site/learn/zudo-database#health): a few database connections, opened once, lent out one at a time. `ConnectionPool` is a general-purpose pool. You give it a **factory**, a function that opens one connection, and limits. To see it lend and take back, this example gives each "connection" a name and runs its queries on one shared PGlite:
 
 pool.tsNode.js only
 
@@ -730,7 +751,7 @@ database shut down
 phase: shutdown
 ```
 
-The report is unhealthy as a whole because one component is, and it names which. That is what your `/health` route should turn into a 503, as in the last lesson, while your logs get the details.
+The report is unhealthy as a whole because one component is, and it names which. That is what your `/health` route should turn into a 503, as in [the database lesson](https://zudojs.oyinlola.site/learn/zudo-database#health), while your logs get the details.
 
 Notice that shutdown ran in the **reverse** order of start-up: files first, then the database. `drain` and `shutdown` visit components one at a time, last registered first. So register a component after the ones it uses: it starts after them and stops before them, while they still work. A component that fails to stop does not keep the others from stopping.
 

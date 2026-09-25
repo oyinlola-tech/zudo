@@ -1,22 +1,30 @@
 ---
-title: "Basic types"
-description: "The everyday types of TypeScript - strings, numbers, booleans, arrays, tuples and object types - plus any vs unknown, null and undefined under strict mode, void, and never for exhaustive checks."
+title: "Basic types — ZudoJS Academy"
+description: "Type strings, numbers, booleans, arrays, tuples and objects, handle null and undefined under strict mode, and meet any, unknown, void and never."
 source: https://zudojs.oyinlola.site/learn/ts-types
 ---
 
-LESSON 33 OF 84
+LEVEL 5 · LESSON 3 OF 23
 
-TypeScript Foundation
+Everyday types Foundation
 
 # Basic types
 
-The everyday types of TypeScript - strings, numbers, booleans, arrays, tuples and object types - plus any vs unknown, null and undefined under strict mode, void, and never for exhaustive checks.
+Type strings, numbers, booleans, arrays, tuples and objects, handle null and undefined under strict mode, and meet any, unknown, void and never.
 
 - **35 min** to read and try
 - **You need:** The ts-tasks project from Why TypeScript exists
 - **You build:** A small task-statistics module where every value has a checked type
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Annotate strings, numbers, booleans, arrays, readonly arrays and small tuples
+- Describe an object's shape and read missing- and extra-property errors
+- Handle values that may be undefined or null with if, ?. and ??
+- Choose unknown over any and narrow it with typeof
+- Use void and never, and write an exhaustive switch
 
 ## Strings, numbers and booleans
 
@@ -165,7 +173,7 @@ tuples.ts:4:48 - error TS2322: Type 'number' is not assignable to type 'string'.
 Found 3 errors in the same file, starting at: tuples.ts:2
 ```
 
-Use tuples for small, obvious pairs. When there are more than two or three positions, an object with named properties is easier to read.
+Use tuples for small, obvious pairs. When there are more than two or three positions, an object with named properties is easier to read. [Tuples](https://zudojs.oyinlola.site/learn/ts-tuples), later in this course, covers optional and rest elements, labels and readonly tuples.
 
 ## Object types
 
@@ -189,7 +197,7 @@ Output of `npx tsx objects.ts` and of the browser terminal
 #2 Call Ada (done)
 ```
 
-Writing the same shape on every function would be tiring, so in practice you give it a name, like the `type Task = { ... }` you wrote before. [Interfaces, unions and literal types](https://zudojs.oyinlola.site/learn/ts-objects) covers naming, optional and read-only properties. For now, see what the compiler checks when you pass an object literal:
+Writing the same shape on every function would be tiring, so in practice you give it a name, like the `type Task = { ... }` you wrote before. [Interfaces, unions and literal types](https://zudojs.oyinlola.site/learn/ts-objects) covers naming, optional and read-only properties, and [Type aliases and interfaces](https://zudojs.oyinlola.site/learn/ts-aliases-interfaces) compares the two ways to name a shape. For now, see what the compiler checks when you pass an object literal:
 
 objects.ts
 
@@ -286,9 +294,25 @@ Buy milk
 
 `null` works the same way. `note: string | null` says the note is a string or deliberately empty. A common convention, and the one ZudoJS follows: `undefined` means "not there", `null` means "there, and empty", which is also how a database `NULL` column arrives in your code.
 
+REASON IT OUT
+
+### Missing, empty or zero?
+
+Each task has an `estimate: number | null` in hours, and `null` means "nobody has estimated it yet". You want the total of all estimates. Before you read on, decide:
+
+1. Should an unestimated task count as 0 hours in the total, or should the total say it is incomplete?
+2. What is the difference between `task.estimate ?? 0` and `task.estimate || 0` for a task estimated at `0` hours? For one at `null`?
+3. For the title of `tasks.find(…)`, when is `?.title ?? "(no title)"` enough, and when do you need a real `if`?
+
+**Show the reasoning**
+
+1. That is a product decision, not a type question. For a rough "hours planned" figure, counting it as 0 is fine. For an invoice it is not: there you would report the unestimated tasks instead of hiding them. The types force you to decide, because `hours += task.estimate` does not compile while `estimate` may be `null`.
+2. For `0` they happen to agree, since the fallback is also 0. They differ as soon as the fallback is not 0: `task.estimate || 1` turns a real 0-hour estimate into 1, because `||` replaces every falsy value. `??` replaces only `null` and `undefined`, so it is the operator that means "missing".
+3. A default is enough when "not found" should just print something. When a missing task means the request is wrong (someone asked to complete task 7 and there is no task 7), use an `if` and handle it: return an error instead of carrying on with a placeholder.
+
 > NOTE
 >
-> Reading `tasks[0]` gives type `Task`, not `Task | undefined`, even though the array might be empty. The optional `noUncheckedIndexedAccess` setting in `tsconfig.json` changes that. It is stricter, and `npx tsc --init` turns it on.
+> Reading `tasks[0]` gives type `Task`, not `Task | undefined`, even though the array might be empty. The optional `noUncheckedIndexedAccess` setting in `tsconfig.json` changes that. It is stricter, and `npx tsc --init` turns it on; [tsconfig in depth](https://zudojs.oyinlola.site/learn/ts-tsconfig#beyond-strict) shows what it catches.
 
 ## any and unknown
 
@@ -369,7 +393,7 @@ BUY MILK
 (not text)
 ```
 
-The rule: **never write `any`**. When you really do not know a type, use `unknown` and check. Data from outside your program, such as a request body, is exactly that case. [TypeScript and JavaScript together](https://zudojs.oyinlola.site/learn/ts-runtime) shows how to check a whole object.
+The rule: **never write `any`**. When you really do not know a type, use `unknown` and check. Data from outside your program, such as a request body, is exactly that case. [Special types: any, unknown, never and friends](https://zudojs.oyinlola.site/learn/ts-special-types) goes deeper into both, and [TypeScript and JavaScript together](https://zudojs.oyinlola.site/learn/ts-runtime) shows how to check a whole object.
 
 ## void and never
 
@@ -404,7 +428,7 @@ Output of `npx tsx void-never.ts` and of the browser terminal
 Error: database is down
 ```
 
-`never` has a second, more useful job. It is the type of a value that cannot exist. After you have checked every possibility, what is left is `never`. That lets the compiler prove a `switch` handles every case. Here, a status is one of three words (a union of **literal types**, which the next lessons cover in depth):
+`never` has a second, more useful job. It is the type of a value that cannot exist. After you have checked every possibility, what is left is `never`. That lets the compiler prove a `switch` handles every case. Here, a status is one of three words (a union of **literal types**, which [Type inference in depth](https://zudojs.oyinlola.site/learn/ts-inference#widening) and [Union types in depth](https://zudojs.oyinlola.site/learn/ts-unions) cover properly):
 
 status.ts
 
@@ -470,7 +494,7 @@ status.ts:12:13 - error TS2322: Type '"blocked"' is not assignable to type 'neve
 Found 1 error in status.ts:12
 ```
 
-The compiler points straight at the `switch` that is now incomplete, and names the case that is left over: `"blocked"` reached the `default` branch, where only `never` is allowed. In a big project, where that `switch` may be in a file the teammate never opened, this is how nothing gets forgotten. This pattern is called an **exhaustiveness check**.
+The compiler points straight at the `switch` that is now incomplete, and names the case that is left over: `"blocked"` reached the `default` branch, where only `never` is allowed. In a big project, where that `switch` may be in a file the teammate never opened, this is how nothing gets forgotten. This pattern is called an **exhaustiveness check**; [Union types in depth](https://zudojs.oyinlola.site/learn/ts-unions#exhaustive) shows two more ways to write one.
 
 ## Put it together: task statistics
 
@@ -627,6 +651,8 @@ undefined
 - With `strict` on, a value that may be `undefined` or `null` must be checked before use: with `if`, `?.` or `??`.
 - `any` turns checking off; `unknown` makes you check first. Prefer `unknown`, always.
 - `void` means "returns nothing"; `never` means "cannot happen", which powers exhaustive `switch` checks.
+
+Next: [Type inference in depth](https://zudojs.oyinlola.site/learn/ts-inference), the rules TypeScript uses to work out all the types you did not write.
 
 ## Test yourself
 

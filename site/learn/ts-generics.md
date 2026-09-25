@@ -1,22 +1,30 @@
 ---
-title: "Generics"
-description: "Write one function, interface or class that works for many types without losing type safety, set rules with constraints and keyof, give type parameters defaults, and build a Result type and a generic repository."
+title: "Generics — ZudoJS Academy"
+description: "Write functions, interfaces and classes that work for many types without losing safety, constrain them with extends and keyof, and give them defaults."
 source: https://zudojs.oyinlola.site/learn/ts-generics
 ---
 
-LESSON 36 OF 84
+LEVEL 5 · LESSON 14 OF 23
 
-TypeScript Foundation
+Generics and type operators Foundation
 
 # Generics
 
-Write one function, interface or class that works for many types without losing type safety, set rules with constraints and keyof, give type parameters defaults, and build a Result type and a generic repository.
+Write functions, interfaces and classes that work for many types without losing safety, constrain them with extends and keyof, and give them defaults.
 
 - **35 min** to read and try
-- **You need:** Interfaces, unions and literal types
+- **You need:** Union types in depth and Tuples
 - **You build:** A typed Result helper and a generic in-memory repository for tasks and users
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain what a type parameter is and why it beats any
+- Write generic functions and let TypeScript infer their type arguments
+- Write generic interfaces, type aliases and classes
+- Constrain a type parameter with extends and keyof, and read T[K]
+- Give a type parameter a default, and build a reusable Result type
 
 ## Why generics
 
@@ -249,7 +257,25 @@ Found 1 error in pluck-typo.ts:5
 
 ## A Result type, with defaults
 
-Many functions can fail in expected ways: a port number out of range, a missing record. Instead of throwing, they can return an object that says whether it worked. You know the tool for that from [Interfaces, unions and literal types](https://zudojs.oyinlola.site/learn/ts-objects#discriminated): a discriminated union. Made generic, it works for any value and any error:
+Many functions can fail in expected ways: a port number out of range, a missing record. Instead of throwing, they can return an object that says whether it worked. You wrote one for transfers in [Union types in depth](https://zudojs.oyinlola.site/learn/ts-unions#result): a discriminated union, `TransferResult`. The problem is that every function needs its own copy. Made generic, one type works for any value and any error.
+
+REASON IT OUT
+
+### Which type parameters does a Result need?
+
+Before you read the code, think about `parsePort(raw)`, which gives a port number or an error message, and `findUser(id)`, which gives a user or `"not-found" | "suspended"`.
+
+1. What changes from one function's result to the other's? Those are the type parameters.
+2. Which of them is the same in most functions, and could have a default?
+3. A helper `ok(value)` builds a success. What should its error type be, so that it fits any `Result`?
+4. Should a caller be able to read the value without first checking whether it worked?
+
+**Show the reasoning**
+
+1. The value type and the error type: `Result<T, E>`.
+2. The error: most simple functions report a message, so `E = string` keeps `Result<number>` short, and `findUser` can still say `Result<User, "not-found" | "suspended">`.
+3. `never`. A success has no error, and `never`, the empty type, fits wherever any error type is expected.
+4. No. The value must only be readable after a check of `ok`, which is exactly what a discriminated union gives you.
 
 result.ts
 
@@ -292,11 +318,34 @@ error: "http" is not a valid port
 - `ok` returns `Result<T, never>`: a success can never hold an error, so it fits any `Result<T, E>`. The same goes for `err`.
 - After `result.ok`, TypeScript knows which member you have. You cannot read `result.value` without checking first, so you cannot forget the failure case.
 
-Some ZudoJS packages use this idea: `@zudojs/schema`'s `safeParse` returns a result object with a `success` flag instead of throwing.
+Libraries use the same idea with other property names. `@zudojs/schema`'s `safeParse` never throws on bad data; it returns `{ success: true, data }` or `{ success: false, issues }`, and `success` is the discriminant:
+
+safe-parse.ts
+
+```ts
+import { schema } from "@zudojs/schema";
+
+const PortSchema = schema.number().int().min(1).max(65535);
+
+for (const input of [3000, 99999, "3000"]) {
+  const result = PortSchema.safeParse(input);
+  console.log(result.success ? `port ${result.data}` : `${result.issues.length} issue(s): ${result.issues[0]?.message}`);
+}
+```
+
+Output of `npx tsx safe-parse.ts` and of the browser terminal
+
+```ts
+port 3000
+1 issue(s): Expected <= 65535, received 99999
+1 issue(s): Expected number, received string
+```
+
+[Runtime validation](https://zudojs.oyinlola.site/learn/ts-validation), later in this course, builds a small schema library like this one yourself.
 
 ## Generic classes: a repository
 
-Classes can be generic too. Here is a pattern ZudoJS uses everywhere: a **repository**, the one place that stores and finds one kind of record. Written once, it works for tasks, users or anything with an `id`:
+Classes can be generic too. Here is a pattern you will meet again in `@zudojs/database`: a **repository**, the one place that stores and finds one kind of record. Written once, it works for tasks, users or anything with an `id`:
 
 repository.ts
 
@@ -474,6 +523,8 @@ delete: Call Ada 1
 - `T extends Shape` sets a rule for `T`. `K extends keyof T` means "one of `T`'s property names", and `T[K]` is that property's type.
 - `E = string` gives a type parameter a default.
 - `Result<T, E>` makes failure part of the return type; a generic repository stores any kind of record.
+
+Next: [Designing generic APIs](https://zudojs.oyinlola.site/learn/ts-generic-design), where you decide which type parameters an API should have, and build a toolkit of generic types that fit together.
 
 ## Test yourself
 

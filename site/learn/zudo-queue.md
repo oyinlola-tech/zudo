@@ -1,22 +1,30 @@
 ---
-title: "Background jobs"
-description: "Move slow and unreliable work out of the request and into a job queue. Queues, jobs, processors, workers, concurrency, retries with exponential backoff, delayed jobs, dead letters and graceful shutdown with @zudojs/queue."
+title: "Background jobs — ZudoJS Academy"
+description: "Move slow, unreliable work out of the request into a job queue: jobs, processors, workers, concurrency, retries with backoff, dead letters with @zudojs/queue."
 source: https://zudojs.oyinlola.site/learn/zudo-queue
 ---
 
-LESSON 67 OF 84
+LEVEL 14 · LESSON 4 OF 18
 
-Events, messages and background work Advanced
+Background work Advanced
 
 # Background jobs
 
-Move slow and unreliable work out of the request and into a job queue. Queues, jobs, processors, workers, concurrency, retries with exponential backoff, delayed jobs, dead letters and graceful shutdown with @zudojs/queue.
+Move slow, unreliable work out of the request into a job queue: jobs, processors, workers, concurrency, retries with backoff, dead letters with @zudojs/queue.
 
 - **45 min** to read and try
 - **You need:** The messaging lesson
 - **You build:** A reminder-email job for the Task API that retries on failure and never disappears silently
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Move slow or unreliable work off the request with a queue, a job and a processor
+- Size concurrency for what the jobs call, and retry failures with exponential backoff and jitter
+- Delay, schedule and prioritize jobs, and route permanently failing ones to the dead-letter queue
+- Write an idempotent processor that survives being run more than once
+- Bound a hanging job with a timeout and shut a worker down gracefully
 
 ## Why background jobs
 
@@ -135,7 +143,17 @@ concurrency 1: 6 jobs done, at most 1 at once
 concurrency 3: 6 jobs done, at most 3 at once
 ```
 
-Instead of guessing how long to wait, the loop asks `getStats()` every 20 ms until all 6 jobs have succeeded. Why not set the concurrency to 1,000? Every running job uses memory and connections, and the service at the other end has limits too. A mail provider may allow 10 connections, a database pool 20. Pick a number that the slowest thing your jobs touch can handle.
+Instead of guessing how long to wait, the loop asks `getStats()` every 20 ms until all 6 jobs have succeeded.
+
+REASON IT OUT
+
+### Concurrency 3 finished the same 6 jobs as concurrency 1. Why not set it to 1,000 and finish even faster?
+
+Nothing in the queue itself stops you from setting a huge number. What actually limits how many of these jobs can usefully run at once? Think about what a "send reminder" processor does while it runs, and what it's talking to on the other end.
+
+**Show the reasoning**
+
+Every running job holds resources open for as long as it runs: memory in your own process, and often a connection to whatever it calls. The limit is rarely your side; it is the other end's. A mail provider might cap you at 10 simultaneous connections and start rejecting the 11th. A database pool might have 20 connections total, shared with everything else the app does. Set concurrency to 1,000 against a provider that allows 10, and 990 of those jobs fail immediately with connection errors, get retried, and hammer the same limit again — you have turned a queue meant to smooth out load into a source of load. Pick a number the slowest thing your jobs touch can actually handle, not the biggest number your own process could technically run.
 
 ## Retries and exponential backoff
 
@@ -496,7 +514,7 @@ task 1: nothing to do
 ```
 
 - The route answered 202 straight away. The work happened after.
-- A double click tried to add the same reminder twice. The `deduplicationKey` refused the second job while the first one exists. In the real route, catch `JobDuplicateError` and answer 202 anyway: the reminder *is* queued.
+- A double click tried to add the same reminder twice. The `deduplicationKey` refused the second job while the first one exists. In the real route, catch `JobDuplicateError`, imported from `@zudojs/errors` (the package this lesson's examples check with `error.name`; `@zudojs/queue` does not re-export it), and answer 202 anyway: the reminder *is* queued.
 - The fake mail server failed once. The queue retried, and the second try sent the email. The user never saw the outage.
 - A late extra job for the same task found `reminded: true` and did nothing: the processor is idempotent.
 
@@ -616,6 +634,8 @@ For each, choose a direct call, an event, or a job: (a) checking a password at l
 - `delay` and `scheduledAt` postpone a job. Repeating work belongs to a scheduler.
 - Jobs that fail every attempt go to the dead-letter queue. Watch it.
 - Processors honour `context.signal` for timeouts. A worker's `stop()` lets running jobs finish before the process exits.
+
+A queue runs each job once, when something asks it to. Next, [Scheduled tasks](https://zudojs.oyinlola.site/learn/zudo-scheduler) covers work that must run on its own, on the clock: every night, every hour, with nobody sending a job.
 
 ## Test yourself
 

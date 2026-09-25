@@ -1,22 +1,30 @@
 ---
-title: "this, prototypes and classes"
-description: "Understand what this means inside a method and why it gets lost, how objects share methods through prototypes, and how to write classes with private fields, getters, static methods and inheritance."
+title: "this, prototypes and classes — ZudoJS Academy"
+description: "See what this means in a method and why it gets lost, how objects share methods through prototypes, and write classes with private fields and inheritance."
 source: https://zudojs.oyinlola.site/learn/js-classes
 ---
 
-LESSON 15 OF 84
+LEVEL 2 · LESSON 16 OF 19
 
-JavaScript fundamentals Foundation
+Classes, errors, async and modules Foundation
 
 # this, prototypes and classes
 
-Understand what this means inside a method and why it gets lost, how objects share methods through prototypes, and how to write classes with private fields, getters, static methods and inheritance.
+See what this means in a method and why it gets lost, how objects share methods through prototypes, and write classes with private fields and inheritance.
 
 - **45 min** to read and try
-- **You need:** Scope and how code runs, and the lessons before it
+- **You need:** Objects in depth and Closures in depth, and the lessons before them
 - **You build:** A Task class and a TaskList class, first with inheritance and then with composition
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain what this refers to in a method call and fix a method that loses it as a callback
+- Explain how objects share methods through the prototype chain
+- Write a class with a constructor, methods, private fields, getters, setters and static members
+- Extend a class with extends and super, and override a method
+- Choose between inheritance and composition, and pass helpers in through the constructor
 
 ## What this means
 
@@ -45,7 +53,7 @@ Call Ada (done)
 true
 ```
 
-Both objects share *one* `describe` function. When you call `milk.describe()`, `this` is `milk`. When you call `ada.describe()`, `this` is `ada`. This is what lets many objects share one set of methods, which is the whole idea behind prototypes and classes below.
+Both objects share *one* `describe` function. When you call `milk.describe()`, `this` is `milk`. When you call `ada.describe()`, `this` is `ada`. This is what lets many objects share one set of methods, which is the whole idea behind prototypes and classes below. This lesson covers the rules you need every day; [this in depth](https://zudojs.oyinlola.site/learn/js-this), in the Advanced JavaScript course, covers every kind of call, including `call`, `apply` and event handlers.
 
 ## Losing this, and two fixes
 
@@ -161,12 +169,7 @@ true
 true
 ```
 
-`new Task("Buy milk")` does four things:
-
-1. Creates a new empty object.
-2. Links that object to `Task.prototype`. That object is the new task's **prototype**.
-3. Calls `Task` with `this` set to the new object, so `this.title = title` fills it in.
-4. Returns the object.
+`new Task("Buy milk")` creates a new empty object, links it to `Task.prototype` (that object becomes the new task's **prototype**), then calls `Task` with `this` set to the new object so `this.title = title` fills it in, and returns it. [Prototypes in depth](https://zudojs.oyinlola.site/learn/js-prototypes#new) takes `new` apart step by step.
 
 The `complete` method is not copied into each task: `Object.keys` shows only `title` and `done`. It lives once, on `Task.prototype`, and every task shares it.
 
@@ -211,6 +214,8 @@ true
 - `title` is the task's **own** property. `complete` is **inherited** from `Task.prototype`: `Object.hasOwn` says no, but `in`, which follows the chain, says yes.
 - `toString` comes from the end of the chain, `Object.prototype`, which every ordinary object shares.
 - Arrays work the same way. `map`, `filter` and `push` live on `Array.prototype`.
+
+That is enough to understand classes. [Prototypes in depth](https://zudojs.oyinlola.site/learn/js-prototypes) goes further: writing your own chains with `Object.create`, what `instanceof` really checks, and why changing `Object.prototype` is dangerous.
 
 ## Classes
 
@@ -261,7 +266,7 @@ Classes have four more tools that you will use constantly:
 
 - A **private field**, written with `#`, such as `#id`. Only code inside the class can read or write it. Writing `task.#id` outside the class is a `SyntaxError`: the program does not even start.
 - A **getter**, `get id() { }`, runs a function when someone reads `task.id`. Without a matching setter, the property is read-only.
-- A **setter**, `set title(value) { }`, runs a function when someone assigns `task.title = value`. It is the place to check the new value.
+- A **setter**, `set title(value) { }`, runs a function when someone assigns `task.title = value`. It is the place to check the new value. Getters and setters work exactly as in plain objects ([Objects in depth](https://zudojs.oyinlola.site/learn/js-objects-deep#accessors)).
 - A **static** member belongs to the class itself, not to each object. You call it on the class: `Task.fromJSON(text)`. It is often used for other ways of creating objects.
 
 members.js
@@ -454,11 +459,29 @@ TypeError: Cannot read properties of undefined (reading '#tasks')
 Task 9 not found
 ```
 
-`forEach((title) => list.add(title))` works. `forEach(list.add)` loses `this`, exactly like before. Class code is always strict, so here the mistake crashes in the browser terminal too.
+`forEach((title) => list.add(title))` works. `forEach(list.add)` loses `this`, exactly like before: inside `add`, `this` is `undefined`, and reading a private field of `undefined` throws a `TypeError`. The mistake fails loudly at once, which is far better than quietly writing to the wrong object.
 
 ## Composition over inheritance
 
 Inheritance is tempting whenever you want "a TaskList, but with something extra". Suppose you need a list that logs every change, and another that records an audit trail. With inheritance you write `LoggingTaskList extends TaskList` and `AuditedTaskList extends TaskList`. Then someone needs both, and you write a third class, `LoggingAuditedTaskList`. Every new feature doubles the number of classes.
+
+REASON IT OUT
+
+### Before you choose: extends or pass it in?
+
+You need a task list that writes every change to a log, and next month a second one that also records an audit trail for the compliance team. Before writing either, think:
+
+- If each feature is a subclass of `TaskList`, how many classes do you need for "log", "audit", "both" and "neither"? And when a third feature arrives?
+- Is a logging task list really a different *kind* of task list, or the same list that *uses* a logger?
+- How would you test that the audit trail is written, without also running the logger?
+
+**Show the reasoning**
+
+**Counting classes:** with inheritance, every combination of features is its own class: two features need three subclasses (log, audit, both), three features need seven. That growth is the warning sign.
+
+**"Is a" or "uses a":** the list's job does not change; it only tells someone else what happened. That is "uses a", which calls for composition: the list *has* helpers, passed in when it is created.
+
+**Testing:** when helpers are passed in, a test passes only the audit helper (or a fake one that records calls) and checks what it received. With inheritance, the logging code comes along whether the test wants it or not.
 
 **Composition** solves this differently: instead of *being* a special list, the list *has* helpers that you pass in. Here the helpers are plain functions, called listeners, that the list calls after each change:
 
@@ -519,7 +542,7 @@ A simple rule of thumb:
 - Use **inheritance** for a true "is a" relationship that will not change, like `RecurringTask` and `Task`, or your own error classes in [the next lesson](https://zudojs.oyinlola.site/learn/js-errors).
 - Use **composition** for "has a" or "uses a": a list that uses a logger, a service that uses a database. When in doubt, choose composition.
 
-Passing helpers in through the constructor is called **dependency injection**. ZudoJS is built on it: `@zudojs/container` creates your classes and hands each one the helpers it needs, as you will see in [the container lesson](https://zudojs.oyinlola.site/learn/zudo-container).
+Passing helpers in through the constructor is called **dependency injection**. ZudoJS is built on it: `@zudojs/container` creates your classes and hands each one the helpers it needs, as you will see in [the container lesson](https://zudojs.oyinlola.site/learn/zudo-container). [Inheritance and composition](https://zudojs.oyinlola.site/learn/js-composition), in the Advanced JavaScript course, explains why deep inheritance breaks and shows more composition tools: wrappers, delegation and mixins.
 
 ## Practice
 
@@ -659,6 +682,8 @@ In the second fix, `() => increment()` is still used because `forEach` passes ar
 - A class is cleaner syntax for the same thing: `constructor`, methods, `#private` fields and methods, `get`/`set`, and `static`.
 - `extends` and `super` build a class on top of another. Call `super()` before using `this`.
 - Prefer composition, passing helpers in, over deep inheritance trees. That is dependency injection, which ZudoJS is built on.
+
+Next, [Handling errors](https://zudojs.oyinlola.site/learn/js-errors): throw and catch errors, and write your own error classes with the `extends` you just learned.
 
 ## Test yourself
 

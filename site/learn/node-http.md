@@ -1,22 +1,30 @@
 ---
-title: "An HTTP server with no framework"
-description: "Build a web server with nothing but Node.js's node:http module. Read the method, path, headers, query and body of each request, send JSON back with the right status code, and route requests by hand."
+title: "An HTTP server with no framework — ZudoJS Academy"
+description: "Build a web server with only node:http: read the method, path, query, headers and body of a request, route by hand and answer JSON with the right status."
 source: https://zudojs.oyinlola.site/learn/node-http
 ---
 
-LESSON 23 OF 84
+LEVEL 4 · LESSON 8 OF 20
 
-Node.js and npm Foundation
+HTTP without a framework Core
 
 # An HTTP server with no framework
 
-Build a web server with nothing but Node.js's node:http module. Read the method, path, headers, query and body of each request, send JSON back with the right status code, and route requests by hand.
+Build a web server with only node:http: read the method, path, query, headers and body of a request, route by hand and answer JSON with the right status.
 
 - **40 min** to read and try
-- **You need:** npm and packages
+- **You need:** How the web works, What Node.js is, and Streams and buffers
 - **You build:** A small tasks server that lists, finds and creates tasks, tested with fetch and curl
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Start a node:http server and answer a request with a status code, headers and a body
+- Read the method, URL, headers and query parameters of a request
+- Route requests by method and path, including route parameters, and answer 404 and 405 correctly
+- Read a JSON body safely with a size limit, a Content-Type check and a clear 400 for broken JSON
+- Test a server by starting it on port 0 and calling it with fetch, and try it by hand with curl
 
 ## Your first server
 
@@ -263,7 +271,30 @@ Route on `url.pathname`, not on `req.url`, or `/tasks?done=true` would not match
 
 ## Reading a request body
 
-A `POST` request carries data in its **body**, usually JSON. You met streams in [Streams and buffers](https://zudojs.oyinlola.site/learn/node-streams): `req` is a readable stream, so the body arrives in chunks. Collect them, join them, then decode. Three things can go wrong, and each has its own status code:
+A `POST` request carries data in its **body**, usually JSON. You met streams in [Streams and buffers](https://zudojs.oyinlola.site/learn/node-streams): `req` is a readable stream, so the body arrives in chunks.
+
+REASON IT OUT
+
+### Before you read a body: what can a stranger send?
+
+Your server will be reachable by anyone who can reach its port. Before writing `readJson(req)`, list what a client could send in the body of `POST /tasks`:
+
+- How big can the body be, and what happens to your server's memory if you collect all of it?
+- The client says `Content-Type: text/plain`, or says nothing. Should you still try to parse the body?
+- The text is not valid JSON. Who should hear about it, and what should they be told?
+- The JSON is valid, but it is `null`, a number, or an object without `title`.
+
+**Show the reasoning**
+
+A body can be as big as the client likes, so the server must stop reading at a limit it chooses and answer 413; otherwise one request can fill its memory.
+
+A client that does not say it is sending JSON is either buggy or not talking to this API; answering 415 tells it exactly what to fix, instead of guessing.
+
+Broken JSON is the client's mistake, so it gets a 400 with a short message you wrote. The `SyntaxError` details stay on the server.
+
+Valid JSON is not the same as valid input: `JSON.parse("null")` succeeds. The shape and the values must be checked separately, which the build below does for `title`.
+
+So the plan is: collect the chunks, join them, then decode, and give each failure its own status code:
 
 - The body is too big: **413 Content Too Large**. Without a limit, anyone can send gigabytes and fill your server's memory.
 - The body is not JSON: **415 Unsupported Media Type** when the `Content-Type` is wrong, or **400 Bad Request** when the text does not parse.
@@ -453,7 +484,7 @@ if (process.argv[1] === import.meta.filename) {
 
 A few details:
 
-- `req.setEncoding("utf8")` makes the stream decode bytes to text for you, and it handles characters split between chunks correctly.
+- `readJson` is the one from the previous section, with a larger limit. The routes read the URL once with `new URL(req.url, "http://localhost")` and route on `url.pathname`.
 - The route for one task uses a regular expression that only matches a valid id, so `/tasks/abc` falls through to 404.
 - The title is validated: it must be text, not empty, and not absurdly long. `body?.title` also copes with a body of `null`.
 - `process.argv[1] === import.meta.filename` is true only when you run `node server.js`, not when another file imports it. That lets the next file test the server without starting it on port 3000.
@@ -543,6 +574,10 @@ $ curl http://localhost:3000/nothing
 ```
 
 Node.js added `Date`, `Connection`, `Keep-Alive` and `Content-Length` by itself. `Keep-Alive` lets a client reuse the same connection for its next request, which is faster. On Windows PowerShell, type `curl.exe` instead of `curl`, and put the JSON in double quotes with the inner quotes doubled or escaped; or simply use the test file above.
+
+> NOTE
+>
+> Opening the URL in the address bar works. A web page from another address that calls this server with `fetch` is a different story: the browser refuses to hand it the response unless the server allows it with **CORS** headers. This server sends none yet; [Networking from JavaScript](https://zudojs.oyinlola.site/learn/browser-networking#cors) explains the rule and adds them to the Task API.
 
 The tasks live in an array in memory, so they are gone when you stop the server. The next lesson grows this into a complete Task API, and shows what starts to hurt when you build everything by hand.
 
@@ -644,6 +679,8 @@ A maximum for `limit` matters: without it, one request for `?limit=10000000` mak
 - Route and query parameters are text from strangers: match them exactly and validate them before use.
 - A body is a stream of chunks. Enforce a size limit, check the `Content-Type`, and turn a failed `JSON.parse` into a 400 with your own message.
 - Test a server by starting it on port 0 and calling it with `fetch`; try it by hand with `curl`.
+
+Next: [Build a plain Node.js Task API](https://zudojs.oyinlola.site/learn/node-task-api), where this server grows into a complete API with modules, middleware, central error handling and an API key.
 
 ## Test yourself
 

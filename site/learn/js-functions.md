@@ -1,12 +1,12 @@
 ---
-title: "Functions"
+title: "Functions — ZudoJS Academy"
 description: "Package logic into reusable functions, pass values in and get results out, pass functions to other functions, and meet scope, closures and recursion."
 source: https://zudojs.oyinlola.site/learn/js-functions
 ---
 
-LESSON 10 OF 84
+LEVEL 2 · LESSON 8 OF 19
 
-JavaScript fundamentals Foundation
+Functions Foundation
 
 # Functions
 
@@ -17,6 +17,14 @@ Package logic into reusable functions, pass values in and get results out, pass 
 - **You build:** A small calculator library, checked by its own tests
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Declare and call functions, and tell parameters from arguments and printing from returning
+- Write function expressions and arrow functions, and explain why only declarations can be called early
+- Use default and rest parameters
+- Pass functions to functions (callbacks) and return functions from functions
+- Keep logic in pure functions and validate inputs so a small library can be tested
 
 ## Why functions
 
@@ -290,7 +298,7 @@ Output of `node pure.js` and of the browser terminal
 10 10
 ```
 
-Pure functions are easy to test and easy to trust: you only need to look at the arguments to know the result. A backend cannot be pure everywhere, because saving to a database is a side effect. A good habit is to keep the logic in pure functions and the side effects in a few clear places, like the thin keyboard part of the guessing game in the previous lesson.
+Pure functions are easy to test and easy to trust: you only need to look at the arguments to know the result. A backend cannot be pure everywhere, because saving to a database is a side effect. A good habit is to keep the logic in pure functions and the side effects in a few clear places, like the thin keyboard part of the guessing game in the previous lesson. [Functional JavaScript](https://zudojs.oyinlola.site/learn/js-functional), in the Advanced JavaScript course, builds a whole style on this idea.
 
 ## Scope and closures
 
@@ -344,7 +352,7 @@ Output of `node closure.js` and of the browser terminal
 1
 ```
 
-`createCounter` finished long ago, but the arrow function it returned still has access to its `count`. Each call to `createCounter` makes a new, separate `count`, so the two counters do not share. Nothing outside can change `count` directly, which makes closures a simple way to keep data private. [The lesson on scope](https://zudojs.oyinlola.site/learn/js-scope) goes deeper.
+`createCounter` finished long ago, but the arrow function it returned still has access to its `count`. Each call to `createCounter` makes a new, separate `count`, so the two counters do not share. Nothing outside can change `count` directly, which makes closures a simple way to keep data private. Later in this course, [Scope and how code runs](https://zudojs.oyinlola.site/learn/js-scope) explains scope precisely, and [Closures in depth](https://zudojs.oyinlola.site/learn/js-closures) shows how closures work and what they are used for.
 
 ## Recursion
 
@@ -384,11 +392,32 @@ Output of `node recursion.js` and of the browser terminal
 5
 ```
 
-`factorial` could just as well be a loop. Recursion shines on data that contains smaller copies of itself, like tasks with subtasks, folders with folders, or comments with replies. There the base case is a task with no subtasks: the loop runs zero times and the function returns 0.
+`factorial` could just as well be a loop. Recursion shines on data that contains smaller copies of itself, like tasks with subtasks, folders with folders, or comments with replies. There the base case is a task with no subtasks: the loop runs zero times and the function returns 0. [Recursion](https://zudojs.oyinlola.site/learn/js-recursion), later in this course, teaches you to design and trace functions like this one.
 
 ## Build: a calculator library
 
 A **library** is a set of related functions that other code uses. You can group functions in an **object**: a set of named values between braces, where each value here is a function. You will learn objects in [their own lesson](https://zudojs.oyinlola.site/learn/js-data); for now, `calculator.add(2, 3)` means "call the `add` function inside `calculator`".
+
+REASON IT OUT
+
+### Before you code: what should the calculator refuse?
+
+A calculator library will be called by other code, some of it passing values that came from users. Before writing it, decide:
+
+- What should `add("2", 3)` do? What would JavaScript do on its own?
+- What should `divide(1, 0)` give? What does `1 / 0` give in JavaScript?
+- What is the average of no numbers at all?
+- Where should each check live, so that it is written only once?
+
+**Show the reasoning**
+
+**`add("2", 3)`:** on its own, `"2" + 3` is the text `"23"`, a wrong answer with no warning. A library should refuse anything that is not a real number (including `NaN`) with a clear error, instead of guessing.
+
+**Dividing by zero:** JavaScript gives `Infinity`, which is not an amount anyone can use. For a calculator it is a mistake by the caller, so the library should say so.
+
+**Average of nothing:** `0 / 0` is `NaN`. There is no sensible answer, so the right answer is an error, not `0`.
+
+**Where:** the number check is the same for every operation, so it belongs in one helper function that every operation calls. A check written six times will be fixed in five places.
 
 The library validates its inputs. When something is wrong it `throw`s an error, which stops the function; the caller can catch it with `try`/`catch`. You will learn errors fully in [the lesson on errors](https://zudojs.oyinlola.site/learn/js-errors). Below the library is a tiny test helper, and a list of checks:
 
@@ -476,7 +505,7 @@ What is new here:
 - `check` takes a callback, so it can run the code inside `try` and report a thrown error as a result instead of crashing.
 - `"2"` is rejected instead of silently turning `2 + 3` into `"23"`. Always refuse bad input loudly.
 
-The last test fails on purpose. It is the floating point error from [the first lesson](https://zudojs.oyinlola.site/learn/js-values#numbers): a test found it, and exercise 2 fixes it. Real projects use a test runner like Vitest instead of a hand-made `check`; you will meet it in [the lesson on testing](https://zudojs.oyinlola.site/learn/testing-basics), and the idea is exactly the same.
+The last test fails on purpose. It is the floating point error from [Values, variables and types](https://zudojs.oyinlola.site/learn/js-values#numbers): a test found it, and exercise 2 fixes it. Real projects use a test runner like Vitest instead of a hand-made `check`; you will meet it in [the lesson on testing](https://zudojs.oyinlola.site/learn/testing-basics), and the idea is exactly the same.
 
 ## Practice
 
@@ -571,6 +600,8 @@ The base case is `n <= 0`. Using `<=` instead of `===` also protects you from a 
 - Default parameters fill in missing arguments; a rest parameter collects the remaining ones into an array.
 - Pure functions depend only on their arguments and change nothing outside. Keep logic pure and side effects few.
 - A closure remembers the variables around it. A recursive function calls itself and needs a base case.
+
+Next, [Arrays](https://zudojs.oyinlola.site/learn/js-arrays): keep lists of values and transform them with functions like the ones you just wrote.
 
 ## Test yourself
 

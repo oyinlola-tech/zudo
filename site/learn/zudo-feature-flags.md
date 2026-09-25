@@ -1,22 +1,30 @@
 ---
-title: "Feature flags"
-description: "Turn features on and off without deploying. Rules, evaluation context, percentage rollouts, A/B variants, kill switches and browser snapshots with @zudojs/feature-flags."
+title: "Feature flags — ZudoJS Academy"
+description: "Turn features on and off without deploying: rules, evaluation context, percentage rollouts, A/B variants and kill switches with @zudojs/feature-flags."
 source: https://zudojs.oyinlola.site/learn/zudo-feature-flags
 ---
 
-LESSON 76 OF 84
+LEVEL 14 · LESSON 15 OF 18
 
-Platform features Advanced
+Platform Advanced
 
 # Feature flags
 
-Turn features on and off without deploying. Rules, evaluation context, percentage rollouts, A/B variants, kill switches and browser snapshots with @zudojs/feature-flags.
+Turn features on and off without deploying: rules, evaluation context, percentage rollouts, A/B variants and kill switches with @zudojs/feature-flags.
 
 - **40 min** to read and try
 - **You need:** The Task API project and the observability lesson
 - **You build:** Task comments rolled out to beta users and then to 20% of everyone, an A/B test for task sorting, and a kill switch for emails
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Separate deploying code from releasing a feature with a flag served from a provider
+- Match rules in order against a server-built evaluation context, never the request body
+- Roll out a feature to a deterministic percentage of users and split them into A/B variants
+- Turn off a flag as a kill switch and give every non-boolean flag a safe offValue
+- Fail closed when the flag store is unreachable, and send only client-visible flags to the browser
 
 ## Deploy is not release
 
@@ -207,6 +215,16 @@ grace sees by-date because of variant_assignment
 About half of the users are in each group. To learn which version wins, record the variant with what the user did, for example a metric `tasks.completed` with a `variant` label, as in [the observability lesson](https://zudojs.oyinlola.site/learn/zudo-observability). A variant label is fine there: it has only two values.
 
 ## Kill switches and safe defaults
+
+REASON IT OUT
+
+### A number flag such as upload-limit-mb has no natural off value. Why does the package fall back to defaultValue instead of always using 0?
+
+`defaultValue` is the value a flag serves when its rules do not decide anything, which is usually meant to be a safe, ordinary value: 50 MB is a perfectly reasonable everyday upload limit. Now think about what "off" should mean for a flag that is not a simple on/off switch. Is there one answer that is correct for every number, string or object flag in every app, the way `false` is obviously correct for every boolean flag?
+
+**Show the reasoning**
+
+There is not, and that is exactly why the package cannot pick one for you: 0 is the right "off" for an upload limit, but it would be the wrong "off" for a flag holding a page size (0 items per page breaks the page) or a timeout in milliseconds (0 means every request instantly times out). Falling back to `defaultValue` is the package's best guess at a value that will not crash anything, since that value was presumably already tested and shipped as the everyday case. It is a reasonable default default, but for a flag you might actually kill during an incident, it is the wrong choice, because "the everyday value" and "safe during an outage" are different questions. That is why `offValue` exists as an explicit, opt-in field: it lets you answer the second question separately, for the one flag where it matters, instead of the package guessing wrong for everyone.
 
 The mail provider is down, and every task completion tries to send an email and fails. You want emails off, now. Set `enabled: false`: the flag then ignores all its rules and serves its **off value**. For a boolean flag the off value is `false`. For a string, number or object flag there is no natural "off", so it serves its `defaultValue`, unless you declare an `offValue`:
 
@@ -491,6 +509,8 @@ Which of these definitions are unsafe, and why? (a) `{ key: "max-upload-mb", ena
 - Fail closed: a flag that is off serves its off value: `offValue` if you declare one, else `false` for a boolean flag, else `defaultValue`. Give every non-boolean flag you might kill an `offValue`. An unreachable store never switches a flag on.
 - Build the context on the server from the verified user. A flag is not a permission.
 - Snapshots send values, not rules, to the browser, and only for `visibility: "client"` flags. Delete flags when they are done.
+
+Next, [Multi-tenancy](https://zudojs.oyinlola.site/learn/zudo-tenancy) serves many companies from one Task API, so every rule, query and cached value stays scoped to the right tenant.
 
 ## Test yourself
 

@@ -1,22 +1,30 @@
 ---
-title: "What a framework does"
-description: "The difference between a library and a framework, inversion of control, and the jobs a backend framework takes over: lifecycle, dependency injection, routing, configuration, validation, database access, testing and application structure. Build a tiny framework to see how it works inside."
+title: "What a framework does — ZudoJS Academy"
+description: "Library vs framework and inversion of control, then every job a backend framework takes over: lifecycle, DI, routing, config, validation. Build a tiny one."
 source: https://zudojs.oyinlola.site/learn/frameworks
 ---
 
-LESSON 45 OF 84
+LEVEL 11 · LESSON 9 OF 12
 
-Architecture and frameworks Core
+Framework engineering Core
 
 # What a framework does
 
-The difference between a library and a framework, inversion of control, and the jobs a backend framework takes over: lifecycle, dependency injection, routing, configuration, validation, database access, testing and application structure. Build a tiny framework to see how it works inside.
+Library vs framework and inversion of control, then every job a backend framework takes over: lifecycle, DI, routing, config, validation. Build a tiny one.
 
 - **30 min** to read and try
-- **You need:** "Backend architecture"
+- **You need:** Backend architecture, Clean architecture: ports and adapters, and Architecture styles
 - **You build:** A 40-line framework that starts modules in dependency order and stops them in reverse
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Tell a library from a framework by who calls whom, and name that flip inversion of control
+- Topologically sort modules by their dependencies, and roll a failed start back in reverse
+- Explain why a circular dependency must be refused before anything starts, not caught later
+- List the jobs a backend framework takes over, and which ZudoJS package does each one
+- Weigh what a framework costs (learning, opinions, a dependency on its future) against what it saves
 
 ## Libraries and frameworks
 
@@ -107,6 +115,18 @@ export function createApp(modules: readonly Module[]) {
 - `visiting` remembers which modules are being visited right now. Meeting one of them again means A needs B needs A: a cycle that can never start, so the framework refuses clearly.
 - `module.start?.()` calls `start` only if the module has one ([Modern JavaScript](https://zudojs.oyinlola.site/learn/js-modern) introduced `?.`).
 - `stop` walks the started modules **in reverse**: the server stops taking requests before the database it uses is closed.
+
+REASON IT OUT
+
+### Two modules that genuinely need each other
+
+Say a `metrics` module wants to report the `http` module's request count, and `http` wants to report through `metrics`. Neither can start first by this framework's rule. Is that a bug in `startOrder` to fix, or is the framework right to refuse it?
+
+**Show the reasoning**
+
+The framework is right. "A needs B" means "B must be fully started, and usable, before A's `start` runs." If A and B need each other that way, there is no first module: whichever starts first calls into something not yet running. A language runtime could paper over this with lazy references or two-phase init, but that trades one predictable startup error for a fact you must hold in your head about every pair of modules that might do this.
+
+The real fix is to break the cycle in the design: `http` should not depend on `metrics` to report through, and `metrics` should not depend on `http` to be counted. A third module, an event bus or a metrics registry that both sides push into and pull from without depending on each other's lifecycle, removes the cycle instead of hiding it.
 
 Now use it. The modules are listed in a random order on purpose:
 
@@ -205,9 +225,9 @@ For a 50-line script, a framework is too much. For a backend with users, a datab
 
 ## Now you are ready for ZudoJS
 
-Look at how far you came. You can write JavaScript and TypeScript, run a Node.js server, design a REST API, use SQL and PostgreSQL, hash passwords, sign tokens, test your code, and split a backend into layers. You also know, from experience, which parts of a backend are tedious and risky to build alone.
+Look at how far you came. You can write JavaScript and TypeScript, run a Node.js server, design a REST API, use SQL and PostgreSQL, hash passwords, sign tokens, test your code, split a backend into [layers](https://zudojs.oyinlola.site/learn/backend-architecture) and enforce that split with [the dependency rule](https://zudojs.oyinlola.site/learn/arch-clean), and weigh a monolith against [services, events and CQRS](https://zudojs.oyinlola.site/learn/arch-styles). You also know, from experience, which parts of a backend are tedious and risky to build alone.
 
-That is exactly the knowledge ZudoJS assumes. It is a set of small packages that each take over one of the jobs above, and a CLI that puts them together into a project. The next lesson is a tour of what it contains and how the pieces fit.
+That is exactly the knowledge ZudoJS assumes. It is a set of small packages that each take over one of the jobs above, and a CLI that puts them together into a project. [Build a mini framework, part 1: the core](https://zudojs.oyinlola.site/learn/framework-build-core) is a tour of what it contains, built by hand so you see how the pieces fit before you meet the real ones.
 
 ## Practice
 
@@ -303,6 +323,8 @@ This is called a **rollback**. `@zudojs/runtime` does it for you, along with tim
 - A framework starts parts in dependency order, stops them in reverse, and refuses a broken setup before anything runs.
 - A backend framework takes over lifecycle, dependency injection, routing, configuration, validation, errors, database access, security, testing and project structure.
 - It costs learning time and some freedom. For a real backend, the jobs it does must be done anyway.
+
+Next: [Build a mini framework, part 1: the core](https://zudojs.oyinlola.site/learn/framework-build-core), where the module system in this lesson grows into a container, configuration and a lifecycle you carry forward into the next two lessons.
 
 ## Test yourself
 

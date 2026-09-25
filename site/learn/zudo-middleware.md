@@ -1,22 +1,30 @@
 ---
-title: "Middleware, CORS, security headers and graceful shutdown"
-description: "Wrap every Task API route in middleware. Learn how a middleware pipeline runs, then add security headers, a CORS allow-list, rate limits with @zudojs/security, and a graceful shutdown that lets requests in progress finish."
+title: "Middleware, CORS, security headers and graceful shutdown — ZudoJS Academy"
+description: "Wrap every Task API route in middleware: how a pipeline runs, security headers, a CORS allow-list, rate limits, and a shutdown that lets requests finish."
 source: https://zudojs.oyinlola.site/learn/zudo-middleware
 ---
 
-LESSON 52 OF 84
+LEVEL 12 · LESSON 14 OF 19
 
-The ZudoJS core Core
+HTTP Core
 
 # Middleware, CORS, security headers and graceful shutdown
 
-Wrap every Task API route in middleware. Learn how a middleware pipeline runs, then add security headers, a CORS allow-list, rate limits with @zudojs/security, and a graceful shutdown that lets requests in progress finish.
+Wrap every Task API route in middleware: how a pipeline runs, security headers, a CORS allow-list, rate limits, and a shutdown that lets requests finish.
 
 - **50 min** to read and try
-- **You need:** Routes, requests and responses
+- **You need:** "Routing in depth"
 - **You build:** A Task API that sends safe headers, allows only its own web app, limits how fast clients can write, and shuts down without cutting off requests
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Predict the order in which middleware runs, and write middleware that works before next(), after it, or instead of it
+- Explain what each default security header protects against
+- Allow exactly the web apps you trust with a CORS allow-list, and explain what CORS does not protect
+- Rate-limit clients, with a stricter limit for writes, and explain the limits of counting per process
+- Shut the server down so requests in progress finish before the runtime closes what they use
 
 ## What middleware is
 
@@ -70,6 +78,21 @@ security: after
 ```
 
 The calls nest like layers of an onion: `security` starts first and finishes last. It was registered second but runs first because its `priority` is lower. Lower numbers run earlier, the default is 0, and equal priorities keep the order you added them in. The last function never calls `next`; it plays the role of the route.
+
+REASON IT OUT
+
+### Where does each middleware go?
+
+Before reading on, put these four in order for the Task API, and say what would go wrong if you swapped a neighbouring pair: security headers, CORS, a rate limit, and the step that hands the request to the router. Think about a CORS preflight, a request refused with 429, and a response that a route builds.
+
+**Show the reasoning**
+
+- **Security headers first**. Their work happens after `next()`, so the outermost layer sees *every* response, including a 429 and a preflight answer. Placed later, the answers of everything before it would go out without the headers.
+- **CORS before the rate limit**. CORS answers a browser's `OPTIONS` preflight itself; after the limiter, every preflight would use up the client's allowance, and a 429 without CORS headers would be hidden from the web app.
+- **The rate limit before the router**, so a flood never reaches your routes.
+- **Dispatch last**: it is the end of the chain and never calls `next`.
+
+That is exactly the order the generated `src/server.ts` uses, as you will see at the end of this lesson.
 
 ## Writing your own middleware
 
@@ -274,7 +297,7 @@ ConfigurationError
 CORS: credentials cannot be combined with a wildcard origin ("*"). Enumerate the allowed origins, or supply a function or RegExp.
 ```
 
-Keep the allow-list in configuration, not in the code, so development can allow `http://localhost:5173` and production only your real domain. The [next lesson](https://zudojs.oyinlola.site/learn/zudo-config) does exactly that.
+Keep the allow-list in configuration, not in the code, so development can allow `http://localhost:5173` and production only your real domain. [Configuration](https://zudojs.oyinlola.site/learn/zudo-config) does exactly that.
 
 ## Rate limiting
 
@@ -352,45 +375,7 @@ The third `POST` got 429, with a JSON body (sent as `application/json`) and a `R
 
 ## Middleware outside HTTP: @zudojs/middleware
 
-The same idea helps with work that is not a request, such as a background job that sends task reminders. `@zudojs/middleware` is a general pipeline for any kind of context. It is already installed with the other ZudoJS packages. Each middleware is given with a `name`, and the result tells you whether the run succeeded:
-
-job-pipeline.tsNode.js only
-
-```ts
-import { createPipeline, timeoutMiddleware } from "@zudojs/middleware";
-import type { Middleware } from "@zudojs/middleware";
-
-interface Job {
-  readonly name: string;
-}
-
-const announce: Middleware<Job, string> = async (job, next) => {
-  console.log(`start ${job.name}`);
-  const result = await next();
-  console.log(`done  ${job.name}`);
-  return result;
-};
-
-const run = createPipeline<Job, string>(
-  [{ name: "announce", handler: announce }, timeoutMiddleware(1_000)],
-  async (job) => `sent reminders for ${job.name}`,
-);
-
-const outcome = await run({ name: "due-today" });
-if (outcome.success) {
-  console.log(outcome.result, outcome.executedMiddleware);
-}
-```
-
-Output of `npx tsx job-pipeline.ts`
-
-```ts
-start due-today
-done  due-today
-sent reminders for due-today [ 'announce', 'timeout' ]
-```
-
-For HTTP, stay with `HttpMiddlewarePipeline` from `@zudojs/http`: it knows about requests and responses. The [queue lesson](https://zudojs.oyinlola.site/learn/zudo-queue) uses job pipelines like this one.
+The same idea helps with work that is not a request, such as a background job that sends task reminders, or checks that an HTTP route, a command-line tool and a queue job must all share. `@zudojs/middleware` is a general pipeline for any kind of context. `@zudojs/http` uses it internally, so it is already in `node_modules`, but only as a dependency of a dependency: it is not in the Task API's `package.json`. Before your own code imports it, install it with `npm install @zudojs/middleware`, or a stricter package manager such as pnpm will refuse the import. For HTTP, stay with `HttpMiddlewarePipeline` from `@zudojs/http`: it knows about requests and responses. The next lesson, [Middleware pipelines with @zudojs/middleware](https://zudojs.oyinlola.site/learn/zudo-middleware-pipelines), builds such a pipeline step by step.
 
 ## Graceful shutdown of the server
 
@@ -525,7 +510,7 @@ export { writeLimitMiddleware } from "./write-limit.middleware.js";
 >
 > `zudojs generate middleware write-limit` writes `src/middlewares/write-limit.middleware.ts` with an empty `writeLimitMiddleware()` that only passes the request on, exports it from `index.ts`, and adds it to the pipeline in `src/server.ts` between the markers. Here you write it by hand, so the limit is yours from the first line.
 
-In `src/server.ts`, import it with `import { writeLimitMiddleware } from "./middlewares/index.js";` and add it after the general rate limit, below the markers. The limit of 20 writes a minute is written in the code for one more lesson; [Configuration](https://zudojs.oyinlola.site/learn/zudo-config) moves it into a setting:
+In `src/server.ts`, import it with `import { writeLimitMiddleware } from "./middlewares/index.js";` and add it after the general rate limit, below the markers. The limit of 20 writes a minute is written in the code until [Configuration](https://zudojs.oyinlola.site/learn/zudo-config) moves it into a setting:
 
 src/server.ts (part)Node.js only
 
@@ -886,7 +871,7 @@ The allow-list compares whole origins exactly. Never build your own check with `
 - `createRateLimiter` from `@zudojs/security` counts requests per client in a sliding window; `createRateLimitMiddleware` answers 429 with `Retry-After`.
 - `server.stop()` refuses new connections and waits for requests in progress. Stop the server, then the runtime, then dispose the container.
 
-The CLI already reads the allowed origins, the general rate limit and the port from settings; only your write limit is still written in the code. The next lesson explains how that **configuration** works, moves the write limit into it, and makes production stricter than development.
+The CLI already reads the allowed origins, the general rate limit and the port from settings; only your write limit is still written in the code, and [Configuration](https://zudojs.oyinlola.site/learn/zudo-config) moves it there. First, the checks that must run in more places than HTTP: next, [Middleware pipelines with @zudojs/middleware](https://zudojs.oyinlola.site/learn/zudo-middleware-pipelines).
 
 ## Test yourself
 

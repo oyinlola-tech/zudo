@@ -1,12 +1,12 @@
 ---
-title: "Your first Zudo code"
+title: "Your first Zudo code — ZudoJS Academy"
 description: "Install your first ZudoJS packages, check untrusted data at runtime with @zudojs/schema, and report failures with the ready-made errors in @zudojs/errors."
 source: https://zudojs.oyinlola.site/learn/zudo-first-code
 ---
 
-LESSON 47 OF 84
+LEVEL 12 · LESSON 2 OF 19
 
-Meet ZudoJS Core
+Entering ZudoJS Core
 
 # Your first Zudo code
 
@@ -17,6 +17,14 @@ Install your first ZudoJS packages, check untrusted data at runtime with @zudojs
 - **You build:** A task service that validates input and reports errors like an API
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Install ZudoJS packages as ordinary dependencies and explain why npm added more than you asked for
+- Describe valid data once with a schema and get both a runtime check and a TypeScript type from it
+- Choose between parse and safeParse and read the issues a failed check returns
+- Throw the ready-made errors from @zudojs/errors and explain their status and code
+- Turn any outcome of a service into a status code and a safe JSON body
 
 ## Install two packages
 
@@ -43,6 +51,22 @@ This time there is no `-D`: your program needs these packages to run, so they ar
 > These two packages also work in the browser terminal on this page. **Run in browser** loads the same ZudoJS code you just installed.
 
 ## Describe a task once
+
+REASON IT OUT
+
+### What can arrive in a request body?
+
+A client will send your Task API a JSON body to create a task, with a `title`, an optional `done` flag and an optional `priority`. Before you see any code, list what could arrive in each field that you would not want to store. What should happen when a field is missing? When the title is only spaces? When the client sends a field you never asked for? Should the program stop at the first problem, or report all of them?
+
+**Show the reasoning**
+
+- **Wrong types**: `"title": 42`, `"done": "sometimes"`, or a body that is not an object at all. TypeScript cannot see any of it, because the data arrives while the program runs.
+- **Right type, wrong value**: a title of `"   "` or of 10,000 characters, a priority of `"urgent"`. Spaces around a title should be removed before its length is checked, or `"   "` counts as three characters.
+- **Missing fields**: a missing `done` or `priority` has an obvious default (`false`, `"normal"`); a missing title does not, so it is an error.
+- **Extra fields**: an `"id": 1` or `"isAdmin": true` must never reach your data. The safest rule is to keep only the fields you described.
+- **Every problem at once**: a client that fixes one field, resends, and learns about the next one wastes a round trip each time. Report all of them, each with the name of its field.
+
+A schema is the tool that does all of this from one description.
 
 A **schema** is a description of valid data that exists at runtime. Here is what a client must send to create a task:
 
@@ -280,7 +304,7 @@ TRY IT YOURSELF
 
 ### Update a task
 
-Add an `update(id, changes)` method to `TaskService`. It should accept any subset of the fields, so use `NewTaskSchema.partial()`, which makes every field optional. It must throw `NotFoundError` for a missing task. Try it through `respond`.
+Add an `update(id, changes)` method to `TaskService`. It should accept any subset of the fields, so use `NewTaskSchema.partial()`, which makes every field optional. It must throw `NotFoundError` for a missing task. Try it with a good change, a bad one and a missing task.
 
 **Show a solution**
 
@@ -346,7 +370,7 @@ The schema lives next to the code that uses it here to keep the example short. I
 - `SchemaError`, `NotFoundError` and `ConflictError` carry status codes 400, 404 and 409, plus a stable `code`.
 - A service takes `unknown` input, validates it, and throws the right error. Something at the edge turns errors into status codes and bodies.
 
-You have now written the core of an API. What is missing is the part that listens on the network. For that you need a real ZudoJS project, which the CLI creates in the next lesson.
+You have now written the core of an API. What is missing is the part that listens on the network. For that you need a real ZudoJS project, which the CLI creates in the next lesson, [Create the Task API project](https://zudojs.oyinlola.site/learn/zudo-create-project).
 
 ## Test yourself
 

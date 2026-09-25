@@ -1,22 +1,30 @@
 ---
-title: "Structured logging"
-description: "Replace console.log with structured log entries that a program can search. Levels, child loggers, request ids, request and error logging, secret redaction and JSON logs for production with @zudojs/logger."
+title: "Structured logging — ZudoJS Academy"
+description: "Replace console.log with structured entries a program can search: levels, child loggers, request ids, redaction and JSON logs with @zudojs/logger."
 source: https://zudojs.oyinlola.site/learn/zudo-logging
 ---
 
-LESSON 74 OF 84
+LEVEL 14 · LESSON 12 OF 18
 
-Testing and observability Core
+Quality and insight Advanced
 
 # Structured logging
 
-Replace console.log with structured log entries that a program can search. Levels, child loggers, request ids, request and error logging, secret redaction and JSON logs for production with @zudojs/logger.
+Replace console.log with structured entries a program can search: levels, child loggers, request ids, redaction and JSON logs with @zudojs/logger.
 
 - **40 min** to read and try
 - **You need:** The Task API project and the testing lesson
 - **You build:** A Task API logger that prints readable lines in development, JSON in production, and tags every request with an id
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Write structured log entries with a fixed message and searchable metadata, instead of sentences
+- Set a logger's threshold level and read it from a LOG_LEVEL environment variable
+- Tag every line of one request with the same id using withContext and child loggers
+- Log a thrown error once, with its stack trace, and separate a 4xx from a 5xx
+- Keep secret field names out of logs with redaction, and switch to JSON output in production
 
 ## Why structured logs
 
@@ -356,6 +364,16 @@ The error details go to the log, never to the client. The client gets the status
 
 Logs are read by many people and kept for a long time, often in another company's service. A password or token that lands in a log has leaked. The logger **redacts** (hides) metadata fields whose *name* looks secret, before any formatter or transport sees them:
 
+REASON IT OUT
+
+### Redaction checks a field's name, such as password or token. Why not also scan every value and hide anything that looks like a secret?
+
+A name-based check is a simple, fast lookup the logger can run on every entry without understanding what your app's data means. Scanning values for "looks like a secret" is a much harder problem: a credit card number, a UUID, a phone number and an ordinary large id can look alike in different apps, and any pattern strict enough to catch real secrets will also redact things that were never secret, such as an order id that happens to be 16 digits. What would you rather have: a fast, predictable rule you can reason about and extend with your own key names, or a heuristic that sometimes hides data you needed and sometimes lets a secret through because it did not match the pattern?
+
+**Show the reasoning**
+
+The logger keeps the fast, predictable rule, and pushes the harder problem back onto you at the one place you actually know what a value means: where you decide what goes into metadata in the first place. That is also why the rule cannot help the second example below, where a secret is glued into the message text rather than kept in a named field — there is no field name to check at all once a value has been interpolated into a string. Name-based redaction is a safety net for the metadata you already intended to log, not a substitute for deciding, at the call site, that a value should never be logged.
+
 redaction.ts
 
 ```ts
@@ -574,6 +592,8 @@ Which of these lines leak a secret into the logs, and how do you fix them? (a) `
 - Log errors once, with the error object. 4xx is `warn`, 5xx is `error`.
 - Redaction hides secret field names, but never text inside the message. Log injection is escaped.
 - In production: one JSON object per line on standard output, and flush before exit.
+
+Next, [Observability](https://zudojs.oyinlola.site/learn/zudo-observability) adds metrics and traces alongside these logs, sharing one trace id across a request and every service it touches.
 
 ## Test yourself
 

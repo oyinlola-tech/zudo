@@ -1,22 +1,31 @@
 ---
-title: "Permissions"
-description: "Decide what each logged-in user may do with @zudojs/permissions. Roles, resource:action permissions, wildcards, role hierarchy, owner rules, deny rules, policies and explain mode, and the mistakes that let a normal user become an admin."
+title: "Permissions — ZudoJS Academy"
+description: "Decide what each logged-in user may do with @zudojs/permissions: roles, wildcards, hierarchy, owner and deny rules, policies, and stopping privilege escalation."
 source: https://zudojs.oyinlola.site/learn/zudo-permissions
 ---
 
-LESSON 61 OF 84
+LEVEL 13 · LESSON 9 OF 12
 
-Users and security Core
+Security and identity Core
 
 # Permissions
 
-Decide what each logged-in user may do with @zudojs/permissions. Roles, resource:action permissions, wildcards, role hierarchy, owner rules, deny rules, policies and explain mode, and the mistakes that let a normal user become an admin.
+Decide what each logged-in user may do with @zudojs/permissions: roles, wildcards, hierarchy, owner and deny rules, policies, and stopping privilege escalation.
 
 - **45 min** to read and try
 - **You need:** The Task API project and the authentication lesson
 - **You build:** A Task API where members can only change their own tasks, admins can change any task, and every escalation attempt is refused
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Grant resource:action permissions through roles, and build a role hierarchy with inherits
+- Write a wildcard permission without granting more than intended, including future permissions
+- Write a resource condition such as isOwner that checks the real resource, not just the actor
+- Treat missing data as a denial in every condition, never a silent match
+- Use deny rules and grant-effect policies correctly, so a policy's yes cannot be mistaken for a grant
+- Read an explain-mode trace to answer why a request was refused, without leaking it to the client
 
 ## Who are you, and what may you do?
 
@@ -372,6 +381,18 @@ tenantIsolation
 ```
 
 Look at the last line of the hand-written version. The old task has no `teamId`, and this request carried no team either. The condition compares `undefined === undefined`, which is `true`, so a user with no team can read every task that was imported without one.
+
+REASON IT OUT
+
+### Before running the example: does undefined === undefined deserve a yes or a no here?
+
+`sameTeamByHand` is a plain equality check, and equality is symmetric: if both sides are the team's real id, it is a yes, so if both sides are absent it looks the same shape of "match". Is treating "no team recorded, no team on the request" as equal to "same team, therefore allow" actually the same kind of case, or does it only look that way in the code?
+
+**Show the reasoning**
+
+It is not the same case, because `undefined` does not mean "team: none" the way a string means a real team — it means *the condition has no evidence either way*. A permission condition is not being asked "are these two values equal?"; it is being asked "has this actor proven membership in this resource's team?", and an actor with no team on record has proven nothing, regardless of what the resource's `teamId` happens to be. Equality answers a different, narrower question than the one the rule needs answered, and it happens to give the dangerous answer exactly when data is missing on both sides — which is also the case an attacker can most easily arrange, by presenting a request or a resource that simply omits the field.
+
+That is why **missing data must mean no** is a blanket rule for every condition you write here, not a style preference: any comparison that can be satisfied by two absences instead of two confirmed facts is a hole, and it is invisible in code review because `undefined === undefined` reads as correct.
 
 The built-in `tenantIsolation(actorField, resourceField)` denies when *either* side is missing. That is the rule for every condition you write: **missing data must mean no**. Check that the values exist before you compare them.
 
@@ -917,7 +938,7 @@ grace: true
 - The actor's id and roles come from the verified token and your database, never from the request body, a header or the query string.
 - Send `publicReason` to clients; keep `reason` and `explain` steps for your logs.
 
-Permissions decide what a logged-in user may do. The next lesson protects the whole API from everyone else: floods of requests, other websites, forged requests and malicious URLs.
+Permissions decide what a logged-in user may do. [Security for every public API](https://zudojs.oyinlola.site/learn/zudo-security), next, protects the whole API from everyone else: floods of requests, other websites, forged requests and malicious URLs.
 
 ## Test yourself
 

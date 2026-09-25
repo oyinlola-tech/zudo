@@ -1,22 +1,30 @@
 ---
-title: "The application runtime and lifecycle"
-description: "Learn how the ZudoJS runtime starts the parts of your application in dependency order, rolls back when startup fails, reports readiness, and shuts everything down gracefully."
+title: "The application runtime and lifecycle — ZudoJS Academy"
+description: "See how @zudojs/runtime starts your app's modules in dependency order, rolls back a failed start, reports readiness honestly and shuts down gracefully."
 source: https://zudojs.oyinlola.site/learn/zudo-runtime
 ---
 
-LESSON 49 OF 84
+LEVEL 12 · LESSON 7 OF 19
 
-The ZudoJS core Core
+Core, runtime and lifecycle Core
 
 # The application runtime and lifecycle
 
-Learn how the ZudoJS runtime starts the parts of your application in dependency order, rolls back when startup fails, reports readiness, and shuts everything down gracefully.
+See how @zudojs/runtime starts your app's modules in dependency order, rolls back a failed start, reports readiness honestly and shuts down gracefully.
 
 - **45 min** to read and try
-- **You need:** The task-api project from the previous lesson
+- **You need:** "The core: applications, modules and context", and the task-api project from "Create the Task API project"
 - **You build:** A Task API runtime with a store module and a tasks module that start in order, roll back on failure and stop cleanly
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Predict the order in which the runtime runs each module's four hooks, on the way up and on the way down
+- Explain what the runtime refuses before any hook runs, and what a rollback undoes
+- Register readiness checks and answer a health probe that never reports a stopping app as ready
+- Explain why the generated app handles signals in server.ts instead of in the runtime
+- Replace the generated placeholder module with modules of your own that share one store
 
 ## Why an application needs a runtime
 
@@ -28,11 +36,11 @@ A real backend is not one thing. The Task API will soon have a database connecti
 
 Doing this by hand works for two parts and becomes fragile at ten. The **runtime** (`@zudojs/runtime`) does it for you. You describe each part and what it depends on, and the runtime works out the order, starts everything, notices failures and shuts down cleanly.
 
-You already have one. In [Create the Task API project](https://zudojs.oyinlola.site/learn/zudo-create-project), the CLI generated `src/app.ts`, which builds a runtime with `createRuntime`, and `src/server.ts`, which calls `runtime.start()`. This lesson explains what happens inside those two calls. Every package used here is already in the project's `package.json`, so there is nothing to install.
+You already have one. In [Anatomy of a ZudoJS project](https://zudojs.oyinlola.site/learn/zudo-project-anatomy) you saw the generated `src/app.ts` build a runtime with `createRuntime`, and `src/server.ts` call `runtime.start()`. [The core lesson](https://zudojs.oyinlola.site/learn/zudo-core) ran modules with the core's own `createApplication`; this lesson explains what `@zudojs/runtime`, the runtime your project really uses, does inside those two calls. Every package used here is already in the project's `package.json`, so there is nothing to install.
 
 ## Modules and their four hooks
 
-The runtime manages **modules**. A module is an object with an `id`, a `name`, an optional list of `dependencies` (the ids of other modules), and up to four **hooks**. A hook is a function the runtime calls at a fixed moment:
+The runtime manages **modules**, the same module contract from `@zudojs/core` that you met in the core lesson. A module is an object with an `id`, a `name`, an optional list of `dependencies` (the ids of other modules), and up to four **hooks**. A hook is a function the runtime calls at a fixed moment:
 
 | Hook | When the runtime calls it | Typical work |
 | --- | --- | --- |
@@ -344,7 +352,59 @@ shutdown   store
 destroy    store
 ```
 
-When the store lost its connection, the app kept running but reported itself **degraded**: still alive, not fully working. The generated `src/app.ts` registers one check, `modules`, and the generated `/health` route answers 503 when the runtime is not running. At the [end of this lesson](#task-api), `/health` reports every readiness check.
+When the store lost its connection, the app kept running but reported itself **degraded**: still alive, not fully working.
+
+REASON IT OUT
+
+### Is a stopping app ready?
+
+A deploy sends `SIGTERM`. The runtime starts to stop, and the store module needs a few seconds to finish its work. Meanwhile the load balancer asks `/health` again, and the store's readiness check still returns `true`. Before running the next example, decide: should the answer be "ready"? What does a wrong "ready" cost, and what does a wrong "not ready" cost? Which facts must a readiness answer combine?
+
+**Show the reasoning**
+
+- No. A stopping app is about to close its connections. Every request the load balancer sends it now may fail halfway.
+- A wrong "ready" costs failed user requests during every deploy. A wrong "not ready" for a moment costs almost nothing: the load balancer uses the other instances.
+- So readiness must combine two facts: the runtime is `running`, *and* every check passes. A check only knows about its own part; it cannot know that the whole app is shutting down.
+
+Here is a probe that arrives during `stop()`, with the check still passing:
+
+readiness-stop.tsNode.js only
+
+```ts
+import { buildRuntime, traceModule } from "./trace.js";
+
+const store = {
+  ...traceModule("store"),
+  onShutdown: async () => {
+    console.log("shutdown   store (finishing its work)");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  },
+};
+const runtime = buildRuntime([store]);
+runtime.registerReadinessCheck("store", () => true);
+
+await runtime.start();
+const stopping = runtime.stop();
+await runtime.runReadinessChecks(); // a /health probe arrives during shutdown
+console.log("state:", runtime.state, "| runtime.ready:", runtime.ready);
+console.log("safe answer:", runtime.state === "running" && runtime.ready);
+await stopping;
+console.log("state:", runtime.state, "| runtime.ready:", runtime.ready);
+```
+
+Output of `npx tsx readiness-stop.ts`
+
+```ts
+initialize store
+ready      store
+shutdown   store (finishing its work)
+state: stopping | runtime.ready: true
+safe answer: false
+destroy    store
+state: stopped | runtime.ready: true
+```
+
+Look at `runtime.ready`. In the published `@zudojs/runtime`, running the checks while the runtime stops sets `ready` back to `true`, and it stays `true` after the runtime has stopped. So never answer a probe from `runtime.ready` alone: combine it with `runtime.state === "running"`, as the "safe answer" line does. The generated project is protected twice: `src/app.ts` registers a check called `modules` that returns `runtime.state === "running"`, and the `health` function in `src/server.ts` checks `runtime.state` itself. At the [end of this lesson](#task-api), `/health` reports every readiness check and keeps that state check.
 
 ## Signals and graceful shutdown
 
@@ -420,7 +480,7 @@ The second argument of `createRuntime` describes the application. These are the 
 | `applicationVersion` | `"0.1.0"` | Your app's version. |
 | `handleSignals` | `true` | Stop gracefully on `SIGTERM` and `SIGINT`. |
 | `startupTimeout` / `shutdownTimeout` | 60000 / 30000 | Longest time, in milliseconds, that starting or stopping may take. |
-| `disposeContainerOnStop` | `false` | You created the container, so by default you own it and `stop()` leaves it alone. Set `true` to let `stop()` also clean up (dispose) the container after every module has stopped. The next lesson is about the container. |
+| `disposeContainerOnStop` | `false` | You created the container, so by default you own it and `stop()` leaves it alone. Set `true` to let `stop()` also clean up (dispose) the container after every module has stopped. [Dependency injection with @zudojs/container](https://zudojs.oyinlola.site/learn/zudo-container) covers the container. |
 
 Everything about the running application is available as `runtime.context`. And each hook receives a **module context** (`ModuleContext`) with the module's own information and the runtime's `logger`. Modules are usually classes that extend `BaseModule` from `@zudojs/core`, like the generated `AppModule`. The `options` you give `BaseModule` come back in `context.options`:
 
@@ -474,53 +534,11 @@ The `runtimeId` is new on every run. It lets you tell apart two copies of the sa
 
 > TIP
 >
-> `@zudojs/core` also has `createApplication`, which builds the container, logger and runtime for you in one call. The CLI uses `@zudojs/runtime` directly instead, so you can see and change every piece in `src/app.ts`.
+> `createApplication` from [the core lesson](https://zudojs.oyinlola.site/learn/zudo-core#application) builds the container, logger and runtime for you in one call. The CLI uses `@zudojs/runtime` directly instead, so you can see and change every piece in `src/app.ts`.
 
 ## Smaller parts: @zudojs/lifecycle
 
-The runtime manages the big pieces of your app. Sometimes one module owns several smaller parts, such as a connection pool, a cache and a mail sender. `@zudojs/lifecycle` applies the same idea one level down, to plain objects called **components**. Each component has optional `initialize`, `start`, `ready`, `stop` and `dispose` methods. You declare its dependencies with `dependsOn`, and you can mark a component that the app can live without as `critical: false`:
-
-components.tsNode.js only
-
-```ts
-import { createLifecycleManager } from "@zudojs/lifecycle";
-
-function component(name: string, failOnStart = false) {
-  return {
-    name,
-    start: async () => {
-      console.log(`start ${name}`);
-      if (failOnStart) throw new Error(`${name} is unreachable`);
-    },
-    stop: async () => console.log(`stop  ${name}`),
-  };
-}
-
-const manager = createLifecycleManager({ handleSignals: false });
-manager.register(component("pool"), { id: "pool" });
-manager.register(component("cache"), { id: "cache", dependsOn: ["pool"] });
-manager.register(component("mailer", true), { id: "mailer", critical: false });
-
-await manager.start();
-for (const [id, status] of manager.getStatus()) console.log(id, status.state);
-await manager.shutdown();
-```
-
-Output of `npx tsx components.ts`
-
-```ts
-start pool
-start mailer
-start cache
-pool ready
-cache ready
-mailer failed
-stop  cache
-stop  mailer
-stop  pool
-```
-
-The mailer failed, but because it is not critical, startup carried on and the mailer is simply marked `failed`. Had the pool failed, `start()` would have rolled back and rejected, just like the runtime. Notice that `pool` and `mailer` started together: components that do not depend on each other run in parallel.
+The runtime manages the big pieces of your app. When one module owns several smaller parts, such as a connection pool, a cache and a mail sender, `@zudojs/lifecycle` applies the same ideas one level down, to plain objects called **components**, and adds what small parts need most: retries for slow dependencies, time limits, optional parts and priorities. It is not among the generated project's dependencies. The next lesson, [Components with @zudojs/lifecycle](https://zudojs.oyinlola.site/learn/zudo-lifecycle), covers it in depth.
 
 ## Put it in the Task API
 
@@ -617,7 +635,7 @@ export class TasksModule extends BaseModule {
 }
 ```
 
-The two new modules replace the placeholder. Delete `src/modules/app.module.ts` and `src/services/app.service.ts`, empty `src/services/index.ts` (the next lesson puts the task service in that folder), and make `src/modules/index.ts` export the new modules instead:
+The two new modules replace the placeholder. Delete `src/modules/app.module.ts` and `src/services/app.service.ts`, empty `src/services/index.ts` (the container lesson puts the task service in that folder), and make `src/modules/index.ts` export the new modules instead:
 
 src/modules/index.tsNode.js only
 
@@ -714,14 +732,15 @@ registerRoutes(
       for (const [name, check] of runtime.readiness.checks) {
         checks[name] = check.ready ? "up" : "down";
       }
-      const ready = runtime.ready && Object.values(checks).every((check) => check === "up");
+      const ready =
+        runtime.state === "running" && runtime.ready && Object.values(checks).every((check) => check === "up");
       return { ready, checks };
     },
   }),
 );
 ```
 
-`runtime.ready` is `false` as soon as one check fails, and the `modules` check already covers "the runtime is running". So `/health` answers 503 while the app starts or stops, and also if the store ever loses its connection. Check the types, then start the server:
+`runtime.ready` is `false` as soon as one check fails, and the explicit `runtime.state === "running"` stays, for the reason shown in [Readiness and health](#readiness). So `/health` answers 503 while the app starts or stops, and also if the store ever loses its connection. Check the types, then start the server:
 
 Terminal on your computer
 
@@ -887,10 +906,10 @@ Exit code 1 tells Docker, systemd or your hosting platform that the app did not 
 - `runtime.state` moves from `created` to `running` to `stopped`, or to `failed`. Every change is also an event on the event bus.
 - Cycles and missing dependencies are refused before any hook runs.
 - A failed start rolls back what already ran and rejects with `RuntimeStartError`, with the original error as `cause`.
-- Readiness checks decide `runtime.ready` and `runtime.health`.
+- Readiness checks decide `runtime.ready` and `runtime.health`. A probe must also require `runtime.state === "running"`: running the checks during `stop()` sets `ready` back to `true`.
 - Graceful shutdown turns `SIGTERM` into an orderly stop. In the Task API, `server.ts` stops the HTTP server first, then the runtime.
 
-The modules in this lesson passed the `TaskStore` to each other through their constructors. With two modules that is fine. The next lesson introduces the **dependency container**, which builds and shares objects like it for you.
+The modules in this lesson passed the `TaskStore` to each other through their constructors. With two modules that is fine; [Dependency injection with @zudojs/container](https://zudojs.oyinlola.site/learn/zudo-container) lets a container build and share objects like it. First, the smaller parts inside a module: next, [Components with @zudojs/lifecycle](https://zudojs.oyinlola.site/learn/zudo-lifecycle).
 
 ## Test yourself
 

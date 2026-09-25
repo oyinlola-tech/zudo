@@ -1,22 +1,30 @@
 ---
-title: "Routes, requests and responses"
-description: "Serve the Task API over HTTP with @zudojs/http. Start a server, add routes with parameters, read query strings, headers, cookies and JSON bodies safely, and answer with the right status codes."
+title: "Routes, requests and responses — ZudoJS Academy"
+description: "Serve the Task API with @zudojs/http: a server, routes with parameters, query strings, headers, cookies and JSON bodies read safely, and the right status codes."
 source: https://zudojs.oyinlola.site/learn/zudo-http
 ---
 
-LESSON 51 OF 84
+LEVEL 12 · LESSON 12 OF 19
 
-The ZudoJS core Core
+HTTP Core
 
 # Routes, requests and responses
 
-Serve the Task API over HTTP with @zudojs/http. Start a server, add routes with parameters, read query strings, headers, cookies and JSON bodies safely, and answer with the right status codes.
+Serve the Task API with @zudojs/http: a server, routes with parameters, query strings, headers, cookies and JSON bodies read safely, and the right status codes.
 
 - **50 min** to read and try
-- **You need:** Dependency injection with @zudojs/container, and HTTP in depth
+- **You need:** "DI architecture with ZudoJS", and "HTTP in depth" from the Backend course
 - **You build:** GET, POST and DELETE routes for /tasks, served by the Task API and tested with fetch and curl
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Start an HTTP server with @zudojs/http and send it requests from a script
+- Register routes with parameters and read query strings, which are always strings or arrays of strings
+- Read a JSON body safely, answering 415 and 400 for the client's mistakes instead of 500
+- Answer with the right status code, headers and cookies for each outcome
+- Connect the Task API's service to real routes through the composition root
 
 ## A server in a few lines
 
@@ -247,7 +255,23 @@ body is a Uint8Array: true
 POST /echo -> 200 {"bytes":20,"text":"{\"title\":\"Buy milk\"}"}
 ```
 
-`TextDecoder` turns bytes into text, assuming UTF-8. The next step, `JSON.parse`, throws on bad input. An uncaught error is a bug, so the server would answer 500. But broken JSON is the *client's* mistake and deserves a 400. A small helper handles every case once:
+`TextDecoder` turns bytes into text, assuming UTF-8. The next step is `JSON.parse`.
+
+REASON IT OUT
+
+### What can go wrong with a body?
+
+Before reading the helper below, list what a client can send to `POST /tasks` instead of a good JSON body, and which status each deserves. Think about the `Content-Type` header, the bytes themselves, and what `JSON.parse` does with them. Which of these are the client's mistake, and which would be yours?
+
+**Show the reasoning**
+
+- **Not JSON at all**: a form (`title=Buy+milk`) or plain text, announced by its `Content-Type`. The server cannot use it: **415 Unsupported Media Type**, before any parsing.
+- **Broken JSON**: `{"title": `. `JSON.parse` throws a `SyntaxError`. Uncaught, it would reach the server as an unknown error and become a 500, blaming your code for the client's mistake. Catch it and answer **400**.
+- **Valid JSON of the wrong shape**: `{"title": 42}` or `[]`. Parsing succeeds; the schema must refuse it, with a 400.
+- **A huge body**: the server itself refuses bodies over its limit with 413 before your route runs.
+- Every one of these is the client's mistake, so every one gets a 4xx. A 500 should only ever mean a bug on your side.
+
+An uncaught error is a bug, so the server would answer 500 for broken JSON. But broken JSON is the *client's* mistake and deserves a 400. A small helper handles every case once:
 
 read-json.tsNode.js only
 
@@ -273,7 +297,7 @@ export function readJson(request: HttpRequestContext): unknown {
 - `badRequest(...)` and `new HttpError(status, message)` come from `@zudojs/http`. Thrown from a route, they become a response with that status. `HttpError` picks its `code` from the status: 415 becomes `UNSUPPORTED_MEDIA_TYPE`. You can pass your own as a third argument, `{ code: "..." }`.
 - It returns `unknown`, not `any`: the data is not trusted until a schema has checked it.
 
-Now a `POST /tasks` route that reads, validates and creates. The schema is the `NewTaskSchema` from the [previous lesson](https://zudojs.oyinlola.site/learn/zudo-container#task-api). A successful create answers **201 Created** with a `Location` header that says where the new task lives:
+Now a `POST /tasks` route that reads, validates and creates. The schema is the `NewTaskSchema` from [the container lesson](https://zudojs.oyinlola.site/learn/zudo-container#task-api). A successful create answers **201 Created** with a `Location` header that says where the new task lives:
 
 create.tsNode.js only
 
@@ -430,7 +454,7 @@ The last request hit a bug. The error message contained a file path, which would
 
 ## Put it in the Task API
 
-Now connect the `TaskService` from the previous lesson to real routes. These files from that lesson do not change:
+Now connect the `TaskService` that [the container lesson](https://zudojs.oyinlola.site/learn/zudo-container#task-api) built, and [DI architecture](https://zudojs.oyinlola.site/learn/zudo-di-architecture#task-api) registered and checked, to real routes. These files do not change:
 
 **Show the unchanged files**
 
@@ -478,12 +502,9 @@ src/services/tasks.service.ts
 
 ```ts
 import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { Clock } from "@zudojs/types";
 import { NewTaskSchema } from "../dtos/tasks.dto.js";
 import type { StoredTask, TaskStore } from "../repositories/tasks.store.js";
-
-export interface Clock {
-  now(): Date;
-}
 
 export class TaskService {
   public constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
@@ -494,7 +515,7 @@ export class TaskService {
     if (clash) {
       throw new ConflictError(`A task called "${data.title}" already exists`);
     }
-    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: this.clock.now().toISOString() };
+    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: new Date(this.clock.now()).toISOString() };
     this.store.tasks.set(task.id, task);
     return task;
   }
@@ -695,11 +716,12 @@ src/check-http.tsNode.js only
 
 ```ts
 import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+import { FixedClock } from "@zudojs/types";
 import { TaskStore } from "./repositories/tasks.store.js";
 import { registerTaskRoutes } from "./routes/tasks.routes.js";
 import { TaskService } from "./services/tasks.service.js";
 
-const service = new TaskService(new TaskStore(), { now: () => new Date("2026-09-23T09:00:00Z") });
+const service = new TaskService(new TaskStore(), new FixedClock(Date.parse("2026-09-23T09:00:00Z")));
 const router = createRouter();
 registerTaskRoutes(router, service);
 
@@ -793,6 +815,21 @@ registerRoutes(
 );
 ```
 
+If you added the smoke test from [Anatomy of a ZudoJS project](https://zudojs.oyinlola.site/learn/zudo-project-anatomy#tests), it now needs a container too, and it can check the new route. Build one with the same `registerServices` the app uses:
+
+tests/smoke.test.ts (part)Node.js only
+
+```ts
+import { createContainer } from "@zudojs/container";
+import { createDependencies, registerServices } from "../src/container.js";
+
+const expected = ["/health", "/tasks", "/api/v1/examples"];
+
+const container = createContainer();
+registerServices(container);
+register(router, createDependencies({ container }));
+```
+
 Errors need no wiring. A thrown `NotFoundError` or `badRequest` reaches the `dispatch` step further down in `src/server.ts`, which answers with the generated `errorResponse` helper: `{"error": message, "code": code}` and the error's status. Any other error becomes a plain 500. Start the server with `npm run dev`, and try the API from a second terminal:
 
 Second terminal
@@ -823,7 +860,7 @@ $ curl -X POST http://localhost:3000/tasks -d 'title=Buy milk'
 >
 > On Windows PowerShell, type `curl.exe`, and put the JSON in double quotes with the inner quotes escaped: `-d "{\"title\":\"Buy milk\"}"`.
 
-The new task got id 2, and the list shows it next to the one the `tasks` module added at startup. Both live in the one `TaskStore` singleton, shared by the modules and the service through the container. The `…` stands for the other security headers, which the next lesson explains. The last request sent a form instead of JSON (`-d` without a `content-type` header does that), and got the 415 from your new check.
+The new task got id 2, and the list shows it next to the one the `tasks` module added at startup. Both live in the one `TaskStore` singleton, shared by the modules and the service through the container. The `…` stands for the other security headers, which [the middleware lesson](https://zudojs.oyinlola.site/learn/zudo-middleware#headers) explains. The last request sent a form instead of JSON (`-d` without a `content-type` header does that), and got the 415 from your new check.
 
 > TIP
 >
@@ -912,7 +949,7 @@ limit=0 -> 400 {"error":"limit must be a whole number from 1 to 50","code":"BAD_
 limit=1&limit=2 -> 400 {"error":"limit must be a whole number from 1 to 50","code":"BAD_REQUEST"}
 ```
 
-The regular expression `^\d+$` accepts digits only, so `"1.5"`, `"-1"` and `" 2"` are refused. A repeated key is an array, not a string, so it is refused too. The next lessons replace this hand-written code with a schema.
+The regular expression `^\d+$` accepts digits only, so `"1.5"`, `"-1"` and `" 2"` are refused. A repeated key is an array, not a string, so it is refused too. [Schemas and validation in depth](https://zudojs.oyinlola.site/learn/zudo-validation#coercion) replaces this hand-written code with a schema.
 
 ## Recap
 
@@ -923,7 +960,7 @@ The regular expression `^\d+$` accepts digits only, so `"1.5"`, `"-1"` and `" 2"
 - Throwing `NotFoundError`, `ConflictError`, `badRequest()` or a `SchemaError` becomes the matching 4xx. Any other error becomes a generic 500.
 - Cookies set with `response.cookie()` are `HttpOnly`, `Secure` and `SameSite=Lax` by default.
 
-Next, the **middleware** around every route: security headers, CORS, rate limits and a graceful shutdown. The CLI wrote most of it for you; the next lesson shows how it works and what to add.
+The Task API has three routes. Before it gets more, learn exactly how the router picks one: next, [Routing in depth](https://zudojs.oyinlola.site/learn/zudo-routing).
 
 ## Test yourself
 

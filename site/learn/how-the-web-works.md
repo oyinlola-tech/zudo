@@ -1,10 +1,10 @@
 ---
-title: "How the web works"
+title: "How the web works — ZudoJS Academy"
 description: "Follow a request from your browser to a server and back, and learn what clients, servers, IP addresses, DNS, ports, HTTP, HTTPS, APIs and databases are."
 source: https://zudojs.oyinlola.site/learn/how-the-web-works
 ---
 
-LESSON 4 OF 84
+LEVEL 1 · LESSON 4 OF 18
 
 Start here Foundation
 
@@ -13,10 +13,18 @@ Start here Foundation
 Follow a request from your browser to a server and back, and learn what clients, servers, IP addresses, DNS, ports, HTTP, HTTPS, APIs and databases are.
 
 - **30 min** to read and try
-- **You need:** Lessons 1 to 3
-- **You build:** A tiny task API that runs on your computer and answers its own requests
+- **You need:** How programs run and Your developer environment
+- **You build:** A URL taken apart in code, and a request followed from DNS to the database and back, with the status code each step gives
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain what a client and a server are, and follow one request and its response
+- Explain what IP addresses, DNS and ports do, and pick the port a URL connects to
+- Take a URL apart into protocol, hostname, port, path and query, by hand and with new URL
+- Read an HTTP response's status code and headers, and explain what HTTPS adds
+- Explain what a web API is and why the backend, not the browser, talks to the database
 
 ## Clients and servers
 
@@ -25,7 +33,7 @@ Every conversation on the web has two sides:
 - The **client** asks. Your browser is a client. So is a phone app, the `curl` command, and any program that sends a question to another computer.
 - The **server** answers. It is a program that waits for questions, usually on a computer in a data centre. The backend you will build is a server.
 
-The question is a **request** and the answer is a **response**. One request always gets one response. A web page with ten images makes at least eleven requests: one for the page, then one per image.
+The question is a **request** and the answer is a **response**. One request always gets one response. A web page with ten images makes eleven requests the first time you open it: one for the page, then one per image. (On a later visit the browser may reuse images it saved, and send fewer.)
 
 Clients and servers find each other over the **internet**: millions of networks joined together, passing small pieces of data from computer to computer until they reach the right one.
 
@@ -113,7 +121,7 @@ default port: ""
 
 - The **protocol** says which language the client and server speak: `https`.
 - The **hostname** is the name DNS turns into an IP address.
-- The **port** picks the program. When a URL has no port, the protocol's default is used: 443 for `https`, 80 for `http`. That is why the port of `https://example.com/` is empty (`""`).
+- The **port** picks the program. When a URL has no port, the protocol's default is used: 443 for `https`, 80 for `http`. That is why the port of `https://example.com/` is empty. `JSON.stringify(…)` prints it with its quotes, `""`, so you can see the empty text instead of a blank.
 - The **path** says what you want from the server, like `/tasks`.
 - The **query**, after `?`, adds options as `name=value` pairs joined by `&`.
 
@@ -185,7 +193,7 @@ const todo = await response.json();
 console.log(todo);
 ```
 
-Run it on your computer. It needs the internet:
+Once Node.js is installed (in [Set up your computer](https://zudojs.oyinlola.site/learn/setup)), you can run it on your computer. It needs the internet:
 
 Terminal on your computer
 
@@ -200,7 +208,7 @@ The status is `200` and the content type is `application/json`: data, not a page
 
 ### Your own API, on your computer
 
-Now play both sides. This script starts a tiny task API with Node.js's built-in `node:http` module, sends two requests to itself with `fetch`, prints the answers, and shuts down:
+Now play both sides. This script starts a tiny task API with Node.js's built-in `node:http` module, sends two requests to itself with `fetch`, prints the answers, and shuts down. You do not need to understand every line yet, and you cannot run it until you install Node.js in [Set up your computer](https://zudojs.oyinlola.site/learn/setup), at the start of the next course. For now, the output is shown under it.
 
 tiny-api.jsNode.js only
 
@@ -254,7 +262,7 @@ Read it as a conversation:
 - The client asked for `/tasks`. The server's function checked the method and the path, and answered `200` with the list as JSON.
 - The client asked for a path the server does not know. It answered `404` with an error message, also as JSON.
 
-That is a whole backend in miniature: receive a request, decide what it means, answer with a status code and data. You will build it properly, step by step, in the [Node.js HTTP lesson](https://zudojs.oyinlola.site/learn/node-http).
+That is a whole backend in miniature: receive a request, decide what it means, answer with a status code and data. You will build it properly, step by step, in [An HTTP server with no framework](https://zudojs.oyinlola.site/learn/node-http).
 
 ## Where databases fit
 
@@ -271,6 +279,29 @@ Here is the whole journey when someone opens a task app, from start to end:
 7. The browser shows them on the page.
 
 Notice who talks to whom. The browser only talks to your backend. It never talks to the database directly: the backend stands between them and decides what each person may read or change. That is the job this course teaches you to do well.
+
+REASON IT OUT
+
+### What does the user see when a step fails?
+
+Take the seven steps of the journey above. Before reading on, pick three of them and ask, for each: what could go wrong at this step, and what would the person using the app see?
+
+- What if DNS has no address for the name, for example because of a typing mistake in the domain?
+- What if the server is switched off, so nothing listens on port 443?
+- What if the request arrives, but the backend decides the person is not allowed to see these tasks?
+- What if the backend is fine but the database does not answer?
+
+**Show the reasoning**
+
+**No DNS answer:** the browser never finds an address, so no request is sent at all. The browser shows its own error page ("this site can't be reached"); your backend never hears about it.
+
+**Nothing on the port:** the address is found, but the connection is refused or times out. Again there is no HTTP response, because there was no program to answer, and the browser shows its own error.
+
+**Not allowed:** this time the backend *did* receive the request, so it answers properly, with a status code that says so (such as `403`, "forbidden") instead of `200`. Deciding that answer is your job as a backend developer.
+
+**Database silent:** the backend is running but cannot do its work. It should still answer, with a status code that says the problem is on the server's side (`500` or `503`), rather than leaving the browser waiting forever.
+
+The pattern: before the request reaches your server, failures are the browser's to report; once it reaches your server, every failure must become a clear response. Later courses teach you to choose those status codes and messages.
 
 ## Practice
 
@@ -316,21 +347,25 @@ Which port does the client connect to for each URL? `https://shop.example.com/ca
 
 TRY IT YOURSELF
 
-### Add a health check
+### Predict the tiny API's answers
 
-Many APIs have a `/health` path that monitoring tools call to see if the server is alive. Add one to the tiny API: `GET /health` answers `200` with `{ "status": "ok" }`. Request it with `fetch`.
+The tiny API answers `200` only when the method is exactly `GET` and the path is exactly `/tasks`. Everything else gets `404`. Without running anything, predict the status code for each request: `GET /tasks`, `POST /tasks`, `GET /Tasks`, `GET /tasks?done=false` and `GET /tasks/`.
 
 **Show a solution**
 
-health.jsNode.js only
+Only the first gets `200`. `POST` is a different method. `/Tasks` has a capital T, and the check compares the text exactly, so it is a different path. The last two surprise most people: the server compares `request.url`, which is the path *and* the query, so `/tasks?done=false` is not the text `/tasks`, and neither is `/tasks/` with its extra slash. All four answer `404`.
+
+After [Set up your computer](https://zudojs.oyinlola.site/learn/setup), you can check the prediction on your computer. The only change from the tiny API is the list of requests, now pairs of a method and a path:
+
+predict.jsNode.js only
 
 ```ts
 import { createServer } from "node:http";
 
 const server = createServer((request, response) => {
-  if (request.method === "GET" && request.url === "/health") {
+  if (request.method === "GET" && request.url === "/tasks") {
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ status: "ok" }));
+    response.end(JSON.stringify([{ id: 1, title: "Buy milk", done: false }]));
     return;
   }
   response.writeHead(404, { "content-type": "application/json" });
@@ -338,16 +373,27 @@ const server = createServer((request, response) => {
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
-console.log(response.status, await response.json());
+const base = `http://127.0.0.1:${server.address().port}`;
+
+for (const [method, path] of [["GET", "/tasks"], ["POST", "/tasks"], ["GET", "/Tasks"], ["GET", "/tasks?done=false"], ["GET", "/tasks/"]]) {
+  const response = await fetch(base + path, { method });
+  console.log(method, path, "->", response.status);
+}
+
 server.close();
 ```
 
-Output of `node health.js`
+Output of `node predict.js`
 
 ```ts
-200 { status: 'ok' }
+GET /tasks -> 200
+POST /tasks -> 404
+GET /Tasks -> 404
+GET /tasks?done=false -> 404
+GET /tasks/ -> 404
 ```
+
+A real API would want `GET /tasks?done=false` to work, so it would look at the path and the query separately, exactly as `new URL` does. Predicting before running is what found that gap.
 
 ## Recap
 
@@ -356,7 +402,7 @@ Output of `node health.js`
 - HTTP requests have a method, a path and headers; responses have a status code, headers and a body. HTTPS encrypts all of it: use it for everything real.
 - An API is a set of URLs for programs, usually answering in JSON. The backend sits between the client and the database.
 
-Next: install Node.js on your computer and write your first program.
+Next: [What programming is](https://zudojs.oyinlola.site/learn/think-programming), where you start thinking like a programmer: every program as input, processing and output, and a method for solving problems before you write the code.
 
 ## Test yourself
 

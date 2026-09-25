@@ -1,22 +1,30 @@
 ---
-title: "Arrays"
-description: "Keep ordered lists in arrays, add and remove items, search them, and transform them with map, filter, reduce and sort, then build a small student management system."
+title: "Arrays — ZudoJS Academy"
+description: "Keep ordered lists in arrays, add, remove and search items, transform them with map, filter, reduce and sort, and build a small student management system."
 source: https://zudojs.oyinlola.site/learn/js-arrays
 ---
 
-LESSON 11 OF 84
+LEVEL 2 · LESSON 9 OF 19
 
-JavaScript fundamentals Foundation
+Arrays and objects Foundation
 
 # Arrays
 
-Keep ordered lists in arrays, add and remove items, search them, and transform them with map, filter, reduce and sort, then build a small student management system.
+Keep ordered lists in arrays, add, remove and search items, transform them with map, filter, reduce and sort, and build a small student management system.
 
 - **40 min** to read and try
 - **You need:** The lessons up to Functions
 - **You build:** A student management system that lists, adds, finds and ranks students
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Create arrays, read items by index and change them in place
+- Add and remove items, and tell the copying slice from the mutating splice
+- Search arrays by value and with callbacks
+- Transform arrays with map, filter and reduce, and chain the steps
+- Sort numbers and text correctly with a comparator and toSorted
 
 ## Creating and reading arrays
 
@@ -73,7 +81,7 @@ Output of `node update.js` and of the browser terminal
 true object
 ```
 
-Notice that `titles` is a `const`, and yet it changed. `const` only stops you from pointing the name at a *different* array; the array itself can still change. Changing a value in place is called **mutating** it. Arrays are objects, so `typeof` says `"object"`; use `Array.isArray` to check for an array.
+Notice that `titles` is a `const`, and yet it changed. `const` only stops you from pointing the name at a *different* array; the array itself can still change. Changing a value in place is called **mutating** it ([Types in depth](https://zudojs.oyinlola.site/learn/js-types-deep#mutability) explains the difference between a `const` name and an unchangeable value). Arrays are objects, so `typeof` says `"object"`; use `Array.isArray` to check for an array.
 
 ## Adding and removing items
 
@@ -140,7 +148,7 @@ Output of `node slice-splice.js` and of the browser terminal
 
 ## Searching
 
-`includes` tells you whether a value is in the array. `indexOf` tells you where, or `-1` if it is not there. Both compare with `===`:
+`includes` tells you whether a value is in the array. `indexOf` tells you where, or `-1` if it is not there. Neither converts types: the string `"2"` is never found in `[1, 2, 3]`. `indexOf` compares with `===`; `includes` uses the same rule except that it can also find `NaN` (the SameValueZero rule from [Types in depth](https://zudojs.oyinlola.site/learn/js-types-deep#equality)):
 
 includes.js
 
@@ -149,6 +157,7 @@ const tags = ["home", "urgent", "shopping"];
 
 console.log(tags.includes("urgent"), tags.includes("work"));
 console.log(tags.indexOf("shopping"), tags.indexOf("work"));
+console.log([1, 2, 3].includes("2"), [NaN].includes(NaN), [NaN].indexOf(NaN));
 ```
 
 Output of `node includes.js` and of the browser terminal
@@ -156,6 +165,7 @@ Output of `node includes.js` and of the browser terminal
 ```ts
 true false
 2 -1
+false true -1
 ```
 
 For anything more than an exact value, pass a callback. `find` gives the first item for which the callback returns something truthy, and `findIndex` gives its position. `some` asks "does at least one item match?" and `every` asks "do all items match?":
@@ -292,7 +302,7 @@ Output of `node sort.js` and of the browser terminal
 ```
 
 - `sort` mutates the array. `toSorted` does the same job but gives back a sorted *copy*. Prefer `toSorted` unless you really want to change the original.
-- The default string order puts all capital letters before all small letters, and accented letters after both. `a.localeCompare(b)` sorts text the way a person expects.
+- The default order compares the text character codes, so every capital A–Z comes before every small a–z, and accented letters come after both. `a.localeCompare(b)` sorts text the way a person expects; [Strings in depth](https://zudojs.oyinlola.site/learn/js-strings#sorting) covers sorting text in other languages.
 
 ## Chaining methods
 
@@ -327,6 +337,27 @@ The third `filter` uses all three callback arguments: the item, its index, and t
 A school needs a small program to keep track of students and their grades. Each student is an **object** with a name and a grade: `{ name: "Ada", grade: 91 }`. Objects get [the next lesson](https://zudojs.oyinlola.site/learn/js-data); here you only need `student.name` and `student.grade` to read the two values.
 
 The system is a set of small functions over one array: list, add (with validation), find, average and top students.
+
+REASON IT OUT
+
+### Before you code: what can go wrong when adding a student?
+
+`addStudent(name, grade)` will receive whatever a form sends. Think it through first:
+
+- Which names should be refused? Think about empty text, spaces and names that already exist in another capitalisation.
+- Which grades should be refused? Think about 101, -5, 88.5 and the string `"88"`.
+- What should `averageGrade()` return for an empty class, and what would the plain formula give?
+- Printing the top students needs sorting. What happens to the order of the class list if you use `sort`?
+
+**Show the reasoning**
+
+**Names:** trim spaces first, then refuse empty text. Compare names ignoring case, or "Ada" and "ada" become two students.
+
+**Grades:** only whole numbers from 0 to 100. The string `"88"` should be refused too: converting it is the caller's job, and a library that silently converts will one day convert something it should not.
+
+**Empty class:** the formula divides by `students.length`, which is 0, and `0 / 0` is `NaN`. Decide on an answer (here 0) and check for the empty list first.
+
+**Sorting:** `sort` mutates the array, so after printing the top students the whole class list would be in grade order. `toSorted` sorts a copy and leaves the list alone.
 
 students.js
 
@@ -506,6 +537,8 @@ Output of `node bands.js` and of the browser terminal
 - `includes` and `indexOf` look for a value; `find`, `findIndex`, `some` and `every` take a callback.
 - `map` transforms, `filter` keeps some items, `reduce` combines them into one value. Give `reduce` a starting value.
 - Default `sort` compares as text. Pass `(a, b) => a - b` for numbers, and prefer `toSorted`, which does not mutate.
+
+Next, [Objects and JSON](https://zudojs.oyinlola.site/learn/js-data): group named values into objects and send them over the network as JSON.
 
 ## Test yourself
 

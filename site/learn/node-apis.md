@@ -1,22 +1,30 @@
 ---
-title: "Files, paths and your computer"
-description: "Use Node.js's built-in modules to build safe file paths, read and write files and folders, learn about the computer, make random ids and hashes, and announce events. Then save tasks to a JSON file."
+title: "Files, paths and your computer — ZudoJS Academy"
+description: "Build safe file paths, read and write files, handle missing files, make random ids and hashes, and announce events, then save a task list to a JSON file."
 source: https://zudojs.oyinlola.site/learn/node-apis
 ---
 
-LESSON 20 OF 84
+LEVEL 4 · LESSON 2 OF 20
 
-Node.js and npm Foundation
+Node.js Core
 
 # Files, paths and your computer
 
-Use Node.js's built-in modules to build safe file paths, read and write files and folders, learn about the computer, make random ids and hashes, and announce events. Then save tasks to a JSON file.
+Build safe file paths, read and write files, handle missing files, make random ids and hashes, and announce events, then save a task list to a JSON file.
 
 - **40 min** to read and try
 - **You need:** What Node.js is
 - **You build:** A command-line task list that saves its tasks in a JSON file
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Build file paths with node:path and keep a path from user input inside an allowed folder
+- Read, write, append, list and describe files with node:fs/promises, and handle ENOENT without hiding other errors
+- Make unguessable ids and tokens with node:crypto, and fingerprint data with SHA-256
+- Announce and listen for events with EventEmitter, including the special error event
+- Save data to a JSON file safely with a temporary file and a rename, and explain the race condition a file cannot prevent
 
 ## Paths: never glue them by hand
 
@@ -55,7 +63,7 @@ Line by line:
 
 - `path.join` puts parts together with exactly one separator, and understands `..` ("the folder above"). String concatenation produced `data//tasks.json`.
 - `path.extname` gives the extension (only the last one), `path.basename` the file name, and `path.dirname` the folder it is in.
-- `path.resolve` turns a path into an **absolute** path, one that starts at the root of the disk, using the current working directory from [the previous lesson](https://zudojs.oyinlola.site/learn/node-runtime#process).
+- `path.resolve` turns a path into an **absolute** path, one that starts at the root of the disk, using the current working directory from [What Node.js is](https://zudojs.oyinlola.site/learn/node-runtime#process).
 
 On Windows, the same program prints `data\tasks.json`. Your code does not change; that is the point.
 
@@ -189,7 +197,7 @@ ENOENT
 ENOENT: no such file or directory, open 'missing.txt'
 ```
 
-Only the error you expect is handled. Anything else, such as `EACCES` (no permission) or broken JSON in the file, is thrown again, as you learned in [Errors](https://zudojs.oyinlola.site/learn/js-errors). Other codes you will meet: `EEXIST` (already exists) and `EISDIR` (that is a folder, not a file).
+Only the error you expect is handled. Anything else, such as `EACCES` (no permission) or broken JSON in the file, is thrown again, as you learned in [Handling errors](https://zudojs.oyinlola.site/learn/js-errors). Other codes you will meet: `EEXIST` (already exists) and `EISDIR` (that is a folder, not a file).
 
 ## The computer: node:os
 
@@ -268,7 +276,7 @@ SHA-256 is a standard hash, so you get exactly these values on your computer too
 
 > NOT FOR PASSWORDS
 >
-> Do not store passwords as `sha256` hashes. SHA-256 is designed to be fast, so an attacker who steals your database can try billions of guesses per second. Passwords need a slow, salted hash made for the job. You will use one in [the ZudoJS authentication lesson](https://zudojs.oyinlola.site/learn/zudo-auth).
+> Do not store passwords as `sha256` hashes. SHA-256 is designed to be fast, so an attacker who steals your database can try billions of guesses per second. Passwords need a slow, salted hash made for the job. You will use one, `scrypt`, in [Cryptography with node:crypto](https://zudojs.oyinlola.site/learn/node-crypto#passwords), which also covers tokens, HMAC signatures and encryption in depth.
 
 ## Announcing events: EventEmitter
 
@@ -309,11 +317,32 @@ nobody listened for error, so emit threw: disk full
 - `once` listens for the first time only, which is why task 2 printed nothing.
 - The `"error"` event is special. If nobody listens for it, `emit` throws, and an uncaught error ends the program. Always listen for `"error"` on emitters that can fail, such as servers and streams.
 
-Events keep code apart: the code that adds a task does not need to know about logging or e-mail. Later in the course, [ZudoJS events](https://zudojs.oyinlola.site/learn/zudo-events) take this idea across a whole application.
+Events keep code apart: the code that adds a task does not need to know about logging or e-mail. [Events, processes and workers](https://zudojs.oyinlola.site/learn/node-events-processes#emitter) goes deeper (async listeners, leaks, errors), and much later the ZudoJS lesson [Events](https://zudojs.oyinlola.site/learn/zudo-events) takes this idea across a whole application.
 
 ## Build: a task list saved to a JSON file
 
 Now put the pieces together. The task list keeps its tasks in `data/tasks.json`, so they survive when the program ends. The store is an `EventEmitter`, so the program can react when something changes.
+
+REASON IT OUT
+
+### Before you build: what can go wrong with a file as storage?
+
+The store reads the whole file, changes the list and writes it back. Before reading the code, list what can go wrong:
+
+- What is in the file the very first time the program runs?
+- The computer loses power halfway through `writeFile`. What is left on disk?
+- Someone runs `add` with an empty title, or `done` with an id that does not exist.
+- Two `add` calls run at the same moment. Which ids do they get?
+
+**Show the reasoning**
+
+The first time, there is no file at all, so `readFile` throws `ENOENT`. That case means "no tasks yet" and should return an empty list; any other error (no permission, broken JSON) must still be thrown.
+
+`writeFile` is not atomic: a crash can leave a half-written file that is no longer valid JSON, and every task is lost. Writing to a temporary file and then renaming it avoids that, because a rename replaces the file in one step.
+
+Bad input should fail with a clear message before anything is written, so both cases throw an `Error` the command-line program can print.
+
+The last question has no good answer with a plain file: both calls read the same list and pick the same next id. The end of this section shows the damage, and it is the reason databases exist.
 
 store.jsNode.js only
 
@@ -475,7 +504,7 @@ ids given out: 1 1
 tasks in the file: 1
 ```
 
-Both calls read the file while it was still empty, both picked id 1, and whichever write finished last replaced the other. One task is lost (which one changes from run to run), and nothing reported an error. This is called a **race condition**. Databases exist to solve exactly this, and you will switch to one in [Databases](https://zudojs.oyinlola.site/learn/databases).
+Both calls read the file while it was still empty, both picked id 1, and whichever write finished last replaced the other. One task is lost (which one changes from run to run), and nothing reported an error. This is a **race condition**, the same kind you met in [Concurrency and cancellation](https://zudojs.oyinlola.site/learn/js-concurrency#races). Databases exist to solve exactly this, and you will switch to one in [How databases work](https://zudojs.oyinlola.site/learn/databases).
 
 ## Practice
 
@@ -605,7 +634,7 @@ same after a change: false
 - An `EventEmitter` calls every listener when you `emit`. Always listen for `"error"`.
 - A JSON file keeps data between runs, but loses writes when two happen at once. That is a job for a database.
 
-Next, you will learn what the bytes in a file really are, and how to handle files far too big to read in one go.
+Next: [Streams and buffers](https://zudojs.oyinlola.site/learn/node-streams), where you learn what the bytes in a file really are, and how to handle files far too big to read in one go.
 
 ## Test yourself
 

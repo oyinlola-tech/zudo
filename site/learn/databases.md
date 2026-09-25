@@ -1,22 +1,31 @@
 ---
-title: "How databases work"
-description: "Why a backend keeps its data in a database, how relational databases organise it into tables and relationships, and what keys, constraints, indexes, transactions and migrations do, with real PostgreSQL running inside Node.js."
+title: "How databases work — ZudoJS Academy"
+description: "Why a backend needs a database, and how tables, keys, relationships, constraints, indexes, transactions and migrations work, on real PostgreSQL in Node.js."
 source: https://zudojs.oyinlola.site/learn/databases
 ---
 
-LESSON 27 OF 84
+LEVEL 7 · LESSON 3 OF 15
 
-Backend fundamentals Foundation
+Databases and SQL Core
 
 # How databases work
 
-Why a backend keeps its data in a database, how relational databases organise it into tables and relationships, and what keys, constraints, indexes, transactions and migrations do, with real PostgreSQL running inside Node.js.
+Why a backend needs a database, and how tables, keys, relationships, constraints, indexes, transactions and migrations work, on real PostgreSQL in Node.js.
 
 - **45 min** to read and try
 - **You need:** The Designing a REST API lesson
 - **You build:** A PostgreSQL schema for users, tasks and tags, with a tiny migration runner
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain what a database gives a backend that a JSON file cannot
+- Create tables with typed columns, primary keys and foreign keys in PostgreSQL
+- Model one-to-one, one-to-many and many-to-many relationships
+- Let constraints and indexes protect and speed up your data
+- Group statements into an all-or-nothing transaction
+- Change a schema safely with numbered migrations
 
 ## Why a database?
 
@@ -101,7 +110,7 @@ SQL keywords are not case sensitive. Many people write them in capitals (`CREATE
 
 ## Tables, rows, columns and keys
 
-A **table** holds one kind of thing, like tasks. Each **column** is one property with a fixed **type**: `integer`, `text`, `boolean`, `timestamptz` (a date and time with time zone), `numeric` (exact decimals, for money), and more. Each **row** is one task. It is like an array of objects where every object is forced to have the same shape.
+A **table** holds one kind of thing, like tasks. Each **column** is one property with a fixed **type**: `integer`, `text`, `boolean`, `timestamptz` (a date and time with time zone), `numeric` (exact decimals, for money; many apps instead store whole kobo or cents in an `integer`), and more. Each **row** is one task. It is like an array of objects where every object is forced to have the same shape.
 
 A **primary key** is the column that identifies each row. No two rows may share it, and it can never be empty. `generated always as identity` lets the database pick the next number, so two requests at the same moment can never get the same id. The database enforces this, even if your code has a bug:
 
@@ -177,7 +186,7 @@ export const schema = `
 - In `profiles`, `user_id` is both the primary key and the foreign key, so each user has at most one profile: one-to-one.
 - `task_tags` is the join table. Its primary key is the *pair* `(task_id, tag_id)`, so the same tag cannot be added to the same task twice.
 
-Fill it with data and ask for Ada's tasks with their tags. The query uses a **join**, which combines rows from several tables. [The joins lesson](https://zudojs.oyinlola.site/learn/sql-advanced) explains it properly; for now, read `join ... on` as "match rows where these columns are equal":
+Fill it with data and ask for Ada's tasks with their tags. The query uses a **join**, which combines rows from several tables. [Joins, grouping and transactions](https://zudojs.oyinlola.site/learn/sql-advanced) explains it properly; for now, read `join ... on` as "match rows where these columns are equal":
 
 relations.jsNode.js only
 
@@ -234,7 +243,24 @@ Three things happened:
 
 1. The join followed the links from tasks through `task_tags` to `tags`. "Write report" appears twice because it has two tags.
 2. A task for user 99, who does not exist, was refused. Without the foreign key, that orphan row would sit in your data forever.
-3. Deleting Ada deleted her profile, her two tasks and their tag links, thanks to `on delete cascade`. Only Alan's task is left. (`count(*)::int` converts the count to a normal number; `::` is how PostgreSQL changes a value's type.)
+3. Deleting Ada deleted her profile, her two tasks and their tag links, thanks to `on delete cascade`. Only Alan's task is left. (`count(*)::int` converts the count to a normal `integer`; `::` is how PostgreSQL changes a value's type. `count` itself returns a 64-bit `bigint`, which [Joins, grouping and transactions](https://zudojs.oyinlola.site/learn/sql-advanced#node-postgres) explains.)
+
+REASON IT OUT
+
+### What should happen to the tasks?
+
+`on delete cascade` is one choice. A foreign key can also **refuse** the delete (the default, `on delete no action`; `on delete restrict` is nearly the same), or **set null** in the rows that pointed at the deleted one. For each case, pick one and say why:
+
+- A user closes their account. What happens to their tasks?
+- A project is deleted. Its tasks should survive.
+- A tag is deleted. What happens to the rows in `task_tags`?
+- A shop customer is deleted, but the law says their invoices must be kept for six years.
+
+**Show the reasoning**
+
+**User's tasks:** `cascade`. The tasks mean nothing without their owner, and keeping them would keep personal data the user asked you to remove. **Project's tasks:** `set null`, on a nullable `project_id`: the tasks stay and simply belong to no project. (The first exercise builds this.) **Tag links:** `cascade`. A row in a join table only says "this tag is on this task"; with the tag gone, the link is meaningless.
+
+**Customer with invoices:** the default, refuse. The delete fails with a foreign key error, and that is the point: the database will not let a bug or a hasty admin destroy records you are required to keep. The application must do something deliberate instead, such as anonymising the customer's name and e-mail while keeping the invoices. Choose the rule when you create the table: it decides what the database does on the day someone deletes by mistake.
 
 ## Constraints: rules the database enforces
 
@@ -280,7 +306,7 @@ refused: new row for relation "tasks" violates check constraint "tasks_title_che
 refused: new row for relation "tasks" violates check constraint "tasks_priority_check"
 ```
 
-Your API still validates input and answers with a friendly 400, as in [the REST lesson](https://zudojs.oyinlola.site/learn/rest-design). Constraints are the last line of defence: they protect the data from bugs, from scripts someone runs by hand, and from a second service that forgot a check.
+Your API still validates input and answers with a friendly 400, as in [Designing a REST API](https://zudojs.oyinlola.site/learn/rest-design). Constraints are the last line of defence: they protect the data from bugs, from scripts someone runs by hand, and from a second service that forgot a check.
 
 ## Indexes
 
@@ -302,6 +328,7 @@ await db.exec(`
   );
   insert into tasks (user_id, title)
     select n % 1000, 'Task ' || n from generate_series(1, 50000) as n;
+  set default_statistics_target = 500;
   analyze tasks;
 `);
 
@@ -329,7 +356,7 @@ Bitmap Heap Scan on tasks
         Index Cond: (user_id = 42)
 ```
 
-`generate_series` produced 50,000 rows to make the difference visible. Before the index, PostgreSQL planned a `Seq Scan`: read all 50,000 rows. After it, a `Bitmap Index Scan` finds the 50 matching rows in the index first, and the heap scan fetches just those. [The joins lesson](https://zudojs.oyinlola.site/learn/sql-advanced) measures the real time difference.
+`generate_series` produced 50,000 rows to make the difference visible. `analyze` collects statistics about the data, which the planner uses to choose a plan; `default_statistics_target = 500` makes it read every row here instead of a random sample, so the plan is the same on every run. Before the index, PostgreSQL planned a `Seq Scan`: read all 50,000 rows. After it, a `Bitmap Index Scan` finds the 50 matching rows in the index first, and the heap scan fetches just those. [Joins, grouping and transactions](https://zudojs.oyinlola.site/learn/sql-advanced#performance) measures the real time difference, and [Indexes and query plans](https://zudojs.oyinlola.site/learn/db-indexes), in the Database engineering course, goes much deeper.
 
 Indexes are not free: each one takes disk space and makes every insert and update a little slower, because the index must be updated too. Add them for the columns you actually search, filter, join and sort by.
 
@@ -389,6 +416,8 @@ The first call updated the owner, then the log insert broke the `check` constrai
 
 Look at the log row's id: 2, not 1. The failed attempt used up number 1, and generated numbers are never handed back, even on rollback. Ids can have gaps, so never use them to count rows.
 
+The "I" in ACID has levels, and two transactions that read and write the same rows at the same moment can still get in each other's way. [Transactions, isolation and locks](https://zudojs.oyinlola.site/learn/db-transactions) shows those cases and how to prevent them.
+
 ## Migrations
 
 Your schema will change: next month tasks need a due date. You cannot just edit the `create table` statement, because the production database already exists and holds real data. Instead you write a **migration**: a small, numbered change such as "add column `due_date`". Each migration runs exactly once, in order, on every database: your laptop, your colleague's, the test server and production.
@@ -441,7 +470,7 @@ second run:
 
 The second run did nothing, because all three ids were already in `schema_migrations`. Each migration runs inside a transaction, so a failing one leaves no half-changed table behind. `information_schema` is a set of built-in tables that describe your own database.
 
-Two rules keep migrations safe. Never edit a migration that has already run somewhere: write a new one. And keep them in version control with your code, which is the [Git lesson](https://zudojs.oyinlola.site/learn/git). Real projects use a migration tool instead of writing the runner themselves; ZudoJS has one, shown in [the ZudoJS database lesson](https://zudojs.oyinlola.site/learn/zudo-database).
+Two rules keep migrations safe. Never edit a migration that has already run somewhere: write a new one. And keep them in version control with your code ([Git and GitHub](https://zudojs.oyinlola.site/learn/git)). Real projects use a migration tool instead of writing the runner themselves; ZudoJS has one, shown in [Databases with @zudojs/database](https://zudojs.oyinlola.site/learn/zudo-database). Changing a big production table without taking the site down is its own skill: [Operating databases](https://zudojs.oyinlola.site/learn/db-operations#migrations) covers it.
 
 ## Practice
 
@@ -515,6 +544,8 @@ Add `{ id: 4, name: "index due date", sql: "create index tasks_due_date_idx on t
 - Constraints (`not null`, `unique`, `check`, foreign keys) are rules the database enforces whatever program writes.
 - Indexes make lookups fast and writes a little slower. Index the columns you filter and join by, including foreign keys.
 - A transaction is all or nothing (ACID). Migrations change the schema in small, numbered steps that each run once.
+
+Next: [SQL with PostgreSQL](https://zudojs.oyinlola.site/learn/sql-basics), where you install a real PostgreSQL server and learn the SQL you will write every day.
 
 ## Test yourself
 

@@ -1,22 +1,31 @@
 ---
-title: "Caching"
-description: "Keep copies of slow results so the Task API can answer again fast. Learn keys, TTL, namespaces, tags and invalidation, stampede protection, locks and cache metrics with @zudojs/cache."
+title: "Caching — ZudoJS Academy"
+description: "Keep copies of slow results so the Task API answers fast: keys, TTL, namespaces, tags, invalidation, stampede protection, locks and metrics."
 source: https://zudojs.oyinlola.site/learn/zudo-cache
 ---
 
-LESSON 63 OF 84
+LEVEL 13 · LESSON 11 OF 12
 
-Events, messages and background work Core
+Caching Core
 
 # Caching
 
-Keep copies of slow results so the Task API can answer again fast. Learn keys, TTL, namespaces, tags and invalidation, stampede protection, locks and cache metrics with @zudojs/cache.
+Keep copies of slow results so the Task API answers fast: keys, TTL, namespaces, tags, invalidation, stampede protection, locks and metrics.
 
 - **40 min** to read and try
 - **You need:** The Task API project and the Data lessons
 - **You build:** A cached task list that stays correct when tasks change
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Build a namespaced cache key from everything the answer depends on, including the user
+- Read and write in one call with getOrSet, and stop a cache stampede by sharing one in-flight computation
+- Set a TTL that bounds how wrong a stale copy can be
+- Invalidate the right entries by key, tag or pattern the moment the underlying data changes
+- Serialize what you store instead of caching a shared, mutable object
+- Watch hit rate with getStats and events, and keep a broken cache adapter from becoming a fatal error
 
 ## Why caching exists
 
@@ -340,6 +349,18 @@ queries: 1
 >
 > This protection works inside one process. If you run three copies of the Task API, each copy can still run one query. That is usually fine. For "exactly once across servers", you need a lock in a shared store, which the lock section covers.
 
+REASON IT OUT
+
+### db.listTasks throws instead of resolving. What happens to the four callers that were waiting on it?
+
+Five callers arrive together, only one runs `db.listTasks("ada")`, and the other four wait on that same in-flight computation instead of starting their own. Suppose the database is briefly down and that one call throws. Do the four waiters each get the same rejection, or does `getOrSet` retry the query for each of them since they never really ran it themselves?
+
+**Show the reasoning**
+
+They share the rejection. All five callers are really awaiting the same underlying promise; the leader's call is not copied out to the followers after the fact; they are all holding a reference to it. So when it rejects, every caller's `await` throws the same error, at the same moment, and nothing is written to the cache. That is the correct behavior for a stampede guard: retrying the query five times just because five requests happened to arrive together would defeat the point of sharing the in-flight computation, and it would mean each retry can turn a fast failure into five slow ones stacked on top of a struggling database.
+
+The trade-off is that a caller who did nothing wrong sees an error caused by "whoever happened to arrive first". That is fine for a read like a task list, where the caller retries the whole request; it would matter more for a computation with side effects, which is exactly why `getOrSet`'s callback should stay a pure read, with writes going through invalidation instead.
+
 ## Invalidation: when the data changes
 
 Here is the bug every cache has at first. Ada adds a task, and her list does not show it:
@@ -543,7 +564,7 @@ miss: zudojs:linus:tasks.list
 entries: 1
 ```
 
-- `subscribe(type, handler)` listens for `cache.hit`, `cache.miss`, `cache.set`, `cache.delete`, `cache.clear` or `cache.error`, or `"*"` for all. You will learn how events work in general in [the next lesson](https://zudojs.oyinlola.site/learn/zudo-events).
+- `subscribe(type, handler)` listens for `cache.hit`, `cache.miss`, `cache.set`, `cache.delete`, `cache.clear` or `cache.error`, or `"*"` for all. You will learn how events work in general later, in [Events](https://zudojs.oyinlola.site/learn/zudo-events).
 - `errors` counts failed operations, including input the cache refused, such as a bad key, namespace, pattern or tag. Each one also emits `cache.error`. A number that keeps growing usually means a bug in how you build keys.
 - `getHotKeys(n)` lists the most-read keys. It tells you where caching pays off most.
 - `getLatencyStats(CacheOperation.GET)` gives you how long reads take (p50, p95, p99). You will send numbers like these to a dashboard in [the observability lesson](https://zudojs.oyinlola.site/learn/zudo-observability).
@@ -728,6 +749,8 @@ Every entry lives 30 ms and you read every 10 ms or so, so roughly one read in t
 - Every write path invalidates the entries it made stale: by key, by tag, or by pattern, in the same namespace.
 - `withLock` runs work one at a time. The built-in lock and memory adapter only cover one process.
 - Watch the hit rate with `getStats()` and events, and use `failSilently` so a broken cache is only slow, not fatal.
+
+Next, [Type-safe application design](https://zudojs.oyinlola.site/learn/zudo-typed-design) closes this course by putting everything you have built behind types the compiler checks: ids, money, states, DTOs, commands, queries and events.
 
 ## Test yourself
 

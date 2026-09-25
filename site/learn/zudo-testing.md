@@ -1,22 +1,31 @@
 ---
-title: "Testing a ZudoJS app"
-description: "Test the Task API with Vitest and @zudojs/testing. Control time with a test clock, replace services with mocks and recording buses, wire fakes through a test container, clean up in the right order, and run integration tests against a real HTTP server."
+title: "Testing a ZudoJS app — ZudoJS Academy"
+description: "Test the Task API with Vitest and @zudojs/testing: a test clock, mocks and recording buses, a test container, ordered cleanup, and real HTTP integration tests."
 source: https://zudojs.oyinlola.site/learn/zudo-testing
 ---
 
-LESSON 73 OF 84
+LEVEL 14 · LESSON 10 OF 18
 
-Testing and observability Core
+Quality and insight Core
 
 # Testing a ZudoJS app
 
-Test the Task API with Vitest and @zudojs/testing. Control time with a test clock, replace services with mocks and recording buses, wire fakes through a test container, clean up in the right order, and run integration tests against a real HTTP server.
+Test the Task API with Vitest and @zudojs/testing: a test clock, mocks and recording buses, a test container, ordered cleanup, and real HTTP integration tests.
 
 - **45 min** to read and try
 - **You need:** The testing basics lesson, and the Task API with its events, queue and HTTP routes
 - **You build:** A Vitest suite for the Task API with unit tests on fake time and fake services, and an integration test over real HTTP
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Replace a clock, a logger, an event bus and a mailer with controllable test doubles
+- Move fake time forward instead of waiting on real timers
+- Wire a test container with fakes at the edges, through the app's own real registration code
+- Register cleanup in the right order so every test releases what it started, even after a failure
+- Compare values structurally instead of by how they print, and catch a Set that JSON would hide
+- Send real HTTP requests to a router in an integration test and assert on the response
 
 ## What @zudojs/testing adds
 
@@ -176,15 +185,25 @@ export const CLOCK = createToken<() => Date>("clock");
 export const TASKS = createToken<ReturnType<typeof createTaskService>>("tasks");
 
 export function registerTasks(container: Container): void {
-  container.registerFactory(TASKS, () => createTaskService({
-    now: container.resolve(CLOCK),
-    logger: container.resolve(LOGGER),
-    events: container.resolve(EVENTS),
-    mailer: container.resolve(MAILER),
-    maxOpenTasks: container.resolve(CONFIG).get<number>("tasks.maxOpenTasks") ?? 20,
-  }));
+  container.registerFactory(TASKS, (now, logger, events, mailer, config) => createTaskService({
+    now,
+    logger,
+    events,
+    mailer,
+    maxOpenTasks: config.get<number>("tasks.maxOpenTasks") ?? 20,
+  }), [CLOCK, LOGGER, EVENTS, MAILER, CONFIG]);
 }
 ```
+
+REASON IT OUT
+
+### registerFactory takes an inject list, [CLOCK, LOGGER, EVENTS, MAILER, CONFIG]. Why not just call container.resolve(CLOCK) and the others inside the factory body, and skip the array?
+
+Both read the same five values, and both work the first time you resolve `TASKS`. The difference only shows up once something changes after that: a test replaces `CLOCK` with a different fake partway through, or your app hot-reloads a config value. Does the container have any way to know that `TASKS` needs rebuilding when `CLOCK` changes, if the factory never told it?
+
+**Show the reasoning**
+
+Resolving a dependency by calling `container.resolve(token)` from inside a factory is a **service locator**: the factory fetches what it needs from the container itself, instead of declaring it. The container's dependency tracking, the mechanism `replace()` uses to know which cached singletons to rebuild, only sees dependencies that were resolved as part of building the token it is currently constructing — which is exactly what the `inject` array arranges. A locator-style resolve happens through the container's public, top-level `resolve()` method, outside that bookkeeping, so the container has no record that `TASKS` ever touched `CLOCK`. Register `TASKS` as a singleton, then call `container.replace(CLOCK, …)` in a later test: with the inject list, the next `resolve(TASKS)` rebuilds it with the new clock; with a locator inside the factory, the old, now-stale `TASKS` instance is served forever. The array costs one extra argument and buys back the container's ability to reason about what depends on what.
 
 The test registers fakes for everything outside, then calls the *real* `registerTasks`. Config says a user may only have one open task:
 
@@ -569,7 +588,7 @@ Output of `npx tsx messages.ts`
 - `createTestContainer` and `createTestConfigManager` let tests use the app's real wiring with fakes at the edges. A cleanup manager stops everything in reverse order, even after a failure.
 - Structural assertions compare content, sets and dates included. `createHttpTestClient` serves your router on a free port and checks real answers with `.expect(…)` chains.
 
-Next, you make the Task API tell you what it is doing in production, with structured logs.
+Next, [Testing a ZudoJS application layer by layer](https://zudojs.oyinlola.site/learn/zudo-testing-apps) tests the whole Task API one layer at a time: services, repositories, auth, events and queues, CQRS and HTTP.
 
 ## Test yourself
 

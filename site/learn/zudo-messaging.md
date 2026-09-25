@@ -1,22 +1,30 @@
 ---
-title: "Messaging"
-description: "Ask another part of the Task API to do something and get an answer back, without importing it. Messages, handlers, middleware, correlation and causation ids, timeouts and cancellation with @zudojs/messaging."
+title: "Messaging — ZudoJS Academy"
+description: "Ask another part of the Task API to do something and get an answer back with @zudojs/messaging: messages, middleware, correlation ids, timeouts, cancellation."
 source: https://zudojs.oyinlola.site/learn/zudo-messaging
 ---
 
-LESSON 65 OF 84
+LEVEL 14 · LESSON 2 OF 18
 
-Events, messages and background work Advanced
+Events, messages and CQRS Advanced
 
 # Messaging
 
-Ask another part of the Task API to do something and get an answer back, without importing it. Messages, handlers, middleware, correlation and causation ids, timeouts and cancellation with @zudojs/messaging.
+Ask another part of the Task API to do something and get an answer back with @zudojs/messaging: messages, middleware, correlation ids, timeouts, cancellation.
 
 - **35 min** to read and try
 - **You need:** The events lesson
 - **You build:** A reminder request that travels from the tasks module to a notifications module and back, traceable end to end
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Ask for work and get an answer back with createMessageBus and bus.send
+- Tell a real failure from "nobody handles this" with allowMultipleHandlers and hasHandlers
+- Wrap dispatch with middleware to log and validate payloads before a handler runs
+- Trace a chain of messages with correlation and causation ids
+- Bound a slow handler with a timeout and cancel it with an AbortController
 
 ## Events tell, messages ask
 
@@ -158,6 +166,16 @@ typo: true []
 ```
 
 Look at the last line: a message that no handler listens for, here because of a typo in the type, still counts as a success, with an empty list as its value. The bus cannot tell "nobody needed to answer" from "you misspelled the address".
+
+REASON IT OUT
+
+### A typo'd message type silently returns success. Why doesn't the bus just throw when nothing handles a message?
+
+The same bus type also backs messages where zero or many handlers legitimately make sense — think of a plugin system where several optional listeners might each want a turn. If `send` always failed for an unmatched type, that legitimate case would break, and every caller would have to work around a "failure" it did not actually have. But `reminder.send` is not that case: it expects exactly one answer, and a typo there should be caught immediately, not discovered later when the reminder never went out. What would let you catch the typo at start-up, before any request depends on it, without taking away the zero-or-many case for messages that want it?
+
+**Show the reasoning**
+
+Make "exactly one handler" an explicit, per-bus opt-in rather than the default: `createMessageBus({ allowMultipleHandlers: false })` turns a second registration for the same type into an immediate thrown error, at the `bus.on` call that adds it — not at dispatch time, and not silently. Pair it with `bus.hasHandlers(type)` checked once when the app starts, so a missing handler (the typo case, or a module that forgot to register one) fails loudly during start-up instead of quietly during a user's request. This keeps the permissive default for buses that want it, while giving request/response messages the strictness they actually need.
 
 When a message must have exactly one handler, as a request that expects an answer should, create the bus with `allowMultipleHandlers: false`, and check `bus.hasHandlers(type)` at start-up:
 
@@ -569,6 +587,8 @@ The handler did 2 steps (about 60 ms), then saw the aborted signal and stopped, 
 - Middleware wraps every dispatch. It runs in ascending priority order. Validate payloads there.
 - The correlation id ties one operation together, and the causation id points to the direct parent. `createDerivedMessage` keeps both right.
 - `timeout` and an `AbortController` cancel through `context.signal`. The send returns at once with a failure, but handlers must check the signal and stop themselves, because nothing stops them by force.
+
+Next, [Commands and queries (CQRS)](https://zudojs.oyinlola.site/learn/zudo-cqrs) builds on this same "ask and get an answer" shape, splitting it into operations that change data and operations that only read it.
 
 ## Test yourself
 

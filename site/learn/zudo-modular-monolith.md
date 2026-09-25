@@ -1,72 +1,43 @@
 ---
-title: "From monolith to modular monolith"
-description: "Split one growing application into modules with clear boundaries. Each module has a small public API, owns its data, and talks to the others through that API, events and commands, all inside one deployable app."
+title: "From monolith to modular monolith — ZudoJS Academy"
+description: "Split a growing monolith into modules with clear boundaries: each owns its data, exposes a small public API, and talks to others via events and commands."
 source: https://zudojs.oyinlola.site/learn/zudo-modular-monolith
 ---
 
-LESSON 79 OF 84
+LEVEL 15 · LESSON 2 OF 5
 
-Architecture with ZudoJS Advanced
+Architecture modes Advanced
 
 # From monolith to modular monolith
 
-Split one growing application into modules with clear boundaries. Each module has a small public API, owns its data, and talks to the others through that API, events and commands, all inside one deployable app.
+Split a growing monolith into modules with clear boundaries: each owns its data, exposes a small public API, and talks to others via events and commands.
 
 - **45 min** to read and try
-- **You need:** The Task API project and the lessons on events and CQRS
+- **You need:** The ShopFlow monolith from the previous lesson, and the lessons on events and CQRS
 - **You build:** A ShopFlow modular monolith with a catalog and an orders module that talk through a public API, events and a command bus
 
   [Test yourself](#test)
 
-## What a monolith is
+BY THE END OF THIS LESSON YOU CAN
 
-The Task API you built is a **monolith**: one program, one codebase, deployed as one unit. Every feature runs in the same process and can call any other feature directly.
+- Split a monolith into modules with clear ownership of data and rules
+- Expose a small public API per module instead of shared tables
+- Declare module dependencies so the runtime starts and stops them in the right order
+- Scaffold modules with `zudojs generate module`
+- Choose between a public API call, an event and a command for cross-module communication
+- Enforce module boundaries with an import check
 
-That is a good thing. A monolith is simple to run, simple to debug, and a function call between two features costs nothing. Most successful products started as one.
+## Where the monolith strains
 
-The trouble starts when the code grows and nothing stops one part from reaching into another. Here is a tiny shop written that way. The orders code changes the catalog's data directly:
+[The previous lesson](https://zudojs.oyinlola.site/learn/zudo-monolith) built ShopFlow as a **monolith**: one program, one codebase, one database, deployed as one unit. That is a good thing. A monolith is simple to run, simple to debug, and a function call between two features costs nothing. Most successful products started as one.
 
-tangled.js
-
-```ts
-const products = new Map([["mug", { name: "Mug", price: 12, stock: 2 }]]);
-const orders = [];
-
-function placeOrder(sku, quantity) {
-  const product = products.get(sku);
-  product.stock -= quantity;
-  orders.push({ sku, quantity, total: product.price * quantity });
-}
-
-function blackFriday() {
-  for (const product of products.values()) product.price = 0;
-}
-
-placeOrder("mug", 3);
-blackFriday();
-console.log(products.get("mug"));
-console.log(orders);
-```
-
-Output of `node tangled.js` and of the browser terminal
-
-```json
-{ name: 'Mug', price: 0, stock: -1 }
-[ { sku: 'mug', quantity: 3, total: 36 } ]
-```
-
-Two bugs, and neither function looks wrong on its own:
-
-- The stock is `-1`. The rule "you cannot sell what you do not have" belongs to the catalog, but the orders code changed the stock itself and skipped it.
-- Someone added `blackFriday()` months later. It changes every price, and nobody who owns products was asked.
-
-In a real codebase these two functions sit in different folders, written by different people. When every part can touch every other part's data, you get what developers call a **big ball of mud**: a change in one place breaks something far away, and nobody can tell what depends on what.
+That lesson also traced what nothing stops from happening once the code grows: `OrdersRepository` reads the `products` table directly, a route skips the service layer, and any new feature can import `ProductsRepository` and change stock without going through checkout's rules. None of this shows up in the folder names, only in which file touches which table. Left alone, this is how a monolith turns into a **big ball of mud**: a change in one place breaks something far away, and nobody can tell what depends on what.
 
 ## The modular monolith
 
-A **modular monolith** is still one program and one deployment. The difference is inside: the code is split into **modules**, and each module has a hard edge around it.
+A **modular monolith** is still one program and one deployment. The difference is inside: the code is split into **modules**, and each module has a hard edge around it. ShopFlow's products area becomes the **catalog module** in this lesson: same table, same rules, but now with a name for the boundary and an edge enforced around it.
 
-- **A module owns one area of the business.** In ShopFlow, the online shop you build in the capstone, that means `catalog` (products and stock), `orders` (carts and checkout), `users` and `payments`. Such an area is called a **domain boundary**, or a *bounded context*.
+- **A module owns one area of the business.** In ShopFlow, the online shop you build in the capstone, that means `catalog` (products and stock, what [the previous lesson](https://zudojs.oyinlola.site/learn/zudo-monolith) called the products area), `orders` (carts and checkout), `users` and `payments`. Such an area is called a **domain boundary**, or a *bounded context*.
 - **A module has a small public API.** Other modules may call only what it exports on purpose. Everything else is private.
 - **A module owns its data.** Only the catalog module reads and writes the products table. Orders asks the catalog.
 - **Infrastructure is shared.** The logger, the configuration, the event bus, the database connection and the HTTP server are the same for every module. Only the *data* and the *rules* are split.
@@ -484,6 +455,18 @@ The orders handler never imported the catalog. It knows that a query called `Get
 >
 > Do not put every call through a bus by reflex. A plain interface call, as in `CatalogApi`, is easier to read and to test. Reach for commands and queries when you want the extra middleware, or when you want the two modules to share nothing but message names.
 
+REASON IT OUT
+
+### Direct call, event, or command: how do you pick for one specific case?
+
+Orders needs the catalog's price to place an order. Would you reach it with `catalog.getProduct(sku)` (the `CatalogApi` interface), with `queries.execute({ type: "GetProduct", ... })`, or by having the catalog publish a `price.changed` event that orders caches? What changes if the catalog module later moves into its own service, as in [the next lesson](https://zudojs.oyinlola.site/learn/zudo-microservices)?
+
+**Show the reasoning**
+
+A direct interface call is right here: the answer must be fresh (stale prices mean wrong totals) and is needed synchronously, before the order can be priced. An event fits the opposite shape — "something already happened, and I can act on it later" — which is why `order.placed` for loyalty points is an event, not a call: loyalty does not block checkout, and it is fine to react a moment late. The command/query bus sits between the two: pick it when you want the same audit middleware every write goes through, or when you want orders to depend on nothing but a message name, not a concrete `CatalogApi` type.
+
+The choice matters more once a module can move out of process. A direct call becomes a network call that can fail or time out; an event already assumes "eventually, maybe again," so it survives the move unchanged; a query through a bus needs its transport swapped from in-process to HTTP or RPC, but the calling code does not change. That is exactly the migration [the next lesson](https://zudojs.oyinlola.site/learn/zudo-microservices) walks through.
+
 ## Wiring modules into the runtime
 
 Here is the whole picture as the runtime sees it. The shared infrastructure (one logger, one container, one event bus) is created once and passed to the runtime. Each module gets what it needs through its constructor, and declares which modules it depends on:
@@ -678,7 +661,7 @@ loyalty: ada@example.com has 5 points
 - `zudojs create --architecture modular-monolith` and `zudojs generate module` give you the folders and register each module in `app.ts` and its routes in `registerRoutes`. You declare each module's `dependencies`.
 - Modules talk through public interfaces (answers now), events (something happened) and commands or queries (work by name). Logger, config, event bus and database server are shared; tables are not.
 
-Next, you take one of these modules out of the process and into its own service, and meet everything that the network makes harder.
+Next, in [Microservices](https://zudojs.oyinlola.site/learn/zudo-microservices), you take one of these modules out of the process and into its own service, and meet everything that the network makes harder.
 
 ## Test yourself
 

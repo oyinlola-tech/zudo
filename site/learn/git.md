@@ -1,22 +1,30 @@
 ---
-title: "Git and GitHub"
-description: "Track every change to your code with Git, work on branches, merge them and resolve a real conflict, keep node_modules and secrets out of your repository, and share your work through GitHub with remotes and pull requests."
+title: "Git and GitHub — ZudoJS Academy"
+description: "Track every change with Git, work on branches and resolve a real merge conflict, keep node_modules and secrets out of the repository, and share work on GitHub."
 source: https://zudojs.oyinlola.site/learn/git
 ---
 
-LESSON 30 OF 84
+LEVEL 4 · LESSON 15 OF 20
 
-Backend fundamentals Foundation
+Professional development Core
 
 # Git and GitHub
 
-Track every change to your code with Git, work on branches, merge them and resolve a real conflict, keep node_modules and secrets out of your repository, and share your work through GitHub with remotes and pull requests.
+Track every change with Git, work on branches and resolve a real merge conflict, keep node_modules and secrets out of the repository, and share work on GitHub.
 
 - **40 min** to read and try
-- **You need:** Git installed, and the Task API folder from earlier lessons
+- **You need:** npm and packages and Build a plain Node.js Task API, with Git installed on your computer
 - **You build:** A Git repository for the Task API with a clean history, a .gitignore that protects your secrets, and a GitHub remote
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Record changes as small commits with git add, git commit, git status and git log
+- Keep node_modules and .env out of a repository with .gitignore, and check why a file is ignored
+- Work on a branch, merge it back and resolve a merge conflict by hand
+- Respond correctly to a committed secret, before and after it was pushed
+- Connect a repository to GitHub, push and pull, and propose a change with a pull request
 
 ## Why version control
 
@@ -40,7 +48,7 @@ Use your own name and e-mail. `--global` saves the settings for every project on
 
 ## Repositories and commits
 
-A **repository** (repo) is a project folder whose history Git tracks. `git init` turns a folder into one by creating a hidden `.git` folder, where the whole history lives. Here the folder holds a tiny `server.js` and a `README.md`:
+A **repository** (repo) is a project folder whose history Git tracks. `git init` turns a folder into one by creating a hidden `.git` folder, where the whole history lives. To keep the output short, this lesson starts a fresh folder with a tiny `server.js` and a `README.md`; afterwards, put your `plain-api` folder from [Build a plain Node.js Task API](https://zudojs.oyinlola.site/learn/node-task-api) under Git the same way:
 
 Terminal on your computer
 
@@ -74,28 +82,28 @@ $ git status --short
 A  README.md
 A  server.js
 $ git commit -m "Add the first server"
-[main (root-commit) a754e78] Add the first server
+[main (root-commit) f2a3cfe] Add the first server
  2 files changed, 11 insertions(+)
  create mode 100644 README.md
  create mode 100644 server.js
 $ git log --oneline
-a754e78 Add the first server
+f2a3cfe Add the first server
 ```
 
-`A` means "added to the staging area". `a754e78` is the start of the commit's **hash**, a unique id Git computes from the content; yours will differ. Write messages that say what the commit does, in a few words: "Add the first server", not "stuff" or "fix".
+`A` means "added to the staging area". `f2a3cfe` is the start of the commit's **hash**, a unique id Git computes from the content; yours will differ. Write messages that say what the commit does, in a few words: "Add the first server", not "stuff" or "fix".
 
 > TIP
 >
-> Commit small and often: one commit per finished step. A history of small commits is easy to read, and easy to undo one piece at a time.
+> Commit small and often: one commit per finished step. A history of small commits is easy to read, easy to undo one piece at a time, and easy to search for the commit that introduced a bug, which [Debugging practice](https://zudojs.oyinlola.site/learn/debug-practice#bisect) does with `git bisect`.
 
 ## .gitignore: node_modules and .env
 
 Two things must never go into a repository:
 
 - `node_modules/`: thousands of files that `npm install` recreates from `package.json` and `package-lock.json` at any time.
-- `.env`: the file where you keep **secrets** for your computer, such as the database password. Anyone who can read the repository could read them.
+- `.env`: the file where you keep **secrets** for your computer, such as the Task API's key. Anyone who can read the repository could read them.
 
-Install `pg` from [the last lesson](https://zudojs.oyinlola.site/learn/sql-advanced) and put the database URL into `.env`. The value is built from the `PGPASSWORD` variable, so the password is never typed out:
+Turn the folder into an npm project, install a dependency (`ms`, from [npm and packages](https://zudojs.oyinlola.site/learn/npm-packages)), and create a `.env` with a random API key, the way [Build a plain Node.js Task API](https://zudojs.oyinlola.site/learn/node-task-api#run) did:
 
 Terminal on your computer
 
@@ -104,12 +112,12 @@ $ npm init -y
 Wrote to ~/task-api/package.json:
 …
 $ npm pkg set type=module
-$ npm install pg
+$ npm install ms
 
-added 14 packages, and audited 15 packages in 6s
+added 1 package, and audited 2 packages in 7s
 
 found 0 vulnerabilities
-$ echo "DATABASE_URL=postgres://postgres:$PGPASSWORD@localhost:5434/taskdb" > .env
+$ node -e "console.log('TASKS_API_KEY=' + crypto.randomBytes(32).toString('hex'))" > .env
 $ git status
 On branch main
 Untracked files:
@@ -144,8 +152,8 @@ $ git check-ignore -v .env node_modules
 .gitignore:1:node_modules/	node_modules
 $ git add .
 $ git commit -m "Add package.json and .gitignore"
-[main 3199366] Add package.json and .gitignore
- 3 files changed, 181 insertions(+)
+[main 38d1d9b] Add package.json and .gitignore
+ 3 files changed, 41 insertions(+)
  create mode 100644 .gitignore
  create mode 100644 package-lock.json
  create mode 100644 package.json
@@ -167,8 +175,8 @@ function required(name) {
 }
 
 try {
-  const databaseUrl = required("DATABASE_URL");
-  console.log("Connecting to", new URL(databaseUrl).host);
+  const apiKey = required("TASKS_API_KEY");
+  console.log(`API key loaded (${apiKey.length} characters)`);
 } catch (error) {
   console.log(error.message);
 }
@@ -177,10 +185,10 @@ try {
 Output of `node config.js`
 
 ```ts
-Missing environment variable DATABASE_URL. Add it to .env or your shell.
+Missing environment variable TASKS_API_KEY. Add it to .env or your shell.
 ```
 
-Here the variable is not set, so the program says exactly what is missing instead of failing later with a confusing database error. When it is set, the program logs only the host, never the whole URL, which contains the password. Node.js can load a `.env` file for you: `node --env-file=.env server.js`. Many projects also commit a `.env.example` with the variable names and no real values, so a new developer knows what to fill in.
+Here the variable is not set, so the program says exactly what is missing instead of failing later in a confusing way. When it is set, the program logs only the key's length, never the key. Node.js loads the `.env` file for you with `node --env-file=.env server.js`, as in [What Node.js is](https://zudojs.oyinlola.site/learn/node-runtime#env), and the project commits a `.env.example` with the variable names and no real values, so a new developer knows what to fill in.
 
 ## Branches and merging
 
@@ -203,7 +211,7 @@ index 4bf9816..4685a08 100644
 -server.listen(3000);
 +server.listen(Number(process.env.PORT ?? 3000));
 $ git commit -am "Read the port from PORT"
-[port-from-env 9970398] Read the port from PORT
+[port-from-env 1ad8c1b] Read the port from PORT
  1 file changed, 1 insertion(+), 1 deletion(-)
 ```
 
@@ -217,17 +225,17 @@ Terminal on your computer
 $ git switch main
 Switched to branch 'main'
 $ git commit -am "Log when the server starts"
-[main 9a2086f] Log when the server starts
+[main 5718881] Log when the server starts
  1 file changed, 1 insertion(+), 1 deletion(-)
 $ git log --oneline --graph --all
-* 9a2086f Log when the server starts
-| * 9970398 Read the port from PORT
+* 5718881 Log when the server starts
+| * 1ad8c1b Read the port from PORT
 |/
-* 3199366 Add package.json and .gitignore
-* a754e78 Add the first server
+* 38d1d9b Add package.json and .gitignore
+* f2a3cfe Add the first server
 ```
 
-The graph shows the two lines of work splitting after `3199366`. Now merge the branch into `main`:
+The graph shows the two lines of work splitting after `38d1d9b`. Now merge the branch into `main`:
 
 Terminal on your computer
 
@@ -279,20 +287,20 @@ const port = Number(process.env.PORT ?? 3000);
 server.listen(port, () => console.log(`Listening on port ${port}`));
 $ git add server.js
 $ git commit --no-edit
-[main f77f5c2] Merge branch 'port-from-env'
+[main a429d21] Merge branch 'port-from-env'
 $ git log --oneline --graph
-*   f77f5c2 Merge branch 'port-from-env'
+*   a429d21 Merge branch 'port-from-env'
 |\
-| * 9970398 Read the port from PORT
-* | 9a2086f Log when the server starts
+| * 1ad8c1b Read the port from PORT
+* | 5718881 Log when the server starts
 |/
-* 3199366 Add package.json and .gitignore
-* a754e78 Add the first server
+* 38d1d9b Add package.json and .gitignore
+* f2a3cfe Add the first server
 $ git branch -d port-from-env
-Deleted branch port-from-env (was 9970398).
+Deleted branch port-from-env (was 1ad8c1b).
 ```
 
-The **merge commit** `f77f5c2` has two parents, which is where the graph joins again. `--no-edit` accepts Git's default message. The branch has done its job, so `git branch -d` deletes it; its commits stay in the history. If a merge gets confusing, `git merge --abort` puts everything back as it was before the merge.
+The **merge commit** `a429d21` has two parents, which is where the graph joins again. `--no-edit` accepts Git's default message. The branch has done its job, so `git branch -d` deletes it; its commits stay in the history. If a merge gets confusing, `git merge --abort` puts everything back as it was before the merge.
 
 ## If you commit a secret
 
@@ -303,14 +311,32 @@ Terminal on your computer
 ```bash
 $ git add -f .env
 $ git commit -m "Add config"
-[main 3947a0a] Add config
+[main f3af9bb] Add config
  1 file changed, 1 insertion(+)
  create mode 100644 .env
 $ git show --stat --oneline HEAD
-3947a0a Add config
+f3af9bb Add config
  .env | 1 +
  1 file changed, 1 insertion(+)
 ```
+
+REASON IT OUT
+
+### The secret is in a commit: what now?
+
+The `.env` file with the real API key is now in a commit. Before reading on, think it through:
+
+- You delete `.env` and make a new commit. Is the key gone from the repository?
+- Who could already have a copy, if the commit was pushed to GitHub an hour ago? If it was never pushed?
+- Which single action makes the leaked key useless, whoever has it?
+
+**Show the reasoning**
+
+Deleting the file in a new commit removes it from the *latest* snapshot only. Every earlier commit still contains it, and anyone with the repository can check out that commit.
+
+If the commit never left your computer, nobody else has it, and you can simply take the commit back. Once it was pushed, you must assume it was copied: bots scan public repositories within minutes, and every teammate who pulled has it too.
+
+Only **rotating** the secret (revoking the old key and issuing a new one) helps in every case. Cleaning the history is tidying up afterwards, not a fix.
 
 What to do depends on one question: has the commit left your computer?
 
@@ -404,7 +430,7 @@ Teams do not push straight to `main`. They use **pull requests** (PRs), GitHub's
 1. Create a branch and commit your work on it: `git switch -c done-filter`.
 2. Push the branch: `git push -u origin done-filter`.
 3. On GitHub, click **Compare & pull request**. Describe what changed and why.
-4. Teammates read the diff and comment. Automated checks, such as your tests, run on it (the [next lesson](https://zudojs.oyinlola.site/learn/testing-basics) writes them). You fix things with more commits on the same branch; the PR updates by itself.
+4. Teammates read the diff and comment. Automated checks, such as a linter and your tests, run on it ([JavaScript tooling](https://zudojs.oyinlola.site/learn/js-tooling#scripts) sets up the check script, and [Testing fundamentals](https://zudojs.oyinlola.site/learn/testing-basics), later in the academy, writes the tests). You fix things with more commits on the same branch; the PR updates by itself.
 5. When it is approved and the checks pass, click **Merge**. GitHub creates the merge on `main`.
 6. Locally, `git switch main`, `git pull`, and delete the old branch.
 
@@ -467,6 +493,8 @@ An empty `API_KEY=`, as in a `.env.example` file, is not flagged, which is what 
 - Put `node_modules/` and `.env` in `.gitignore` before your first `git add .`. Read secrets from `process.env`.
 - A committed secret that was pushed is leaked: rotate it first, then clean up. GitHub secret scanning and push protection help catch it.
 - `git remote add origin`, `git push`, `git pull` and `git clone` connect you with GitHub. Teams merge through reviewed pull requests.
+
+Next: [Professional Git](https://zudojs.oyinlola.site/learn/git-collaboration), where you work the way a team does: issues, pull requests that get reviewed, merge versus rebase, releases and changelogs.
 
 ## Test yourself
 

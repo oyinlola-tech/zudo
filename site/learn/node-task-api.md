@@ -1,22 +1,30 @@
 ---
-title: "Build a plain Node.js Task API"
-description: "Finish a complete Task API with no framework, split into modules, with middleware, centralized error handling, API-key protection and configuration from the environment. Then look honestly at what hurts when it grows to 20,000 lines."
+title: "Build a plain Node.js Task API — ZudoJS Academy"
+description: "Build a complete Task API with no framework: modules, middleware, central error handling, an API key and checked configuration, then see what hurts as it grows."
 source: https://zudojs.oyinlola.site/learn/node-task-api
 ---
 
-LESSON 24 OF 84
+LEVEL 4 · LESSON 9 OF 20
 
-Node.js and npm Foundation
+HTTP without a framework Core
 
 # Build a plain Node.js Task API
 
-Finish a complete Task API with no framework, split into modules, with middleware, centralized error handling, API-key protection and configuration from the environment. Then look honestly at what hurts when it grows to 20,000 lines.
+Build a complete Task API with no framework: modules, middleware, central error handling, an API key and checked configuration, then see what hurts as it grows.
 
 - **50 min** to read and try
-- **You need:** An HTTP server with no framework
+- **You need:** An HTTP server with no framework, Events, processes and workers, and Cryptography with node:crypto
 - **You build:** A multi-file Task API with create, read, update and delete, run with npm start and tested with fetch and curl
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Chain middleware with compose and predict the order it runs in, including a middleware that stops the chain
+- Turn every error into a response in one place, without leaking internal details in a 500
+- Split an API into modules for configuration, errors, storage, routing, middleware and startup
+- Protect routes with an API key compared in constant time, and accept only the fields a route expects
+- Start and stop the server cleanly, and name the pieces that become hard to maintain as the API grows
 
 ## What you will build
 
@@ -91,7 +99,7 @@ Order matters: middleware runs in the order you list it. The logger goes first s
 
 ## Errors in one place
 
-In the last lesson, every route sent its own error responses. With 50 routes, one of them will get it wrong, and a mistake in a 500 response can leak your file paths, database names or stack traces to anyone. The fix: routes **throw**, and one place turns errors into responses. You learned about custom error classes in [Errors](https://zudojs.oyinlola.site/learn/js-errors); here the class carries an HTTP status:
+In the last lesson, every route sent its own error responses. With 50 routes, one of them will get it wrong, and a mistake in a 500 response can leak your file paths, database names or stack traces to anyone. The fix: routes **throw**, and one place turns errors into responses. You learned about custom error classes in [Handling errors](https://zudojs.oyinlola.site/learn/js-errors); here the class carries an HTTP status:
 
 error-handler.js
 
@@ -416,13 +424,34 @@ export const requireApiKey = (apiKey, publicPaths) => async (ctx, next) => {
 };
 ```
 
-Why not simply `given === apiKey`? A normal comparison stops at the first different character, so it answers a tiny bit faster for a guess that starts wrong. With enough requests, an attacker can measure that and discover a key one character at a time. `timingSafeEqual` always takes the same time. It needs two inputs of the same length, so both sides are hashed first, which also hides how long the real key is.
+Why not simply `given === apiKey`? As you saw in [Cryptography with node:crypto](https://zudojs.oyinlola.site/learn/node-crypto#timing), a normal comparison stops at the first different character, so an attacker who sends enough requests can discover a key one character at a time. `timingSafeEqual` always takes the same time. It needs two inputs of the same length, so both sides are hashed first, which also hides how long the real key is.
 
 > NOTE
 >
-> One shared API key is fine for a service only your own programs call. An API used by many people needs real user accounts, passwords and permissions, so each person can only do what they are allowed to. That is what the users and security part of the course builds.
+> One shared API key is fine for a service only your own programs call. An API used by many people needs real user accounts, passwords and permissions, so each person can only do what they are allowed to. The backend and security courses build that, starting with [BookStore API: authentication and tests](https://zudojs.oyinlola.site/learn/bookstore-auth) and the security course's [Authentication](https://zudojs.oyinlola.site/learn/sec-authentication).
 
 ## Wiring it together
+
+REASON IT OUT
+
+### Before you write PATCH: which changes may a client make?
+
+`PATCH /tasks/:id` changes part of a task. The body is JSON from a client you do not control. Before reading `app.js`, decide what each of these requests should get:
+
+- `PATCH /tasks/1` with `{"done": true}`, and with `{"done": "yes"}`.
+- `PATCH /tasks/1` with `{"id": 7}`, or with `{"title": "Buy milk", "owner": "admin"}`.
+- `PATCH /tasks/abc`, and `PATCH /tasks/99` when task 99 does not exist.
+- A body that is the JSON value `null`.
+
+**Show the reasoning**
+
+`{"done": true}` is the normal case: 200 with the updated task. `"yes"` is not a boolean, so it is a 400; guessing what the client meant spreads bad data.
+
+A field the route does not know must be refused, not ignored and certainly not copied: copying `id` would let a client overwrite another task's identity, and a field such as `owner` is how "mass assignment" bugs give users rights they should not have. So the route keeps an allow-list (`title` and `done`) and answers 400 for anything else.
+
+`abc` can never be a task id and task 99 does not exist; both are 404 with the same message, so the client learns nothing more than "not found".
+
+`JSON.parse("null")` is valid, so the route must not assume the body is an object: `body ?? {}` and `body?.title` keep it from crashing into a 500.
 
 `app.js` defines the routes and puts the middleware in order. Each route handler gets the context and returns `{ status, body }`, or throws. Input is checked before it reaches the store: a title must be a non-empty string of at most 200 characters, and `PATCH` accepts only the fields it knows:
 
@@ -508,7 +537,7 @@ The result of `createApp` is an ordinary request handler, the same kind of funct
 
 ## Starting and stopping
 
-`server.js` is the only file that touches `process.env` and the network port. It also handles **signals**: messages the operating system sends a process. `SIGINT` is what Ctrl + C sends; `SIGTERM` is what Docker and hosting platforms send when they stop your app. On either, the server stops accepting new connections, lets requests in progress finish, and then exits. That is a **graceful shutdown**:
+`server.js` is the only file that touches `process.env` and the network port. It also handles `SIGINT` (Ctrl + C) and `SIGTERM` (what Docker and hosting platforms send) with the **graceful shutdown** you learned in [Events, processes and workers](https://zudojs.oyinlola.site/learn/node-events-processes#signals): stop accepting new connections, let requests in progress finish, then exit, with a deadline:
 
 src/server.jsNode.js only
 
@@ -709,11 +738,11 @@ You now have a real API, and you understand every line of it. That is worth a lo
 - **Configuration.** `loadConfig` grows to dozens of settings with types, defaults per environment, and secrets that must never reach a log.
 - **Testing.** Every test starts a server by hand, builds requests by hand, and cleans up by hand, as `demo.js` did.
 - **Errors.** One `HttpError` becomes many kinds (not found, conflict, validation with details per field, rate limited), and every client expects them in one consistent format.
-- **Security.** Two headers and one API key are a start. A public API also needs CORS rules, rate limits, CSRF protection for browser sessions, user login and permissions, each easy to get subtly wrong.
+- **Security.** Two headers and one API key are a start. A public API also needs CORS rules (which you will add in [Networking from JavaScript](https://zudojs.oyinlola.site/learn/browser-networking#cors)), rate limits, CSRF protection for browser sessions, user login and permissions, each easy to get subtly wrong.
 - **Lifecycle and shutdown.** Today, shutdown closes one server. Later it must stop taking traffic, finish jobs, flush logs and close the database, in the right order, and report when the app is ready to receive traffic at start-up.
 - **No types.** Nothing stops you from passing a task where an id was expected. You only find out when it runs.
 
-None of these is hard on its own. Together, they are most of the code in a backend, and every team writes them again, slightly differently, with their own bugs. The rest of the course answers them one by one: first [HTTP in depth](https://zudojs.oyinlola.site/learn/http-deep), [databases](https://zudojs.oyinlola.site/learn/databases), [testing](https://zudojs.oyinlola.site/learn/testing-basics) and [TypeScript](https://zudojs.oyinlola.site/learn/ts-setup); then, in [the frameworks lesson](https://zudojs.oyinlola.site/learn/frameworks), you will see how a framework packages exactly these pieces; and from [Meet ZudoJS](https://zudojs.oyinlola.site/learn/zudo-welcome) on, you will rebuild this Task API with ZudoJS's routing, validation, dependency injection, configuration, errors, security and lifecycle, and notice how much of this lesson's code you no longer write.
+None of these is hard on its own. Together, they are most of the code in a backend, and every team writes them again, slightly differently, with their own bugs. The rest of the academy answers them one by one: first TypeScript ([Why TypeScript exists](https://zudojs.oyinlola.site/learn/ts-setup)), then [HTTP in depth](https://zudojs.oyinlola.site/learn/http-deep), [How databases work](https://zudojs.oyinlola.site/learn/databases) and [Testing fundamentals](https://zudojs.oyinlola.site/learn/testing-basics) in the backend course; then, in [What a framework does](https://zudojs.oyinlola.site/learn/frameworks), you will see how a framework packages exactly these pieces; and from [Welcome to ZudoJS](https://zudojs.oyinlola.site/learn/zudo-welcome) on, you will rebuild this Task API with ZudoJS's routing, validation, dependency injection, configuration, errors, security and lifecycle, and notice how much of this lesson's code you no longer write.
 
 ## Practice
 
@@ -828,7 +857,9 @@ Some possible answers:
 - Configuration is read once, from the environment, checked completely, and the server refuses to start without its secret.
 - Check every input: route parameters, query values, body size, JSON, and exactly which fields may change. Compare secrets with `timingSafeEqual`.
 - Handle `SIGINT` and `SIGTERM` by closing the server gracefully.
-- All of this works, and all of it grows into most of your code. The rest of the course, and ZudoJS, exist to make those pieces standard.
+- All of this works, and all of it grows into most of your code. The rest of the academy, and ZudoJS, exist to make those pieces standard.
+
+Next: [The DOM](https://zudojs.oyinlola.site/learn/browser-dom). The course moves to the other end of the connection, the browser, where you build the page that will call this API.
 
 ## Test yourself
 

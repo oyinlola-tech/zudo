@@ -1,22 +1,31 @@
 ---
-title: "Deploying a ZudoJS app"
-description: "Take the Task API from your computer to a server. Build it for production, run it under systemd or in Docker, add PostgreSQL and Redis with Docker Compose, put Caddy in front for HTTPS, run migrations during a deployment, read the logs and back up the database."
+title: "Deploying a ZudoJS app — ZudoJS Academy"
+description: "Take the Task API to a server: build it, run with systemd or Docker Compose, add Postgres, Redis and Caddy for HTTPS, migrate safely, back up the database."
 source: https://zudojs.oyinlola.site/learn/deployment
 ---
 
-LESSON 82 OF 84
+LEVEL 17 · LESSON 4 OF 5
 
 Production Production
 
 # Deploying a ZudoJS app
 
-Take the Task API from your computer to a server. Build it for production, run it under systemd or in Docker, add PostgreSQL and Redis with Docker Compose, put Caddy in front for HTTPS, run migrations during a deployment, read the logs and back up the database.
+Take the Task API to a server: build it, run with systemd or Docker Compose, add Postgres, Redis and Caddy for HTTPS, migrate safely, back up the database.
 
 - **60 min** to read and try
 - **You need:** The Task API project, Production engineering, and Docker installed (docker.com/get-started)
 - **You build:** The Task API running in Docker Compose with PostgreSQL, Redis and a Caddy reverse proxy, with migrations, readiness checks and a tested backup
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Build the app for production and run the compiled output under systemd, restarting on crash and shutting down gracefully
+- Package it as a small, non-root, multi-stage Docker image
+- Run the app with PostgreSQL, Redis and a Caddy reverse proxy on a private network with Docker Compose
+- Get free, auto-renewing HTTPS for a domain, and trust forwarded headers only from your own proxy
+- Deploy a new version safely with expand-and-contract migrations, and roll back a bad release
+- Take a PostgreSQL backup and prove it by restoring it
 
 ## From your computer to a server
 
@@ -472,7 +481,7 @@ volumes:
 - **Volumes** (`pgdata`, `redisdata`) keep the data when containers are replaced. Without them, every deployment would delete your database.
 - `depends_on` with `service_healthy` starts the app only after PostgreSQL and Redis pass their health checks.
 - `${POSTGRES_PASSWORD:?…}` takes the password from the environment or from a `.env` file next to `compose.yaml`, and stops with a message if it is missing. There is no default password.
-- `REDIS_URL` is ready for a shared cache or rate-limit store, as recommended in the previous lesson. `TRUST_PROXY: private` tells the app to believe `X-Forwarded-For` only from addresses on private networks, which is where Caddy sits.
+- `REDIS_URL` is ready for a shared cache or rate-limit store, as recommended in [Production engineering](https://zudojs.oyinlola.site/learn/production-engineering). `TRUST_PROXY: private` tells the app to believe `X-Forwarded-For` only from addresses on private networks, which is where Caddy sits.
 
 The proxy's configuration, `Caddyfile`, forwards every request to the app:
 
@@ -559,7 +568,7 @@ $ curl http://localhost:8080/health
 {"status":"ok","checks":{"postgres":"up"},"timestamp":"2026-09-23T17:48:55.064Z"}
 ```
 
-Exactly as planned in the previous lesson: the generated `/health` is a readiness check. Without its database the app answers 503 and says which part is down, but it keeps running, logs one warning (you will see it in [the logs](#logs) below), and recovers by itself when the database is back. Docker marks the container `unhealthy` after three failed checks but does not restart it; Kubernetes would stop sending it traffic.
+Exactly as planned in [Production engineering](https://zudojs.oyinlola.site/learn/production-engineering): the generated `/health` is a readiness check. Without its database the app answers 503 and says which part is down, but it keeps running, logs one warning (you will see it in [the logs](#logs) below), and recovers by itself when the database is back. Docker marks the container `unhealthy` after three failed checks but does not restart it; Kubernetes would stop sending it traffic.
 
 > NOTE
 >
@@ -632,7 +641,7 @@ app-1  | 2026-09-23T22:33:13.290Z [INFO] [task-api] Initiating graceful shutdown
 app-1  | 2026-09-23T22:33:13.303Z [INFO] [task-api] Graceful shutdown complete.
 ```
 
-`docker compose stop` sent `SIGTERM`. The first line comes from the signal handler in `src/server.ts`, and the next two show the graceful shutdown from the previous lesson taking 13 milliseconds. Add `-f` to follow logs live. Under systemd the same is `journalctl -u task-api`. Docker keeps logs in files that grow forever by default; limit them with the `logging` option (`max-size: "10m"`, `max-file: "3"`) or ship them to a log service, as the production lesson recommends.
+`docker compose stop` sent `SIGTERM`. The first line comes from the signal handler in `src/server.ts`, and the next two show the graceful shutdown from [Production engineering](https://zudojs.oyinlola.site/learn/production-engineering) taking 13 milliseconds. Add `-f` to follow logs live. Under systemd the same is `journalctl -u task-api`. Docker keeps logs in files that grow forever by default; limit them with the `logging` option (`max-size: "10m"`, `max-file: "3"`) or ship them to a log service, as the production lesson recommends.
 
 ## Deploying a new version
 
@@ -660,6 +669,20 @@ $ curl http://localhost:8080/health
 ```
 
 ### Migrations that do not break the running app
+
+REASON IT OUT
+
+### Will this migration break the app that is still running?
+
+Step 3 migrates the database while the *old* app is still serving traffic; only step 4 replaces it, and that container needs its own 10-40 seconds to shut down gracefully. A migration for the next release runs `ALTER TABLE tasks RENAME COLUMN title TO name`.
+
+The old code still reads and writes `title` on every request. What happens the instant this migration commits, and how would you split the rename across two deployments to avoid it?
+
+**Show the reasoning**
+
+The instant the rename commits, every query the still-running old app sends for `title` starts failing, for as long as the old container takes to drain and stop: a guaranteed window of errors on every deployment, not a rare race.
+
+The fix is to split it, the **expand and contract** pattern: deployment 1 adds the new `name` column and ships code that writes both columns and reads whichever is present, so old and new code both work against the expanded schema. Only once no old code is left running does deployment 2 drop `title`. The same idea applies to any change the old code cannot tolerate: add before you remove, and never in the same release.
 
 Between step 3 and step 4, the *old* app runs against the *new* database. So every migration must work with both versions. Split breaking changes into two deployments, called **expand and contract**:
 
@@ -796,7 +819,7 @@ Find four production problems in this Compose service:
 - Caddy gets and renews HTTPS certificates for your domain by itself. Trust forwarded headers only from your own proxy.
 - Every deployment: back up, build a new tag, migrate, replace, check. Write migrations that suit both versions, and test your backups by restoring them.
 
-You can now ship a ZudoJS app. In the capstone you design and build a bigger one from scratch: ShopFlow.
+You can now ship a ZudoJS app by hand. Next, build a pipeline that does it for you on every push, in [CI/CD with GitHub Actions](https://zudojs.oyinlola.site/learn/zudo-ci-cd).
 
 ## Test yourself
 

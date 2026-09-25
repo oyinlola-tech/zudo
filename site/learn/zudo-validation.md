@@ -1,22 +1,30 @@
 ---
-title: "Schemas and validation in depth"
-description: "Validate everything that crosses the Task API's boundary with @zudojs/schema. Read issues, coerce query strings, transform and refine values, block unknown fields, validate requests in routes and responses on the way out, and guard against hostile JSON with @zudojs/validation."
+title: "Schemas and validation in depth — ZudoJS Academy"
+description: "Validate everything crossing the Task API's boundary with @zudojs/schema: issues, coercion, transforms, refinements, unknown fields, responses and hostile JSON."
 source: https://zudojs.oyinlola.site/learn/zudo-validation
 ---
 
-LESSON 54 OF 84
+LEVEL 12 · LESSON 17 OF 19
 
-The ZudoJS core Core
+Configuration, validation and errors Core
 
 # Schemas and validation in depth
 
-Validate everything that crosses the Task API's boundary with @zudojs/schema. Read issues, coerce query strings, transform and refine values, block unknown fields, validate requests in routes and responses on the way out, and guard against hostile JSON with @zudojs/validation.
+Validate everything crossing the Task API's boundary with @zudojs/schema: issues, coercion, transforms, refinements, unknown fields, responses and hostile JSON.
 
 - **50 min** to read and try
-- **You need:** Configuration, and Your first Zudo code
+- **You need:** "Configuration", and "Your first Zudo code"
 - **You build:** A Task API that validates route parameters, query strings and bodies, supports filtered lists and partial updates, and never sends a field it did not mean to
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Turn schema issues into per-field messages a client can act on
+- Coerce text inputs such as query strings, and explain why JSON bodies must not be coerced
+- Transform and refine values, including rules that compare two fields
+- Accept partial updates without inventing defaults, and refuse fields a client must not set
+- Filter what leaves the server with a response schema, and stop hostile JSON before a schema walks it
 
 ## Validate at the boundary
 
@@ -241,6 +249,19 @@ Comparing the two strings works because dates in `YYYY-MM-DD` form sort in the s
 
 ## Partial updates and unknown fields
 
+REASON IT OUT
+
+### What may a PATCH change?
+
+The Task API gets `PATCH /tasks/:id`. Before reading on, decide: a stored task has `id`, `title`, `done`, `priority` and `createdAt`. Which fields may a client change? What should happen to a field the client does not mention? What if the body contains `"id": 99` or `"createdAt"`? And what about an empty body, `{}`?
+
+**Show the reasoning**
+
+- Only `title`, `done` and `priority` may change. `id` and `createdAt` belong to the server.
+- A field that is not mentioned must keep its stored value. In particular, a default such as `priority: "normal"` must not be filled in, or every update would quietly reset a `high` priority.
+- An `id` or `createdAt` in the body is either a client bug or an attack. Dropping it silently is safe; refusing it with 400 also tells an honest client about its mistake.
+- An empty body changes nothing, which almost always means the client forgot something. Refuse it too.
+
 A `PATCH /tasks/:id` request changes only the fields it sends. `NewTaskSchema.partial()` makes every field optional. Look at what it does with a field that has a **default**:
 
 partial.ts
@@ -430,7 +451,7 @@ Output of `npx tsx response.ts` and of the browser terminal
 }
 ```
 
-The three internal fields were dropped. And a stored task with a missing priority, a bug somewhere in your own code, was caught instead of sent. That is a server error, not a client error, so in a route let it become a 500 and fix the bug.
+The three internal fields were dropped. And a stored task with a missing priority, a bug somewhere in your own code, was caught instead of sent. That is a server error, not a client error, so in a route it must become a 500, and you fix the bug. Be careful here: `parse` throws a `SchemaError`, which is an exposed 400, so on its own it would answer a bug in *your* data as the client's mistake. The Task API below still has that flaw; the next lesson fixes it.
 
 Validating every response costs a little time. Many teams validate responses in development and tests, and only apply the allow-list (by parsing) in production. For small objects like tasks, simply always parsing is fine.
 
@@ -470,13 +491,13 @@ too deep -> SerializationDepthError 400 Maximum serialization depth exceeded: 11
 too big -> SerializationPayloadTooLargeError 413 Serialized payload too large: 100013 bytes (max: 16384)
 ```
 
-Both hostile bodies were stopped. The size check is an estimate: it counts two bytes per character, so it is deliberately on the high side.
+Both hostile bodies were stopped. The size check is an estimate, not a byte count: it counts two bytes per UTF-16 code unit. That is double the real size for plain ASCII text such as the `x`s here, but *less* than the real UTF-8 size for characters such as `₦`, which take three bytes. [Validation rules](https://zudojs.oyinlola.site/learn/zudo-validation-rules#guards) measures the difference. Treat the guard as a cheap check on the parsed value, and keep the server's own body limit as the limit on real bytes.
 
 Look at the status codes. The size error is a **413 Payload Too Large**, and the depth error a **400 Bad Request**: both are the client's mistake, so thrown from a route they become the right 4xx answer by themselves.
 
 > NOTE
 >
-> `@zudojs/validation` also offers a complete schema system based on the Zod library (`validate`, `z.object(...)`). It does not share schemas with `@zudojs/schema`. Pick one per project; this course uses `@zudojs/schema` and only borrows the guards.
+> `@zudojs/validation` also offers a complete schema system based on the Zod library (`validate`, `z.object(...)`), plus rules, normalizers and composers. It does not share schemas with `@zudojs/schema`. This course describes every DTO with `@zudojs/schema`; [the next lesson](https://zudojs.oyinlola.site/learn/zudo-validation-rules) shows what `@zudojs/validation` adds on top.
 
 ## Put it in the Task API
 
@@ -557,13 +578,10 @@ src/services/tasks.service.tsNode.js only
 
 ```ts
 import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { Clock } from "@zudojs/types";
 import { ListTasksQuery, NewTaskSchema } from "../dtos/tasks.dto.js";
 import type { ListTasks, TaskChanges } from "../dtos/tasks.dto.js";
 import type { StoredTask, TaskStore } from "../repositories/tasks.store.js";
-
-export interface Clock {
-  now(): Date;
-}
 
 export class TaskService {
   public constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
@@ -571,7 +589,7 @@ export class TaskService {
   public create(input: unknown): StoredTask {
     const data = NewTaskSchema.parse(input);
     this.assertUniqueTitle(data.title);
-    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: this.clock.now().toISOString() };
+    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: new Date(this.clock.now()).toISOString() };
     this.store.tasks.set(task.id, task);
     return task;
   }
@@ -763,7 +781,7 @@ export function securityHeaders(): HttpMiddleware {
 }
 ```
 
-The routes validate every input and send every task through `TaskResponse`:
+The routes validate every input and send every task through `TaskResponse`. `send` uses `parse` for now, with the flaw described in [Validating responses](#response): a broken stored task would be answered with a 400. The next lesson replaces this one line:
 
 src/routes/tasks.routes.tsNode.js only
 
@@ -800,11 +818,12 @@ src/check-validation.tsNode.js only
 
 ```ts
 import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+import { FixedClock } from "@zudojs/types";
 import { TaskStore } from "./repositories/tasks.store.js";
 import { registerTaskRoutes } from "./routes/tasks.routes.js";
 import { TaskService } from "./services/tasks.service.js";
 
-const service = new TaskService(new TaskStore(), { now: () => new Date("2026-09-23T09:00:00Z") });
+const service = new TaskService(new TaskStore(), new FixedClock(Date.parse("2026-09-23T09:00:00Z")));
 const router = createRouter();
 registerTaskRoutes(router, service);
 const server = createHttpServer({
@@ -841,7 +860,7 @@ GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDAT
 PATCH /tasks/2 413 {"error":"Serialized payload too large: 80013 bytes (max: 65536)","code":"ERR_PAYLOAD_TOO_LARGE"}
 ```
 
-The unknown `id` was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and a huge body never reached a schema: it got a 413 that names the size and the limit, and nothing from the body itself. You do not map this error yourself: the guard marks it as safe to show, so the router's default answer here, and the generated `errorResponse` in the running server, both send it as it is. The 400 bodies still only say "Validation failed". The next lesson fixes that for every route at once. Run the same script in your project:
+The unknown `id` was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and a huge body never reached a schema: it got a 413 that names the size and the limit, and nothing from the body itself. You do not map this error yourself: the guard marks it as safe to show, so the router's default answer here, and the generated `errorResponse` in the running server, both send it as it is. The 400 bodies still only say "Validation failed"; [The ZudoJS error system](https://zudojs.oyinlola.site/learn/zudo-errors) adds the list of issues for every route at once. Run the same script in your project:
 
 Terminal on your computer
 
@@ -959,7 +978,7 @@ SchemaError Validation failed
 - A response schema is an allow-list for what leaves the server.
 - `@zudojs/validation`'s depth and size guards stop hostile JSON before a schema walks it.
 
-Validation errors are still answered with a bare "Validation failed". The next lesson builds one error handler that gives every error the right status and a helpful, safe body.
+Two things are still open: a broken stored task is answered with a 400, and titles that differ only in spacing or capitals count as different tasks. Next, [Validation rules with @zudojs/validation](https://zudojs.oyinlola.site/learn/zudo-validation-rules) fixes both.
 
 ## Test yourself
 

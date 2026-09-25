@@ -1,30 +1,36 @@
 ---
-title: "Set up your computer"
+title: "Set up your computer — ZudoJS Academy"
 description: "Install Node.js, try JavaScript in the Node.js REPL, write and run your first program, and turn its folder into a project."
 source: https://zudojs.oyinlola.site/learn/setup
 ---
 
-LESSON 5 OF 84
+LEVEL 2 · LESSON 2 OF 19
 
-Start here Foundation
+Getting started Foundation
 
 # Set up your computer
 
 Install Node.js, try JavaScript in the Node.js REPL, write and run your first program, and turn its folder into a project.
 
 - **30 min** to read and try
-- **You need:** Lessons 1 to 4, and a computer where you can install programs
+- **You need:** Meet JavaScript, How programs run and Your developer environment, and a computer where you can install programs
 - **You build:** A hello-zudo project folder with your first program
 
   [Test yourself](#test)
 
-## What is JavaScript?
+BY THE END OF THIS LESSON YOU CAN
 
-**JavaScript** is a programming language. It was made in 1995 to make web pages react to clicks, and today it runs almost everywhere: in every browser, on servers, in phone apps and in tools you use every day.
+- Install Node.js 24 or newer and check the versions of node and npm
+- Try expressions in the Node.js REPL and know when a file is the better tool
+- Run a JavaScript file with node and turn its folder into an ES module project
+- Read a syntax error and a ReferenceError: file and line, error name and message
+- Predict which lines of a broken file run before it fails
 
-In [How programs run](https://zudojs.oyinlola.site/learn/how-programs-run) you saw that a language needs an engine and a runtime around it. In the browser, the browser is the runtime. On your computer and on servers, the runtime is **Node.js**. Node.js is what turns JavaScript into a language for backends, and ZudoJS needs Node.js 24 or newer.
+## From this page to your computer
 
-You can already run JavaScript on these pages. Press **Run in browser**:
+In [Meet JavaScript](https://zudojs.oyinlola.site/learn/js-intro) you ran code in the browser terminal on the page. That is perfect for trying things, but a backend does not run in a browser tab. It runs as a program on a computer, and the program that runs JavaScript outside the browser is **Node.js**: the V8 engine plus a runtime (a host, in the words of [Meet JavaScript](https://zudojs.oyinlola.site/learn/js-intro#engines-hosts)) that can read files, talk to the network and read the keyboard. ZudoJS needs Node.js 24 or newer.
+
+The same code runs in both places. Press **Run in browser**, then keep reading to run it on your own computer:
 
 hello.js
 
@@ -38,7 +44,7 @@ Output of `node hello.js` and of the browser terminal
 Hello from Node.js!
 ```
 
-`console.log` prints whatever you give it. It is the first tool every JavaScript developer reaches for when they want to see what their code is doing. The browser terminal is for trying things quickly. The real backend will run on your computer, so the rest of this lesson installs Node.js there.
+`console.log` prints whatever you give it. It is the first tool every JavaScript developer reaches for when they want to see what their code is doing. The rest of this lesson installs Node.js, runs this line from a file, and shows you how to read the errors you will meet first.
 
 ## Install Node.js
 
@@ -283,13 +289,37 @@ ReferenceError: Console is not defined
 
 When you get an error, read three things: the **file and line** at the top, the **error name** (`SyntaxError`, `ReferenceError`, `TypeError`), and the **message** after it. Skip the `at node:internal…` lines: they are inside Node.js, not your code.
 
+REASON IT OUT
+
+### Before you run it: which lines print?
+
+This file has two mistakes. Before you run it, decide what the terminal will show.
+
+```ts
+console.log("Starting the shopping list");
+Console.log("- Bread");
+console.log("- Milk";
+```
+
+- Does `Starting the shopping list` print? It comes before both mistakes.
+- Which error does Node.js report: the `ReferenceError` on line 2 or the `SyntaxError` on line 3?
+- After you fix line 3, what changes?
+
+**Show the reasoning**
+
+**Nothing prints.** Node.js reads (parses) the whole file before it runs any of it. Line 3 is missing a `)`, so the file is not valid JavaScript, and Node.js stops with a `SyntaxError` pointing at line 3 before running line 1.
+
+**A `ReferenceError` is found only while running.** `Console.log(…)` is perfectly good grammar: a name, a dot, a call. Whether the name `Console` exists is only checked when that line runs. So once line 3 is fixed, the file starts, line 1 prints `Starting the shopping list`, and line 2 throws `ReferenceError: Console is not defined`. Line 3 never runs.
+
+That gives you a quick way to tell the two apart: if *nothing* printed, suspect a syntax error; if some lines printed and then it stopped, the error happened while running, at the first line that did not print.
+
 ## Practice
 
 TRY IT YOURSELF
 
 ### Print three lines
 
-Change `hello.js` so it prints your name, what you want to build, and the number of lessons in this course (84). Run it in the browser, then on your computer.
+Change `hello.js` so it prints your name, what you want to build, and the year JavaScript was created (1995, from [Meet JavaScript](https://zudojs.oyinlola.site/learn/js-intro#history)) as a number. Run it in the browser, then on your computer.
 
 **Show a solution**
 
@@ -298,7 +328,7 @@ about-me.js
 ```ts
 console.log("My name is Ada");
 console.log("I want to build a task API");
-console.log("Lessons in this course:", 84);
+console.log("JavaScript was created in", 1995);
 ```
 
 Output of `node about-me.js` and of the browser terminal
@@ -306,7 +336,7 @@ Output of `node about-me.js` and of the browser terminal
 ```ts
 My name is Ada
 I want to build a task API
-Lessons in this course: 84
+JavaScript was created in 1995
 ```
 
 `console.log` can take several values separated by commas. It prints them on one line with a space between them.
@@ -375,7 +405,7 @@ Line 1 was missing a `"`. Line 3 was missing a `)`, and the `;` is good style. B
 - A program is statements run top to bottom. Comments (`//` and `/* */`) are notes for people.
 - Read errors in three parts: file and line, error name, message.
 
-Next you will learn the building blocks of every program: values and variables.
+Next, [Values, variables and types](https://zudojs.oyinlola.site/learn/js-values): the building blocks of every program.
 
 ## Test yourself
 

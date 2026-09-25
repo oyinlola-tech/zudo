@@ -1,22 +1,30 @@
 ---
-title: "Modules in TypeScript"
-description: "Split a TypeScript project into files, import types with import type, see why verbatimModuleSyntax exists, write .js in import paths, and understand how NodeNext resolution, \"type\" - \"module\" and the \"exports\" field fit together."
+title: "Modules in TypeScript — ZudoJS Academy"
+description: "Split a project into files, import types with import type, write .js in import paths, and see how NodeNext, \"type\": \"module\" and \"exports\" fit together."
 source: https://zudojs.oyinlola.site/learn/ts-modules
 ---
 
-LESSON 39 OF 84
+LEVEL 5 · LESSON 18 OF 23
 
-TypeScript Foundation
+Classes, modules and configuration Foundation
 
 # Modules in TypeScript
 
-Split a TypeScript project into files, import types with import type, see why verbatimModuleSyntax exists, write .js in import paths, and understand how NodeNext resolution, "type" - "module" and the "exports" field fit together.
+Split a project into files, import types with import type, write .js in import paths, and see how NodeNext, "type": "module" and "exports" fit together.
 
 - **40 min** to read and try
 - **You need:** Classes in TypeScript, and the JavaScript modules lesson
 - **You build:** A multi-file ts-modules project with src/ and dist/ folders, a barrel file and npm scripts to check, build and run it
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Lay out a project with src and dist using rootDir and outDir
+- Import and re-export types with import type and export type, and explain TS1484
+- Write .js in relative import paths and explain why TypeScript never rewrites them
+- Explain how NodeNext, "type": "module" and a package's "exports" field decide what an import loads
+- Set up check, build, start and dev scripts
 
 ## A project with src and dist
 
@@ -161,7 +169,7 @@ SyntaxError: The requested module './task.js' does not provide an export named '
 Node.js v24.19.0
 ```
 
-`STATUSES` is a real export of `task.js`, but `Task` was an interface, and the compiled `task.js` has no trace of it. Without `verbatimModuleSyntax`, TypeScript would guess which imports are types and drop them silently. The guess is usually right, but other tools that strip types, such as `tsx`, Node.js and the browser terminal, look at one file at a time and cannot guess. Being explicit makes every tool agree. That is why ZudoJS turns it on, and why this course has used `import type` since [Interfaces, unions and literal types](https://zudojs.oyinlola.site/learn/ts-objects).
+`STATUSES` is a real export of `task.js`, but `Task` was an interface, and the compiled `task.js` has no trace of it. Without `verbatimModuleSyntax`, TypeScript would guess which imports are types and drop them silently. The guess is usually right, but other tools that strip types, such as `tsx`, Node.js and the browser terminal, look at one file at a time and cannot guess. Being explicit makes every tool agree. That is why ZudoJS turns it on, and why this course has used `import type` since [What the TypeScript compiler does](https://zudojs.oyinlola.site/learn/ts-compiler#type-stripping).
 
 ## A barrel file
 
@@ -201,6 +209,24 @@ done: Buy milk
 ```
 
 ## Why the imports say .js
+
+REASON IT OUT
+
+### Which file will the import load?
+
+`src/main.ts` imports from `src/index.ts`. After `npx tsc`, Node.js will run `dist/main.js`. Before reading on, think:
+
+1. Which files exist in `dist/` after the build, and which do not?
+2. Node.js reads the import string in `dist/main.js` literally. Which file name must that string contain for the import to work?
+3. Does `tsc` change import strings when it removes the types?
+4. So which name should you write in `src/main.ts`: `./index`, `./index.ts` or `./index.js`?
+
+**Show the reasoning**
+
+1. Only `.js` files (and `.d.ts` or maps if you ask for them). No `.ts` file is copied to `dist`.
+2. `./index.js`: Node's ES modules never add or guess an extension.
+3. No. It removes types and leaves the rest of the code, import paths included, as you wrote it.
+4. `./index.js`, the file that will exist when the code runs. `tsc` knows that `./index.js` is built from `./index.ts` and reads the types from there.
 
 The files are called `store.ts` and `index.ts`, yet every import says `"./store.js"` and `"./index.js"`. This surprises everyone once. The reason: **TypeScript does not change import paths**. It removes types, and leaves the rest of your code as you wrote it. Build the project and look:
 
@@ -298,7 +324,7 @@ Without `"type": "module"`, Node.js treats every `.js` file as CommonJS, so Type
 
 ## Packages and the "exports" field
 
-When you import a package, TypeScript and Node.js read its `package.json`. Modern packages list their public entry points in the **`"exports"`** field. Here is the relevant part of `@zudojs/schema`'s `package.json`, the package you will install in [Your first Zudo code](https://zudojs.oyinlola.site/learn/zudo-first-code):
+When you import a package, TypeScript and Node.js read its `package.json`. Modern packages list their public entry points in the **`"exports"`** field. Here is the relevant part of `@zudojs/schema`'s `package.json`, the package whose `safeParse` you tried in [Generics](https://zudojs.oyinlola.site/learn/ts-generics#result) and which [Your first Zudo code](https://zudojs.oyinlola.site/learn/zudo-first-code) installs:
 
 package.json
 
@@ -478,6 +504,8 @@ import { schema } from "@zudojs/schema";
 - `NodeNext` follows Node's rules: full relative paths, packages through `node_modules`, and `"type": "module"` for ES modules.
 - A package's `"exports"` field lists what you may import; everything else is private.
 - `rootDir`/`outDir` separate `src/` from `dist/`; `check`, `build`, `start` and `dev` scripts run the whole workflow.
+
+Next: [tsconfig in depth](https://zudojs.oyinlola.site/learn/ts-tsconfig), every compiler option you will meet in a real project, and the bug each one prevents.
 
 ## Test yourself
 

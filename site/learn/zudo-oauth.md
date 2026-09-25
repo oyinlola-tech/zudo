@@ -1,22 +1,31 @@
 ---
-title: "Sign in with OAuth"
-description: "Add \"Sign in with Google\" to the Task API with @zudojs/auth-oauth. Learn the OAuth 2 authorization code flow, state and PKCE, the provider presets, and the callback, all tested offline against a stand-in provider."
+title: "Sign in with OAuth — ZudoJS Academy"
+description: "Add Sign in with Google to the Task API with @zudojs/auth-oauth: the OAuth 2 code flow, state and PKCE, provider presets, tested offline."
 source: https://zudojs.oyinlola.site/learn/zudo-oauth
 ---
 
-LESSON 60 OF 84
+LEVEL 13 · LESSON 8 OF 12
 
-Users and security Advanced
+Security and identity Advanced
 
 # Sign in with OAuth
 
-Add "Sign in with Google" to the Task API with @zudojs/auth-oauth. Learn the OAuth 2 authorization code flow, state and PKCE, the provider presets, and the callback, all tested offline against a stand-in provider.
+Add Sign in with Google to the Task API with @zudojs/auth-oauth: the OAuth 2 code flow, state and PKCE, provider presets, tested offline.
 
 - **50 min** to read and try
 - **You need:** The Authentication lesson
 - **You build:** A "Sign in with Google" flow for the Task API that ends in your own session
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Build an authorization URL for a built-in provider preset such as Google
+- Defend the callback against login CSRF with a server-checked state value
+- Defend the code exchange against interception with a PKCE verifier and S256 challenge
+- Exchange a code for a token and fetch the user's profile from the provider
+- Find or create a local account by provider and provider id, and start your own session
+- Handle where providers differ: missing refresh tokens, no profile endpoint, optional email
 
 ## Let someone else check the password
 
@@ -401,6 +410,18 @@ OAUTH_PKCE_INVALID - PKCE code verifier must be 43-128 characters from the unres
 ```
 
 All three agree. A generated verifier is 64 random characters, and two verifiers never give the same challenge. The package only implements the `S256` method. The older `plain` method sends the verifier itself in the URL, which protects nothing, so you cannot turn it on.
+
+REASON IT OUT
+
+### state already stops login CSRF. Why also carry PKCE, and could one replace the other?
+
+`state` is a random value your server made up and checks on the way back; PKCE is a verifier and a hash of it. Both end up as extra values around the same authorization code. Before writing the callback handler: what attack does each one stop, and does dropping either one leave a real hole?
+
+**Show the reasoning**
+
+They defend against different attackers at different points. `state` answers "is this callback for a login *my server* started?" — without it, an attacker can start their own login with Google, capture the resulting code, and trick a victim's browser into visiting your callback URL with that code, logging the victim into the attacker's account (login CSRF). PKCE answers a different question: "is whoever is exchanging this code the same server that requested it?" — it defends against the code itself leaking after a legitimate login already started, from browser history, a proxy log or a malicious extension on the user's machine.
+
+Dropping `state` leaves the CSRF hole open even though PKCE is present, because PKCE never checks that the flow belongs to this browser's session — it only checks that the exchanger holds the original verifier, which an attacker who started their own login also holds. Dropping PKCE leaves code interception open even though `state` is present, because `state` never travels with a secret the thief lacks. Neither substitutes for the other; a correct flow checks both, in the order this lesson does: `state` first, to know the callback is even yours, then the code exchange, which PKCE protects.
 
 ## Steps 4 to 6: code, token, profile
 

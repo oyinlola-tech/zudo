@@ -1,0 +1,908 @@
+---
+title: "Authentication — ZudoJS Academy"
+description: "Build log-in from first principles: Argon2id hashes, hashed session tokens, a hand-made JWT, secure cookies, rotation, logout and brute-force limits."
+source: https://zudojs.oyinlola.site/learn/sec-authentication
+---
+
+LEVEL 10 · LESSON 1 OF 6
+
+Identity Core
+
+# Authentication
+
+Build log-in from first principles: Argon2id hashes, hashed session tokens, a hand-made JWT, secure cookies, rotation, logout and brute-force limits.
+
+- **60 min** to read and try
+- **You need:** BookStore API authentication, Cryptography with node:crypto, and Rate limiting
+- **You build:** A framework-free log-in system with Argon2id hashes that upgrade themselves, server-side sessions in PostgreSQL with idle and absolute expiry, rotation and logout, a hand-made HS256 JWT verifier, and progressive brute-force delays
+
+  [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Hash passwords with Argon2id in a self-describing format and upgrade old hashes at log-in
+- Store sessions as hashed random tokens with idle and absolute expiry, and rotate them on log-in
+- Build and verify an HS256 JWT by hand, and explain the algorithm, claim and key-rotation checks a verifier needs
+- Choose between server-side sessions and JWTs for a given system
+- Set session cookies with HttpOnly, Secure, SameSite and the __Host- prefix, and log out for real
+- Slow down password guessing per account and per IP without letting attackers lock users out
+
+## A review of the BookStore's log-in
+
+In [the BookStore lessons](https://zudojs.oyinlola.site/learn/bookstore-auth#review) you built log-in with scrypt and a signed token, and then wrote an honest review of it. Three findings from that review were about authentication:
+
+- Nothing stops a script from trying a million passwords against `POST /sessions`.
+- A token cannot be revoked before it expires, so there is no real log-out. If a laptop is stolen, its token works for the rest of the hour.
+- The token format was invented for the project. It has no algorithm field, no audience, no key id, so it cannot be verified by other services or rotated to a new secret.
+
+**Authentication** answers "who is making this request?". Getting it wrong is how accounts are taken over, so this lesson rebuilds it properly, still without a framework: only `node:crypto`, `node:http` and PostgreSQL (PGlite). You will store passwords with Argon2id, keep sessions on the server with real expiry and log-out, take a JWT apart by building one by hand, set cookies that browsers protect, and slow down guessing without handing attackers a way to lock users out. At the end you will see why, having built all this once, you should use a well-tested library for it: [Authentication with ZudoJS](https://zudojs.oyinlola.site/learn/zudo-auth) does.
+
+Almost every example needs Node.js (`node:crypto`, PGlite), so they are marked to run only there.
+
+## Passwords: Argon2id and hashes that upgrade themselves
+
+[Cryptography with node:crypto](https://zudojs.oyinlola.site/learn/node-crypto#passwords) showed why passwords are stored with a slow, salted password hash, and built one with scrypt. Two things are new here. First, **Argon2id**, OWASP's first recommendation, is built into Node.js since version 24.7 as `crypto.argon2()`. Second, real systems always have *old* hashes: the BookStore's `scrypt$salt$key` values, or Argon2id with last year's cost. So verification must accept every format you ever wrote, and log-in is the moment to upgrade, because it is the only time the server holds the plain password.
+
+REASON IT OUT
+
+### Before you store a password
+
+Think through these before writing the code:
+
+- The `users` table leaks tomorrow. What should the attacker have to do to recover one password? Two users with the same password?
+- Someone registers with a 5 MB "password". What happens to your server?
+- You decide next year that hashes should cost twice as much. What happens to the 200,000 hashes already stored?
+- What must be stored next to the hash so it can still be verified in five years?
+
+**Show the reasoning**
+
+With a salted, slow, memory-hard hash, the attacker must guess password by password, for each user separately, paying the full cost for every guess. The same password gives different hashes because each has its own random salt.
+
+Hashing cost grows with input size, so a 5 MB password is a denial-of-service attack. Cap the length in bytes before hashing (1,024 bytes is generous), and refuse anything longer.
+
+You cannot re-hash stored hashes: you do not have the passwords. Instead, each stored value records its algorithm and parameters. Verification reads them from the stored value, and after a successful log-in, a hash with outdated parameters is replaced by a new one.
+
+So store a **self-describing** string: algorithm, version, parameters, salt and hash. The widely used **PHC string format** looks like `$argon2id$v=19$m=19456,t=2,p=1$salt$hash`.
+
+Argon2id has three cost parameters: `memory` in KiB (`m`), the number of `passes` over that memory (`t`) and `parallelism` (`p`). OWASP's minimum is 19 MiB of memory, 2 passes and 1 lane, which is what `CURRENT` uses:
+
+passwords.js
+
+```ts
+import { argon2, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
+
+const argon2Async = promisify(argon2);
+const scryptAsync = promisify(scrypt);
+export const CURRENT = { m: 19456, t: 2, p: 1 };
+const MAX_BYTES = 1024;
+const b64 = (bytes) => bytes.toString("base64").replace(/=+$/, "");
+
+function argon2id(password, salt, { m, t, p }) {
+  return argon2Async("argon2id", { message: password.normalize("NFKC"), nonce: salt, memory: m, passes: t, parallelism: p, tagLength: 32 });
+}
+
+export async function hashPassword(password, params = CURRENT) {
+  if (Buffer.byteLength(password) > MAX_BYTES) throw new Error("password too long");
+  const salt = randomBytes(16);
+  const hash = await argon2id(password, salt, params);
+  return `$argon2id$v=19$m=${params.m},t=${params.t},p=${params.p}$${b64(salt)}$${b64(hash)}`;
+}
+
+function same(a, b) {
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export async function verifyPassword(password, stored) {
+  if (Buffer.byteLength(password) > MAX_BYTES) return false;
+  if (stored.startsWith("$argon2id$v=19$")) {
+    const [, , , costs, salt, hash] = stored.split("$");
+    const params = Object.fromEntries(costs.split(",").map((pair) => pair.split("=")).map(([k, v]) => [k, Number(v)]));
+    const expected = Buffer.from(hash, "base64");
+    return same(await argon2id(password, Buffer.from(salt, "base64"), params), expected);
+  }
+  if (stored.startsWith("scrypt$")) {
+    const [, salt, key] = stored.split("$");
+    const expected = Buffer.from(key, "base64url");
+    return same(await scryptAsync(password, Buffer.from(salt, "base64url"), expected.length), expected);
+  }
+  return false;
+}
+
+export function needsRehash(stored, params = CURRENT) {
+  return !stored.startsWith(`$argon2id$v=19$m=${params.m},t=${params.t},p=${params.p}$`);
+}
+```
+
+- `verifyPassword` understands two formats: current Argon2id, and the legacy `scrypt$salt$key` from the BookStore. An unknown format is simply a wrong password, never a crash.
+- `needsRehash` says whether a stored value is out of date: a different algorithm, or Argon2id with different costs.
+- The length limit is checked in bytes, before any hashing work. The legacy branch does not normalize, because the BookStore did not normalize when it hashed.
+
+Now a user who registered on the old BookStore logs in. The server verifies against the old hash, sees that it needs upgrading, and replaces it:
+
+upgrade.jsNode.js only
+
+```ts
+import { randomBytes, scryptSync } from "node:crypto";
+import { hashPassword, needsRehash, verifyPassword } from "./passwords.js";
+
+const salt = randomBytes(16);
+let stored = `scrypt$${salt.toString("base64url")}$${scryptSync("a long passphrase", salt, 64).toString("base64url")}`;
+console.log("stored:", stored.split("$")[0], "| needs rehash:", needsRehash(stored));
+
+async function logIn(password) {
+  if (!(await verifyPassword(password, stored))) return "wrong password";
+  if (needsRehash(stored)) stored = await hashPassword(password);
+  return "logged in";
+}
+
+console.log(await logIn("a long passphrase"));
+console.log("stored:", stored.split("$").slice(0, 4).join("$"), "| needs rehash:", needsRehash(stored));
+console.log(await logIn("a long passphrase"), "/", await logIn("a long passphrasE"));
+console.log("5 MB password:", await verifyPassword("x".repeat(5_000_000), stored));
+```
+
+Output of `node upgrade.js`
+
+```ts
+stored: scrypt | needs rehash: true
+logged in
+stored: $argon2id$v=19$m=19456,t=2,p=1 | needs rehash: false
+logged in / wrong password
+5 MB password: false
+```
+
+After one log-in the account is on Argon2id, and nobody had to reset a password. Users who never log in again keep their old hashes; after a year or so, many teams force a password reset for those accounts and delete the old hashes, so a leak cannot expose the weaker format.
+
+### Choosing the cost
+
+The right cost is the highest your server can afford at your log-in rate. Measure it on the production hardware, and aim for tens of milliseconds per hash. Log-in is rare compared with other requests; an attacker's guesses are not:
+
+cost.jsNode.js only
+
+```ts
+import { hashPassword } from "./passwords.js";
+
+for (const params of [{ m: 19456, t: 2, p: 1 }, { m: 65536, t: 3, p: 1 }]) {
+  const started = performance.now();
+  await hashPassword("a long passphrase", params);
+  const ms = performance.now() - started;
+  console.log(`m=${params.m} KiB, t=${params.t}:`, ms < 2000 ? "under 2 s" : "too slow", "| memory per hash:", Math.round(params.m / 1024), "MiB");
+}
+```
+
+Output of `node cost.js`
+
+```ts
+m=19456 KiB, t=2: under 2 s | memory per hash: 19 MiB
+m=65536 KiB, t=3: under 2 s | memory per hash: 64 MiB
+```
+
+The time depends on your machine, so the example only prints whether it stayed under two seconds; print `ms` itself when you tune. Memory matters as much as time: 64 MiB per hash means 50 simultaneous log-ins need 3.2 GB. Memory-hardness is the point (it makes graphics-card cracking expensive), but it is also a capacity limit you must plan for, together with the per-IP rate limits from [Rate limiting](https://zudojs.oyinlola.site/learn/api-rate-limiting).
+
+> NOTE
+>
+> Password *rules* matter too. Current NIST guidance (SP 800-63B, revision 4, 2025) says: a minimum length (15 characters when the password is the only factor, 8 when combined with a second factor), allow at least 64 characters and every Unicode character, no composition rules like "one symbol and one digit", no forced periodic changes, and refuse passwords found in lists of breached passwords.
+
+## Server-side sessions
+
+After log-in, the client needs something to prove "I am the one who logged in" on every request, without sending the password each time. The oldest and simplest answer is a **session**: the server creates a record, gives the client a long random **session token** that points at it, and looks the record up on every request. Deleting the record is log-out, and it takes effect immediately.
+
+Three details separate a good session store from a weak one:
+
+1. **Store a hash of the token, not the token.** If the `sessions` table leaks, the attacker gets hashes, which are useless as cookies. The token is 32 random bytes, so a fast SHA-256 is enough here: nobody can guess 256 random bits, so there is nothing to slow down.
+2. **Two clocks.** An **idle timeout** (30 minutes without a request) that moves forward on every use, and an **absolute timeout** (12 hours after log-in) that never moves. Without the second, a stolen session that is used every few minutes lives forever.
+3. **Log-out everywhere.** Sessions are rows with a `user_id`, so "sign out of all devices" (after a password change, say) is one `DELETE`.
+
+sessions.js
+
+```ts
+import { createHash, randomBytes } from "node:crypto";
+
+export const IDLE_MS = 30 * 60 * 1000;
+export const ABSOLUTE_MS = 12 * 60 * 60 * 1000;
+const sha256 = (token) => createHash("sha256").update(token).digest("hex");
+
+export async function createSessionTable(db) {
+  await db.exec(`CREATE TABLE sessions (
+    token_hash text PRIMARY KEY,
+    user_id integer NOT NULL,
+    created_at timestamptz NOT NULL,
+    last_seen_at timestamptz NOT NULL)`);
+}
+
+export async function startSession(db, userId, now) {
+  const token = randomBytes(32).toString("base64url");
+  await db.query("INSERT INTO sessions VALUES ($1, $2, $3, $3)", [sha256(token), userId, now]);
+  return token;
+}
+
+export async function readSession(db, token, now) {
+  if (typeof token !== "string") return null;
+  const { rows: [session] } = await db.query("SELECT * FROM sessions WHERE token_hash = $1", [sha256(token)]);
+  if (!session) return null;
+  const idle = now - session.last_seen_at >= IDLE_MS;
+  const tooOld = now - session.created_at >= ABSOLUTE_MS;
+  if (idle || tooOld) {
+    await db.query("DELETE FROM sessions WHERE token_hash = $1", [session.token_hash]);
+    return null;
+  }
+  await db.query("UPDATE sessions SET last_seen_at = $2 WHERE token_hash = $1", [session.token_hash, now]);
+  return { userId: session.user_id };
+}
+
+export async function endSession(db, token) {
+  await db.query("DELETE FROM sessions WHERE token_hash = $1", [sha256(token)]);
+}
+
+export async function endAllSessions(db, userId) {
+  const { rows } = await db.query("DELETE FROM sessions WHERE user_id = $1 RETURNING user_id", [userId]);
+  return rows.length;
+}
+```
+
+Walk a session through a day, with the clock moved by hand:
+
+session-life.jsNode.js only
+
+```ts
+import { PGlite } from "@electric-sql/pglite";
+import { createSessionTable, endAllSessions, endSession, readSession, startSession } from "./sessions.js";
+
+const db = new PGlite();
+await createSessionTable(db);
+const t0 = new Date(Date.UTC(2026, 8, 24, 8, 0));
+const at = (minutes) => new Date(t0.getTime() + minutes * 60_000);
+const show = async (label, token, minutes) => console.log(label.padEnd(34), await readSession(db, token, at(minutes)));
+
+const laptop = await startSession(db, 7, at(0));
+const { rows: [row] } = await db.query("SELECT token_hash FROM sessions");
+console.log("cookie holds", laptop.length, "chars; table holds a", row.token_hash.length, "char hash");
+
+await show("laptop, 20 min later", laptop, 20);
+await show("laptop, 45 min (25 idle)", laptop, 45);
+await show("laptop, 90 min (45 idle)", laptop, 90);
+
+let phone = await startSession(db, 7, at(0));
+for (let minutes = 25; minutes < 12 * 60; minutes += 25) await readSession(db, phone, at(minutes));
+await show("phone, used every 25 min, at 12 h", phone, 12 * 60);
+
+const tablet = await startSession(db, 7, at(0));
+const work = await startSession(db, 7, at(0));
+await endSession(db, tablet);
+await show("tablet after log-out", tablet, 1);
+console.log("sign out everywhere ended", await endAllSessions(db, 7), "session(s)");
+await show("work laptop after that", work, 2);
+await db.close();
+```
+
+Output of `node session-life.js`
+
+```ts
+cookie holds 43 chars; table holds a 64 char hash
+laptop, 20 min later               { userId: 7 }
+laptop, 45 min (25 idle)           { userId: 7 }
+laptop, 90 min (45 idle)           null
+phone, used every 25 min, at 12 h  null
+tablet after log-out               null
+sign out everywhere ended 1 session(s)
+work laptop after that             null
+```
+
+The laptop's session survived 25 idle minutes and died after 45. The phone was used every 25 minutes all day, so the idle timeout never fired, and the absolute timeout ended it at 12 hours anyway. Log-out and "sign out everywhere" took effect on the very next request. The table never held a usable token.
+
+### Rotate the token on log-in: session fixation
+
+Many sites give every visitor a session before log-in (for a shopping cart, say). The tempting implementation marks that same session as logged in when the user logs in. That enables **session fixation**: an attacker obtains a session token, plants it in the victim's browser (through a link on a vulnerable site, or a cookie set by a compromised subdomain), and waits. When the victim logs in, the attacker's token becomes a logged-in session:
+
+fixation.js
+
+```ts
+const sessions = new Map();
+let counter = 0;
+const newToken = () => `token-${++counter}`;
+
+function visit() {
+  const token = newToken();
+  sessions.set(token, { userId: null });
+  return token;
+}
+
+function logInReusingSession(token, userId) {
+  sessions.get(token).userId = userId;
+  return token;
+}
+
+function logInWithRotation(token, userId) {
+  const cart = sessions.get(token)?.cart;
+  sessions.delete(token);
+  const fresh = newToken();
+  sessions.set(fresh, { userId, cart });
+  return fresh;
+}
+
+for (const [label, logIn] of [["reusing the session", logInReusingSession], ["rotating the token", logInWithRotation]]) {
+  const planted = visit();
+  const victimToken = logIn(planted, "ada");
+  console.log(`${label}: victim holds ${victimToken}; attacker's ${planted} is user`, sessions.get(planted)?.userId ?? "(no session)");
+}
+```
+
+Output of `node fixation.js` and of the browser terminal
+
+```ts
+reusing the session: victim holds token-1; attacker's token-1 is user ada
+rotating the token: victim holds token-3; attacker's token-2 is user (no session)
+```
+
+The rule: **issue a new session token whenever the privilege level changes**: at log-in, at log-out, and when a user confirms their password to do something sensitive. Copy over whatever data the old session carried (the cart), then delete the old one.
+
+## JWTs, taken apart
+
+A session needs a database lookup on every request. A **JSON Web Token** (JWT, pronounced "jot") avoids it: the server puts the facts ("user 7, until 10:15") into the token itself and signs them, and any server holding the key can verify the signature without asking a database. The BookStore's token was this idea without the standard format. A JWT has three base64url parts joined by dots: a **header** that names the signing algorithm, a **payload** of **claims**, and the **signature**. With **HS256**, the signature is HMAC-SHA256 of `header.payload` with a shared secret. Build one by hand to see that there is nothing hidden:
+
+jwt-by-hand.jsNode.js only
+
+```ts
+import { createHmac } from "node:crypto";
+
+const secret = "demo-secret-from-the-environment-0123456789";
+const encode = (object) => Buffer.from(JSON.stringify(object)).toString("base64url");
+
+const header = encode({ alg: "HS256", typ: "JWT" });
+const payload = encode({ sub: "7", iss: "bank-api", aud: "bank-app", iat: 1790150400, exp: 1790151300 });
+const signature = createHmac("sha256", secret).update(`${header}.${payload}`).digest("base64url");
+const token = `${header}.${payload}.${signature}`;
+
+console.log(token.split(".").map((part) => part.length));
+console.log(Buffer.from(header, "base64url").toString());
+console.log(Buffer.from(payload, "base64url").toString());
+```
+
+Output of `node jwt-by-hand.js`
+
+```json
+[ 36, 106, 43 ]
+{"alg":"HS256","typ":"JWT"}
+{"sub":"7","iss":"bank-api","aud":"bank-app","iat":1790150400,"exp":1790151300}
+```
+
+The registered claims: `sub` (subject: who), `iss` (issuer: who made it), `aud` (audience: who it is for), `iat` (issued at), `exp` (expires) and `nbf` (not before), all times in seconds since 1970. This token lives 15 minutes. Anyone who holds it can read it: a JWT is **signed, not encrypted**.
+
+### Verifying: every check matters
+
+Verification is where real systems have failed. The classic bug: a library read the `alg` field from the token's header and used whatever algorithm it named, including `"none"`, which means "no signature". An attacker changed the payload, set `alg` to `none`, dropped the signature, and was accepted. Here is a correct verifier next to a naive one:
+
+jwt.js
+
+```ts
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+const decode = (part) => JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+
+export function sign(claims, keys, kid) {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT", kid })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  const signature = createHmac("sha256", keys[kid]).update(`${header}.${payload}`).digest("base64url");
+  return `${header}.${payload}.${signature}`;
+}
+
+export function verify(token, keys, { now, issuer, audience, leeway = 30 }) {
+  const parts = typeof token === "string" ? token.split(".") : [];
+  if (parts.length !== 3) return { error: "malformed" };
+  let header, claims;
+  try {
+    header = decode(parts[0]);
+    claims = decode(parts[1]);
+  } catch {
+    return { error: "malformed" };
+  }
+  if (header.alg !== "HS256") return { error: `algorithm ${header.alg} not allowed` };
+  if (!Object.hasOwn(keys, header.kid)) return { error: "unknown key" };
+  const expected = createHmac("sha256", keys[header.kid]).update(`${parts[0]}.${parts[1]}`).digest();
+  const given = Buffer.from(parts[2], "base64url");
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return { error: "bad signature" };
+  const seconds = Math.floor(now / 1000);
+  if (typeof claims.exp !== "number" || seconds > claims.exp + leeway) return { error: "expired" };
+  if (typeof claims.nbf === "number" && seconds + leeway < claims.nbf) return { error: "not valid yet" };
+  if (claims.iss !== issuer) return { error: "wrong issuer" };
+  if (claims.aud !== audience) return { error: "wrong audience" };
+  return { claims };
+}
+
+export function naiveVerify(token, secret) {
+  const [h, p, s] = token.split(".");
+  const header = decode(h);
+  if (header.alg === "none") return decode(p);
+  const expected = createHmac("sha256", secret).update(`${h}.${p}`).digest("base64url");
+  return s === expected ? decode(p) : null;
+}
+```
+
+- The algorithm is **fixed by the server**, never chosen by the token. Only `HS256` is accepted.
+- `kid` (key id) says which key signed the token, and must be one of *your* keys (`Object.hasOwn`, so `"__proto__"` or `"constructor"` cannot sneak in). This is what makes **key rotation** possible: sign with a new key, keep accepting the old one until its tokens have expired, then remove it.
+- The signature is compared in constant time, before any claim is trusted.
+- `exp` is required, and a small **leeway** absorbs clock differences between servers. `iss` and `aud` stop a token issued by another system, or for another service, from being accepted here.
+
+jwt-attacks.jsNode.js only
+
+```ts
+import { naiveVerify, sign, verify } from "./jwt.js";
+
+const keys = { "2026-09": "september-secret-0123456789abcdef0123", "2026-10": "october-secret-0123456789abcdef01234" };
+const now = Date.UTC(2026, 8, 24, 10, 0, 0);
+const iat = Math.floor(now / 1000);
+const claims = { sub: "7", role: "customer", iss: "bank-api", aud: "bank-app", iat, exp: iat + 900 };
+const options = { now, issuer: "bank-api", audience: "bank-app" };
+const token = sign(claims, keys, "2026-09");
+
+const [h, p] = token.split(".");
+const enc = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const tampered = `${h}.${enc({ ...claims, role: "admin" })}.${token.split(".")[2]}`;
+const algNone = `${enc({ alg: "none", typ: "JWT" })}.${enc({ ...claims, sub: "1", role: "admin" })}.`;
+
+const cases = {
+  "valid token": token,
+  "payload changed to admin": tampered,
+  "alg: none, no signature": algNone,
+  "signed with new key": sign(claims, keys, "2026-10"),
+  "signed with unknown key": sign(claims, { ...keys, attacker: "x" }, "attacker"),
+  "for another service": sign({ ...claims, aud: "loans-app" }, keys, "2026-09"),
+  "expired 10 s ago": sign({ ...claims, exp: iat - 10 }, keys, "2026-09"),
+  "expired 5 minutes ago": sign({ ...claims, exp: iat - 300 }, keys, "2026-09"),
+};
+for (const [label, candidate] of Object.entries(cases)) {
+  const result = verify(candidate, keys, options);
+  console.log(label.padEnd(26), result.error ?? `ok, sub ${result.claims.sub}`);
+}
+console.log("naive verifier on alg:none ->", naiveVerify(algNone, keys["2026-09"]));
+```
+
+Output of `node jwt-attacks.js`
+
+```ts
+valid token                ok, sub 7
+payload changed to admin   bad signature
+alg: none, no signature    algorithm none not allowed
+signed with new key        ok, sub 7
+signed with unknown key    unknown key
+for another service        wrong audience
+expired 10 s ago           ok, sub 7
+expired 5 minutes ago      expired
+naive verifier on alg:none -> {
+  sub: '1',
+  role: 'admin',
+  iss: 'bank-api',
+  aud: 'bank-app',
+  iat: 1790244000,
+  exp: 1790244900
+}
+```
+
+The correct verifier rejected every forgery, accepted a token from the new key during rotation, and let a token that expired 10 seconds ago through the 30-second leeway (but not one from five minutes ago). The naive verifier handed an attacker an admin token for user 1, without any key at all.
+
+> DO NOT SHIP YOUR OWN JWT CODE
+>
+> This section built a verifier to show what one must check. In production, use a maintained library (for example `jose`, or [@zudojs/auth](https://zudojs.oyinlola.site/learn/zudo-auth#jwt)) and configure it strictly: one allowed algorithm, required `exp`, expected issuer and audience. JWT libraries have had critical bugs precisely in the details above, and a library's bugs get found and fixed for everyone.
+
+### Sessions or JWTs?
+
+|  | Server-side session | Stateless JWT |
+| --- | --- | --- |
+| Lookup per request | Yes (database or cache) | No, only a signature check |
+| Log-out, revoke a stolen token | Immediate: delete the row | Not until `exp`, unless you add a denylist (which is a lookup again) |
+| Change a user's role | Takes effect on the next request | Old tokens keep the old role until they expire |
+| Verify in another service | Needs access to the session store | Needs only the key (or, with RS256/ES256, only a public key) |
+| Token size | ~43 characters | Hundreds of characters, on every request |
+
+For a web application talking to its own backend, server-side sessions are simpler and safer. JWTs earn their place when *other* services must verify identity without calling back, which is exactly what OAuth and OpenID Connect use them for in [the next lesson](https://zudojs.oyinlola.site/learn/sec-oauth). A common middle ground is a short-lived JWT (5-15 minutes) for API calls, plus a long-lived **refresh token** stored on the server that can be revoked.
+
+### Refresh token rotation
+
+A refresh token is long-lived, so it is the prize for an attacker. **Rotation** makes each refresh token single-use: using it returns a new access token *and* a new refresh token, and the old one is marked used. If a used token ever comes back, two parties hold copies, and the server cannot tell which one is the thief. So it revokes the whole **family** of tokens descended from that log-in:
+
+refresh.jsNode.js only
+
+```ts
+import { createHash, randomBytes } from "node:crypto";
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`CREATE TABLE refresh_tokens (
+  token_hash text PRIMARY KEY, family text NOT NULL, user_id integer NOT NULL, used boolean NOT NULL DEFAULT false)`);
+const sha256 = (t) => createHash("sha256").update(t).digest("hex");
+
+async function issue(userId, family = randomBytes(8).toString("hex")) {
+  const token = randomBytes(32).toString("base64url");
+  await db.query("INSERT INTO refresh_tokens (token_hash, family, user_id) VALUES ($1, $2, $3)", [sha256(token), family, userId]);
+  return token;
+}
+
+async function refresh(token) {
+  const { rows: [row] } = await db.query(
+    "UPDATE refresh_tokens SET used = true WHERE token_hash = $1 AND used = false RETURNING family, user_id", [sha256(token)]);
+  if (row) return { ok: true, next: await issue(row.user_id, row.family) };
+  const { rows: [reused] } = await db.query("SELECT family FROM refresh_tokens WHERE token_hash = $1", [sha256(token)]);
+  if (reused) {
+    const { rows } = await db.query("DELETE FROM refresh_tokens WHERE family = $1 RETURNING token_hash", [reused.family]);
+    return { ok: false, why: `reuse detected, revoked ${rows.length} token(s) in the family` };
+  }
+  return { ok: false, why: "unknown token" };
+}
+
+const first = await issue(7);
+const second = await refresh(first);
+console.log("app refreshes:", second.ok);
+const stolenCopy = first;
+console.log("thief replays the old token:", await refresh(stolenCopy));
+console.log("app's current token:", await refresh(second.next));
+await db.close();
+```
+
+Output of `node refresh.js`
+
+```ts
+app refreshes: true
+thief replays the old token: { ok: false, why: 'reuse detected, revoked 2 token(s) in the family' }
+app's current token: { ok: false, why: 'unknown token' }
+```
+
+The honest app lost its session too. That is intentional: the user logs in again, and the thief's copy is dead. The `UPDATE … WHERE used = false RETURNING` is the same atomic "claim" pattern as the idempotency keys in [Idempotency and safe retries](https://zudojs.oyinlola.site/learn/api-idempotency#keys): two simultaneous refreshes with the same token cannot both succeed.
+
+## Cookies that browsers protect
+
+In a browser, where should the session token live? `localStorage` is readable by any JavaScript on the page, so one cross-site scripting (XSS) bug hands every token to the attacker. A cookie with the right attributes is out of JavaScript's reach. [HTTP in depth](https://zudojs.oyinlola.site/learn/http-deep#cookies) introduced the attributes; for a session cookie, use all of them, plus one more:
+
+- `HttpOnly`: page JavaScript cannot read it.
+- `Secure`: only sent over HTTPS.
+- `SameSite=Lax`: not sent with cross-site form posts and background requests, which blocks most cross-site request forgery. `Strict` also withholds it when the user follows a link from another site, which is safer but means arriving from an e-mail link shows them logged out.
+- `Path=/`, and **no** `Domain` attribute, so only this exact host receives it.
+- The **`__Host-` name prefix**: browsers refuse a cookie with this prefix unless it is `Secure`, has `Path=/` and has no `Domain`. So a compromised subdomain (`promo.bank.example`) cannot set or overwrite it, which closes the cookie-planting route to session fixation.
+
+cookies.js
+
+```ts
+function sessionCookie(token, maxAgeSeconds) {
+  return `__Host-session=${token}; Path=/; Max-Age=${maxAgeSeconds}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function clearedSessionCookie() {
+  return "__Host-session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax";
+}
+
+function readSessionToken(cookieHeader = "") {
+  for (const part of cookieHeader.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === "__Host-session") return rest.join("=") || null;
+  }
+  return null;
+}
+
+console.log(sessionCookie("Qm9sYS1pcy1ub3QtYS10b2tlbg", 12 * 60 * 60));
+console.log(clearedSessionCookie());
+console.log(readSessionToken("theme=dark; __Host-session=Qm9sYS1pcy1ub3QtYS10b2tlbg"));
+console.log(readSessionToken("session=planted-by-attacker"));
+```
+
+Output of `node cookies.js` and of the browser terminal
+
+```ts
+__Host-session=Qm9sYS1pcy1ub3QtYS10b2tlbg; Path=/; Max-Age=43200; HttpOnly; Secure; SameSite=Lax
+__Host-session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax
+Qm9sYS1pcy1ub3QtYS10b2tlbg
+null
+```
+
+The cookie's `Max-Age` matches the absolute timeout, but it is only a hint to the browser: the server's own expiry checks are what count. Log-out sends the cleared cookie *and* deletes the session row; clearing the cookie alone leaves a working token in any copy an attacker made. Cookies sent automatically bring cross-site request forgery with them; [Browser attacks and defences](https://zudojs.oyinlola.site/learn/sec-web) covers CSRF tokens and the rest.
+
+## Slowing down guessing
+
+A log-in endpoint answers one question, "is this password right?", and attackers ask it at scale in two ways:
+
+- **Brute force**: many passwords against one account.
+- **Credential stuffing**: e-mail and password pairs leaked from *other* sites, one attempt per account, across thousands of accounts. People reuse passwords, so a few percent succeed.
+
+Per-account counting stops the first; per-IP limits (from [Rate limiting](https://zudojs.oyinlola.site/learn/api-rate-limiting#keys)) slow the second. But a hard lock ("5 failures and the account is locked for an hour") hands attackers a weapon: they can lock any customer out on purpose by failing five times. A **progressive delay** is gentler: after a few failures, each further attempt must wait longer, doubling up to a cap. A legitimate user who mistyped waits seconds; a guesser gets a handful of attempts per hour. The delay is stored with the user, and a success resets it:
+
+throttle.js
+
+```ts
+const FREE_ATTEMPTS = 5;
+const MAX_DELAY_MS = 15 * 60 * 1000;
+
+export function delayAfter(failures) {
+  if (failures <= FREE_ATTEMPTS) return 0;
+  return Math.min(1000 * 2 ** (failures - FREE_ATTEMPTS - 1), MAX_DELAY_MS);
+}
+
+export async function createUserTable(db) {
+  await db.exec(`CREATE TABLE users (
+    id serial PRIMARY KEY,
+    email text NOT NULL UNIQUE,
+    password_hash text NOT NULL,
+    failed_logins integer NOT NULL DEFAULT 0,
+    next_attempt_at timestamptz)`);
+}
+
+export async function recordFailure(db, userId, now) {
+  const { rows: [row] } = await db.query(
+    "UPDATE users SET failed_logins = failed_logins + 1 WHERE id = $1 RETURNING failed_logins", [userId]);
+  const wait = delayAfter(row.failed_logins);
+  await db.query("UPDATE users SET next_attempt_at = $2 WHERE id = $1", [userId, wait ? new Date(now.getTime() + wait) : null]);
+}
+
+export async function recordSuccess(db, userId) {
+  await db.query("UPDATE users SET failed_logins = 0, next_attempt_at = NULL WHERE id = $1", [userId]);
+}
+```
+
+delays.js
+
+```ts
+import { delayAfter } from "./throttle.js";
+
+const rows = [];
+for (let failures = 1; failures <= 16; failures++) rows.push(`${failures}:${delayAfter(failures) / 1000}s`);
+console.log(rows.join("  "));
+
+let attempts = 0, clock = 0;
+for (let failures = 0; clock < 60 * 60 * 1000; failures++) {
+  clock += delayAfter(failures);
+  attempts++;
+}
+console.log("guesses possible in the first hour:", attempts);
+```
+
+Output of `node delays.js` and of the browser terminal
+
+```ts
+1:0s  2:0s  3:0s  4:0s  5:0s  6:1s  7:2s  8:4s  9:8s  10:16s  11:32s  12:64s  13:128s  14:256s  15:512s  16:900s
+guesses possible in the first hour: 19
+```
+
+Five free attempts, then 1, 2, 4 … seconds, capped at 15 minutes. An attacker who waits out every delay gets 19 guesses in the first hour, then four an hour after that. Against a password that is not on a common-passwords list, that is hopeless; a user who mistyped twice never notices.
+
+Two more rules from [the BookStore](https://zudojs.oyinlola.site/learn/bookstore-auth#routes) still apply: the same "wrong e-mail or password" answer for unknown accounts and wrong passwords, and a dummy hash check for unknown e-mails so both paths take the same time. There is one honest trade-off: telling a user "wait 32 seconds" reveals that the account exists, since unknown e-mails never get a delay. Many services accept that for a better experience; high-security ones return the same generic answer plus the delay for everyone.
+
+## Build it: log-in, sessions and log-out over HTTP
+
+Now the pieces together in a `node:http` server: register, log in (with the delay, the dummy hash, the rehash and a fresh session token), `GET /me`, and log-out. The clock is a variable so the example can move time; a real server uses `new Date()`:
+
+server.jsNode.js only
+
+```ts
+import http from "node:http";
+import { PGlite } from "@electric-sql/pglite";
+import { hashPassword, needsRehash, verifyPassword } from "./passwords.js";
+import { createSessionTable, endSession, readSession, startSession, ABSOLUTE_MS } from "./sessions.js";
+import { createUserTable, recordFailure, recordSuccess } from "./throttle.js";
+
+const db = new PGlite();
+await createUserTable(db);
+await createSessionTable(db);
+const dummyHash = await hashPassword("no-user-has-this-password-9f8e7d");
+let clock = new Date(Date.UTC(2026, 8, 24, 9, 0));
+
+const cookieToken = (req) => (req.headers.cookie ?? "").match(/(?:^|;\s*)__Host-session=([^;]+)/)?.[1];
+const cookie = (token, age) => `__Host-session=${token}; Path=/; Max-Age=${age}; HttpOnly; Secure; SameSite=Lax`;
+
+async function route(req, body) {
+  if (req.url === "/register") {
+    const hash = await hashPassword(body.password);
+    await db.query("INSERT INTO users (email, password_hash) VALUES ($1, $2)", [body.email.toLowerCase(), hash]);
+    return { status: 201 };
+  }
+  if (req.url === "/login") {
+    const { rows: [user] } = await db.query("SELECT * FROM users WHERE email = $1", [String(body.email).toLowerCase()]);
+    if (user?.next_attempt_at > clock) {
+      return { status: 429, headers: { "Retry-After": String(Math.ceil((user.next_attempt_at - clock) / 1000)) } };
+    }
+    const ok = await verifyPassword(String(body.password), user?.password_hash ?? dummyHash);
+    if (!user || !ok) {
+      if (user) await recordFailure(db, user.id, clock);
+      return { status: 401, body: { error: "Wrong e-mail or password" } };
+    }
+    await recordSuccess(db, user.id);
+    if (needsRehash(user.password_hash)) {
+      await db.query("UPDATE users SET password_hash = $2 WHERE id = $1", [user.id, await hashPassword(body.password)]);
+    }
+    const old = cookieToken(req);
+    if (old) await endSession(db, old);
+    const token = await startSession(db, user.id, clock);
+    return { status: 204, headers: { "Set-Cookie": cookie(token, ABSOLUTE_MS / 1000) } };
+  }
+  if (req.url === "/me") {
+    const session = await readSession(db, cookieToken(req), clock);
+    return session ? { status: 200, body: { userId: session.userId } } : { status: 401 };
+  }
+  if (req.url === "/logout") {
+    const token = cookieToken(req);
+    if (token) await endSession(db, token);
+    return { status: 204, headers: { "Set-Cookie": cookie("", 0) } };
+  }
+  return { status: 404 };
+}
+
+const server = http.createServer(async (req, res) => {
+  let text = "";
+  for await (const chunk of req) text += chunk;
+  const result = await route(req, text ? JSON.parse(text) : {});
+  res.writeHead(result.status, { "Content-Type": "application/json", ...result.headers });
+  res.end(result.body ? JSON.stringify(result.body) : undefined);
+});
+
+server.listen(0, async () => {
+  const base = `http://localhost:${server.address().port}`;
+  const post = (path, body, cookieHeader) =>
+    fetch(base + path, { method: "POST", body: JSON.stringify(body), headers: cookieHeader ? { Cookie: cookieHeader } : {} });
+
+  await post("/register", { email: "Ada@Example.com", password: "a long passphrase for ada" });
+  const statuses = [];
+  for (let i = 0; i < 6; i++) statuses.push((await post("/login", { email: "ada@example.com", password: `guess ${i}` })).status);
+  const blocked = await post("/login", { email: "ada@example.com", password: "a long passphrase for ada" });
+  console.log("six wrong guesses:", statuses.join(" "), "| right password at once:", blocked.status, "retry after", blocked.headers.get("retry-after"), "s");
+  console.log("unknown e-mail:", (await post("/login", { email: "nobody@example.com", password: "x" })).status);
+
+  clock = new Date(clock.getTime() + 3_000);
+  const login = await post("/login", { email: "ada@example.com", password: "a long passphrase for ada" });
+  const setCookie = login.headers.get("set-cookie");
+  console.log("3 s later:", login.status, setCookie.replace(/=[^;]+/, "=<token>"));
+
+  const session = setCookie.split(";")[0];
+  console.log("GET /me:", (await (await fetch(`${base}/me`, { headers: { Cookie: session } })).json()));
+  const logout = await post("/logout", {}, session);
+  console.log("log-out:", logout.status, logout.headers.get("set-cookie").split(";").slice(0, 3).join(";"));
+  console.log("old cookie after log-out:", (await fetch(`${base}/me`, { headers: { Cookie: session } })).status);
+  server.close();
+  await db.close();
+});
+```
+
+Output of `node server.js`
+
+```ts
+six wrong guesses: 401 401 401 401 401 401 | right password at once: 429 retry after 1 s
+unknown e-mail: 401
+3 s later: 204 __Host-session=<token>; Path=/; Max-Age=43200; HttpOnly; Secure; SameSite=Lax
+GET /me: { userId: 1 }
+log-out: 204 __Host-session=; Path=/; Max-Age=0
+old cookie after log-out: 401
+```
+
+Read it as the attacker and as Ada:
+
+- All six wrong guesses got 401: five were free, and the sixth failure started a one-second delay. So even the correct password, sent straight after, was answered with 429 and `Retry-After: 1`. The unknown e-mail got the same 401 as a wrong password.
+- Three seconds later Ada logged in and received a `__Host-` cookie with every protective attribute. Her failure count was reset.
+- Log-out deleted the session on the server and told the browser to drop the cookie. A copy of the old cookie, replayed afterwards, got 401.
+
+## Testing and production concerns
+
+- **Test with a clock.** Every function here takes `now`, so expiry, delays and rotation are tested in milliseconds. Test the failures, not just the happy path: expired sessions, replayed refresh tokens, forged JWTs, the unknown e-mail's timing path.
+- **Offer a second factor.** A password can be phished or reused. Time-based one-time codes (TOTP) or passkeys (WebAuthn) stop credential stuffing even when the password is known; passkeys also resist phishing.
+- **Password reset is a log-in.** A reset link carries a token that logs the user in: make it random, store only its hash, single-use, and short-lived (for example 30 minutes), and end all sessions once the password changes.
+- **Notify.** E-mail the user after a password change, a new device log-in or many failed attempts. It turns a silent takeover into one the user can report.
+- **Keep secrets out of logs.** Never log passwords, tokens, cookies or `Authorization` headers, not even in debug mode. Log user ids and session ids' hashes instead.
+- **Use the library.** You now know what a log-in system must do. [@zudojs/auth](https://zudojs.oyinlola.site/learn/zudo-auth) implements hashing with rehash detection, sessions with idle and absolute expiry, refresh rotation with reuse detection, and lockouts, with tests you did not have to write.
+
+## Practice
+
+TRY IT YOURSELF
+
+### Raise the cost
+
+Your servers got faster, and you raise Argon2id's memory from 19,456 KiB to 47,104 KiB (46 MiB). Using `passwords.js`, show that a hash made with the old parameters still verifies, that `needsRehash` reports it with the new parameters, and that the upgraded hash has the new cost in it.
+
+**Show a solution**
+
+raise-cost.jsNode.js only
+
+```ts
+import { hashPassword, needsRehash, verifyPassword } from "./passwords.js";
+
+const NEXT = { m: 47104, t: 1, p: 1 };
+const old = await hashPassword("a long passphrase", { m: 19456, t: 2, p: 1 });
+
+console.log("old verifies:", await verifyPassword("a long passphrase", old));
+console.log("needs rehash under NEXT:", needsRehash(old, NEXT));
+const upgraded = await hashPassword("a long passphrase", NEXT);
+console.log(upgraded.split("$")[3], "| needs rehash:", needsRehash(upgraded, NEXT));
+console.log("upgraded verifies:", await verifyPassword("a long passphrase", upgraded));
+```
+
+Output of `node raise-cost.js`
+
+```ts
+old verifies: true
+needs rehash under NEXT: true
+m=47104,t=1,p=1 | needs rehash: false
+upgraded verifies: true
+```
+
+`m=47104, t=1` is another of OWASP's equivalent settings: more memory, fewer passes. Verification reads the costs from each stored value, so hashes with different costs live side by side while users gradually log in and get upgraded.
+
+TRY IT YOURSELF
+
+### A token for the wrong service
+
+The bank has two services, `bank-app` and `loans-app`, signed with the same key. Show that a token issued for `loans-app` is refused by `bank-app`'s verifier, and explain what would go wrong without the audience check.
+
+**Show a solution**
+
+audience.jsNode.js only
+
+```ts
+import { sign, verify } from "./jwt.js";
+
+const keys = { k1: "shared-secret-0123456789abcdef0123456789" };
+const now = Date.UTC(2026, 8, 24, 10, 0, 0);
+const iat = Math.floor(now / 1000);
+const loansToken = sign({ sub: "7", scope: "loans:apply", iss: "bank-api", aud: "loans-app", iat, exp: iat + 900 }, keys, "k1");
+
+console.log("loans-app:", verify(loansToken, keys, { now, issuer: "bank-api", audience: "loans-app" }).error ?? "ok");
+console.log("bank-app: ", verify(loansToken, keys, { now, issuer: "bank-api", audience: "bank-app" }).error ?? "ok");
+```
+
+Output of `node audience.js`
+
+```ts
+loans-app: ok
+bank-app:  wrong audience
+```
+
+Without the audience check, any token issued for any service sharing the key works everywhere. A token leaked from the less protected loans service, or one issued to a partner for a narrow purpose, would open the main banking app. Better still, give each service its own key.
+
+TRY IT YOURSELF
+
+### Never trust the session id from before log-in
+
+Using `sessions.js`, write a log-in step that ends the pre-login session (if any) and starts a new one. Show that the token an attacker planted before log-in does not become Ada's session.
+
+**Show a solution**
+
+rotate-on-login.jsNode.js only
+
+```ts
+import { PGlite } from "@electric-sql/pglite";
+import { createSessionTable, endSession, readSession, startSession } from "./sessions.js";
+
+const db = new PGlite();
+await createSessionTable(db);
+const now = new Date(Date.UTC(2026, 8, 24, 9, 0));
+
+async function completeLogin(preLoginToken, userId) {
+  if (preLoginToken) await endSession(db, preLoginToken);
+  return startSession(db, userId, now);
+}
+
+const planted = await startSession(db, 0, now);
+const adas = await completeLogin(planted, 7);
+console.log("Ada's session:", await readSession(db, adas, now));
+console.log("planted token:", await readSession(db, planted, now));
+console.log("tokens differ:", adas !== planted);
+await db.close();
+```
+
+Output of `node rotate-on-login.js`
+
+```ts
+Ada's session: { userId: 7 }
+planted token: null
+tokens differ: true
+```
+
+User 0 stands for an anonymous visitor's session. After log-in the planted token points at nothing, so the attacker who knows it gains nothing. Combine this with the `__Host-` cookie prefix, which stops subdomains from planting cookies in the first place.
+
+## Summary
+
+- Hash passwords with Argon2id (built into Node.js 24.7+) or scrypt, in a self-describing format; cap the length in bytes; verify every format you ever wrote and rehash to current parameters after a successful log-in.
+- Server-side sessions: 32 random bytes in the cookie, only their SHA-256 hash in the database, an idle timeout and an absolute timeout, and log-out that deletes the row. Rotate the token whenever privilege changes, to stop session fixation.
+- A JWT is base64url header, payload and an HMAC (or public-key) signature. A verifier fixes the algorithm, checks the key id, compares the signature in constant time, requires `exp`, and checks `iss` and `aud`, with a small leeway. Use a library in production.
+- Sessions revoke instantly and are simplest for your own web app; JWTs suit verification by other services. Short-lived access tokens plus rotated, reuse-detecting refresh tokens combine both.
+- Session cookies: `__Host-` prefix, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, no `Domain`.
+- Slow guessing with progressive per-account delays and per-IP limits, not hard lockouts attackers can abuse; answer unknown accounts and wrong passwords the same way, in the same time.
+
+Next: [OAuth 2.0 and OpenID Connect](https://zudojs.oyinlola.site/learn/sec-oauth), where someone else checks the password, and you implement the authorization code flow with PKCE against a small authorization server of your own.
+
+## Test yourself
+
+Five questions, picked at random from this lesson's question bank. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it in the terminal. Get 4 of 5 right to pass. If you don't, read the explanations and try again: you get 5 different questions.

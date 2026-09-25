@@ -1,22 +1,30 @@
 ---
-title: "TypeScript and JavaScript together"
-description: "See exactly what TypeScript becomes when it runs, why types cannot check outside data, and how to close that gap by hand with type guards, assertion functions and a validator that returns a Result."
+title: "TypeScript and JavaScript together — ZudoJS Academy"
+description: "See why types cannot check data that arrives while the program runs, and close the gap by hand with guards, assertion functions and a validator."
 source: https://zudojs.oyinlola.site/learn/ts-runtime
 ---
 
-LESSON 40 OF 84
+LEVEL 5 · LESSON 20 OF 23
 
-TypeScript Foundation
+Types meet the runtime Foundation
 
 # TypeScript and JavaScript together
 
-See exactly what TypeScript becomes when it runs, why types cannot check outside data, and how to close that gap by hand with type guards, assertion functions and a validator that returns a Result.
+See why types cannot check data that arrives while the program runs, and close the gap by hand with guards, assertion functions and a validator.
 
 - **45 min** to read and try
-- **You need:** Modules in TypeScript
+- **You need:** Narrowing, Type assertions and tsconfig in depth
 - **You build:** A type-safe create-task handler that turns untrusted JSON into a checked NewTask, or a list of problems
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain which parts of a program exist only at compile time and which exist at runtime
+- Show why an annotation on JSON.parse checks nothing, and type outside data as unknown
+- Check outside data with type guards and assertion functions at the boundary
+- Build a validator that collects every issue, applies defaults and copies only allowed fields
+- Apply the rules of type-safe API design to a request handler
 
 ## From TypeScript to a running program
 
@@ -27,50 +35,7 @@ Every TypeScript program goes through the same steps:
 3. **Node.js**: runs the JavaScript. It has never heard of your types.
 4. **Your application**: receives requests, reads files and databases, and talks to other services, all while running.
 
-Here is a small file. It has an interface, a type alias, annotations, a default parameter and a type assertion (`as`):
-
-erase.ts
-
-```ts
-interface Task {
-  id: number;
-  title: string;
-}
-
-type Status = "todo" | "done";
-
-function label(task: Task, status: Status = "todo"): string {
-  return `${task.title} (${status})`;
-}
-
-const raw: unknown = { id: 1, title: "Buy milk" };
-const task = raw as Task;
-console.log(label(task));
-```
-
-Output of `npx tsx erase.ts` and of the browser terminal
-
-```ts
-Buy milk (todo)
-```
-
-Compile it in your `ts-tasks` folder, and read what Node.js will actually run:
-
-Terminal on your computer
-
-```bash
-$ npx tsc --noEmit false --outDir dist
-$ cat dist/erase.js
-function label(task, status = "todo") {
-    return `${task.title} (${status})`;
-}
-const raw = { id: 1, title: "Buy milk" };
-const task = raw;
-console.log(label(task));
-export {};
-```
-
-The interface and the type alias are gone. So are the annotations. The default value `= "todo"` stayed, because it is JavaScript. And look at `const task = raw;`: the `as Task` became **nothing at all**. No check, no conversion. This is called **type erasure**, and it explains everything in this lesson.
+Step 2 is **type erasure**, which [What the TypeScript compiler does](https://zudojs.oyinlola.site/learn/ts-compiler#erasure) showed line by line: interfaces, type aliases, annotations, generics, `as`, `!` and `satisfies` all disappear, and nothing is added in their place. By step 4, nothing is left of your types. That one fact explains everything in this lesson: whatever arrives while the program runs is checked by nobody, unless you write the check.
 
 ## Compile time and runtime
 
@@ -149,41 +114,13 @@ This file passes `tsc` with no errors, then fails when it runs. Without the `try
 
 Every request that reaches your API is text like `requestBody`, sent by someone else, possibly an attacker. Something has to check it **at runtime** and turn it into a value that really matches the type. The rest of this lesson builds that check by hand.
 
-## Type assertions: when as lies
+## Why as is not a check
 
-`value as Task` is a **type assertion**. It tells the compiler "trust me, this is a `Task`". You just saw it compile to nothing. It changes the type the compiler believes, never the value:
-
-as-lies.ts
-
-```ts
-interface Task {
-  id: number;
-  title: string;
-}
-
-const body: unknown = JSON.parse('{"id": "7"}');
-const task = body as Task;
-const id = "42" as unknown as number;
-
-console.log(typeof task.id, task.title);
-console.log(typeof id, id + 1);
-```
-
-Output of `npx tsx as-lies.ts` and of the browser terminal
-
-```ts
-string undefined
-string 421
-```
-
-- `task.id` is typed as a `number`, but it is the string `"7"`, and `task.title` is typed as a `string` but does not exist.
-- `"42" as unknown as number` compiles, and `id + 1` gives `"421"`: string joining, not addition. TypeScript refuses `"42" as number` directly because it is obviously wrong, but going through `unknown` silences every objection.
-
-When is `as` acceptable? Only when **you know something the compiler cannot**, and you have checked it yourself. `as const` is always safe: it makes a type narrower, not different. `field as keyof NewTask` right after `Object.keys` on an object you built yourself, as in [Advanced and utility types](https://zudojs.oyinlola.site/learn/ts-advanced#mapped), is safe. On data from outside, `as` is never a check. The same goes for `any` and for the `!` operator (`value!`, "not null, trust me"): each one switches the compiler off for one spot.
+A common first reaction to the gap is to write `JSON.parse(requestBody) as Task`. [Type assertions](https://zudojs.oyinlola.site/learn/ts-assertions) showed why that fixes nothing: `as`, `as unknown as` and `!` change what the compiler believes, never the value, and they compile to nothing. At a boundary that gives one simple rule: **no `as` on data from outside**. The only assertions left in this lesson come right after a runtime check that proves them, on the line before.
 
 ## Type guards: value is T
 
-You already narrow types with `typeof` and `in`. A **type guard** packs such checks into a function you can reuse. Its return type, `value is NewTask`, is called a **type predicate**: when the function returns `true`, TypeScript narrows the argument to that type.
+You wrote type guards in [Narrowing](https://zudojs.oyinlola.site/learn/ts-narrowing#type-guards): a function whose return type is a **type predicate** such as `value is NewTask`. There, the value was already one of a few known types. At a boundary it starts as `unknown`, so the guard has to check the whole shape, field by field:
 
 guard.ts
 
@@ -226,11 +163,11 @@ invalid: null
 
 > THE COMPILER TRUSTS YOUR GUARD
 >
-> TypeScript does not check that the body of a type guard matches its predicate. A guard that forgets to check `done` still narrows to `NewTask`, and the bug is back. Type guards are the one place where a type can lie, so keep them short and write tests for them.
+> As [Narrowing](https://zudojs.oyinlola.site/learn/ts-narrowing#type-guards) showed, TypeScript does not check that a guard's body matches its predicate. At a boundary that matters more than anywhere: a guard that forgets to check `done` still narrows to `NewTask`, and unchecked data is let in. Keep boundary guards short, check every field, and test them.
 
 ## Assertion functions: asserts value is T
 
-A type guard returns a boolean and you write the `if`. An **assertion function** throws instead, and when it returns normally, the value is narrowed for the rest of the code. Its return type is `asserts value is T`:
+The other tool from [Narrowing](https://zudojs.oyinlola.site/learn/ts-narrowing#assertion-functions) is the **assertion function** (`asserts value is T`): it throws when the check fails, and when it returns normally the value is narrowed for the rest of the code. For a request body it reads naturally as "this must be a new task, or stop":
 
 asserts.ts
 
@@ -274,29 +211,7 @@ After `assertNewTask(body)`, `body` is a `NewTask` on every following line. This
 
 ## unknown in catch
 
-There is one more place where outside data sneaks in: `catch`. JavaScript lets code `throw` anything, not only `Error` objects. So with `strict` on, the variable in `catch (error)` has the type `unknown`:
-
-catch.ts
-
-```ts
-try {
-  JSON.parse("{not json");
-} catch (error) {
-  console.log(error.message);
-}
-```
-
-What `npx tsc --noEmit` prints
-
-```ts
-catch.ts:4:15 - error TS18046: 'error' is of type 'unknown'.
-
-4   console.log(error.message);
-                ~~~~~
-
-
-Found 1 error in catch.ts:4
-```
+One more value arrives from outside your control: whatever was thrown. With `strict` on, the variable in `catch (error)` is `unknown` ([Special types](https://zudojs.oyinlola.site/learn/ts-special-types#unknown) showed why), so you check it like a request body:
 
 catch.ts
 
@@ -325,9 +240,29 @@ bad JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)
 thrown: a plain string
 ```
 
-`error instanceof Error` is a runtime check (`Error` is a class), so it narrows. Never write `catch (error: any)`; it just hides the question.
+Never write `catch (error: any)`; it just hides the question. [Typed error handling](https://zudojs.oyinlola.site/learn/ts-errors), two lessons from now, builds a whole error system on this.
 
 ## Build: a validator that returns a Result
+
+REASON IT OUT
+
+### Before you write the validator
+
+The create-task endpoint receives a JSON body. A valid task has a `title` (3 to 100 characters), an optional `done` flag (default `false`) and an optional `priority` (`"low"`, `"normal"` or `"high"`, default `"normal"`). Before reading the code, think:
+
+1. What can the body be instead of a perfect task? Think beyond wrong field types.
+2. A client sends `"  Buy milk "`. Should the stored title keep the spaces? What about `"  "`?
+3. A client adds `"id": 999` and `"role": "admin"`. What should happen to them?
+4. The title is too short and `done` is `"sometimes"`. Should the client hear about one problem or both?
+5. What should the function return, so that the handler cannot forget the failure case?
+
+**Show the reasoning**
+
+1. Not JSON at all, `null`, an array, a string, an object with missing fields, or fields of the wrong type. Each must give a clear answer, not a crash.
+2. Trim it: `"Buy milk"` is what the user meant. Length rules then apply to the trimmed text, so `"  "` is too short.
+3. Ignore them. The server decides ids and roles, so the validator builds the result from the three allowed fields only.
+4. Both, in one answer. A client that learns one problem per request has to guess and retry.
+5. A `Result`: either the checked task or the list of problems. The handler then has to look at `ok` before it can reach the task.
 
 A real API should not stop at the first problem. It should tell the client everything that is wrong, in one answer. It should also clean the data: trim spaces, enforce lengths, and **copy only the fields it expects**, so a client cannot sneak in an `id` or a `role` (the mass assignment hole from [the user module](https://zudojs.oyinlola.site/learn/ts-objects#build)). Here is a validator that does all of that and returns the `Result` type from [Generics](https://zudojs.oyinlola.site/learn/ts-generics#result):
 
@@ -429,7 +364,7 @@ Output of `npx tsx handler.ts` and of the browser terminal
 { status: 400, body: { error: 'body is not valid JSON' } }
 ```
 
-Four requests, four correct answers. The spaces around `"Buy milk"` were trimmed. The bad body from earlier got a **422** with both problems listed, as you designed in [the REST design lesson](https://zudojs.oyinlola.site/learn/rest-design). The third client tried to choose its own `id` and make itself an `admin`; both fields were simply dropped. Broken JSON got a **400**. And `createTask` takes a `NewTask`, so it can only ever be called with checked data.
+Four requests, four correct answers. The spaces around `"Buy milk"` were trimmed. The bad body from earlier got a **422** ("the JSON was fine, its content was not") with both problems listed; [Designing a REST API](https://zudojs.oyinlola.site/learn/rest-design), in the backend course, explains how to choose such status codes. The third client tried to choose its own `id` and make itself an `admin`; both fields were simply dropped. Broken JSON got a **400**. And `createTask` takes a `NewTask`, so it can only ever be called with checked data.
 
 ## Designing type-safe APIs
 
@@ -446,18 +381,38 @@ What you just built follows a handful of rules that hold for any TypeScript back
 
 Count the lines. Checking three fields took about twenty lines of careful code, plus a trick to keep the compiler convinced, plus the `NewTask` interface written separately from the checks. If someone adds a field to the interface and forgets the validator, nothing warns them. A real API has dozens of request shapes, with nested objects, arrays, e-mail addresses and dates.
 
-That is exactly the problem `@zudojs/schema` solves. You describe the shape once, as a schema; it checks values at runtime, collects every issue, strips unknown fields, and gives you the TypeScript type for free, so the type and the check can never disagree. The same task, with ZudoJS:
+That is the problem schema libraries solve. You describe the shape once, as a schema; it checks values at runtime, collects every issue, strips unknown fields, and gives you the TypeScript type for free, so the type and the check can never disagree. Here is the same task with `@zudojs/schema`, ZudoJS's own schema library:
+
+schema-task.ts
 
 ```ts
+import { schema, type Infer } from "@zudojs/schema";
+
 const NewTaskSchema = schema.object({
   title: schema.string().trim().min(3).max(100),
   done: schema.default(schema.boolean(), false),
   priority: schema.default(schema.enum(["low", "normal", "high"]), "normal"),
 });
 type NewTask = Infer<typeof NewTaskSchema>;
+
+const task: NewTask = NewTaskSchema.parse({ title: "  Buy milk ", priority: "high", role: "admin" });
+console.log(task);
+
+const bad = NewTaskSchema.safeParse({ title: 42, done: "sometimes" });
+if (!bad.success) console.log(bad.issues.map((issue) => issue.message));
 ```
 
-You will install it and use it in [Your first Zudo code](https://zudojs.oyinlola.site/learn/zudo-first-code). Now you know exactly what it does for you, and why.
+Output of `npx tsx schema-task.ts` and of the browser terminal
+
+```json
+{ title: 'Buy milk', done: false, priority: 'high' }
+[
+  'Expected string, received number',
+  'Expected boolean, received string'
+]
+```
+
+[Runtime validation](https://zudojs.oyinlola.site/learn/ts-validation), next, shows how such a library works inside by building a small one, then compares Zod, Valibot and JSON Schema. You will use `@zudojs/schema` throughout the ZudoJS courses, starting with [Your first Zudo code](https://zudojs.oyinlola.site/learn/zudo-first-code).
 
 ## Practice
 
@@ -633,9 +588,11 @@ Output of `npx tsx patch.ts` and of the browser terminal
 - TypeScript becomes JavaScript before it runs. Types, interfaces and `as` are erased; only JavaScript checks exist at runtime.
 - Outside data (JSON, `process.env`, files, other APIs) was never seen by the compiler. Type it as `unknown`.
 - `as` changes what the compiler believes, never the value. Do not use it on outside data.
-- Type guards (`value is T`) and assertion functions (`asserts value is T`) narrow `unknown` after real checks. The compiler trusts them, so keep them correct.
+- Type guards (`value is T`) and assertion functions (`asserts value is T`) turn `unknown` into a checked type at the boundary. The compiler trusts them, so they must check every field.
 - In `catch`, the error is `unknown`; check with `instanceof Error`.
-- Validate once at the boundary, return a `Result` with every issue, and copy only allowed fields. `@zudojs/schema` does this for you, next.
+- Validate once at the boundary, return a `Result` with every issue, and copy only allowed fields. Schema libraries such as `@zudojs/schema` do this for you.
+
+Next: [Runtime validation](https://zudojs.oyinlola.site/learn/ts-validation), where one schema gives you both the runtime check and the TypeScript type.
 
 ## Test yourself
 

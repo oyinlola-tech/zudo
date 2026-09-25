@@ -1,22 +1,31 @@
 ---
-title: "Databases with @zudojs/database"
-description: "Connect the Task API to PostgreSQL through @zudojs/database, with migrations, seeds, a repository, a query builder, pagination, transactions and health checks, all running against real PostgreSQL."
+title: "Databases with @zudojs/database — ZudoJS Academy"
+description: "Connect the Task API to real PostgreSQL with @zudojs/database: migrations, seeds, a repository, a query builder, pagination, transactions and health checks."
 source: https://zudojs.oyinlola.site/learn/zudo-database
 ---
 
-LESSON 56 OF 84
+LEVEL 13 · LESSON 1 OF 12
 
 Data Core
 
 # Databases with @zudojs/database
 
-Connect the Task API to PostgreSQL through @zudojs/database, with migrations, seeds, a repository, a query builder, pagination, transactions and health checks, all running against real PostgreSQL.
+Connect the Task API to real PostgreSQL with @zudojs/database: migrations, seeds, a repository, a query builder, pagination, transactions and health checks.
 
 - **50 min** to read and try
 - **You need:** The SQL lessons and the ZudoJS core part
 - **You build:** A PostgreSQL task store with migrations, seeds, a soft-deleting repository and signed pagination
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Connect @zudojs/database to real PostgreSQL through a PrismaClientLike adapter
+- Apply and roll back numbered migrations and named seeds under a lock
+- Query safely with an allow-listed raw SQL helper and with BaseRepository
+- Add soft delete, offset and signed cursor pagination to a repository
+- Wrap several writes in one transaction with withTransaction
+- Report real connection-pool health on /health instead of a hardcoded 200
 
 ## What @zudojs/database does
 
@@ -869,6 +878,18 @@ committed, high priority tasks: 1
 
 The second insert failed, so the first one was rolled back too: "Pack bags" was never saved. The second transaction committed both updates together. Use the `tx`-bound repository for every query inside the callback. A query through the ordinary `tasks` repository would run outside the transaction.
 
+REASON IT OUT
+
+### Inside the callback, you call tasks.update(...) instead of repo.update(...). What breaks?
+
+`tasks` is the repository bound to the default connection; `repo` is the copy `withTransaction(tx)` bound to this transaction's connection. Both point at the same rows in the same database. If a handler mixes them up under load, what can go wrong, and would it show up in a quick manual test?
+
+**Show the reasoning**
+
+The stray `tasks.update(...)` runs and commits immediately on its own connection, outside the transaction's isolation and outside its rollback. If the transaction later throws and rolls back, that write survives anyway — the "all-or-nothing" guarantee silently has an exception. Worse, it can see rows the transaction has locked but not yet committed, or fail to see rows the transaction inserted but not yet committed, depending on timing and isolation level, so the two connections can disagree about what exists for a few milliseconds.
+
+A quick manual test rarely catches this, because on a quiet database the stray write still lands correctly most of the time — the bug only shows under concurrent load or when the transaction actually rolls back. That is why `@zudojs/database` makes `withTransaction(tx)` return a new object rather than mutating `tasks` in place: it forces the transaction-bound repository to have its own name in the callback, so using the wrong one is a variable-naming mistake you can catch in review, not a runtime race you can only catch under load.
+
 ### Your own errors inside a transaction
 
 Often the reason to stop a transaction is your own rule, not the database: "project 7 does not exist", "this task is already done". Throw the matching error from [the errors lesson](https://zudojs.oyinlola.site/learn/zudo-errors). The transaction still rolls back, and the error reaches your caller unchanged, with its own status code:
@@ -1126,7 +1147,7 @@ Output of `npx tsx list-tasks.ts`
 - `withTransaction` makes several writes all-or-nothing; bind repositories with `withTransaction(tx)`. Your own errors thrown inside roll it back and keep their status code.
 - `checkDatabaseHealth` makes `/health` honest. Pools live in the driver adapter.
 
-Next, [storage abstractions](https://zudojs.oyinlola.site/learn/zudo-storage) show a second, driver-independent way to store data, including files.
+Next, [Data architecture with ZudoJS](https://zudojs.oyinlola.site/learn/zudo-data-architecture) designs this data layer properly: entities versus DTOs, a query service for screen-shaped reads, N+1 queries, keyset pagination and indexes you measure instead of guess.
 
 ## Test yourself
 

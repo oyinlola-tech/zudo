@@ -1,22 +1,31 @@
 ---
-title: "Transactions"
-description: "Coordinate transactions across many functions with @zudojs/transactions, with context that follows your code through AsyncLocalStorage, rollbacks, savepoints, after-commit hooks, retries, timeouts and rollback-only state, against real PostgreSQL."
+title: "Transactions — ZudoJS Academy"
+description: "Coordinate transactions across functions with @zudojs/transactions: propagation via AsyncLocalStorage, savepoints, after-commit hooks, retries and timeouts."
 source: https://zudojs.oyinlola.site/learn/zudo-transactions
 ---
 
-LESSON 58 OF 84
+LEVEL 13 · LESSON 4 OF 12
 
 Data Advanced
 
 # Transactions
 
-Coordinate transactions across many functions with @zudojs/transactions, with context that follows your code through AsyncLocalStorage, rollbacks, savepoints, after-commit hooks, retries, timeouts and rollback-only state, against real PostgreSQL.
+Coordinate transactions across functions with @zudojs/transactions: propagation via AsyncLocalStorage, savepoints, after-commit hooks, retries and timeouts.
 
 - **45 min** to read and try
 - **You need:** The Databases with @zudojs/database lesson
 - **You build:** A task service whose functions share one transaction, send emails only after commit, and retry on conflicts
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Share one transaction across functions with a transaction manager and AsyncLocalStorage
+- Join an existing transaction as a participant instead of starting a new one
+- Mark a transaction rollback-only, including for a deliberate dry run
+- Nest a savepoint so one part of the work can fail without undoing the rest
+- Run side effects such as email only after commit with afterCommit
+- Retry on a serialization failure and bound a transaction with a timeout
 
 ## One transaction, many functions
 
@@ -371,6 +380,18 @@ dry run finished, reason: dry run
 tasks after dry run: 0
 real import, tasks: 2
 ```
+
+REASON IT OUT
+
+### Why does catching the participant's error not save the outer transaction?
+
+In the rollback-only example, `recordActivity`'s error is caught right there, inside the outer `run` callback. The task insert that came before it looks unaffected: no exception reached it, the code carries on, and the callback returns normally. Yet the whole transaction still rolls back and the caller gets a thrown error out of what looked like a successful `run`. Why does the manager not just trust that the catch handled it?
+
+**Show the reasoning**
+
+A participant and the root share one physical database transaction and one connection. Once `recordActivity`'s query fails inside PostgreSQL, that connection is in an aborted state until a rollback (or a rollback to a savepoint) runs — every further statement on it would itself fail. Catching the JavaScript exception hides the failure from your code, but it cannot undo what already happened to the connection: the manager has no query result to trust once one participant has thrown, because it does not know what, if anything, that participant already sent to the database before failing.
+
+So "rollback-only" is the manager refusing to let a caught error mean less than it does: the participant asked to be part of one unit of work, that unit failed, and the only safe outcome is that none of it commits. If you need part of the work to survive a failure elsewhere, that is what a savepoint is for, below — it gives the failing part its own boundary to roll back to, instead of asking the whole transaction to pretend nothing happened.
 
 ## Savepoints
 
@@ -795,7 +816,7 @@ Output of `npx tsx event-counts.ts`
 - `afterCommit` is where emails and messages go. Retries replay the whole callback, so keep side effects out of it. `attempts` counts retries, and `shouldRetry` picks which errors get one.
 - `timeout` rolls back and rejects at once; pass `tx.signal` to slow calls so your callback stops too. `readOnly` makes PostgreSQL refuse writes.
 
-That completes the data part. Next, the [authentication lesson](https://zudojs.oyinlola.site/learn/zudo-auth) gives each task an owner who can log in.
+That completes the data part. Next, [Project: a file upload system](https://zudojs.oyinlola.site/learn/zudo-file-uploads) puts this all to work: task attachments with size limits, content sniffing, safe keys, and a fenced lock on replace, all built on the storage and transaction pieces from these two lessons.
 
 ## Test yourself
 

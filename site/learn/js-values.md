@@ -1,22 +1,30 @@
 ---
-title: "Values, variables and types"
+title: "Values, variables and types — ZudoJS Academy"
 description: "Store values in variables with const and let, meet the seven primitive types, and learn how JavaScript handles text, numbers, true and false, and \"no value\"."
 source: https://zudojs.oyinlola.site/learn/js-values
 ---
 
-LESSON 6 OF 84
+LEVEL 2 · LESSON 3 OF 19
 
-JavaScript fundamentals Foundation
+Values and operators Foundation
 
 # Values, variables and types
 
 Store values in variables with const and let, meet the seven primitive types, and learn how JavaScript handles text, numbers, true and false, and "no value".
 
 - **35 min** to read and try
-- **You need:** The Start here part; Node.js 24, or just the browser terminal on this page
+- **You need:** Meet JavaScript and Set up your computer (or just the browser terminal on this page)
 - **You build:** A small task summary built from variables, strings and numbers
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Store values with const and let, and explain why var is avoided
+- Name the seven primitive types and check a value's type with typeof
+- Convert text to numbers on purpose and spot the Number("") and NaN traps
+- Build and clean text with template literals and string methods
+- Tell truthy from falsy values, and null from undefined
 
 ## Variables
 
@@ -46,7 +54,7 @@ Buy milk
 2
 ```
 
-Anything after `//` is a **comment**. JavaScript ignores it; it is a note for people.
+Anything after `//` is a comment, as in [Meet JavaScript](https://zudojs.oyinlola.site/learn/js-intro#comments).
 
 The `=` sign does not mean "equals" like in maths. It means "store the value on the right under the name on the left". `doneCount = doneCount + 1` reads the old value, adds 1, and stores the result. Changing the value of an existing variable is called **reassigning** it.
 
@@ -161,7 +169,7 @@ symbol
 >
 > This is a bug from the first version of JavaScript in 1995 that can never be fixed without breaking old websites. `null` is its own type. To check for it, write `value === null`, not `typeof`.
 
-Everything that is not a primitive is an **object**: lists, functions, dates, and the objects you will build in [the lesson on objects](https://zudojs.oyinlola.site/learn/js-data).
+Everything that is not a primitive is an **object**: lists, functions, dates, and the objects you will build in [Objects and JSON](https://zudojs.oyinlola.site/learn/js-data). The [next lesson, Types in depth](https://zudojs.oyinlola.site/learn/js-types-deep), maps every type and explains how primitives and objects behave differently.
 
 ## Converting between types
 
@@ -187,7 +195,25 @@ Output of `node coercion.js` and of the browser terminal
 NaN
 ```
 
-The first line is the classic trap. Text from a form, a URL or a file is always a string, so `"5" + 1` gives `"51"`, not `6`. `NaN` means "not a number"; you will meet it again below.
+The first line is the classic trap. Text from a form, a URL or a file is always a string, so `"5" + 1` gives `"51"`, not `6`. `NaN` means "not a number"; you will meet it again below. The exact conversion rules are in [Types in depth](https://zudojs.oyinlola.site/learn/js-types-deep#coercion).
+
+REASON IT OUT
+
+### Before you convert: a quantity typed into a form
+
+A shop's order form has a quantity box. Whatever the customer types reaches your code as a string. Before you look at the conversion functions below, think it through:
+
+- List what might arrive: a normal number, nothing at all, spaces, a decimal, a word, a number with a unit.
+- Which of those should become a quantity, and which should be refused?
+- If the conversion quietly turned empty text into `0`, what would the customer see?
+
+**Show the reasoning**
+
+**What arrives:** `"3"`, `""` (the box was left empty), `" 3 "`, `"2.5"`, `"three"`, `"3 bags"`. Every one of them is a string, even `"3"`.
+
+**What to accept:** only text that is a whole number from 1 up. Spaces around the digits are a harmless accident; a decimal, a word or a unit is not a quantity.
+
+**Empty text is the dangerous one.** As you will see next, `Number("")` is `0`, not `NaN`. A check that only looks for `NaN` lets an empty box through as a quantity of 0, and the customer gets an order for nothing, or an error far away from the form. So check for empty text *first*, then convert, then check that the result is a whole number in range. [Making decisions](https://zudojs.oyinlola.site/learn/js-conditions#build) builds exactly this kind of check for an age field.
 
 Do not rely on coercion. Convert values yourself, on purpose, with `Number()`, `String()` and `Boolean()`. This is **explicit conversion**:
 
@@ -336,11 +362,11 @@ get milk, get bread
 [ 'buy milk', 'buy bread' ]
 ```
 
-`split` gives back an **array**, a list of values in square brackets. Arrays get [a lesson of their own](https://zudojs.oyinlola.site/learn/js-arrays).
+`split` gives back an **array**, a list of values in square brackets. Arrays get [a lesson of their own](https://zudojs.oyinlola.site/learn/js-arrays). Text has more surprises than these methods show (an emoji can have a `length` of 2, and accented letters can be written in two ways); [Strings in depth](https://zudojs.oyinlola.site/learn/js-strings) covers them.
 
 ## Numbers
 
-Numbers support the usual arithmetic: `+`, `-`, `*` and `/`. The [next lesson](https://zudojs.oyinlola.site/learn/js-operators) covers all the operators. Here is what makes JavaScript numbers special:
+Numbers support the usual arithmetic: `+`, `-`, `*` and `/`. [Operators](https://zudojs.oyinlola.site/learn/js-operators) covers all the operators. Here is what makes JavaScript numbers special:
 
 floating-point.js
 
@@ -360,7 +386,7 @@ false
 0.30
 ```
 
-Why is `0.1 + 0.2` not `0.3`? Computers store numbers in binary (only 0s and 1s). In binary, `0.1` has no exact form, just like 1/3 has no exact form in decimal (0.3333…). The tiny error shows up after adding. This is called **floating point** error, and almost every language has it. `toFixed(2)` rounds for display and gives back a string.
+Why is `0.1 + 0.2` not `0.3`? Computers store numbers in binary (only 0s and 1s). In binary, `0.1` has no exact form, just like 1/3 has no exact form in decimal (0.3333…). The tiny error shows up after adding. This is called **floating point** error, and almost every language has it. `toFixed(2)` rounds for display and gives back a string. [Numbers in depth](https://zudojs.oyinlola.site/learn/js-numbers), in the Advanced JavaScript course, explains the binary format and how to compare and round safely.
 
 > Money
 >
@@ -488,7 +514,7 @@ false
 true true true true
 ```
 
-The loop runs the `console.log` once for each value in the list; [loops](https://zudojs.oyinlola.site/learn/js-loops) come later in this part. The last line is the surprise: the strings `"0"`, `" "` and `"false"` are all truthy, because they are not empty.
+The loop runs the `console.log` once for each value in the list; [Loops](https://zudojs.oyinlola.site/learn/js-loops) come later in this course. The last line is the surprise: the strings `"0"`, `" "` and `"false"` are all truthy, because they are not empty.
 
 ## null and undefined
 
@@ -525,7 +551,7 @@ true true
 
 `{ title: "Buy milk", assignee: null }` is an **object**: several named values kept together. [Objects](https://zudojs.oyinlola.site/learn/js-data) come a few lessons later; here you only need to read `task.assignee` as "the assignee of the task".
 
-To check for "no value", use `=== undefined` or `=== null`. The one accepted use of the loose `==` is `value == null`, which is true for both `null` and `undefined` and nothing else. The [next lesson](https://zudojs.oyinlola.site/learn/js-operators) shows the `??` operator, the modern way to give a missing value a default.
+To check for "no value", use `=== undefined` or `=== null`. The one accepted use of the loose `==` is `value == null`, which is true for both `null` and `undefined` and nothing else. [Operators](https://zudojs.oyinlola.site/learn/js-operators#nullish) shows the `??` operator, the modern way to give a missing value a default.
 
 ## Put it together: a task summary
 
@@ -561,7 +587,7 @@ Priority valid: false
 Assigned: false
 ```
 
-`!` turns `true` into `false` and back. You will see it, and `%`, in the next lesson.
+`!` turns `true` into `false` and back. You will see it, and `%`, in [Operators](https://zudojs.oyinlola.site/learn/js-operators).
 
 ## Practice
 
@@ -671,6 +697,8 @@ true
 - Template literals build text; `trim`, `includes`, `replaceAll` and `split` clean and search it.
 - `0.1 + 0.2` is not exactly `0.3`. Check for `NaN` with `Number.isNaN`.
 - Only eight values are falsy. `undefined` means "never set", `null` means "empty on purpose".
+
+Next, [Types in depth](https://zudojs.oyinlola.site/learn/js-types-deep): every type on one map, why objects are shared while primitives are copied, and the exact rules behind equality and coercion.
 
 ## Test yourself
 

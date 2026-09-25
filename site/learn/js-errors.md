@@ -1,16 +1,16 @@
 ---
-title: "Handling errors"
-description: "Tell syntax, runtime and logic errors apart, throw and catch errors, read an Error object's name, message, cause and stack, write your own error classes, and turn errors into safe API answers."
+title: "Handling errors — ZudoJS Academy"
+description: "Tell syntax, runtime and logic errors apart, throw and catch errors, write your own error classes, and turn every error into a safe answer from an API."
 source: https://zudojs.oyinlola.site/learn/js-errors
 ---
 
-LESSON 16 OF 84
+LEVEL 2 · LESSON 17 OF 19
 
-JavaScript fundamentals Foundation
+Classes, errors, async and modules Foundation
 
 # Handling errors
 
-Tell syntax, runtime and logic errors apart, throw and catch errors, read an Error object's name, message, cause and stack, write your own error classes, and turn errors into safe API answers.
+Tell syntax, runtime and logic errors apart, throw and catch errors, write your own error classes, and turn every error into a safe answer from an API.
 
 - **40 min** to read and try
 - **You need:** this, prototypes and classes, and the lessons before it
@@ -18,13 +18,21 @@ Tell syntax, runtime and logic errors apart, throw and catch errors, read an Err
 
   [Test yourself](#test)
 
+BY THE END OF THIS LESSON YOU CAN
+
+- Tell syntax, runtime and logic errors apart by when they appear
+- Throw errors and handle them with try, catch and finally
+- Read an error's name, message, stack and cause, and wrap a low-level error with a cause
+- Write your own error classes and handle only the errors you expect, re-throwing the rest
+- Map errors to HTTP status codes without leaking internal details
+
 ## Three kinds of errors
 
 An **error** is anything that stops your program from doing what you meant. There are three kinds, and each one shows up at a different moment.
 
 ### Syntax errors: the code cannot even start
 
-A **syntax error** means the code is not valid JavaScript: a missing bracket, a typo in a keyword. Node.js reads the whole file before it runs any of it, so a syntax error stops everything, even the lines above the mistake. Save this file as `syntax.js` in a project folder with `"type": "module"` (see [Your first program](https://zudojs.oyinlola.site/learn/setup)):
+A **syntax error** means the code is not valid JavaScript: a missing bracket, a typo in a keyword. Node.js reads the whole file before it runs any of it, so a syntax error stops everything, even the lines above the mistake. Save this file as `syntax.js` in a project folder with `"type": "module"` (see [Set up your computer](https://zudojs.oyinlola.site/learn/setup#package-json)):
 
 syntax.jsNode.js only
 
@@ -116,7 +124,7 @@ The average of 2 and 4 is 3, not 4. Someone wrote `+ 1` by mistake. JavaScript c
 
 ## throw, try, catch and finally
 
-When your own code cannot do what was asked, it should say so loudly rather than carry on with bad data. `throw` stops the current function and hands an error to whoever called it, then to their caller, and so on up the call stack. `try`/`catch` is where you receive it. If nothing catches it, the program crashes as you saw above.
+When your own code cannot do what was asked, it should say so loudly rather than carry on with bad data. `throw` stops normal execution and hands the error to the nearest `catch`: in the same function if the `throw` is inside a `try` there, otherwise in the function that called it, then in its caller, and so on up the call stack. `try`/`catch` is where you receive it. If nothing catches it, the program crashes as you saw above.
 
 catch.js
 
@@ -209,7 +217,7 @@ The first call returned from inside `try`, the second threw. In both cases `fina
 An error is an ordinary object made from the `Error` class or one of its built-in subclasses. The ones you will meet most:
 
 - `TypeError`: a value has the wrong type for the operation, such as calling something that is not a function.
-- `ReferenceError`: a name that does not exist, or a `let`/`const` used before its line ([Scope](https://zudojs.oyinlola.site/learn/js-scope)).
+- `ReferenceError`: a name that does not exist, or a `let`/`const` used before its line ([Scope and how code runs](https://zudojs.oyinlola.site/learn/js-scope#hoisting)).
 - `RangeError`: a value is out of range, or the call stack overflowed.
 - `SyntaxError`: invalid code, or invalid JSON passed to `JSON.parse`.
 
@@ -282,7 +290,7 @@ Could not load settings
 cause: SyntaxError - Expected property name or '}' in JSON at position 2 (line 1 column 3)
 ```
 
-The caller gets a clear message, and `error.cause` still holds the original `SyntaxError` for debugging.
+The caller gets a clear message, and `error.cause` still holds the original `SyntaxError` for debugging. Deciding *which* layer of a program should catch, wrap or re-throw an error is a design question of its own; [Designing error handling](https://zudojs.oyinlola.site/learn/js-error-design), in the Advanced JavaScript course, covers it, together with `AggregateError`.
 
 ## Your own error classes
 
@@ -359,7 +367,7 @@ Output of `node find.js` and of the browser terminal
 
 The `else { throw error; }` part matters. Only handle the errors you expect, and **re-throw** anything else so it keeps going up and is not silently lost. A `catch` that swallows every error hides bugs.
 
-This pattern is exactly how ZudoJS works. `@zudojs/errors` ships `NotFoundError`, `ValidationError`, `ConflictError` and dozens more, each with the right status code, so after this lesson you will rarely write these classes yourself. You will meet them in [Errors in ZudoJS](https://zudojs.oyinlola.site/learn/zudo-errors).
+This pattern is exactly how ZudoJS works. `@zudojs/errors` ships `NotFoundError`, `ValidationError`, `ConflictError` and dozens more, each with the right status code, so after this lesson you will rarely write these classes yourself. You will meet them in [The ZudoJS error system](https://zudojs.oyinlola.site/learn/zudo-errors).
 
 ## Build: a reliable calculator API
 
@@ -368,6 +376,24 @@ Put it all together in the logic of a small API. A client asks for a calculation
 1. Validate the input and throw a `ValidationError` for anything wrong.
 2. Throw its own error for a calculation that is impossible, dividing by zero.
 3. Turn every error into an answer with a status code and a safe message, and never crash.
+
+REASON IT OUT
+
+### Before you build: what can arrive, and what may the client see?
+
+The API receives `a`, `b` and `op` from a web address. Before writing any code, decide:
+
+- What values can `a` and `b` really have? List at least four different kinds of bad input.
+- Which failures are the *client's* fault, which are requests that are well-formed but impossible, and which are bugs in your own code? Should they get the same status code?
+- For each kind, what may the client see in the answer, and what must stay in your logs?
+
+**Show the reasoning**
+
+**Inputs:** every value from a URL is a string, or missing. Bad inputs include a missing `a`, an empty string, text such as `"ten"`, `"Infinity"`, an unknown `op`, and an `op` such as `"constructor"` that happens to be the name of an inherited property. A whole request can even arrive as `null` if some earlier code has a bug.
+
+**Three kinds, three answers:** bad input is the client's fault: 400, with the field that is wrong. Dividing by zero is a valid request that cannot be done: 422. Anything you did not plan for is your bug: 500.
+
+**What to show:** errors you designed for users (the 400s and the 422) carry messages written for them, so they are safe to send. An unexpected error's message and stack describe your code; log them for yourself and send the client only a generic message.
 
 First, the error classes. They are the ones from above plus one new class. Status 422 means "I understood the request, but I cannot do it":
 
@@ -436,7 +462,7 @@ export function calculate({ a, b, op }) {
 Two safety details:
 
 - The operation name is looked up in an **allow-list**, the `OPERATIONS` object. The input is never run as code. Never use `eval` to "calculate" what a user typed: that would let them run any code on your server.
-- `Object.hasOwn` matters. A plain `OPERATIONS[op]` check would accept `op=constructor` or `op=toString`, because every object inherits those from `Object.prototype` ([the prototype chain](https://zudojs.oyinlola.site/learn/js-classes)).
+- `Object.hasOwn` matters. A plain `OPERATIONS[op]` check would accept `op=constructor` or `op=toString`, because every object inherits those from `Object.prototype` ([the prototype chain](https://zudojs.oyinlola.site/learn/js-classes#prototypes)).
 
 Finally, the API layer. It is the only place that knows about status codes. It catches every error and turns it into a response:
 
@@ -677,6 +703,8 @@ Because it is a `ValidationError`, `handleCalculate` answers 400 with the field 
 - Errors have `name`, `message` and `stack`. Wrap a low-level error with `new Error(message, { cause })`. Always throw `Error` objects, never strings.
 - Give each kind of failure its own class, check it with `instanceof`, and re-throw what you do not handle.
 - Validate outside input with an allow-list, map known errors to status codes, and answer unknown errors with a generic 500 while logging the details privately.
+
+Next, [Asynchronous JavaScript](https://zudojs.oyinlola.site/learn/js-async): code that waits without blocking, and how errors travel through it.
 
 ## Test yourself
 

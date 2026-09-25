@@ -1,22 +1,30 @@
 ---
-title: "SQL with PostgreSQL"
-description: "Install PostgreSQL with an installer or with Docker, talk to it with psql, and learn the SQL every backend uses: create, insert, select, update and delete, with filters, sorting and paging, and parameterized queries that stop SQL injection."
+title: "SQL with PostgreSQL — ZudoJS Academy"
+description: "Run PostgreSQL with an installer or Docker, use psql, and write everyday SQL: insert, select, update, delete, and placeholders that stop SQL injection."
 source: https://zudojs.oyinlola.site/learn/sql-basics
 ---
 
-LESSON 28 OF 84
+LEVEL 7 · LESSON 4 OF 15
 
-Backend fundamentals Foundation
+Databases and SQL Core
 
 # SQL with PostgreSQL
 
-Install PostgreSQL with an installer or with Docker, talk to it with psql, and learn the SQL every backend uses: create, insert, select, update and delete, with filters, sorting and paging, and parameterized queries that stop SQL injection.
+Run PostgreSQL with an installer or Docker, use psql, and write everyday SQL: insert, select, update, delete, and placeholders that stop SQL injection.
 
 - **45 min** to read and try
 - **You need:** The How databases work lesson
 - **You build:** A running PostgreSQL server and a task store with safe, parameterized queries
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Install and start PostgreSQL with an installer or with Docker, keeping the password out of your commands
+- Create a database and inspect tables with psql
+- Write insert, select, update and delete statements with where, order by, limit, offset and returning
+- Scope every query to the current user and turn "no row changed" into a 404
+- Explain SQL injection and prevent it with placeholders for values and allow-lists for names
 
 ## Install PostgreSQL
 
@@ -220,7 +228,7 @@ Output of `node insert.js`
 
 - `where` keeps only rows that match a condition. Combine conditions with `and`, `or` and `not`.
 - `order by` sorts, `asc` (the default) or `desc`. Without it, the order is **not guaranteed**.
-- `limit` takes at most that many rows, and `offset` skips rows first: the offset pagination from [the REST lesson](https://zudojs.oyinlola.site/learn/rest-design).
+- `limit` takes at most that many rows, and `offset` skips rows first: the offset pagination from [Designing a REST API](https://zudojs.oyinlola.site/learn/rest-design#pagination).
 
 select.jsNode.js only
 
@@ -258,7 +266,7 @@ Output of `node select.js`
 [ { id: 3, title: 'Call Ada' }, { id: 4, title: 'Fix bike' } ]
 ```
 
-- The first query is "user 1's open tasks, most important first". The `id` after `priority` is the tie-breaker the REST lesson recommended.
+- The first query is "user 1's open tasks, most important first". The `id` after `priority` is the tie-breaker that [Designing a REST API](https://zudojs.oyinlola.site/learn/rest-design#query) recommended.
 - `ilike` compares text, ignoring upper and lower case. In the pattern, `%` means "any characters". `like` is the case-sensitive version.
 - `limit 2 offset 2` is page 2 with two tasks per page.
 
@@ -315,7 +323,21 @@ deleted: [
 
 The deleted rows came back as 1, 5, 2, not sorted by id: row 2 had just been updated, and PostgreSQL returns rows in whatever order it finds them. Only `order by` promises an order.
 
-Every query in a real API includes `user_id` in its `where`. Without it, user 2 could change user 1's task just by guessing its id. When `affectedRows` is 0, the task does not exist *for this user*, and your handler answers 404.
+REASON IT OUT
+
+### Whose task is it?
+
+The API gets `PATCH /tasks/2` with `{"done": true}` from a logged-in user. Before writing the SQL, answer:
+
+- Which values come from the client, and which from the server's own knowledge?
+- User 2 sends it, but task 2 belongs to user 1. What must happen?
+- The `update` changed 0 rows. Should the answer be 404 Not Found or 403 Forbidden?
+
+**Show the reasoning**
+
+The task id in the URL and the body come from the client. The user id comes from the login session, which the server checked; it never comes from the body or the URL. So every query includes the session's user id in its `where`: `where id = $1 and user_id = $2`. Without it, user 2 could change user 1's task just by guessing its id, one of the most common security bugs in real APIs.
+
+With the user in the `where`, "no such task" and "someone else's task" look the same to the database: 0 rows changed. Answer **404** in both cases. A 403 would confirm to user 2 that task 2 exists, which leaks information; a 404 says only "there is no such task *for you*". This also costs one query instead of two.
 
 > Always write the where first
 >
@@ -392,7 +414,9 @@ Output of `node injection-fix.js`
 
 Now the attack is just a strange title that no task has, and the answer is an empty list.
 
-Placeholders work for **values**. They cannot stand for a column name or `asc`/`desc`. When those come from the client, as with `sort` in [the REST lesson](https://zudojs.oyinlola.site/learn/rest-design), pick them from an allow-list in your code and never paste the client's text.
+SQL is not the only place where outside text can turn into commands: shell commands, file paths and outgoing URLs have the same problem. [Writing injection-safe code](https://zudojs.oyinlola.site/learn/sec-injection), in the Security course, covers them all.
+
+Placeholders work for **values**. They cannot stand for a column name or `asc`/`desc`. When those come from the client, as with `sort` in [Designing a REST API](https://zudojs.oyinlola.site/learn/rest-design#query), pick them from an allow-list in your code and never paste the client's text.
 
 ## Practice
 
@@ -461,6 +485,8 @@ Only (c) is right. (a) happens to be safe because `Number` can only produce a nu
 - `insert ... returning`, `select ... where ... order by ... limit ... offset`, `update ... set ... where`, `delete ... where`.
 - Put the user's id in every `where`, so one user can never touch another's rows.
 - Never paste input into SQL text. Use `$1` placeholders for values and allow-lists for names.
+
+Next: [Joins, grouping and transactions](https://zudojs.oyinlola.site/learn/sql-advanced), where you combine tables, summarise them, and connect Node.js to your server.
 
 ## Test yourself
 

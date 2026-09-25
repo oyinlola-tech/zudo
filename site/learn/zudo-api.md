@@ -1,22 +1,30 @@
 ---
-title: "One operation, many transports"
-description: "Write your business logic once as an operation with @zudojs/api, then run it from HTTP, RPC and a queue with the same validation, errors, interceptors and timeouts."
+title: "One operation, many transports — ZudoJS Academy"
+description: "Write business logic once as an operation with @zudojs/api, then run it from HTTP, RPC and a queue with the same validation, errors and timeouts."
 source: https://zudojs.oyinlola.site/learn/zudo-api
 ---
 
-LESSON 71 OF 84
+LEVEL 14 · LESSON 8 OF 18
 
-APIs and services Advanced
+Services and contracts Advanced
 
 # One operation, many transports
 
-Write your business logic once as an operation with @zudojs/api, then run it from HTTP, RPC and a queue with the same validation, errors, interceptors and timeouts.
+Write business logic once as an operation with @zudojs/api, then run it from HTTP, RPC and a queue with the same validation, errors and timeouts.
 
 - **45 min** to read and try
 - **You need:** The Task API project, and the lessons on validation, HTTP routing, queues and RPC
 - **You build:** Task operations that the Task API serves over HTTP, over RPC, from a background queue and from the command line, with one set of rules
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Define business logic once as an operation with an input schema, an output schema and a handler
+- Read an APIExecutor's { ok, data } or { ok, error } result instead of catching a thrown error
+- Carry a safe request id, a cancel signal and typed slots through a call with the API context
+- Apply one authentication rule to every transport with an interceptor, before input validation runs
+- Serve the same registry of operations over HTTP, RPC, a queue and the command line
 
 ## One piece of logic, many doors
 
@@ -261,6 +269,16 @@ export const executor = new APIExecutor({ interceptors: [log, requireUser] });
 - The first interceptor in the list is the outermost, so `log` also sees the answers of `requireUser`.
 - `call.context.state` is what the transport verified about the caller. Each binding below fills it with a `Caller` object, which is why the `as Caller` is safe here. `requireUser` refuses a call without a user, and copies the user id into the typed `UserIdContextKey` slot for the handlers.
 - `registry.freeze()` locks the registry, so nobody can add or replace an operation while requests run. `get(name)`, `require(name)`, `getAll()` and `findByTag(tag)` read it.
+
+REASON IT OUT
+
+### Should the schema check the input before or after the interceptors run?
+
+An unsigned-in caller sends `{ title: 42 }` to `tasks.create`: both a bad request (wrong type) and an unauthenticated one. If the schema ran first, the caller would learn "title must be a string" before learning "you are not signed in". Does that order leak anything, and does it matter which check is cheaper to run?
+
+**Show the reasoning**
+
+Validating first would tell an unauthenticated caller something about the shape of your input before it has proven it may call the operation at all — a small information leak, and inconsistent with checking identity first everywhere else in this course. It also means every rejected anonymous request pays for a schema run it gains nothing from. Running interceptors first avoids both: an unknown caller gets a 401 and nothing else, regardless of what they sent, and the schema only ever runs for a request that has already cleared the interceptors. That is why `@zudojs/api` orders it this way, and why the `log` interceptor above sees *every* call, valid or not: it wraps the whole pipeline, schema included.
 
 The interceptors run *before* the input is checked against the schema. So an unknown caller is refused with 401 before anything tells it what a valid input looks like, and the `log` interceptor sees invalid calls too. `call.input` is the input as the caller sent it. If an interceptor replaces it, the new value is checked by the schema before the handler runs, so no interceptor can slip bad data past it.
 
@@ -651,7 +669,7 @@ A script that runs your tool can now tell "fix your input" (65) from "sign in" (
 - `createApiFetchHandler`, `registerApiRpcProcedures`, `bindApiQueue` and `runApiCli` serve the same operations over HTTP, RPC, a queue and the command line. Each one only needs `state`: the caller's identity, from what that transport verified.
 - A timeout or a cancelled caller aborts the handler's `context.signal`. Pass it on so slow work stops.
 
-In the next lesson you describe the Task API in an OpenAPI document, so other people and tools can see exactly what it accepts and returns.
+Next, [OpenAPI documents](https://zudojs.oyinlola.site/learn/zudo-openapi) describes the Task API in an OpenAPI document generated from these same operations, so other people and tools can see exactly what it accepts and returns.
 
 ## Test yourself
 

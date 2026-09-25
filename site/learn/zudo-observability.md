@@ -1,22 +1,31 @@
 ---
-title: "Observability"
-description: "See inside a running Task API. Metrics count what happens, traces show where the time goes, and logs, metrics and traces share one trace id across requests and services, with @zudojs/observability."
+title: "Observability — ZudoJS Academy"
+description: "See inside a running Task API: metrics count what happens, traces show where time goes, and logs share one trace id with @zudojs/observability."
 source: https://zudojs.oyinlola.site/learn/zudo-observability
 ---
 
-LESSON 75 OF 84
+LEVEL 14 · LESSON 13 OF 18
 
-Testing and observability Production
+Quality and insight Production
 
 # Observability
 
-See inside a running Task API. Metrics count what happens, traces show where the time goes, and logs, metrics and traces share one trace id across requests and services, with @zudojs/observability.
+See inside a running Task API: metrics count what happens, traces show where time goes, and logs share one trace id with @zudojs/observability.
 
 - **45 min** to read and try
 - **You need:** The Task API project and the logging lesson
 - **You build:** A Task API that measures every request, traces slow ones step by step, and links every log line to its trace
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Choose a counter, a gauge or a histogram for a metric, and read percentiles instead of the mean
+- Avoid a cardinality explosion by keeping unbounded values such as user ids out of metric labels
+- Trace one request as a tree of spans with withSpan, and read which step took the time
+- Carry a trace id through await calls with AsyncLocalStorage, with no request parameter to pass it
+- Propagate a trace across services with the traceparent header, treating it as untrusted
+- Sample traces in production so every request still counts in metrics without recording every span
 
 ## Three questions, three signals
 
@@ -473,6 +482,16 @@ caller flag 0 -> recording: false
 
 `createProbabilitySampler(0.1)` keeps about one trace in ten, chosen from the trace id. `createParentBasedSampler` follows the caller when there is one: the last number of `traceparent` (`01` or `00`) says whether the caller kept the trace. Metrics are not sampled: every request still counts.
 
+REASON IT OUT
+
+### Traces are sampled at 10%, but metrics count every single request. Why not sample metrics the same way and save even more?
+
+Think about what each signal is for. A trace's job is to let you open one specific, interesting request and see every step of it in detail; you rarely need to see all of them, and a representative sample of "GET /tasks took 900ms, mostly in the database" tells you nearly as much as recording every single one. A metric's job is different: `http.requests` with `status="500"` going up is itself the signal that something is wrong, and the alert threshold, "more than 1% of requests fail", is a direct count. What happens to that percentage, and to the alert built on it, if only one in ten requests were counted?
+
+**Show the reasoning**
+
+Sampling a count changes the count: if only 10% of requests are counted, a real 1% error rate now measures as roughly 1% of a tenth of the traffic, which is noisier and, at low volume, can swing across your alert threshold by chance alone. Worse, a rare but real problem, one failing request in ten thousand, might simply never land in the sample at all, so the metric would report zero errors while users are actually failing. Traces can afford to sample because you read one trace at a time and a representative example is almost as useful as every example. Metrics cannot, because their entire value is being an exact count you can alert on and trust; a sampled metric is a different, less reliable metric, not a cheaper version of the same one.
+
 Finally, call `await obs.shutdown()` in the Task API's `SIGTERM` handler, after the HTTP server has stopped, just like `runtime.stop()` in [the runtime lesson](https://zudojs.oyinlola.site/learn/zudo-runtime). In unit tests, `createNoopObservability()` gives an object with the same methods that records nothing.
 
 ## Practice
@@ -565,6 +584,8 @@ No. Joining a trace only links spans together: at worst, a client makes its requ
 - AsyncLocalStorage carries the context through `await`s, so logs get the trace id without extra parameters.
 - The `traceparent` header carries the trace to other services. A malformed one starts a fresh trace.
 - Exporters send batches: always `await obs.shutdown()`. In production, use real exporters and sample traces.
+
+Next, [Documentation as data with @zudojs/docs](https://zudojs.oyinlola.site/learn/zudo-docs) turns the Task API's own Markdown docs into checked data, the same way this lesson turned what the app does at runtime into checked signals.
 
 ## Test yourself
 

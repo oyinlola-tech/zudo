@@ -1,0 +1,1078 @@
+---
+title: "Pattern practice — ZudoJS Academy"
+description: "Solve eleven unlabelled problems by first naming the pattern and why, then coding, testing and analysing, plus two interview walkthroughs."
+source: https://zudojs.oyinlola.site/learn/pattern-practice
+---
+
+LEVEL 3 · LESSON 21 OF 21
+
+Problem-solving patterns Core
+
+# Pattern practice
+
+Solve eleven unlabelled problems by first naming the pattern and why, then coding, testing and analysing, plus two interview walkthroughs.
+
+- **60 min** to read and try
+- **You need:** The frequency counter, two pointers, sliding window and binary search on the answer lessons
+- **You build:** Eleven tested solutions to unlabelled problems, a reusable brute-force comparison harness, and two worked interview answers
+
+  [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Pick a pattern for an unlabelled problem from its signals, and say why the other patterns do not fit
+- Combine patterns, such as a sliding window with a frequency map or prefix sums with binary search
+- Explain each solution's time and space and how it compares with brute force
+- Test any fast solution against a brute-force reference with one reusable harness
+- Talk through a problem in an interview: clarify, brute force, improve, code, test, analyse
+
+## The hard part is choosing
+
+In the last four lessons every problem arrived with its pattern attached: the lesson was called "sliding window", so the answer was a sliding window. Real work is not like that. A ticket says "finance needs the two payouts that make up this refund" or "why is checkout slow on big carts?", and nobody tells you which of the tools you own applies. Interviews are the same: the question is a story, and choosing the approach is half of what is being assessed.
+
+So this lesson turns the order around. For each problem you first read the statement and, in a `<reason>` block, decide which pattern fits and *why*, including why the others do not. Try it before opening the answer. Then comes the solution, tested, with its complexity. The problems start with one pattern each, then need two patterns combined, then include a few that surprise.
+
+## Signals: a cheat sheet
+
+These questions, asked in order, point at a pattern for most problems in this course:
+
+| Ask | If yes, think of | Lesson |
+| --- | --- | --- |
+| Does only *how often* each value appears matter, not where? | frequency counter (`Map`, `Set`) | [Frequency](https://zudojs.oyinlola.site/learn/pattern-frequency) |
+| Is the data sorted (or a linked chain), and is the question about pairs, ends or in-place changes? | two pointers | [Two pointers](https://zudojs.oyinlola.site/learn/pattern-two-pointers) |
+| Is the answer a *contiguous* range: "in a row", "consecutive", "any 7 days", "streak"? | sliding window | [Sliding window](https://zudojs.oyinlola.site/learn/pattern-sliding-window) |
+| Many totals of arbitrary ranges, or ranges with an exact sum and negative values? | prefix sums (often with a `Map`) | [Prefix sums](https://zudojs.oyinlola.site/learn/pattern-sliding-window#prefix-sums) |
+| "The minimum (or maximum) value such that…", with a check that is monotonic? | binary search on the answer | [Binary search](https://zudojs.oyinlola.site/learn/pattern-binary-search) |
+| A yes/no that switches once over time or positions: "the first day", "the first build"? | binary search on positions | [First failing build](https://zudojs.oyinlola.site/learn/pattern-binary-search#first-failing-build) |
+
+And one question before all of them: **how big is the input?** For 50 items, the brute force is fine and easier to trust. Patterns earn their complexity when the data, or the number of times the code runs, is large.
+
+All solutions below share one small helper for testing, and several share `firstTrue` from [the binary search lesson](https://zudojs.oyinlola.site/learn/pattern-binary-search#pattern):
+
+helpers.js
+
+```ts
+export function check(label, actual, expected) {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  console.log(a === e ? `PASS ${label}` : `FAIL ${label}: got ${a}, expected ${e}`);
+}
+
+export function firstTrue(lo, hi, test) {
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (test(mid)) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+```
+
+## Warm-up: one pattern each
+
+### Problem 1: duplicate usernames in a sign-up batch
+
+A school imports 3,000 student accounts from a spreadsheet. Usernames must be unique after trimming spaces and ignoring case. List every username that appears more than once (normalised, each once, in the order the second copy appears), so the school can fix the sheet before importing.
+
+REASON IT OUT
+
+### Pick the pattern: duplicate usernames
+
+- Does the position of a username matter, or only how many times it appears?
+- Would sorting and comparing neighbours (two pointers) work? What would it cost, and what would it lose?
+
+**Show the reasoning**
+
+**Frequency counter.** The question is "how many times does each value appear", which is exactly what a table of counts answers, in one O(n) pass.
+
+Sorting then comparing neighbours also finds duplicates, in O(n log n), but it loses the original order, and the school wants them "in the order the second copy appears", which is also the order of the rows to fix. Nested loops would be O(n²): 4.5 million comparisons for 3,000 rows.
+
+p1-usernames.js
+
+```ts
+import { check } from "./helpers.js";
+
+function duplicateUsernames(rows) {
+  const counts = new Map();
+  const found = [];
+  for (const raw of rows) {
+    const name = raw.trim().toLowerCase();
+    const n = (counts.get(name) ?? 0) + 1;
+    counts.set(name, n);
+    if (n === 2) found.push(name);
+  }
+  return found;
+}
+
+check("basic", duplicateUsernames(["ada.o", "Bola", "ADA.O ", "kemi", "bola", "ada.o"]), ["ada.o", "bola"]);
+check("none", duplicateUsernames(["ada", "bola"]), []);
+check("empty", duplicateUsernames([]), []);
+```
+
+Output of `node p1-usernames.js` and of the browser terminal
+
+```ts
+PASS basic
+PASS none
+PASS empty
+```
+
+**Complexity:** O(n) time, O(k) space for `k` distinct names. Reporting at the moment a count reaches exactly 2 lists each duplicate once, in discovery order.
+
+### Problem 2: a refund in a live feed
+
+Transactions arrive one at a time from a payment provider's webhook, in no particular order. As soon as two transactions that add up to a disputed refund of ₦23,500 have *both* arrived, the dispute can be closed. Report the pair the moment the second one arrives.
+
+REASON IT OUT
+
+### Pick the pattern: a refund in a live feed
+
+- In [The two pointers pattern](https://zudojs.oyinlola.site/learn/pattern-two-pointers), two pointers found a refund pair in O(n) with O(1) space. Why can't they be used here?
+- When a transaction arrives, what do you need to know about the ones before it?
+
+**Show the reasoning**
+
+**Two pointers need the whole list, sorted.** Here the data is neither complete (it streams in) nor sorted. Sorting after every arrival would cost O(n log n) each time.
+
+**"Have I already seen the other half?"** is a lookup in a table of what has arrived: the hash-map two-sum, a close cousin of the frequency counter. Each arrival costs O(1) on average: check for `target − amount`, then record this amount.
+
+p2-refund-feed.js
+
+```ts
+import { check } from "./helpers.js";
+
+function refundWatcher(targetKobo) {
+  const seen = new Map(); // amount -> transaction id
+  return function onTransaction(tx) {
+    const partner = seen.get(targetKobo - tx.kobo);
+    if (partner !== undefined) return [partner, tx.id];
+    if (!seen.has(tx.kobo)) seen.set(tx.kobo, tx.id);
+    return null;
+  };
+}
+
+const watch = refundWatcher(2350000);
+const feed = [
+  { id: "T1", kobo: 1500000 },
+  { id: "T2", kobo: 420000 },
+  { id: "T3", kobo: 1175000 },
+  { id: "T4", kobo: 1175000 },
+  { id: "T5", kobo: 850000 },
+];
+console.log(feed.map((tx) => watch(tx)));
+check("a single payout does not pair with itself", refundWatcher(2350000)({ id: "X", kobo: 1175000 }), null);
+```
+
+Output of `node p2-refund-feed.js` and of the browser terminal
+
+```json
+[ null, null, null, [ 'T3', 'T4' ], [ 'T1', 'T5' ] ]
+PASS a single payout does not pair with itself
+```
+
+The two ₦11,750 transactions pair up on T4's arrival, before T5 (which would pair with T1) has even arrived. **Complexity:** O(1) average per transaction, O(n) space for the amounts seen. The closure keeps the state between webhook calls; in a real service it would live in a shared store, since webhooks may reach different server processes.
+
+### Problem 3: merging two sorted exports
+
+Two systems each export their order ids sorted ascending, and some orders appear in both exports (and some repeat within one). Produce one sorted list with every id exactly once. Each export has 2 million ids.
+
+REASON IT OUT
+
+### Pick the pattern: merging exports
+
+- `[...new Set([...a, ...b])].sort()` is one line. What does it cost, and is the result correct for numbers?
+- What does "both inputs are already sorted" let you do?
+
+**Show the reasoning**
+
+The one-liner is O(n log n) for the sort, and `sort()` without a comparator sorts numbers as text. It works if you fix the comparator, but it ignores the fact that the work of sorting has already been done.
+
+**Two pointers, one per list:** take the smaller head each time (the merge step of merge sort), and skip anything equal to the last id written. One pass, O(n + m), and the output is sorted without sorting.
+
+p3-merge-unique.js
+
+```ts
+import { check } from "./helpers.js";
+
+function mergeUnique(a, b) {
+  const out = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    let next;
+    if (j >= b.length || (i < a.length && a[i] <= b[j])) next = a[i++];
+    else next = b[j++];
+    if (out.length === 0 || out[out.length - 1] !== next) out.push(next);
+  }
+  return out;
+}
+
+check("overlap", mergeUnique([1001, 1004, 1004, 1009], [1002, 1004, 1010]), [1001, 1002, 1004, 1009, 1010]);
+check("one empty", mergeUnique([], [5, 5, 7]), [5, 7]);
+check("both empty", mergeUnique([], []), []);
+```
+
+Output of `node p3-merge-unique.js` and of the browser terminal
+
+```ts
+PASS overlap
+PASS one empty
+PASS both empty
+```
+
+**Complexity:** O(n + m) time; the output is the only extra space. Comparing each id with the last one written works because the output is sorted: equal ids are always adjacent.
+
+### Problem 4: the quietest three hours
+
+An online shop needs a 3-hour maintenance window each week. It has the number of orders for each of the 168 hours of last week. Find the 3 consecutive hours with the fewest orders (the earliest, if several tie).
+
+REASON IT OUT
+
+### Pick the pattern: a maintenance window
+
+- Which word in the statement is the strongest signal?
+- The best maintenance window may wrap from Sunday night into Monday morning. Does your pattern handle that?
+
+**Show the reasoning**
+
+**"Consecutive"** means a contiguous range of fixed size: a fixed-size sliding window, adding the hour that enters and subtracting the one that leaves.
+
+**Wrapping:** weeks repeat, so hour 167 is followed by hour 0. Let the window run past the end and read positions modulo 168. A plain window over the array would miss the Sunday-to-Monday windows, which are often the quietest.
+
+p4-quiet-hours.js
+
+```ts
+import { check } from "./helpers.js";
+
+function quietestWindow(orders, k) {
+  const n = orders.length;
+  if (k <= 0 || k > n) return null;
+  let total = 0;
+  for (let h = 0; h < k; h++) total += orders[h];
+  let best = { start: 0, total };
+  for (let start = 1; start < n; start++) {
+    total += orders[(start + k - 1) % n] - orders[start - 1]; // wraps past the end
+    if (total < best.total) best = { start, total };
+  }
+  return best;
+}
+
+const week = Array.from({ length: 168 }, (_, h) => {
+  const hour = h % 24;
+  return hour >= 1 && hour <= 5 ? 3 + (h % 4) : 40 + ((h * 7) % 25);
+});
+week[166] = 1; // Sunday 22:00
+week[167] = 0; // Sunday 23:00
+week[0] = 2;   // Monday 00:00
+console.log(quietestWindow(week, 3));
+check("wraps into Monday", quietestWindow([5, 9, 9, 9, 1, 0], 3), { start: 4, total: 6 });
+check("no window", quietestWindow([1, 2], 3), null);
+```
+
+Output of `node p4-quiet-hours.js` and of the browser terminal
+
+```json
+{ start: 166, total: 3 }
+PASS wraps into Monday
+PASS no window
+```
+
+**Complexity:** O(n) time, O(1) space, with `n` window positions (each start hour, including the wrapping ones).
+
+### Problem 5: splitting a route between riders
+
+A route has 10 stops in a fixed order, each with a number of parcels. Three riders will split it into three consecutive parts (rider 1 takes the first stops, rider 2 the next, rider 3 the rest). Split it so the busiest rider has as few parcels as possible. What is that number?
+
+REASON IT OUT
+
+### Pick the pattern: splitting a route
+
+- How many ways are there to cut 10 stops into 3 consecutive parts? And 1,000 stops into 20 parts?
+- If you are told "no rider may carry more than 60 parcels", can you check quickly whether 3 riders are enough?
+- Where have you seen this problem before, in different clothes?
+
+**Show the reasoning**
+
+**Trying every split** means choosing 2 cut points out of 9 gaps: 36 ways for 10 stops, but for 1,000 stops and 20 riders the number of splits is astronomically large.
+
+**The check is easy and monotonic:** walk the stops, starting a new rider when the next stop would exceed the limit, and count riders. If a limit works, any bigger limit works too.
+
+**It is the truck problem.** Riders are days, the limit is the capacity. "Minimise the maximum" is a strong signal for binary search on the answer: search the limit between the biggest stop and the total.
+
+p5-split-route.js
+
+```ts
+import { check, firstTrue } from "./helpers.js";
+
+function ridersNeeded(stops, limit) {
+  let riders = 1;
+  let load = 0;
+  for (const parcels of stops) {
+    if (load + parcels > limit) {
+      riders++;
+      load = 0;
+    }
+    load += parcels;
+  }
+  return riders;
+}
+
+function smallestBusiest(stops, riders) {
+  const biggest = Math.max(...stops);
+  const total = stops.reduce((a, b) => a + b, 0);
+  return firstTrue(biggest, total + 1, (limit) => ridersNeeded(stops, limit) <= riders);
+}
+
+const route = [8, 15, 7, 20, 11, 9, 14, 6, 18, 12];
+const best = smallestBusiest(route, 3);
+console.log(best, ridersNeeded(route, best), ridersNeeded(route, best - 1));
+check("one rider takes everything", smallestBusiest(route, 1), 120);
+check("a rider per stop", smallestBusiest(route, 10), 20);
+```
+
+Output of `node p5-split-route.js` and of the browser terminal
+
+```ts
+50 3 4
+PASS one rider takes everything
+PASS a rider per stop
+```
+
+**Complexity:** O(n · log(total)) time, O(1) space. Recognising an old problem in new clothes is the most valuable skill in this lesson: "split into k consecutive groups, minimise the largest" is the same search as "ship within D days".
+
+## Combining patterns
+
+### Problem 6: the shortest span covering all warehouses
+
+An operations dashboard logs pick events, sorted by minute, each tagged with the warehouse that did it: `LAG`, `ABJ` or `PHC`. For a report on coordination, find the shortest stretch of time that contains at least one event from every warehouse.
+
+REASON IT OUT
+
+### Pick the pattern: covering every warehouse
+
+- Is the answer a contiguous range of events? Fixed size or variable?
+- What summary of the window tells you whether it is "valid" (covers every warehouse)? How do you update it when an event leaves?
+- Is this "longest valid" or "shortest valid"? Which way does the shrinking go?
+
+**Show the reasoning**
+
+**A variable sliding window.** The events are in time order and the answer is a stretch of consecutive events, of unknown length.
+
+**A frequency map inside the window:** warehouse → how many of its events are in the window, plus the number of warehouses with a count above 0. Adding an event increments; removing one decrements, and a count dropping to 0 means the window lost that warehouse.
+
+**Shortest valid:** grow on the right until the window is valid, then shrink from the left *while it stays valid*, recording each valid span. (For "longest", you shrink only while it is invalid.)
+
+p6-cover-all.js
+
+```ts
+import { check } from "./helpers.js";
+
+function shortestCover(events, required) {
+  const inWindow = new Map();
+  let covered = 0;
+  let left = 0;
+  let best = null;
+  for (let right = 0; right < events.length; right++) {
+    const wh = events[right].wh;
+    if (required.has(wh)) {
+      inWindow.set(wh, (inWindow.get(wh) ?? 0) + 1);
+      if (inWindow.get(wh) === 1) covered++;
+    }
+    while (covered === required.size) {
+      const span = events[right].minute - events[left].minute;
+      if (best === null || span < best.span) best = { span, from: events[left].minute, to: events[right].minute };
+      const out = events[left].wh;
+      if (required.has(out)) {
+        inWindow.set(out, inWindow.get(out) - 1);
+        if (inWindow.get(out) === 0) covered--;
+      }
+      left++;
+    }
+  }
+  return best;
+}
+
+const events = [
+  { minute: 480, wh: "LAG" }, { minute: 482, wh: "LAG" }, { minute: 490, wh: "ABJ" },
+  { minute: 495, wh: "LAG" }, { minute: 530, wh: "PHC" }, { minute: 531, wh: "ABJ" },
+  { minute: 540, wh: "LAG" }, { minute: 600, wh: "ABJ" },
+];
+console.log(shortestCover(events, new Set(["LAG", "ABJ", "PHC"])));
+check("missing a warehouse", shortestCover(events.filter((e) => e.wh !== "PHC"), new Set(["LAG", "ABJ", "PHC"])), null);
+check("one warehouse", shortestCover(events, new Set(["ABJ"])), { span: 0, from: 490, to: 490 });
+```
+
+Output of `node p6-cover-all.js` and of the browser terminal
+
+```json
+{ span: 10, from: 530, to: 540 }
+PASS missing a warehouse
+PASS one warehouse
+```
+
+**Complexity:** each event enters and leaves the window once, so O(n) time; O(w) space for `w` warehouses. This is the "minimum window substring" interview question, with warehouses instead of letters. Keeping `covered` as a separate number avoids re-checking every warehouse's count on each step.
+
+### Problem 7: when does the stock run out?
+
+A warehouse has the planned sales for each of the next 90 days. The planning tool lets a manager type a starting stock ("what if we start with 4,000 units?") and instantly shows the first day the stock runs out. Managers try hundreds of values while planning.
+
+REASON IT OUT
+
+### Pick the pattern: the run-out day
+
+- For one query, what is the simplest correct approach, and what does it cost?
+- What is true about the running total of sales from day 1 onwards?
+- With hundreds of queries on the same plan, what should you prepare once?
+
+**Show the reasoning**
+
+**One query:** add up sales day by day until the total reaches the stock. O(n) per query, fine for one, wasteful for hundreds.
+
+**The running total never decreases** (sales are never negative). So "has the stock run out by day d?" is false, …, false, true, …, true: a monotonic predicate over days.
+
+**Prefix sums once, then binary search per query.** Build the running totals in O(n), then find the first day whose total reaches the stock with `firstTrue`: O(log n) per query.
+
+p7-run-out.js
+
+```ts
+import { check, firstTrue } from "./helpers.js";
+
+function runOutPlanner(dailySales) {
+  const soldBy = []; // soldBy[d] = units sold on days 0..d
+  let total = 0;
+  for (const units of dailySales) soldBy.push((total += units));
+  return function runOutDay(stock) {
+    const day = firstTrue(0, soldBy.length, (d) => soldBy[d] >= stock);
+    return day === soldBy.length ? null : day + 1; // day numbers start at 1
+  };
+}
+
+const plan = Array.from({ length: 90 }, (_, d) => 40 + (d % 7) * 10 + (d >= 60 ? 50 : 0)); // busier after day 60
+const runOutDay = runOutPlanner(plan);
+console.log([1000, 4000, 6000, 20000].map((stock) => `${stock} units -> day ${runOutDay(stock)}`).join("\n"));
+check("tiny plan", runOutPlanner([10, 10, 10])(15), 2);
+check("exactly used up on day 3", runOutPlanner([10, 10, 10])(30), 3);
+```
+
+Output of `node p7-run-out.js` and of the browser terminal
+
+```ts
+1000 units -> day 15
+4000 units -> day 58
+6000 units -> day 76
+20000 units -> day null
+PASS tiny plan
+PASS exactly used up on day 3
+```
+
+`null` means the stock lasts beyond the plan. **Complexity:** O(n) once to build, O(log n) per query, O(n) space. If sales could be negative (returns), the running total would not be monotonic, and binary search would give wrong answers: the precondition is part of the solution.
+
+### Problem 8: the longest balanced period
+
+A shop that accepts card and cash wants to know the longest run of consecutive payments in which card and cash were used equally often (their bank offers a fee rebate for balanced periods). Payments are a list of `"card"` and `"cash"`.
+
+REASON IT OUT
+
+### Pick the pattern: equal cards and cash
+
+- Replace each card by +1 and each cash by −1. What does "equally often" become?
+- Can a shrinking window decide when to move `left`? What goes wrong?
+- With prefix sums, when does the range between two positions have a total of 0?
+
+**Show the reasoning**
+
+**A range is balanced exactly when its +1/−1 total is 0.**
+
+**A window cannot decide:** the values are negative as well as positive, so a window that is unbalanced now may become balanced after adding more payments. There is no safe moment to shrink.
+
+**Prefix sums with a map.** The range after position `i` up to position `j` totals 0 when the running balance at `i` equals the one at `j`. For the *longest* range, remember the *first* position where each balance appeared, and for each later position with the same balance, measure the distance.
+
+p8-balanced.js
+
+```ts
+import { check } from "./helpers.js";
+
+function longestBalanced(payments) {
+  const firstAt = new Map([[0, -1]]); // balance 0 "before" the first payment
+  let balance = 0;
+  let best = { length: 0, from: -1 };
+  payments.forEach((method, i) => {
+    balance += method === "card" ? 1 : -1;
+    if (firstAt.has(balance)) {
+      const length = i - firstAt.get(balance);
+      if (length > best.length) best = { length, from: firstAt.get(balance) + 1 };
+    } else {
+      firstAt.set(balance, i);
+    }
+  });
+  return best;
+}
+
+const day = ["card", "card", "cash", "card", "cash", "cash", "card", "card", "card"];
+console.log(longestBalanced(day));
+check("all card", longestBalanced(["card", "card"]), { length: 0, from: -1 });
+check("empty", longestBalanced([]), { length: 0, from: -1 });
+```
+
+Output of `node p8-balanced.js` and of the browser terminal
+
+```json
+{ length: 6, from: 0 }
+PASS all card
+PASS empty
+```
+
+Only the *first* position of each balance is stored, because a later one could only give a shorter range. **Complexity:** O(n) time, O(n) space for the map. This is the frequency lesson's table and the sliding window lesson's prefix sums, working together.
+
+### Problem 9: the closest delivery slots
+
+A customer asks for delivery at 14:10. The courier's free slots for the day are a sorted list of minutes after midnight. Offer the 3 free slots closest to the requested time (on a tie, the earlier slot first), in time order.
+
+REASON IT OUT
+
+### Pick the pattern: closest slots
+
+- How do you find where 14:10 (minute 850) would sit in the sorted list, quickly?
+- Once you know that position, where are the closest slots?
+
+**Show the reasoning**
+
+**Binary search** (lower bound): the first slot at or after minute 850, in O(log n).
+
+**Two pointers from there, moving outwards.** The closest slots are next to that position, on either side. Put one pointer just left and one at the position; repeatedly take whichever side is closer and move that pointer outwards, `k` times.
+
+p9-closest-slots.js
+
+```ts
+import { check, firstTrue } from "./helpers.js";
+
+function closestSlots(slots, wanted, k) {
+  const at = firstTrue(0, slots.length, (i) => slots[i] >= wanted);
+  let left = at - 1;
+  let right = at;
+  const picked = [];
+  while (picked.length < k && (left >= 0 || right < slots.length)) {
+    const leftGap = left >= 0 ? wanted - slots[left] : Infinity;
+    const rightGap = right < slots.length ? slots[right] - wanted : Infinity;
+    if (leftGap <= rightGap) picked.push(slots[left--]); // tie: the earlier slot
+    else picked.push(slots[right++]);
+  }
+  return picked.sort((a, b) => a - b);
+}
+
+const time = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+const free = [540, 600, 690, 780, 830, 870, 900, 960, 1020];
+console.log(closestSlots(free, 850, 3).map(time).join(" "));
+check("before all slots", closestSlots(free, 480, 2), [540, 600]);
+check("more than available", closestSlots([600, 660], 630, 5), [600, 660]);
+```
+
+Output of `node p9-closest-slots.js` and of the browser terminal
+
+```ts
+13:50 14:30 15:00
+PASS before all slots
+PASS more than available
+```
+
+**Complexity:** O(log n + k) time, plus O(k log k) to sort the `k` picked slots; O(k) space. The alternative, sorting all slots by distance, is O(n log n) and ignores the fact that they are already sorted.
+
+## Surprises
+
+### Problem 10: a peak hour, without sorting
+
+A monitoring tool stores the requests per minute of a day (1,440 values, and for a month, 43,200). An alert needs *a* peak: a minute that is busier than both of its neighbours (the first and last minute only need to beat their one neighbour). Any peak will do, and it must be fast, because the tool checks thousands of servers.
+
+REASON IT OUT
+
+### Pick the pattern: a peak
+
+- The data is not sorted. Could binary search still apply? What would one comparison at the middle need to tell you?
+- Compare `traffic[mid]` with `traffic[mid + 1]`. If the next minute is busier, is there certainly a peak to the right?
+
+**Show the reasoning**
+
+**Binary search on positions**, even without sorted data. It only needs a comparison that proves the answer lies on one side.
+
+If `traffic[mid + 1] > traffic[mid]`, walk right from `mid + 1`: either the values keep rising until the last minute (which is then a peak) or they fall at some point (and the top before the fall is a peak). Either way a peak exists to the right. Otherwise, by the mirror argument, one exists at `mid` or to its left. The test "`traffic[i] > traffic[i + 1]`", read left to right, need not be monotonic, but the search keeps the invariant "there is a peak in `lo`..`hi`".
+
+p10-peak.js
+
+```ts
+import { check } from "./helpers.js";
+
+function findPeak(traffic, counter = { steps: 0 }) {
+  let lo = 0;
+  let hi = traffic.length - 1;
+  while (lo < hi) {
+    counter.steps++;
+    const mid = Math.floor((lo + hi) / 2);
+    if (traffic[mid + 1] > traffic[mid]) lo = mid + 1; // a peak lies to the right
+    else hi = mid;                                    // a peak is mid or to its left
+  }
+  return lo;
+}
+
+function isPeak(t, i) { // strictly busier than both neighbours
+  return (i === 0 || t[i] > t[i - 1]) && (i === t.length - 1 || t[i] > t[i + 1]);
+}
+
+function atLeastNeighbours(t, i) {
+  return (i === 0 || t[i] >= t[i - 1]) && (i === t.length - 1 || t[i] >= t[i + 1]);
+}
+
+const day = [120, 180, 260, 240, 300, 410, 390, 350, 500, 470];
+const p = findPeak(day);
+console.log(p, day[p], isPeak(day, p));
+
+const month = Array.from({ length: 43200 }, (_, m) => Math.round(1000 * Math.sin(m / 700) + m / 10));
+const counter = { steps: 0 };
+const q = findPeak(month, counter);
+console.log(counter.steps, "steps for 43,200 minutes:", month.slice(q - 1, q + 2), isPeak(month, q), atLeastNeighbours(month, q));
+check("rising all day: last minute", findPeak([1, 2, 3]), 2);
+check("single minute", findPeak([7]), 0);
+```
+
+Output of `node p10-peak.js` and of the browser terminal
+
+```ts
+8 500 true
+15 steps for 43,200 minutes: [ 3712, 3713, 3713 ] false true
+PASS rising all day: last minute
+PASS single minute
+```
+
+The month of whole-number request counts shows the fine print. Rounded counts create **plateaus** (equal neighbours), and the minute found is not strictly busier than both neighbours: it equals one of them. What the search does guarantee is a minute at least as busy as both neighbours, because its invariant is "the value just left of `lo` is smaller, and the value at `hi` is not smaller than the one after it". Whether that is good enough is a product question; for an alert, it usually is. **Complexity:** O(log n) time, O(1) space, on unsorted data. The lesson: binary search needs a reason to throw away half, not a sorted array.
+
+### Problem 11: the same customer twice within 10 minutes
+
+A fraud rule flags any customer who places two orders within 10 minutes of each other. Orders arrive sorted by time. Find all such pairs of consecutive orders from the same customer.
+
+REASON IT OUT
+
+### Pick the pattern: repeats within 10 minutes
+
+- "Within 10 minutes" sounds like a sliding window over time. Is a full window necessary?
+- For a new order from Ada, which earlier order of Ada's is the only one that matters?
+
+**Show the reasoning**
+
+A window of the last 10 minutes with a count per customer would work. But look closer: since orders are in time order, if Ada's new order is within 10 minutes of *any* earlier order of hers, it is within 10 minutes of her *most recent* one. So a `Map` from customer to the time of their last order is enough.
+
+The pattern is the hash-map lookup from the frequency family, and the "window" collapses to one remembered value per customer. Choosing the simplest structure that answers the question is a skill in itself.
+
+p11-quick-repeat.js
+
+```ts
+import { check } from "./helpers.js";
+
+function quickRepeats(orders, minutes) {
+  const lastAt = new Map();
+  const flagged = [];
+  for (const order of orders) {
+    const previous = lastAt.get(order.customer);
+    if (previous !== undefined && order.minute - previous.minute <= minutes) {
+      flagged.push(`${order.customer}: ${previous.id} -> ${order.id}`);
+    }
+    lastAt.set(order.customer, order);
+  }
+  return flagged;
+}
+
+const orders = [
+  { id: "O1", customer: "ada", minute: 600 },
+  { id: "O2", customer: "bola", minute: 603 },
+  { id: "O3", customer: "ada", minute: 608 },
+  { id: "O4", customer: "ada", minute: 619 },
+  { id: "O5", customer: "bola", minute: 620 },
+];
+console.log(quickRepeats(orders, 10));
+check("exactly 10 minutes counts", quickRepeats([{ id: "A", customer: "c", minute: 0 }, { id: "B", customer: "c", minute: 10 }], 10), ["c: A -> B"]);
+```
+
+Output of `node p11-quick-repeat.js` and of the browser terminal
+
+```json
+[ 'ada: O1 -> O3' ]
+PASS exactly 10 minutes counts
+```
+
+Ada's O4 is 11 minutes after O3, so only O1 → O3 is flagged, and Bola's two orders are 17 minutes apart. **Complexity:** O(n) time, O(c) space for `c` customers.
+
+The "most recent order is enough" argument depends on one precondition: the input is sorted by time. Real feeds deliver events late. Here Ada's order at minute 608 arrives after her order at 615:
+
+p11-late-events.js
+
+```ts
+function quickRepeats(orders, minutes) {
+  const lastAt = new Map();
+  const flagged = [];
+  for (const order of orders) {
+    const previous = lastAt.get(order.customer);
+    if (previous !== undefined && order.minute - previous.minute <= minutes) {
+      flagged.push(`${order.customer}: ${previous.id} -> ${order.id}`);
+    }
+    lastAt.set(order.customer, order);
+  }
+  return flagged;
+}
+
+const arrived = [
+  { id: "O1", customer: "ada", minute: 600 },
+  { id: "O2", customer: "ada", minute: 615 },
+  { id: "O3", customer: "ada", minute: 608 }, // delivered late
+];
+console.log("as arrived:", quickRepeats(arrived, 10));
+console.log("sorted:    ", quickRepeats(arrived.toSorted((a, b) => a.minute - b.minute), 10));
+```
+
+Output of `node p11-late-events.js` and of the browser terminal
+
+```ts
+as arrived: [ 'ada: O2 -> O3' ]
+sorted:     [ 'ada: O1 -> O3', 'ada: O3 -> O2' ]
+```
+
+In arrival order, the late event is compared with the wrong "previous" order (a negative gap counts as "within 10 minutes") and the real pair O1 → O3 is missed. Sorting first (`toSorted` returns a sorted copy) gives both real pairs. In a live system you would buffer events for a few minutes and sort the buffer, or compare against every order of that customer in the last 10 minutes. Checking the precondition, not just the logic, is part of choosing the pattern.
+
+## Interview walkthroughs
+
+In a coding interview the interviewer cares as much about *how* you get to the answer as about the answer. A good shape for every answer: **clarify** the problem and its edge cases, state a **brute force** and its cost, **improve** it with a named pattern and say why it is correct, **code** it, **test** it by hand on a small case, and state the **complexity**. Here are two, written as the conversation might go.
+
+### Walkthrough 1: "Two transactions that sum to the refund"
+
+**Interviewer:** Given a list of transaction amounts and a refund amount, return two transactions that add up to it.
+
+**You:** A few questions first. Are the amounts integers, say kobo? Can the same transaction be used twice? What if there are several pairs, or none? Is the list sorted? Roughly how many transactions?
+
+**Interviewer:** Integers in kobo; two different transactions; any one pair, or `null`; not sorted; up to a million.
+
+**You:** The brute force tries every pair: O(n²), about 500 billion additions for a million, too slow. Since I only need to know whether the other half has appeared, I will keep a `Map` from amount to index while I walk the list: for each amount, look up `refund − amount` first, then store the amount. O(n) time and O(n) space. Looking up before storing stops a single transaction from pairing with itself.
+
+w1-refund.js
+
+```ts
+function refundPair(amounts, refund) {
+  const seenAt = new Map();
+  for (let i = 0; i < amounts.length; i++) {
+    const j = seenAt.get(refund - amounts[i]);
+    if (j !== undefined) return [j, i];
+    if (!seenAt.has(amounts[i])) seenAt.set(amounts[i], i);
+  }
+  return null;
+}
+
+console.log(refundPair([1500000, 420000, 1175000, 850000], 2350000));
+console.log(refundPair([1175000, 1175000], 2350000), refundPair([1175000], 2350000), refundPair([], 0));
+```
+
+Output of `node w1-refund.js` and of the browser terminal
+
+```json
+[ 0, 3 ]
+[ 0, 1 ] null null
+```
+
+**You:** Tracing the first case: 1,500,000 needs 850,000, not seen yet, store it; 420,000 and 1,175,000 likewise; 850,000 needs 1,500,000, seen at index 0, so the answer is `[0, 3]`. Edge cases: two equal halves work, one alone does not, an empty list gives `null`.
+
+**Interviewer:** Memory is tight: the list is already sorted, and you may not allocate a map.
+
+**You:** Then two pointers from both ends: too big, move the right one in; too small, move the left one in. O(n) time, O(1) space, and correct because each move discards an amount that cannot be in any pair. If the list were *not* sorted and memory were tight, I would sort in place first, O(n log n), which is still far better than O(n²).
+
+**Interviewer:** And if the refund could be split across *three* transactions?
+
+**You:** Sort, then for each transaction run the two-pointer search on the ones after it for `refund − amount`: O(n²) instead of the O(n³) brute force. That is the classic "3-sum".
+
+What made this answer strong: questions before code, a brute force with its cost, a named pattern with the reason it is correct, a hand trace, and a calm change of plan when the constraints changed. The pattern followed the constraints, not the other way round.
+
+### Walkthrough 2: "Find the first failing build"
+
+**Interviewer:** You have builds numbered 1 to `n` and a function `isBroken(build)`. Build 1 is fine and build `n` is broken. Find the first broken build.
+
+**You:** Can a build be broken, then fixed, then broken again? How expensive is `isBroken`? Is it deterministic?
+
+**Interviewer:** Once broken, it stays broken. Each call takes ten minutes. Assume it is deterministic.
+
+**You:** Then the answers are false, …, false, true, …, true, so binary search finds the switch. The brute force calls `isBroken` on builds 2, 3, 4, … up to `n − 1` times; binary search needs about `log₂ n` calls, and since each call costs ten minutes, the number of calls is what matters. I keep the invariant "`lo` is the first candidate not known to be good, everything from `hi` on is broken".
+
+w2-first-broken.js
+
+```ts
+function firstBroken(n, isBroken) {
+  let lo = 2;  // build 1 is known good
+  let hi = n;  // build n is known broken
+  let calls = 0;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    calls++;
+    if (isBroken(mid)) hi = mid;
+    else lo = mid + 1;
+  }
+  return { build: lo, calls };
+}
+
+console.log(firstBroken(1000, (b) => b >= 347));
+console.log(firstBroken(2, (b) => b >= 2), firstBroken(1000000, (b) => b >= 999999));
+```
+
+Output of `node w2-first-broken.js` and of the browser terminal
+
+```json
+{ build: 347, calls: 10 }
+{ build: 2, calls: 0 } { build: 999999, calls: 20 }
+```
+
+**You:** For 1,000 builds, 10 calls, 100 minutes, instead of up to 998 calls. When `n` is 2 no call is needed at all, because build 2 is the only candidate and it is known broken. For a million builds, 20 calls.
+
+**Interviewer:** What if `isBroken` is occasionally wrong?
+
+**You:** Then binary search is dangerous: one wrong answer discards the half with the real culprit, and it never looks back. I would rerun the check at each step two or three times and take the majority (a frequency count of three answers), accept the extra calls, and verify at the end that the answer is broken and the build before it is not.
+
+What made this answer strong: the monotonicity question was asked, not assumed; the cost model (calls, not operations) was stated; and the failure mode had a concrete mitigation.
+
+## Choosing the wrong pattern
+
+Most wrong answers in interviews and code reviews come not from bugs in a pattern but from using a pattern whose precondition does not hold. Each row below is a mistake you have now seen fail:
+
+| Pattern | Precondition | What happens when it does not hold |
+| --- | --- | --- |
+| frequency counter | position does not matter | "within 10 minutes", "longest streak" cannot be answered from counts |
+| two pointers (pair sum) | sorted input | silently misses pairs |
+| shrinking sliding window | values never negative (the window total only grows as it grows) | shrinks away valid ranges; use prefix sums with a `Map` |
+| binary search on the answer | a monotonic check | returns some switch point with full confidence |
+| "most recent is enough" (problem 11) | input in time order | misses pairs in late-arriving data |
+| any pattern | the input is big enough to matter | extra complexity and bugs for no gain; the brute force was fine |
+
+## A harness for any fast solution
+
+Every problem above has a brute force that is too slow for production but easy to believe. One small harness compares any fast function with its brute force on random inputs from a generator, and stops at the first disagreement with the input that caused it, which is the most useful thing a failing test can give you:
+
+harness.js
+
+```ts
+function xorshift(seed) {
+  return () => {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return (seed >>> 0) / 4294967296;
+  };
+}
+
+function compare(name, fast, slow, generate, runs = 2000, seed = 42) {
+  const random = xorshift(seed);
+  for (let r = 0; r < runs; r++) {
+    const input = generate(random);
+    const a = JSON.stringify(fast(...input));
+    const b = JSON.stringify(slow(...input));
+    if (a !== b) return console.log(`FAIL ${name} on ${JSON.stringify(input)}: fast ${a}, slow ${b}`);
+  }
+  console.log(`PASS ${name}: ${runs} random inputs`);
+}
+
+const smallInts = (random, max, len) => Array.from({ length: Math.floor(random() * len) }, () => Math.floor(random() * max));
+
+// Problem 8: longest balanced run (length only)
+function balancedFast(p) {
+  const firstAt = new Map([[0, -1]]);
+  let bal = 0, best = 0;
+  p.forEach((m, i) => {
+    bal += m ? 1 : -1;
+    if (firstAt.has(bal)) best = Math.max(best, i - firstAt.get(bal));
+    else firstAt.set(bal, i);
+  });
+  return best;
+}
+function balancedSlow(p) {
+  let best = 0;
+  for (let i = 0; i < p.length; i++) {
+    let bal = 0;
+    for (let j = i; j < p.length; j++) {
+      bal += p[j] ? 1 : -1;
+      if (bal === 0) best = Math.max(best, j - i + 1);
+    }
+  }
+  return best;
+}
+compare("balanced", balancedFast, balancedSlow, (r) => [smallInts(r, 2, 12)]);
+
+// Problem 10: a peak (the slow version checks the answer is a peak)
+function findPeak(t) {
+  let lo = 0, hi = t.length - 1;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (t[mid + 1] > t[mid]) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+const distinct = (r) => {
+  const t = [...new Set(smallInts(r, 50, 10))];
+  return [t.length ? t : [1]];
+};
+compare("peak", (t) => {
+  const i = findPeak(t);
+  return (i === 0 || t[i] > t[i - 1]) && (i === t.length - 1 || t[i] > t[i + 1]);
+}, () => true, distinct);
+
+// A deliberately broken "fast" version, to see what a failure looks like
+compare("balanced (buggy)", (p) => balancedFast(p.slice(1)), balancedSlow, (r) => [smallInts(r, 2, 12)]);
+```
+
+Output of `node harness.js` and of the browser terminal
+
+```ts
+PASS balanced: 2000 random inputs
+PASS peak: 2000 random inputs
+FAIL balanced (buggy) on [[0,1,1,0,1,1,1]]: fast 2, slow 4
+```
+
+Two details are worth copying. For problems with several correct answers (any peak), the reference does not compute "the" answer; the fast answer is checked against the *definition* instead. And the deliberately broken version shows that the harness can fail, and what it prints when it does: a small input you can trace by hand. A test you have never seen fail is a test you cannot fully trust.
+
+## New problems to practise
+
+For each problem, write down the pattern and why before you open the solution.
+
+TRY IT YOURSELF
+
+### Two categories at most
+
+A shopping session is a list of the categories of the products a customer viewed, in order. Marketing wants the longest stretch of consecutive views that touches at most 2 different categories (a focused session). Which pattern, and what is the window's summary?
+
+**Show a solution**
+
+two-categories.js
+
+```ts
+function longestFocused(views, maxCategories) {
+  const counts = new Map();
+  let left = 0;
+  let best = 0;
+  for (let right = 0; right < views.length; right++) {
+    counts.set(views[right], (counts.get(views[right]) ?? 0) + 1);
+    while (counts.size > maxCategories) {
+      const c = views[left];
+      counts.set(c, counts.get(c) - 1);
+      if (counts.get(c) === 0) counts.delete(c);
+      left++;
+    }
+    best = Math.max(best, right - left + 1);
+  }
+  return best;
+}
+
+const views = ["phones", "phones", "cases", "phones", "laptops", "cases", "cases", "cases", "phones"];
+console.log(longestFocused(views, 2), longestFocused(views, 1), longestFocused([], 2));
+```
+
+Output of `node two-categories.js` and of the browser terminal
+
+```ts
+4 3 0
+```
+
+A variable sliding window whose summary is a frequency map of the categories inside it; `counts.size` is the number of distinct categories, as long as categories whose count reaches 0 are deleted. "Longest valid", so shrink while invalid. O(n) time, O(k) space.
+
+TRY IT YOURSELF
+
+### Three payouts for one refund
+
+A refund of ₦30,000 was split into *three* payouts. Given an unsorted list of payouts (in naira), find three different ones that add up to it. Aim for better than O(n³).
+
+**Show a solution**
+
+three-payouts.js
+
+```ts
+function threePayouts(amounts, target) {
+  const sorted = [...amounts].sort((a, b) => a - b);
+  for (let i = 0; i < sorted.length - 2; i++) {
+    let left = i + 1;
+    let right = sorted.length - 1;
+    while (left < right) {
+      const sum = sorted[i] + sorted[left] + sorted[right];
+      if (sum === target) return [sorted[i], sorted[left], sorted[right]];
+      if (sum > target) right--;
+      else left++;
+    }
+  }
+  return null;
+}
+
+console.log(threePayouts([12000, 4500, 9000, 16500, 3000, 7500], 30000));
+console.log(threePayouts([10000, 10000], 30000));
+```
+
+Output of `node three-payouts.js` and of the browser terminal
+
+```json
+[ 4500, 9000, 16500 ]
+null
+```
+
+Sort once (O(n log n)), then fix each payout in turn and use two pointers on the rest for `target − payout`: O(n²) in total, O(n) for the sorted copy. The copy keeps the caller's list untouched.
+
+TRY IT YOURSELF
+
+### The earliest day to publish
+
+A shop has a list of the day each of its 12 products will be ready (day numbers). It wants to publish a catalogue on the earliest day when at least 8 products are ready, and in a batch of at least 3 *consecutive* products on the shelf plan (positions in the list) all ready. Which pattern finds the day, and what is the check?
+
+**Show a solution**
+
+publish-day.js
+
+```ts
+function canPublish(readyDay, day, minReady, minRun) {
+  let ready = 0;
+  let run = 0;
+  let longestRun = 0;
+  for (const d of readyDay) {
+    if (d <= day) {
+      ready++;
+      run++;
+      longestRun = Math.max(longestRun, run);
+    } else {
+      run = 0;
+    }
+  }
+  return ready >= minReady && longestRun >= minRun;
+}
+
+function earliestDay(readyDay, minReady, minRun) {
+  let lo = Math.min(...readyDay);
+  let hi = Math.max(...readyDay) + 1;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (canPublish(readyDay, mid, minReady, minRun)) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo > Math.max(...readyDay) ? null : lo;
+}
+
+const readyDay = [3, 9, 4, 12, 7, 5, 6, 15, 2, 8, 11, 10];
+console.log(earliestDay(readyDay, 8, 3), earliestDay(readyDay, 12, 12), earliestDay(readyDay, 13, 1));
+```
+
+Output of `node publish-day.js` and of the browser terminal
+
+```ts
+9 15 null
+```
+
+Binary search on the answer (the day), because "can we publish by day d?" is monotonic: products only become ready, never unready. The check itself is a counter plus a streak, one O(n) pass. Total O(n log D) for a range of D days. Asking for 13 products out of 12 is impossible, so the search runs past the last ready day and the function returns `null` rather than an untested day.
+
+## Summary
+
+- Choose before you code: ask whether position matters, whether the data is sorted, whether the answer is a contiguous range, whether the question is "the minimum such that…", and how big the input really is.
+- Say why the other patterns do not fit; most wrong answers use a pattern whose precondition fails (unsorted data, negative values, a non-monotonic check, late-arriving events).
+- Many problems need two patterns: a window with a frequency map, prefix sums with a map, prefix sums with binary search, binary search then two pointers.
+- Recognise old problems in new clothes: splitting a route is shipping parcels; balanced payments are zero-sum ranges; minimum-window covering is a window with counts.
+- In interviews: clarify, brute force with its cost, improve with a named pattern and a reason it is correct, code, trace by hand, state the complexity, and adapt when the constraints change.
+- Test every fast solution against a brute force with one reusable harness, and make sure you have seen it fail.
+
+This completes [Algorithms and data structures](https://zudojs.oyinlola.site/learn/algorithms). Next is [Advanced JavaScript](https://zudojs.oyinlola.site/learn/javascript-advanced), starting with [how `this` works in every kind of call](https://zudojs.oyinlola.site/learn/js-this).
+
+## Test yourself
+
+Five questions, picked at random from this lesson's question bank. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it in the terminal. Get 4 of 5 right to pass. If you don't, read the explanations and try again: you get 5 different questions.

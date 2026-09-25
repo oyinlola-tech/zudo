@@ -1,0 +1,1610 @@
+---
+title: "Data architecture with ZudoJS — ZudoJS Academy"
+description: "Design the Task API's data layer with @zudojs/database: entities and DTOs, repositories, query services, keyset pagination, indexes and safe concurrent writes."
+source: https://zudojs.oyinlola.site/learn/zudo-data-architecture
+---
+
+LEVEL 13 · LESSON 2 OF 12
+
+Data Core
+
+# Data architecture with ZudoJS
+
+Design the Task API's data layer with @zudojs/database: entities and DTOs, repositories, query services, keyset pagination, indexes and safe concurrent writes.
+
+- **55 min** to read and try
+- **You need:** Databases with @zudojs/database, and Type-safe API layers
+- **You build:** A project and task data layer with repositories, a query service, keyset pagination, measured indexes and conflict-safe updates
+
+  [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Separate rows, entities, request DTOs and response DTOs, and map between them in one place
+- Give each table a repository whose methods answer questions, and put screen-shaped reads in a query service
+- Find and remove N+1 queries, and cap what one request can make the database do
+- Page with signed keyset cursors, and explain why offset pages drift and millisecond cursors skip rows
+- Back each query with an index you have measured, and keep counters and versions consistent under concurrent writes
+
+## The dashboard that made 51 queries
+
+The Task API now has **projects**, and every task belongs to one. A teammate adds the first screen that shows them: a dashboard with each project and how many open tasks it has. They also store that number on the project, in an `open_tasks` column, so it is quick to show. Here is their code, reduced to the essentials and run against a real PostgreSQL (PGlite):
+
+naive.tsNode.js only
+
+```ts
+import { PGlite } from "@electric-sql/pglite";
+
+const pg = new PGlite();
+await pg.exec(`
+  CREATE TABLE projects (id serial PRIMARY KEY, name text NOT NULL, owner_id text NOT NULL,
+                         open_tasks int NOT NULL DEFAULT 0, internal_notes text);
+  CREATE TABLE tasks (id serial PRIMARY KEY, project_id int NOT NULL, title text NOT NULL,
+                      status text NOT NULL DEFAULT 'open');
+`);
+
+let queries = 0;
+const query = <T>(sql: string, params: unknown[] = []) => {
+  queries += 1;
+  return pg.query<T>(sql, params);
+};
+
+async function createTask(projectId: number, title: string) {
+  await query("INSERT INTO tasks (project_id, title) VALUES ($1, $2)", [projectId, title]);
+  if (title.length > 20) throw new Error("title too long"); // a rule checked too late
+  await query("UPDATE projects SET open_tasks = open_tasks + 1 WHERE id = $1", [projectId]);
+}
+
+async function dashboard() {
+  const projects = (await query<Record<string, unknown>>("SELECT * FROM projects ORDER BY id")).rows;
+  for (const project of projects) {
+    const { rows } = await query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM tasks WHERE project_id = $1 AND status = 'open'", [project["id"]],
+    );
+    project["countedOpen"] = rows[0]?.n;
+  }
+  return projects;
+}
+
+for (let i = 1; i <= 50; i++) {
+  await pg.query("INSERT INTO projects (name, owner_id, internal_notes) VALUES ($1, 'ada', 'margin 40%')", [`Project ${i}`]);
+}
+await createTask(1, "Draft the brief");
+await createTask(1, "Collect quotes from three printers").catch(() => {});
+
+queries = 0;
+const rows = await dashboard();
+console.log("queries for one page view:", queries);
+console.log(rows[0]);
+```
+
+Output of `npx tsx naive.ts`
+
+```ts
+queries for one page view: 51
+{
+  id: 1,
+  name: 'Project 1',
+  owner_id: 'ada',
+  open_tasks: 1,
+  internal_notes: 'margin 40%',
+  countedOpen: 2
+}
+```
+
+Every line of that output is a bug that reaches production in real projects:
+
+- **51 queries for one page.** One query for the projects, then one more *per project*. This is the **N+1 query problem**. With 50 projects the page is slow; with 5,000 the database is busy all day answering one screen.
+- **Everything leaks.** `SELECT *` went straight to the client: `internal_notes`, the owner's id, and database column names in `snake_case`. Add a column tomorrow and it is public.
+- **No limit.** The dashboard returns every project the table will ever hold.
+- **The stored count is wrong.** `open_tasks` says 1, but there are 2 open tasks. The second `createTask` inserted its task, then failed before the counter update, and nothing undid the insert.
+
+None of these is a SQL mistake. They are *architecture* mistakes: no agreed shape for the data at each layer, no boundary on what a request can ask for, and writes that are not all-or-nothing. In [Databases with @zudojs/database](https://zudojs.oyinlola.site/learn/zudo-database) you learned the tools. This lesson is about how to arrange them. You will rebuild the projects and tasks part of the Task API so that each of the four bugs becomes impossible, or at least loud.
+
+## Questions before any code
+
+REASON IT OUT
+
+### Where does each rule live?
+
+Think about the projects and tasks feature before reading on. Write short answers:
+
+- A task has a title, a status, a priority, an assignee, timestamps and a project. Which of these may a client *send* when creating a task? Which may it *see*?
+- "Two tasks in one project can't have the same title." Where should that rule be enforced: in the route, the service, or the database? What happens if two requests create the same title at the same moment?
+- The dashboard wants counts for many projects. Is that a job for the task repository, or something else?
+- A client asks for `?limit=5000`. What should happen?
+- Two people open the same task, and both press "done" within a second. What should the counter on the project say afterwards? Can the same request arrive twice?
+
+**Show the reasoning**
+
+A client may send the **title**, and optionally the **priority** and **assignee**. The project comes from the URL (and a permission check), the id, status, version and timestamps from the server. It may see everything except internal bookkeeping such as `deletedAt`, and dates as ISO strings.
+
+The uniqueness rule must live in the **database**, as a unique index. A check in the service ("look for the title, then insert") has a gap between the look and the insert, and two requests can both pass the look. The service can still check first to give a friendlier message, but the index is what makes it true.
+
+Counts across many projects are a **read shaped for one screen**. They belong in a query service that can use one `GROUP BY` query, not in a repository whose job is to load and save tasks.
+
+`limit=5000` is outside input asking for unbounded work. Refuse it with 400 at the edge, or clamp it to a maximum. Never pass it through.
+
+The counter must go down by exactly one. That needs the "mark done" and "decrease the counter" writes in one transaction, a decrease computed *by the database* (`open_tasks - 1`) rather than from a value read earlier, and a guard so that marking an already-done task changes nothing. Yes, the request can arrive twice: a double click, or a client retrying after a timeout. The operation must be safe to repeat.
+
+## Rows, entities and DTOs
+
+[Type-safe API layers](https://zudojs.oyinlola.site/learn/ts-api-layers) introduced the four shapes of a record. Here they are for a task, and which part of ZudoJS produces each:
+
+| Shape | Example | Produced by |
+| --- | --- | --- |
+| Row | `{ project_id: 1, created_at: … }` | PostgreSQL |
+| Entity | `Task`: `{ projectId: 1, createdAt: Date, version: 3, … }` | the repository (through the adapter) |
+| Request DTO | `CreateTaskBody`: `{ title, priority? }` | a schema, from an `unknown` body |
+| Response DTO | `TaskResponse`: `{ id, title, createdAt: "2026-…Z" }` | a mapper, from the entity |
+
+A **DTO** (data transfer object) is a shape made for crossing a boundary, here the network. An **entity** is the full record your code works with. `@zudojs/database` gives you base types for entities: `DatabaseEntity<TId>` has a readonly `id`, `createdAt` and `updatedAt`. There is also `SoftDeletableEntity`, but it has no type parameter, so its id is always a `string`. With `serial` number ids it does not fit:
+
+entity-id.ts
+
+```ts
+import type { SoftDeletableEntity } from "@zudojs/database";
+
+export interface Task extends SoftDeletableEntity {
+  readonly id: number;
+  readonly title: string;
+}
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+entity-id.ts:3:18 - error TS2430: Interface 'Task' incorrectly extends interface 'SoftDeletableEntity'.
+  Types of property 'id' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+
+3 export interface Task extends SoftDeletableEntity {
+                   ~~~~
+
+
+Found 1 error in entity-id.ts:3
+```
+
+So for number ids, extend `DatabaseEntity<number>` and add `deletedAt` yourself, as the next file does.
+
+### The project's data files
+
+The adapter from [the database lesson](https://zudojs.oyinlola.site/learn/zudo-database#adapter) comes along unchanged in `where.ts`. `pglite-adapter.ts` gets three small additions, each marked `new:`. It reads only the columns a query `select`s, it understands Prisma's `{ increment: 1 }` and `{ decrement: 1 }` updates, and it sets `updated_at` on every update, like Prisma's `@updatedAt`. It also maps PostgreSQL's `CHECK` violation (`23514`) to Prisma's `P2004`.
+
+**Show where.ts and pglite-adapter.ts**
+
+where.ts
+
+```ts
+const COMPARE: Record<string, string> = {
+  equals: "=", not: "<>", lt: "<", lte: "<=", gt: ">", gte: ">=",
+};
+
+/* "createdAt" becomes the column "created_at", but only for known fields. */
+export function column(field: string, fields: readonly string[]): string {
+  if (!fields.includes(field)) {
+    throw new TypeError(`Unknown field "${field}"`);
+  }
+  return `"${field.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase())}"`;
+}
+
+export function whereToSql(where: unknown, fields: readonly string[], params: unknown[]): string {
+  if (where === undefined || where === null) return "TRUE";
+  const bind = (value: unknown) => `$${params.push(value)}`;
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(where)) {
+    if (key === "AND" || key === "OR") {
+      const list = (value as unknown[]).map((w) => `(${whereToSql(w, fields, params)})`);
+      parts.push(list.join(` ${key} `) || (key === "AND" ? "TRUE" : "FALSE"));
+      continue;
+    }
+    if (key === "NOT") {
+      parts.push(`NOT (${whereToSql(value, fields, params)})`);
+      continue;
+    }
+    const col = column(key, fields);
+    const hasOps = value !== null && typeof value === "object" && !(value instanceof Date);
+    for (const [op, v] of hasOps ? Object.entries(value) : [["equals", value]]) {
+      if (v === null && op === "equals") parts.push(`${col} IS NULL`);
+      else if (v === null && op === "not") parts.push(`${col} IS NOT NULL`);
+      else if (op in COMPARE) parts.push(`${col} ${COMPARE[op]} ${bind(v)}`);
+      else if (op === "in") parts.push(`${col} = ANY(${bind(v)})`);
+      else if (op === "contains") parts.push(`${col} LIKE ${bind(`%${String(v).replace(/[\\%_]/g, "\\$&")}%`)}`);
+      else throw new TypeError(`Operator "${op}" is not supported`);
+    }
+  }
+  return parts.join(" AND ") || "TRUE";
+}
+```
+
+pglite-adapter.ts
+
+```ts
+import type { PGlite, Transaction } from "@electric-sql/pglite";
+import type { DatabaseTransactionContext, PrismaClientLike, PrismaSqlLike, RepositoryDelegate } from "@zudojs/database";
+import { column, whereToSql } from "./where.js";
+
+type Db = PGlite | Transaction;
+type Row = Record<string, unknown>;
+export interface Model {
+  readonly table: string;
+  readonly fields: readonly string[];
+}
+interface Args {
+  where?: unknown;
+  data?: Row;
+  orderBy?: readonly Row[];
+  skip?: number;
+  take?: number;
+  select?: Row; // new: which columns to read
+}
+
+/* PostgreSQL error codes, translated to the Prisma codes ZudoJS understands. */
+const PRISMA_CODES: Record<string, string> = {
+  "23505": "P2002", "23503": "P2003", "23514": "P2004", "40001": "P2034", // new: 23514
+};
+
+function prismaError(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code, clientVersion: "pglite" });
+}
+
+async function run(db: Db, sql: string, params: readonly unknown[]) {
+  try {
+    return await db.query<Row>(sql, [...params]);
+  } catch (error) {
+    const code = PRISMA_CODES[(error as { code?: string }).code ?? ""];
+    throw code ? prismaError(code, (error as Error).message) : error;
+  }
+}
+
+/* Rows come back as { created_at: … }; entities use { createdAt: … }. */
+function toEntity(row: Row | undefined): Row {
+  if (!row) throw prismaError("P2025", "Record not found");
+  const entries = Object.entries(row).map(([key, value]) => [
+    key.replace(/_(\w)/g, (_, c: string) => c.toUpperCase()),
+    value,
+  ]);
+  return Object.fromEntries(entries);
+}
+
+export function modelDelegate<T>(db: Db, model: Model): RepositoryDelegate<T, number> {
+  const table = `"${model.table}"`;
+  const col = (field: string) => column(field, model.fields);
+  const where = (args: Args | undefined, params: unknown[]) =>
+    whereToSql(args?.where, model.fields, params);
+
+  async function findMany(args: Args = {}) {
+    const params: unknown[] = [];
+    // new: SELECT only the columns asked for
+    const picked = Object.keys(args.select ?? {}).filter((f) => args.select?.[f] === true);
+    const columns = picked.length > 0 ? picked.map(col).join(", ") : "*";
+    let sql = `SELECT ${columns} FROM ${table} WHERE ${where(args, params)}`;
+    const order = (args.orderBy ?? []).flatMap((o) => Object.entries(o));
+    if (order.length > 0) {
+      sql += " ORDER BY " + order.map(([f, d]) => `${col(f)} ${d === "desc" ? "DESC" : "ASC"}`).join(", ");
+    }
+    if (args.take !== undefined) sql += ` LIMIT $${params.push(args.take)}`;
+    if (args.skip !== undefined) sql += ` OFFSET $${params.push(args.skip)}`;
+    return (await run(db, sql, params)).rows.map(toEntity);
+  }
+
+  const delegate = {
+    findMany,
+    findFirst: async (args: Args) => (await findMany({ ...args, take: 1 }))[0] ?? null,
+    findUnique: async (args: Args) => (await findMany({ ...args, take: 1 }))[0] ?? null,
+    async count(args?: Args) {
+      const params: unknown[] = [];
+      const sql = `SELECT count(*) AS n FROM ${table} WHERE ${where(args, params)}`;
+      return Number((await run(db, sql, params)).rows[0]?.["n"]);
+    },
+    async create(args: Args) {
+      const entries = Object.entries(args.data ?? {}).filter(([, value]) => value !== undefined);
+      const columns = entries.map(([field]) => col(field)).join(", ");
+      const marks = entries.map((_, i) => `$${i + 1}`).join(", ");
+      const sql = `INSERT INTO ${table} (${columns}) VALUES (${marks}) RETURNING *`;
+      return toEntity((await run(db, sql, entries.map(([, value]) => value))).rows[0]);
+    },
+    async update(args: Args) {
+      const params: unknown[] = [];
+      const sets = Object.entries(args.data ?? {})
+        .filter(([, value]) => value !== undefined) // like Prisma: undefined means "leave it"
+        .map(([f, v]) => {
+          // new: { increment: n } and { decrement: n } are computed by the database
+          const step = v !== null && typeof v === "object" && !(v instanceof Date) ? (v as Row) : null;
+          if (step && "increment" in step) return `${col(f)} = ${col(f)} + $${params.push(step["increment"])}`;
+          if (step && "decrement" in step) return `${col(f)} = ${col(f)} - $${params.push(step["decrement"])}`;
+          return `${col(f)} = $${params.push(v)}`;
+        });
+      if (model.fields.includes("updatedAt") && args.data?.["updatedAt"] === undefined) {
+        sets.push(`"updated_at" = now()`); // new: what Prisma's @updatedAt does
+      }
+      const sql = `UPDATE ${table} SET ${sets.join(", ")} WHERE ${where(args, params)} RETURNING *`;
+      return toEntity((await run(db, sql, params)).rows[0]);
+    },
+    async delete(args: Args) {
+      const params: unknown[] = [];
+      const sql = `DELETE FROM ${table} WHERE ${where(args, params)} RETURNING *`;
+      return toEntity((await run(db, sql, params)).rows[0]);
+    },
+  };
+  return delegate as unknown as RepositoryDelegate<T, number>;
+}
+
+/* sql`… ${value}` and Prisma.sql`…` both arrive as text parts plus values. */
+function tagged(query: TemplateStringsArray | PrismaSqlLike, values: readonly unknown[]) {
+  const [parts, params] = "strings" in query ? [query.strings, query.values] : [query, values];
+  return { sql: parts.reduce((text, part, i) => `${text}$${i}${part}`), params };
+}
+
+export function createPglitePrisma(pg: PGlite, models: Readonly<Record<string, Model>>): PrismaClientLike {
+  const bind = (db: Db): DatabaseTransactionContext => {
+    const query = async <R>(sql: string, values: readonly unknown[]) => (await run(db, sql, values)).rows as R;
+    const execute = async (sql: string, values: readonly unknown[]) => (await run(db, sql, values)).affectedRows ?? 0;
+    const client: DatabaseTransactionContext & Record<string, unknown> = {
+      $queryRawUnsafe: (sql, ...values) => query(sql, values),
+      $executeRawUnsafe: (sql, ...values) => execute(sql, values),
+      $queryRaw: (sql, ...values) => { const t = tagged(sql, values); return query(t.sql, t.params); },
+      $executeRaw: (sql, ...values) => { const t = tagged(sql, values); return execute(t.sql, t.params); },
+    };
+    for (const [key, model] of Object.entries(models)) client[key] = modelDelegate(db, model);
+    return client;
+  };
+  return {
+    ...bind(pg),
+    async $connect() {
+      if (pg.closed) throw new Error("PGlite is closed");
+      await pg.waitReady;
+    },
+    async $disconnect() {
+      if (!pg.closed) await pg.close();
+    },
+    $transaction: <T>(callback: (tx: DatabaseTransactionContext) => Promise<T>) =>
+      pg.transaction((tx) => callback(bind(tx))),
+  };
+}
+```
+
+Now the schema. Read the constraints as the rules of the data, written where no bug in your code can skip them: a title between 1 and 200 characters, a status that is `open` or `done`, a counter that never goes below zero, and a `project_id` that must point at a real project (a **foreign key**). Migration 2 adds two indexes; the [indexes section](#indexes) explains both. The timestamps are `timestamptz(3)`, millisecond precision, for a reason you will see in [pagination](#precision).
+
+migrations.ts
+
+```ts
+import type { Migration } from "@zudojs/database";
+
+export const migrations: Migration[] = [
+  {
+    version: 1,
+    name: "create-projects-and-tasks",
+    up: async (tx) => {
+      await tx.$executeRawUnsafe(`
+        CREATE TABLE projects (
+          id          serial PRIMARY KEY,
+          name        text NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
+          owner_id    text NOT NULL,
+          open_tasks  int  NOT NULL DEFAULT 0 CHECK (open_tasks >= 0),
+          created_at  timestamptz(3) NOT NULL DEFAULT now(),
+          updated_at  timestamptz(3) NOT NULL DEFAULT now()
+        )`);
+      await tx.$executeRawUnsafe(`
+        CREATE TABLE tasks (
+          id          serial PRIMARY KEY,
+          project_id  int  NOT NULL REFERENCES projects (id),
+          title       text NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
+          status      text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
+          priority    text NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high')),
+          assignee_id text,
+          version     int  NOT NULL DEFAULT 1,
+          created_at  timestamptz(3) NOT NULL DEFAULT now(),
+          updated_at  timestamptz(3) NOT NULL DEFAULT now(),
+          deleted_at  timestamptz(3)
+        )`);
+    },
+    down: async (tx) => {
+      await tx.$executeRawUnsafe("DROP TABLE tasks");
+      await tx.$executeRawUnsafe("DROP TABLE projects");
+    },
+  },
+  {
+    version: 2,
+    name: "index-tasks-for-listing",
+    up: async (tx) => {
+      await tx.$executeRawUnsafe(
+        "CREATE INDEX tasks_project_created_idx ON tasks (project_id, created_at DESC, id DESC)",
+      );
+      await tx.$executeRawUnsafe(
+        "CREATE UNIQUE INDEX tasks_project_title_key ON tasks (project_id, lower(title)) WHERE deleted_at IS NULL",
+      );
+    },
+    down: async (tx) => {
+      await tx.$executeRawUnsafe("DROP INDEX tasks_project_title_key");
+      await tx.$executeRawUnsafe("DROP INDEX tasks_project_created_idx");
+    },
+  },
+];
+```
+
+The entities, their model descriptions for the adapter, and a function that opens the database:
+
+database.ts
+
+```ts
+import { PGlite } from "@electric-sql/pglite";
+import { createDatabaseClient, noopDatabaseLogger } from "@zudojs/database";
+import type { DatabaseEntity } from "@zudojs/database";
+import { createPglitePrisma } from "./pglite-adapter.js";
+import type { Model } from "./pglite-adapter.js";
+
+export type TaskStatus = "open" | "done";
+export type Priority = "low" | "normal" | "high";
+
+export interface Project extends DatabaseEntity<number> {
+  readonly name: string;
+  readonly ownerId: string;
+  readonly openTasks: number;
+}
+
+export interface Task extends DatabaseEntity<number> {
+  readonly projectId: number;
+  readonly title: string;
+  readonly status: TaskStatus;
+  readonly priority: Priority;
+  readonly assigneeId: string | null;
+  readonly version: number;
+  readonly deletedAt: Date | null;
+}
+
+export const PROJECT_MODEL: Model = {
+  table: "projects",
+  fields: ["id", "name", "ownerId", "openTasks", "createdAt", "updatedAt"],
+};
+export const TASK_MODEL: Model = {
+  table: "tasks",
+  fields: ["id", "projectId", "title", "status", "priority", "assigneeId", "version", "createdAt", "updatedAt", "deletedAt"],
+};
+
+export async function openDatabase() {
+  const pg = new PGlite();
+  const prisma = createPglitePrisma(pg, { project: PROJECT_MODEL, task: TASK_MODEL });
+  const client = createDatabaseClient({ prisma, logger: noopDatabaseLogger });
+  await client.connect();
+  return { pg, client };
+}
+```
+
+And a `setup` that migrates and adds two projects with a few tasks, so every example starts from the same data. The `open_tasks` values match the open tasks inserted:
+
+setup.ts
+
+```ts
+import { createMigrationRunner } from "@zudojs/database";
+import { openDatabase } from "./database.js";
+import { migrations } from "./migrations.js";
+
+export async function setup() {
+  const db = await openDatabase();
+  await createMigrationRunner(db.client, migrations).migrate();
+  await db.pg.exec(`
+    INSERT INTO projects (name, owner_id, open_tasks) VALUES ('Website relaunch', 'ada', 3), ('Office move', 'bola', 1);
+    INSERT INTO tasks (project_id, title, priority, assignee_id, status, created_at) VALUES
+      (1, 'Write the copy',      'high',   'ada',   'open', '2026-09-01 09:00+00'),
+      (1, 'Choose a font',       'normal', 'chidi', 'done', '2026-09-01 10:00+00'),
+      (1, 'Compress the images', 'low',    NULL,    'open', '2026-09-02 09:00+00'),
+      (1, 'Test on phones',      'high',   'ada',   'open', '2026-09-03 09:00+00'),
+      (2, 'Book the van',        'high',   'bola',  'open', '2026-09-02 12:00+00');
+  `);
+  return db;
+}
+```
+
+## Repositories answer questions
+
+A repository owns one table. Everything above it (services, routes) asks it questions in the language of the domain, and gets entities back. Two rules keep that boundary clean:
+
+1. **Name methods after questions**, not after SQL: `findOpenInProject(projectId)`, not `findWhere(anything)`. A service that can pass any `where` object will eventually pass one built from request input.
+2. **Return entities**, never DTOs. What a client sees is decided by the mapper, so one repository serves many screens.
+
+repositories.ts
+
+```ts
+import { BaseRepository } from "@zudojs/database";
+import type { BaseRepositoryOptions, RepositoryDelegate } from "@zudojs/database";
+import type { Priority, Project, Task, TaskStatus } from "./database.js";
+
+type Step = { readonly increment: number } | { readonly decrement: number };
+
+export type NewProject = Pick<Project, "name" | "ownerId">;
+export interface ProjectChanges {
+  readonly name?: string;
+  readonly openTasks?: Step;
+}
+
+export class ProjectRepository extends BaseRepository<Project, number, NewProject, ProjectChanges> {
+  constructor(delegate: RepositoryDelegate<Project, number, NewProject, ProjectChanges>, options: BaseRepositoryOptions = {}) {
+    super(delegate, { modelName: "Project", ...options });
+  }
+}
+
+export type NewTask = Pick<Task, "projectId" | "title"> & Partial<Pick<Task, "priority" | "assigneeId">>;
+export interface TaskChanges {
+  readonly title?: string;
+  readonly status?: TaskStatus;
+  readonly priority?: Priority;
+  readonly assigneeId?: string | null;
+  readonly version?: Step;
+}
+
+export class TaskRepository extends BaseRepository<Task, number, NewTask, TaskChanges> {
+  constructor(delegate: RepositoryDelegate<Task, number, NewTask, TaskChanges>, options: BaseRepositoryOptions = {}) {
+    super(delegate, { modelName: "Task", softDelete: true, ...options });
+  }
+
+  findOpenInProject(projectId: number): Promise<readonly Task[]> {
+    return this.findMany({ projectId, status: "open" });
+  }
+
+  /** Changes a task only if nobody changed it since `version` was read. */
+  updateIfUnchanged(id: number, version: number, changes: TaskChanges): Promise<Task> {
+    return this.execute("update", () =>
+      this.delegate.update({
+        where: { id, version, deletedAt: null },
+        data: { ...changes, version: { increment: 1 } },
+      }),
+    );
+  }
+}
+```
+
+Look at the type parameters of `BaseRepository<Task, number, NewTask, TaskChanges>`: the entity, its id, what `create` accepts and what `update` accepts. `NewTask` has no `status`, `version` or `id`, so no code path can create a task that starts out done or at version 7. `TaskChanges` allows `version` only as `{ increment }`: code can move a version forward, never set it.
+
+`updateIfUnchanged` calls the protected `this.delegate` directly, because `update(id, …)` only matches on the id. It wraps the call in `this.execute`, which gives it the same error mapping as every built-in method. You will use it for [optimistic concurrency](#optimistic). Now watch the database's rules reach your code:
+
+repository-rules.tsNode.js only
+
+```ts
+import { BaseError } from "@zudojs/errors";
+import { PROJECT_MODEL, TASK_MODEL } from "./database.js";
+import type { Project, Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { ProjectRepository, TaskRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+
+const { pg, client } = await setup();
+const projects = new ProjectRepository(modelDelegate<Project>(pg, PROJECT_MODEL));
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+
+const open = await tasks.findOpenInProject(1);
+console.log("open in project 1:", open.map((t) => t.id).sort());
+
+const attempts: [string, () => Promise<unknown>][] = [
+  ["same title, other case", () => tasks.create({ projectId: 1, title: "write THE copy" })],
+  ["project that does not exist", () => tasks.create({ projectId: 9, title: "Hire movers" })],
+  ["counter below zero", () => projects.update(2, { openTasks: { decrement: 5 } })],
+];
+for (const [label, attempt] of attempts) {
+  try {
+    await attempt();
+  } catch (error) {
+    if (error instanceof BaseError) console.log(`${label}: ${error.statusCode} ${error.message}`);
+  }
+}
+await client.disconnect();
+```
+
+Output of `npx tsx repository-rules.ts`
+
+```ts
+open in project 1: [ 1, 3, 4 ]
+same title, other case: 409 Task already exists.
+project that does not exist: 409 Task create violates a foreign key constraint.
+counter below zero: 500 Project update failed.
+```
+
+The unique index compares `lower(title)`, so "write THE copy" collides with "Write the copy": **409**. The foreign key refuses a task in project 9: also **409**. Both messages are generic; they never name the constraint or the column.
+
+The `CHECK` violation arrives as a **500**. In `@zudojs/database` 1.4.0, the repository maps unique and foreign-key violations to 409, but not a `CHECK` (`P2004`), which falls through to a generic failure. Treat it as what it is: your validation let through a value the database refuses, which is a bug to fix, not a client mistake. Validate at the edge first (next section), and let the constraint be the last line of defence.
+
+## DTOs and mappers at the edge
+
+Requests come in as `unknown` and leave as JSON. Both conversions belong in one file per feature, next to the routes, so that "what can a client send" and "what can a client see" each have exactly one answer:
+
+task.dto.ts
+
+```ts
+import { schema } from "@zudojs/schema";
+import type { Infer } from "@zudojs/schema";
+import type { Priority, Task, TaskStatus } from "./database.js";
+
+const PriorityValue = schema.enum(["low", "normal", "high"] as const);
+
+export const CreateTaskBody = schema.object({
+  title: schema.string().trim().min(1).max(200),
+  priority: schema.optional(PriorityValue),
+  assigneeId: schema.optional(schema.string().min(1).max(64)),
+}).strict();
+export type CreateTaskBody = Infer<typeof CreateTaskBody>;
+
+export const ListTasksQuery = schema.object({
+  status: schema.optional(schema.enum(["open", "done"] as const)),
+  limit: schema.coerce.number().int().min(1).max(50).default(20),
+  cursor: schema.optional(schema.string().max(512)),
+}).strict();
+export type ListTasksQuery = Infer<typeof ListTasksQuery>;
+
+export interface TaskResponse {
+  readonly id: number;
+  readonly title: string;
+  readonly status: TaskStatus;
+  readonly priority: Priority;
+  readonly assigneeId: string | null;
+  readonly version: number;
+  readonly createdAt: string;
+}
+
+export function toTaskResponse(task: Task): TaskResponse {
+  return {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    priority: task.priority,
+    assigneeId: task.assigneeId,
+    version: task.version,
+    createdAt: task.createdAt.toISOString(),
+  };
+}
+```
+
+The mapper names every field instead of spreading the entity. If someone adds a `costEstimate` column to `Task` tomorrow, it stays private until someone adds it here on purpose. The response includes `version`, because a client that wants to change the task later must send it back. `deletedAt`, `updatedAt` and `projectId` stay inside. Try the edges:
+
+dto-edges.tsNode.js only
+
+```ts
+import { SchemaError } from "@zudojs/errors";
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { TaskRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+import { CreateTaskBody, ListTasksQuery, toTaskResponse } from "./task.dto.js";
+
+const bodies: unknown[] = [
+  { title: "  Order business cards ", priority: "high" },
+  { title: "Order stamps", projectId: 2, status: "done", version: 99 },
+  { title: "" },
+];
+for (const body of bodies) {
+  const result = CreateTaskBody.safeParse(body);
+  console.log(result.success ? result.data : result.issues.map((i) => i.message));
+}
+
+for (const query of [{ limit: "10" }, { limit: "5000" }, {}]) {
+  try {
+    console.log(ListTasksQuery.parse(query));
+  } catch (error) {
+    if (error instanceof SchemaError) console.log(error.statusCode, error.message);
+  }
+}
+
+const { pg, client } = await setup();
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+console.log(toTaskResponse((await tasks.findById(1))!));
+await client.disconnect();
+```
+
+Output of `npx tsx dto-edges.ts`
+
+```json
+{ title: 'Order business cards', priority: 'high' }
+[
+  'Unknown key: projectId',
+  'Unknown key: status',
+  'Unknown key: version'
+]
+[ 'String must be at least 1 character' ]
+{ limit: 10 }
+400 Validation failed
+{ limit: 20 }
+{
+  id: 1,
+  title: 'Write the copy',
+  status: 'open',
+  priority: 'high',
+  assigneeId: 'ada',
+  version: 1,
+  createdAt: '2026-09-01T09:00:00.000Z'
+}
+```
+
+The second body tried to pick its own project, status and version. `.strict()` refuses the unknown keys with a 400 instead of silently dropping them, so a confused client learns about its mistake. `limit=5000` is refused too. The repository has its own safety net for the same problem: `findPaginated` and `paginateCursor` pass every limit through `normalizeLimit`, which clamps it to `MAX_LIMIT` (100). A clamp protects the database; the schema tells the client. Keep both.
+
+## Query boundaries and the N+1 problem
+
+Back to the dashboard. The repository is built for one table and one entity at a time. Asked for "open tasks per project", it can only answer per project, and a loop turns that into N+1 queries. The fix is not a smarter loop; it is a different kind of object. A **query service** owns the reads that are shaped for one screen. It may join tables, group and count, and it returns DTOs ready to send. Repositories keep the writes and the entity loads. (This is a small step toward the command/query split you will meet in [CQRS](https://zudojs.oyinlola.site/learn/zudo-cqrs).)
+
+project.queries.ts
+
+```ts
+import { normalizeLimit } from "@zudojs/database";
+import type { DatabaseClient } from "@zudojs/database";
+
+export interface ProjectCard {
+  readonly id: number;
+  readonly name: string;
+  readonly openTasks: number;
+  readonly highPriority: number;
+}
+
+interface CardRow {
+  readonly id: number;
+  readonly name: string;
+  readonly open: number;
+  readonly high: number;
+}
+
+export class ProjectQueries {
+  constructor(private readonly client: DatabaseClient) {}
+
+  async cardsFor(ownerId: string, limit: number): Promise<readonly ProjectCard[]> {
+    const rows = await this.client.queryRawUnsafe<CardRow[]>(
+      `SELECT p.id, p.name,
+              count(t.id) FILTER (WHERE t.status = 'open')::int AS open,
+              count(t.id) FILTER (WHERE t.status = 'open' AND t.priority = 'high')::int AS high
+         FROM projects p
+         LEFT JOIN tasks t ON t.project_id = p.id AND t.deleted_at IS NULL
+        WHERE p.owner_id = $1
+        GROUP BY p.id
+        ORDER BY p.id
+        LIMIT $2`,
+      [ownerId, normalizeLimit(limit)],
+    );
+    return rows.map((row) => ({ id: row.id, name: row.name, openTasks: row.open, highPriority: row.high }));
+  }
+}
+```
+
+Compare three ways of building the same dashboard for an owner with 21 projects. The example counts the queries each one sends by wrapping PGlite's `query` method:
+
+n-plus-one.tsNode.js only
+
+```ts
+import type { PGlite } from "@electric-sql/pglite";
+import { PROJECT_MODEL, TASK_MODEL } from "./database.js";
+import type { Project, Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { ProjectQueries } from "./project.queries.js";
+import { ProjectRepository, TaskRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+
+function countQueries(pg: PGlite) {
+  const original = pg.query.bind(pg);
+  const counter = { n: 0 };
+  pg.query = ((...args: Parameters<PGlite["query"]>) => {
+    counter.n += 1;
+    return original(...args);
+  }) as PGlite["query"];
+  return counter;
+}
+
+const { pg, client } = await setup();
+for (let i = 1; i <= 20; i++) {
+  await pg.query("INSERT INTO projects (name, owner_id) VALUES ($1, 'ada')", [`Side project ${i}`]);
+}
+const projects = new ProjectRepository(modelDelegate<Project>(pg, PROJECT_MODEL));
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+const counter = countQueries(pg);
+
+counter.n = 0;
+const mine = await projects.findMany({ ownerId: "ada" });
+for (const project of mine) await tasks.count({ projectId: project.id, status: "open" });
+console.log("loop:", counter.n, "queries");
+
+counter.n = 0;
+const ids = (await projects.findMany({ ownerId: "ada" })).map((p) => p.id);
+const openTasks = await tasks.findMany({ projectId: { in: ids }, status: "open" });
+console.log("batched:", counter.n, "queries,", openTasks.length, "open tasks loaded");
+
+counter.n = 0;
+const cards = await new ProjectQueries(client).cardsFor("ada", 3);
+console.log("query service:", counter.n, "query");
+console.log(cards);
+await client.disconnect();
+```
+
+Output of `npx tsx n-plus-one.ts`
+
+```ts
+loop: 22 queries
+batched: 2 queries, 3 open tasks loaded
+query service: 1 query
+[
+  { id: 1, name: 'Website relaunch', openTasks: 3, highPriority: 2 },
+  { id: 3, name: 'Side project 1', openTasks: 0, highPriority: 0 },
+  { id: 4, name: 'Side project 2', openTasks: 0, highPriority: 0 }
+]
+```
+
+The loop sent one query per project. The batched version loads the projects, then all their open tasks in a single `IN` query, and groups them in memory: 2 queries however many projects there are. It is the right tool when you need the entities themselves. The query service asked the database for just the numbers: one query, no task rows copied into your process at all, and a `LIMIT` that `normalizeLimit` keeps below 100.
+
+> TIP
+>
+> The pattern "collect the ids, then load everything with one `IN` query" is called **batch loading**. GraphQL servers use a helper called a DataLoader for exactly this. Whenever you see `await` inside a `for` loop over rows, ask whether it is an N+1.
+
+### Bounding what a query may include
+
+A query boundary is also about how *deep* a request can reach. Prisma can load related rows with `include` (a project with its tasks, each with its project…). If clients can choose includes, one request can pull half the database. `@zudojs/database` checks includes against a **relation registry**, a list of the relations your models really have:
+
+includes.tsNode.js only
+
+```ts
+import { createRelationRegistry, includeRelation, manyToOne, oneToMany, toPrismaInclude } from "@zudojs/database";
+
+const relations = createRelationRegistry([
+  oneToMany({ name: "tasks", parent: "Project", child: "Task", foreignKey: "projectId", referencedKey: "id" }),
+  manyToOne({ name: "project", parent: "Task", child: "Project", foreignKey: "projectId", referencedKey: "id" }),
+]);
+const options = { registry: relations, parent: "Project", includeDeleted: false };
+
+console.log(JSON.stringify(toPrismaInclude([includeRelation("tasks", { select: ["id", "title"] })], options)));
+
+const requests = [
+  [includeRelation("owner")],
+  [includeRelation("tasks", { include: [includeRelation("project", { include: [includeRelation("tasks")] })] })],
+];
+for (const include of requests) {
+  try {
+    toPrismaInclude(include, options);
+  } catch (error) {
+    console.log((error as Error).name, "-", (error as Error).message);
+  }
+}
+```
+
+Output of `npx tsx includes.ts`
+
+```json
+{"tasks":{"select":{"id":true,"title":true},"where":{"deletedAt":null}}}
+TypeError - Relation "owner" is not registered for the parent model.
+TypeError - Relation include "tasks" is cyclic.
+```
+
+The valid include became a Prisma `include` with a `select` and, because `includeDeleted` is `false`, a filter that hides soft-deleted tasks. A relation the model does not have is refused, and so is a cycle (project → tasks → project → tasks), which could otherwise nest until the response is enormous. Nesting is also capped at 5 levels by default (`DEFAULT_INCLUDE_DEPTH`). Pass the registry to a repository as `relations` and `findByQuery` applies these checks for you.
+
+## Pagination that stays correct
+
+[The database lesson](https://zudojs.oyinlola.site/learn/zudo-database#pagination) showed both kinds of pagination. Here is the reason to prefer keyset pagination for lists that change. Page through a project's tasks, newest first, two per page, and add a task between the two requests:
+
+offset-drift.tsNode.js only
+
+```ts
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { TaskRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+
+const { pg, client } = await setup();
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+const sort = [{ field: "createdAt", direction: "desc" }, { field: "id", direction: "desc" }] as const;
+const titles = (list: readonly Task[]) => list.map((t) => t.title);
+
+const page1 = await tasks.findPaginated({ projectId: 1 }, { pagination: { page: 1, limit: 2 }, sort });
+console.log("offset page 1:", titles(page1.data));
+await tasks.create({ projectId: 1, title: "Fix the footer" });
+const page2 = await tasks.findPaginated({ projectId: 1 }, { pagination: { page: 2, limit: 2 }, sort });
+console.log("offset page 2:", titles(page2.data));
+
+const first = await tasks.paginateCursor({ projectId: 1 }, { limit: 2, sort: [{ field: "createdAt", direction: "desc" }] });
+console.log("keyset page 1:", titles(first.data));
+await tasks.create({ projectId: 1, title: "Update the sitemap" });
+const second = await tasks.paginateCursor({ projectId: 1 }, {
+  limit: 2, sort: [{ field: "createdAt", direction: "desc" }], cursor: first.meta.nextCursor,
+});
+console.log("keyset page 2:", titles(second.data));
+await client.disconnect();
+```
+
+Output of `npx tsx offset-drift.ts`
+
+```ts
+offset page 1: [ 'Test on phones', 'Compress the images' ]
+offset page 2: [ 'Compress the images', 'Choose a font' ]
+keyset page 1: [ 'Fix the footer', 'Test on phones' ]
+keyset page 2: [ 'Compress the images', 'Choose a font' ]
+```
+
+With offsets, "page 2" means "skip 2 rows". The new task pushed every row down by one, so "Compress the images" was shown twice. When a row is deleted instead, one is skipped and the user never sees it. With a keyset cursor, page 2 means "the rows after *this* row", so the new task (which sorts before the cursor) does not disturb it.
+
+How does a cursor turn into SQL? `paginateCursor` appended `id` to the sort as a **tiebreaker**, because two tasks can share a timestamp, and a sort that is not unique has no well-defined "after". The cursor holds the last row's values for each sort field, and `buildKeysetWhere` turns them into a condition:
+
+keyset-where.tsNode.js only
+
+```ts
+import { buildKeysetWhere, createKeysetCursor, decodeKeysetCursor } from "@zudojs/database";
+
+const sort = [{ field: "createdAt", direction: "desc" }, { field: "id", direction: "desc" }] as const;
+const lastRow = { id: 3, createdAt: new Date("2026-09-02T09:00:00Z"), title: "Compress the images" };
+
+const cursor = createKeysetCursor(lastRow, sort);
+const payload = decodeKeysetCursor(cursor, sort);
+console.log(payload);
+console.log(JSON.stringify(buildKeysetWhere(payload, sort), null, 1));
+```
+
+Output of `npx tsx keyset-where.ts`
+
+```json
+{ createdAt: '2026-09-02T09:00:00.000Z', id: 3 }
+{
+ "OR": [
+  {
+   "createdAt": {
+    "lt": "2026-09-02T09:00:00.000Z"
+   }
+  },
+  {
+   "AND": [
+    {
+     "createdAt": {
+      "equals": "2026-09-02T09:00:00.000Z"
+     }
+    },
+    {
+     "id": {
+      "lt": 3
+     }
+    }
+   ]
+  }
+ ]
+}
+```
+
+Read the condition as "created earlier, or created at the same moment with a smaller id". Only the sort fields go into the cursor, not the title. In SQL it becomes `created_at < $1 OR (created_at = $1 AND id < $2)`, and an index on `(created_at DESC, id DESC)` can jump straight to that spot. Give the repository a `cursorSecret`, as in the database lesson, and the cursor is signed so a client cannot edit it.
+
+### The cursor that skipped rows
+
+Look at the payload again: the date became the text `"2026-09-02T09:00:00.000Z"`. A JavaScript `Date` has millisecond precision. A PostgreSQL `timestamptz` has *microsecond* precision by default. Rows created within the same millisecond differ only in digits the cursor cannot carry. Here are sensor readings stored with the default precision, paged one at a time:
+
+precision.tsNode.js only
+
+```ts
+import { PGlite } from "@electric-sql/pglite";
+import { BaseRepository } from "@zudojs/database";
+import type { DatabaseEntity } from "@zudojs/database";
+import { modelDelegate } from "./pglite-adapter.js";
+
+interface Reading extends DatabaseEntity<number> {
+  readonly label: string;
+}
+class ReadingRepository extends BaseRepository<Reading, number> {}
+
+const pg = new PGlite();
+await pg.exec(`
+  CREATE TABLE readings (id serial PRIMARY KEY, label text NOT NULL,
+                         created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
+  INSERT INTO readings (label, created_at) VALUES
+    ('first',  '2026-09-01 10:00:00.000100+00'),
+    ('second', '2026-09-01 10:00:00.000200+00'),
+    ('third',  '2026-09-01 10:00:00.000300+00'),
+    ('older',  '2026-09-01 09:00:00+00');
+`);
+const readings = new ReadingRepository(
+  modelDelegate<Reading>(pg, { table: "readings", fields: ["id", "label", "createdAt", "updatedAt"] }),
+  { modelName: "Reading" },
+);
+
+const seen: string[] = [];
+let cursor: string | undefined;
+do {
+  const page = await readings.paginateCursor(undefined, { limit: 1, sort: [{ field: "createdAt", direction: "desc" }], cursor });
+  seen.push(...page.data.map((r) => r.label));
+  cursor = page.meta.nextCursor;
+} while (cursor);
+console.log("paged through:", seen);
+console.log("in the table:", (await pg.query("SELECT count(*)::int AS n FROM readings")).rows[0]);
+await pg.close();
+```
+
+Output of `npx tsx precision.ts`
+
+```ts
+paged through: [ 'third', 'older' ]
+in the table: { n: 4 }
+```
+
+Two of the four readings were never shown, and nothing failed. The first page's cursor said `10:00:00.000`. PostgreSQL compared it with `10:00:00.000200` and decided that "second" was *newer* than the cursor, so it did not belong on the next page. The fix is to store only what the cursor can carry: `timestamptz(3)`, as the tasks table does, or to sort by a column without this problem, such as the id. Bulk imports, which insert many rows in one millisecond, are exactly where this shows up.
+
+## Indexes for the queries you really run
+
+An index is chosen for a *query*, not for a table. The task list above runs "tasks of project X, not deleted, newest first, after a cursor, 21 rows". Migration 2 created `tasks_project_created_idx` on `(project_id, created_at DESC, id DESC)`, which matches it column for column: equality on `project_id` first, then the sort order. [Indexes and query plans](https://zudojs.oyinlola.site/learn/db-indexes) explains why that order matters. Here you measure it: load 30,000 tasks, then read the plan with and without migration 2 (the migration runner can roll it back):
+
+explain.tsNode.js only
+
+```ts
+import { createMigrationRunner } from "@zudojs/database";
+import { migrations } from "./migrations.js";
+import { setup } from "./setup.js";
+
+const { pg, client } = await setup();
+await pg.exec(`
+  INSERT INTO projects (name, owner_id) SELECT 'Project ' || n, 'ada' FROM generate_series(3, 300) AS n;
+  INSERT INTO tasks (project_id, title, created_at)
+    SELECT 1 + n % 300, 'Task ' || n, timestamptz '2026-01-01 00:00+00' + n * interval '1 minute'
+    FROM generate_series(1, 30000) AS n;
+  ANALYZE;
+`);
+
+const listSql = `SELECT * FROM tasks
+  WHERE project_id = 42 AND deleted_at IS NULL
+    AND (created_at < '2026-01-15 00:00+00' OR (created_at = '2026-01-15 00:00+00' AND id < 20000))
+  ORDER BY created_at DESC, id DESC LIMIT 21`;
+
+async function plan(sql: string) {
+  const { rows } = await pg.query<{ "QUERY PLAN": string }>("EXPLAIN " + sql);
+  return rows.map((r) => r["QUERY PLAN"].replace(/\s+\(cost=.*$/, "")).filter((line) => !line.includes("Filter") && !line.includes("Cond"));
+}
+
+console.log("with the index:", await plan(listSql));
+const runner = createMigrationRunner(client, migrations);
+await runner.rollback();
+console.log("without it:", await plan(listSql));
+await runner.migrate();
+await client.disconnect();
+```
+
+Output of `npx tsx explain.ts`
+
+```ts
+with the index: [
+  'Limit',
+  '  ->  Index Scan using tasks_project_created_idx on tasks'
+]
+without it: [
+  'Limit',
+  '  ->  Sort',
+  '        Sort Key: created_at DESC, id DESC',
+  '        ->  Seq Scan on tasks'
+]
+```
+
+With the index, PostgreSQL walks it from the cursor position and stops after 21 rows: an **Index Scan** under a **Limit**. Without it, it reads the whole table (**Seq Scan**) and sorts what it found before it can return the first row. On 30,000 rows that is still fast; on 30 million, it is the page that times out. A plan is the only reliable way to know which one you have.
+
+### What offset pagination costs
+
+Even with the right index, an offset has to *walk past* every row it skips. `EXPLAIN ANALYZE` runs the query and reports how many rows each step really produced. Compare page 500 by offset with the same page by keyset:
+
+offset-cost.tsNode.js only
+
+```ts
+import { setup } from "./setup.js";
+
+const { pg, client } = await setup();
+await pg.exec(`
+  INSERT INTO tasks (project_id, title, created_at)
+    SELECT 2, 'Box ' || n, timestamptz '2026-01-01 00:00+00' + n * interval '1 minute'
+    FROM generate_series(1, 20000) AS n;
+  ANALYZE;
+`);
+
+async function rowsRead(sql: string): Promise<number> {
+  const { rows } = await pg.query<{ "QUERY PLAN": [{ Plan: { Plans: [{ "Actual Rows": number }] } }] }>(
+    "EXPLAIN (ANALYZE, FORMAT JSON) " + sql,
+  );
+  return rows[0]!["QUERY PLAN"][0].Plan.Plans[0]["Actual Rows"];
+}
+
+const base = "SELECT * FROM tasks WHERE project_id = 2 AND deleted_at IS NULL ORDER BY created_at DESC, id DESC";
+console.log("offset 10,000:", await rowsRead(`${base} LIMIT 20 OFFSET 10000`), "rows read");
+const cursorRow = (await pg.query<{ created_at: Date; id: number }>(`${base} LIMIT 1 OFFSET 9999`)).rows[0]!;
+const keyset = `SELECT * FROM tasks WHERE project_id = 2 AND deleted_at IS NULL
+  AND (created_at, id) < ($1::timestamptz, $2::int) ORDER BY created_at DESC, id DESC LIMIT 20`;
+const { rows } = await pg.query<{ "QUERY PLAN": [{ Plan: { Plans: [{ "Actual Rows": number }] } }] }>(
+  "EXPLAIN (ANALYZE, FORMAT JSON) " + keyset, [cursorRow.created_at, cursorRow.id],
+);
+console.log("keyset after row 10,000:", rows[0]!["QUERY PLAN"][0].Plan.Plans[0]["Actual Rows"], "rows read");
+await client.disconnect();
+```
+
+Output of `npx tsx offset-cost.ts`
+
+```ts
+offset 10,000: 10020 rows read
+keyset after row 10,000: 20 rows read
+```
+
+The offset query read 10,020 index entries to return 20. The keyset query read 20. The deeper the page, the bigger the gap, which is why infinite scrolls and API clients that export everything should always get cursors. (The keyset query here uses PostgreSQL's **row comparison** `(created_at, id) < (…, …)`, a compact way to write the same "earlier, or same time and smaller id" condition when both columns sort the same way.)
+
+### A unique rule that respects soft delete
+
+The second index in migration 2 is `UNIQUE (project_id, lower(title)) WHERE deleted_at IS NULL`. It is a **partial** index: it only covers rows that are not soft-deleted. That detail matters as soon as users delete things:
+
+unique-soft-delete.tsNode.js only
+
+```ts
+import { BaseError } from "@zudojs/errors";
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { TaskRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+
+const { pg, client } = await setup();
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+
+await tasks.softDelete(2);
+const again = await tasks.create({ projectId: 1, title: "Choose a font" });
+console.log("re-created as task", again.id);
+
+try {
+  await tasks.restore(2);
+} catch (error) {
+  if (error instanceof BaseError) console.log("restore:", error.statusCode, error.message);
+}
+console.log("titles in project 1:", (await tasks.withDeleted().findMany({ projectId: 1 })).length, "rows");
+await client.disconnect();
+```
+
+Output of `npx tsx unique-soft-delete.ts`
+
+```ts
+re-created as task 6
+restore: 409 Task already exists.
+titles in project 1: 5 rows
+```
+
+After the soft delete, "Choose a font" could be created again, because the deleted row is no longer covered by the index. A plain unique index would have answered 409 for a task the user cannot even see. And restoring the old task is refused, because now there would be two live tasks with that title. The database decided both cases; your service only has to pass the 409 on.
+
+## Consistent writes
+
+Now the counter. Creating a task is three steps: check the project exists, insert the task, add one to `open_tasks`. In the first example they were separate statements, and a failure in the middle left the count wrong forever. A service puts them in one transaction with `withTransaction`, and every repository joins it with `withTransaction(tx)`:
+
+task.service.ts
+
+```ts
+import { isNotFoundError, withTransaction } from "@zudojs/database";
+import type { DatabaseClient } from "@zudojs/database";
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { Task } from "./database.js";
+import type { ProjectRepository, TaskRepository } from "./repositories.js";
+import type { CreateTaskBody } from "./task.dto.js";
+
+export class TaskService {
+  constructor(
+    private readonly client: DatabaseClient,
+    private readonly projects: ProjectRepository,
+    private readonly tasks: TaskRepository,
+  ) {}
+
+  createTask(projectId: number, body: CreateTaskBody): Promise<Task> {
+    return withTransaction(this.client, async (tx) => {
+      const projects = this.projects.withTransaction(tx);
+      if (!(await projects.exists({ id: projectId }))) {
+        throw new NotFoundError(`Project ${projectId} not found`);
+      }
+      const task = await this.tasks.withTransaction(tx).create({ projectId, ...body });
+      await projects.update(projectId, { openTasks: { increment: 1 } });
+      return task;
+    });
+  }
+
+  completeTask(id: number, expectedVersion: number): Promise<Task> {
+    return withTransaction(this.client, async (tx) => {
+      const tasks = this.tasks.withTransaction(tx);
+      const current = await tasks.findById(id);
+      if (!current) throw new NotFoundError(`Task ${id} not found`);
+      if (current.version !== expectedVersion) {
+        throw new ConflictError(`Task ${id} was changed by someone else. Reload it and try again.`);
+      }
+      if (current.status === "done") return current; // a repeated request changes nothing
+      let done: Task;
+      try {
+        done = await tasks.updateIfUnchanged(id, expectedVersion, { status: "done" });
+      } catch (error) {
+        if (isNotFoundError(error)) throw new ConflictError(`Task ${id} was changed by someone else. Reload it and try again.`);
+        throw error;
+      }
+      await this.projects.withTransaction(tx).update(done.projectId, { openTasks: { decrement: 1 } });
+      return done;
+    });
+  }
+}
+```
+
+Three details are deliberate. The counter changes with `{ increment: 1 }`, so PostgreSQL computes `open_tasks + 1` from the value it has right now, not from a number your code read earlier. `completeTask` returns the task unchanged when it is already done, so a double click or a retried request does not count twice: the operation is **idempotent**. And `updateIfUnchanged` still checks the version in its `WHERE`, in case someone changed the task between the read and the write.
+
+create-task.tsNode.js only
+
+```ts
+import { BaseError } from "@zudojs/errors";
+import { PROJECT_MODEL, TASK_MODEL } from "./database.js";
+import type { Project, Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { ProjectRepository, TaskRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+import { TaskService } from "./task.service.js";
+
+const { pg, client } = await setup();
+const projects = new ProjectRepository(modelDelegate<Project>(pg, PROJECT_MODEL));
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+const service = new TaskService(client, projects, tasks);
+const openCount = async () => (await projects.findById(1))?.openTasks;
+
+await service.createTask(1, { title: "Add a contact form" });
+console.log("after a good create:", await openCount());
+
+for (const [projectId, title] of [[1, "Write the copy"], [7, "Order chairs"]] as const) {
+  try {
+    await service.createTask(projectId, { title });
+  } catch (error) {
+    if (error instanceof BaseError) console.log(`"${title}": ${error.statusCode} ${error.message}`);
+  }
+}
+console.log("after two failures:", await openCount(), "with", await tasks.count({ projectId: 1, status: "open" }), "open tasks");
+await client.disconnect();
+```
+
+Output of `npx tsx create-task.ts`
+
+```ts
+after a good create: 4
+"Write the copy": 409 Task already exists.
+"Order chairs": 404 Project 7 not found
+after two failures: 4 with 4 open tasks
+```
+
+The duplicate title passed the project check, then failed on the unique index, and the rollback undid the whole transaction: the counter was never touched. Had the insert worked and the counter update failed instead, the rollback would have removed the insert just the same. The missing project failed with your own `NotFoundError`, which `withTransaction` passes through unchanged. The stored counter and the real count agree.
+
+### Lost updates
+
+A transaction makes one request all-or-nothing. It does not stop two requests from stepping on each other. The classic bug is **read-modify-write**: read a value, compute a new one in your code, write it back. Here two requests complete a task each, at the same moment, and both adjust the counter that way:
+
+lost-update.tsNode.js only
+
+```ts
+import { PROJECT_MODEL } from "./database.js";
+import type { Project } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { ProjectRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+
+const { pg, client } = await setup();
+const projects = new ProjectRepository(modelDelegate<Project>(pg, PROJECT_MODEL));
+
+async function readModifyWrite(projectId: number) {
+  const project = await projects.findById(projectId);
+  await pg.query("UPDATE projects SET open_tasks = $1 WHERE id = $2", [project!.openTasks - 1, projectId]);
+}
+await Promise.all([readModifyWrite(1), readModifyWrite(1)]);
+console.log("read-modify-write, 3 minus 2 =", (await projects.findById(1))?.openTasks);
+
+await pg.query("UPDATE projects SET open_tasks = 3 WHERE id = 1");
+await Promise.all([
+  projects.update(1, { openTasks: { decrement: 1 } }),
+  projects.update(1, { openTasks: { decrement: 1 } }),
+]);
+console.log("atomic decrement, 3 minus 2 =", (await projects.findById(1))?.openTasks);
+await client.disconnect();
+```
+
+Output of `npx tsx lost-update.ts`
+
+```ts
+read-modify-write, 3 minus 2 = 2
+atomic decrement, 3 minus 2 = 1
+```
+
+Both requests read 3 before either wrote, so both wrote 2. One completion vanished: a **lost update**. The atomic decrement cannot lose one, because each `UPDATE … SET open_tasks = open_tasks - 1` reads and writes the row in one step while holding its lock.
+
+> NOTE
+>
+> PGlite is one connection, so it runs whole transactions one after another. On a real PostgreSQL server under the default isolation level (`READ COMMITTED`), two transactions can also both read 3 before either commits, so wrapping read-modify-write in `withTransaction` does not fix it. Atomic updates, version checks and row locks do.
+
+### Optimistic concurrency with a version
+
+Not every change is a number you can increment. When two people edit the same task, the second save should not silently overwrite the first. **Optimistic concurrency** assumes conflicts are rare and detects them instead of preventing them: every read returns a `version`, every write says which version it is based on, and the write only matches if the version is unchanged. That is what `completeTask` does:
+
+optimistic.tsNode.js only
+
+```ts
+import { BaseError } from "@zudojs/errors";
+import { PROJECT_MODEL, TASK_MODEL } from "./database.js";
+import type { Project, Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { ProjectRepository, TaskRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+import { toTaskResponse } from "./task.dto.js";
+import { TaskService } from "./task.service.js";
+
+const { pg, client } = await setup();
+const projects = new ProjectRepository(modelDelegate<Project>(pg, PROJECT_MODEL));
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+const service = new TaskService(client, projects, tasks);
+
+const seenByAda = toTaskResponse((await tasks.findById(3))!);
+await tasks.update(3, { priority: "high", version: { increment: 1 } }); // Chidi saves an edit first
+console.log("Chidi's edit moved the task to version", (await tasks.findById(3))?.version);
+
+try {
+  await service.completeTask(3, seenByAda.version);
+} catch (error) {
+  if (error instanceof BaseError) console.log("Ada:", error.statusCode, error.message);
+}
+
+const fresh = (await tasks.findById(3))!;
+const done = await service.completeTask(3, fresh.version);
+const repeated = await service.completeTask(3, done.version);
+console.log("Ada after reloading:", done.status, "version", done.version, "- repeated:", repeated.version);
+console.log("open_tasks:", (await projects.findById(1))?.openTasks);
+await client.disconnect();
+```
+
+Output of `npx tsx optimistic.ts`
+
+```ts
+Chidi's edit moved the task to version 2
+Ada: 409 Task 3 was changed by someone else. Reload it and try again.
+Ada after reloading: done version 3 - repeated: 3
+open_tasks: 2
+```
+
+Ada's request was based on version 1, but the task was at version 2, so it was refused with **409 Conflict**. Her client reloads, shows her Chidi's change, and she tries again. The repeated request did nothing and the counter went down exactly once, from 3 to 2. In HTTP APIs the version often travels as an `ETag` header, and the client sends it back in `If-Match`; the idea is the same.
+
+The alternative is **pessimistic** locking: lock the row first, so others wait. `createLockManager(client).withRowLock("tasks", id, work)` runs `work` in a transaction after `SELECT … FOR UPDATE` on that row, with an optional `timeoutMs` so a waiting request fails instead of hanging. Use it for short, contended critical sections such as taking the last seat on a booking. For edits that a person makes over minutes, versions are better: you cannot hold a database lock while someone is typing.
+
+## Testing the data layer
+
+Data-layer tests are most useful when they check **invariants**: facts that must hold after any sequence of operations. For this feature, "`open_tasks` equals the number of open, not-deleted tasks" is the one that matters. Write it as a query, then run the service through good and bad paths against a fresh database for each test:
+
+invariants.test.tsNode.js only
+
+```ts
+import { strict as assert } from "node:assert";
+import { PROJECT_MODEL, TASK_MODEL } from "./database.js";
+import type { Project, Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { ProjectRepository, TaskRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+import { TaskService } from "./task.service.js";
+
+async function drift(pg: Awaited<ReturnType<typeof setup>>["pg"]) {
+  const { rows } = await pg.query<{ id: number }>(`
+    SELECT p.id FROM projects p
+    WHERE p.open_tasks <> (SELECT count(*) FROM tasks t
+                           WHERE t.project_id = p.id AND t.status = 'open' AND t.deleted_at IS NULL)`);
+  return rows.map((r) => r.id);
+}
+
+async function test(name: string, body: (service: TaskService, tasks: TaskRepository) => Promise<void>) {
+  const { pg, client } = await setup();
+  const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+  const service = new TaskService(client, new ProjectRepository(modelDelegate<Project>(pg, PROJECT_MODEL)), tasks);
+  try {
+    await body(service, tasks);
+    assert.deepEqual(await drift(pg), [], "open_tasks drifted");
+    console.log("PASS", name);
+  } catch (error) {
+    console.log("FAIL", name, "-", (error as Error).message.split("\n")[0]);
+  } finally {
+    await client.disconnect();
+  }
+}
+
+await test("seed data is consistent", async () => {});
+await test("create and complete keep the counter", async (service) => {
+  const task = await service.createTask(2, { title: "Label the boxes" });
+  await service.completeTask(task.id, task.version);
+});
+await test("a failed create changes nothing", async (service) => {
+  await assert.rejects(service.createTask(1, { title: "WRITE THE COPY" }));
+});
+await test("completing twice counts once", async (service) => {
+  const done = await service.completeTask(5, 1);
+  await service.completeTask(5, done.version);
+});
+await test("soft delete keeps the counter", async (_service, tasks) => {
+  await tasks.softDelete(1);
+});
+```
+
+Output of `npx tsx invariants.test.ts`
+
+```ts
+PASS seed data is consistent
+PASS create and complete keep the counter
+PASS a failed create changes nothing
+PASS completing twice counts once
+FAIL soft delete keeps the counter - open_tasks drifted
+```
+
+The last test fails, and it is right to. Soft-deleting an open task through the repository removed it from the real count, but nobody decreased `open_tasks`. The invariant found a code path that bypasses the service. The fix is a `deleteTask` service method (exercise 2), and the rule "only the service writes tasks". The same `drift` query works in production as a nightly check that alerts you when the stored count and the truth disagree.
+
+Run these with Vitest in your project: one `it(…)` per case, `setup()` in a `beforeEach`. A fresh PGlite per test takes a few hundred milliseconds, which is a fair price for testing real SQL, constraints and indexes instead of a fake.
+
+## Production concerns
+
+- **Building indexes on a live table.** `CREATE INDEX` blocks writes to the table until it finishes. PostgreSQL's `CREATE INDEX CONCURRENTLY` does not, but it cannot run inside a transaction, and the migration runner runs every migration in one. Run such an index from a deploy script outside the runner, or in a quiet moment.
+- **Timeouts.** Every repository method accepts `{ timeoutMs, signal }`. They stop *your caller* from waiting; the query keeps running on the server. Set PostgreSQL's `statement_timeout` for the database side.
+- **Counters under heavy load.** An atomic increment on one hot row (a project with thousands of writers) makes every writer wait for that row's lock. When that hurts, stop storing the count and compute it, or keep it in a separate table updated in batches.
+- **Read replicas.** Query services are a natural fit for a read-only copy of the database, but a replica lags a little. Read your own writes from the primary: a user who just created a task expects to see it.
+- **Backfills.** Adding a counter or a version column to a table with millions of rows means filling it in batches (for example 1,000 ids at a time), never in one `UPDATE` that locks everything.
+
+concurrently.tsNode.js only
+
+```ts
+import { setup } from "./setup.js";
+
+const { pg, client } = await setup();
+try {
+  await client.transaction(async (tx) => {
+    await tx.$executeRawUnsafe("CREATE INDEX CONCURRENTLY tasks_assignee_idx ON tasks (assignee_id)");
+  });
+} catch (error) {
+  console.log("inside a transaction:", (error as Error).message);
+}
+await pg.exec("CREATE INDEX CONCURRENTLY tasks_assignee_idx ON tasks (assignee_id)");
+console.log("outside:", (await pg.query("SELECT indexname FROM pg_indexes WHERE indexname = 'tasks_assignee_idx'")).rows);
+await client.disconnect();
+```
+
+Output of `npx tsx concurrently.ts`
+
+```ts
+inside a transaction: CREATE INDEX CONCURRENTLY cannot run inside a transaction block
+outside: [ { indexname: 'tasks_assignee_idx' } ]
+```
+
+## Practice
+
+TRY IT YOURSELF
+
+### Tasks per assignee
+
+Add `assigneeLoad(projectId)` to `ProjectQueries`: for one project, each assignee with their number of open tasks, busiest first, unassigned tasks left out. Use one query, and return `{ assigneeId, open }` objects.
+
+**Show a solution**
+
+assignee-load.tsNode.js only
+
+```ts
+import type { DatabaseClient } from "@zudojs/database";
+import { setup } from "./setup.js";
+
+async function assigneeLoad(client: DatabaseClient, projectId: number) {
+  const rows = await client.queryRawUnsafe<{ assignee_id: string; open: number }[]>(
+    `SELECT assignee_id, count(*)::int AS open
+       FROM tasks
+      WHERE project_id = $1 AND status = 'open' AND deleted_at IS NULL AND assignee_id IS NOT NULL
+      GROUP BY assignee_id
+      ORDER BY open DESC, assignee_id`,
+    [projectId],
+  );
+  return rows.map((row) => ({ assigneeId: row.assignee_id, open: row.open }));
+}
+
+const { pg, client } = await setup();
+await pg.query("INSERT INTO tasks (project_id, title, assignee_id) VALUES (1, 'Proofread', 'chidi')");
+console.log(await assigneeLoad(client, 1));
+await client.disconnect();
+```
+
+Output of `npx tsx assignee-load.ts`
+
+```json
+[ { assigneeId: 'ada', open: 2 }, { assigneeId: 'chidi', open: 1 } ]
+```
+
+The second sort key, `assignee_id`, makes the order stable when two people have the same load. Without it, the order of ties could change between two requests.
+
+TRY IT YOURSELF
+
+### Delete without drift
+
+The invariant test found that soft-deleting an open task left `open_tasks` too high. Write `deleteTask(service parts, id)` that, in one transaction, soft-deletes the task and decrements the counter only if the task was open. Show that the drift query then finds nothing.
+
+**Show a solution**
+
+delete-task.tsNode.js only
+
+```ts
+import { withTransaction } from "@zudojs/database";
+import type { DatabaseClient } from "@zudojs/database";
+import { NotFoundError } from "@zudojs/errors";
+import { PROJECT_MODEL, TASK_MODEL } from "./database.js";
+import type { Project, Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { ProjectRepository, TaskRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+
+async function deleteTask(client: DatabaseClient, projects: ProjectRepository, tasks: TaskRepository, id: number) {
+  await withTransaction(client, async (tx) => {
+    const deleted = await tasks.withTransaction(tx).softDelete(id).catch(() => {
+      throw new NotFoundError(`Task ${id} not found`);
+    });
+    if (deleted.status === "open") {
+      await projects.withTransaction(tx).update(deleted.projectId, { openTasks: { decrement: 1 } });
+    }
+  });
+}
+
+const { pg, client } = await setup();
+const projects = new ProjectRepository(modelDelegate<Project>(pg, PROJECT_MODEL));
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+
+await deleteTask(client, projects, tasks, 1); // open
+await deleteTask(client, projects, tasks, 2); // done
+await deleteTask(client, projects, tasks, 1).catch((error: Error) => console.log(error.message));
+const { rows } = await pg.query(`
+  SELECT p.id FROM projects p
+  WHERE p.open_tasks <> (SELECT count(*) FROM tasks t
+                         WHERE t.project_id = p.id AND t.status = 'open' AND t.deleted_at IS NULL)`);
+console.log("open_tasks:", (await projects.findById(1))?.openTasks, "drifted projects:", rows);
+await client.disconnect();
+```
+
+Output of `npx tsx delete-task.ts`
+
+```ts
+Task 1 not found
+open_tasks: 2 drifted projects: []
+```
+
+`softDelete` only matches a row that is not deleted yet, so deleting twice is a 404 instead of a second decrement. Using the row it returns, rather than a separate read, means the status you check is the one you just changed.
+
+TRY IT YOURSELF
+
+### Sort by priority, with an index
+
+Clients want "high priority first, then newest". Page project 1's tasks with `paginateCursor` sorted by `priority` ascending and then `createdAt` descending, two per page. Why is sorting by the text `priority` a trap, and what would you change?
+
+**Show a solution**
+
+priority-sort.tsNode.js only
+
+```ts
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { TaskRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+
+const { pg, client } = await setup();
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+const sort = [{ field: "priority", direction: "asc" }, { field: "createdAt", direction: "desc" }] as const;
+
+const seen: string[] = [];
+let cursor: string | undefined;
+do {
+  const page = await tasks.paginateCursor({ projectId: 1 }, { limit: 2, sort, cursor });
+  seen.push(...page.data.map((t) => `${t.priority}:${t.title}`));
+  cursor = page.meta.nextCursor;
+} while (cursor);
+console.log(seen);
+await client.disconnect();
+```
+
+Output of `npx tsx priority-sort.ts`
+
+```json
+[
+  'high:Test on phones',
+  'high:Write the copy',
+  'low:Compress the images',
+  'normal:Choose a font'
+]
+```
+
+Text sorts alphabetically: `high`, `low`, `normal`. It happened to put "high" first, but "low" comes before "normal", which is wrong. Store the priority as a number (`1` high, `2` normal, `3` low, mapped to words in the DTO) or as a PostgreSQL `enum` type, whose order is the order you declare. Then add the index `(project_id, priority, created_at DESC, id DESC)` and check its plan as in the indexes section.
+
+## Summary
+
+- Keep four shapes apart: rows, entities (`DatabaseEntity<number>`), request DTOs (strict schemas) and response DTOs (a mapper that names every field). `SoftDeletableEntity` only fits string ids.
+- A repository owns one table, answers named questions and returns entities. Put rules in the schema as constraints; the repository turns unique and foreign-key violations into 409.
+- Screen-shaped reads go in a query service that joins, groups and returns DTOs in one query. An `await` in a loop over rows is usually an N+1. Bound every request: limits (`normalizeLimit`, schemas), allowed fields, and include depth and cycles through a relation registry.
+- Keyset cursors do not drift when rows are added, read only the rows they return, and need a unique tiebreaker. A `Date` in a cursor has millisecond precision, so store `timestamptz(3)` or sort by id.
+- Choose indexes for your real queries and prove them with `EXPLAIN`. A partial unique index lets soft-deleted rows step aside.
+- Group related writes in `withTransaction`. Change counters with atomic increments, guard edits with a version and answer 409 on a conflict, make repeated requests harmless, and test invariants.
+
+Next, [storage abstractions](https://zudojs.oyinlola.site/learn/zudo-storage) look at the same problems from the driver-independent side, including files, which [the upload project](https://zudojs.oyinlola.site/learn/zudo-file-uploads) then builds on.
+
+## Test yourself
+
+Five questions, picked at random from this lesson's question bank. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it in the terminal. Get 4 of 5 right to pass. If you don't, read the explanations and try again: you get 5 different questions.

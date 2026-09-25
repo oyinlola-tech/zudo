@@ -1,26 +1,34 @@
 ---
-title: "What Node.js is"
-description: "Learn what Node.js adds to JavaScript, how its event loop decides what runs next, and how a program talks to the computer through process, exit codes and environment variables."
+title: "What Node.js is — ZudoJS Academy"
+description: "Learn what Node.js adds to JavaScript, where its event loop fits, and how a program uses arguments, exit codes and environment variables to talk to the system."
 source: https://zudojs.oyinlola.site/learn/node-runtime
 ---
 
-LESSON 19 OF 84
+LEVEL 4 · LESSON 1 OF 20
 
-Node.js and npm Foundation
+Node.js Core
 
 # What Node.js is
 
-Learn what Node.js adds to JavaScript, how its event loop decides what runs next, and how a program talks to the computer through process, exit codes and environment variables.
+Learn what Node.js adds to JavaScript, where its event loop fits, and how a program uses arguments, exit codes and environment variables to talk to the system.
 
 - **35 min** to read and try
-- **You need:** The JavaScript lessons, especially Asynchronous JavaScript and Modules
+- **You need:** JavaScript fundamentals and Advanced JavaScript, especially The event loop and Module systems in depth
 - **You build:** A learn-node folder with small programs that read arguments, exit codes and a .env file
 
   [Test yourself](#test)
 
+BY THE END OF THIS LESSON YOU CAN
+
+- Explain what a runtime adds to JavaScript and what V8, libuv and the built-in modules each do
+- Predict the order of sync code, nextTick, promises, setImmediate and timers inside an I/O callback
+- Read command-line arguments and report success or failure with an exit code
+- Load settings and secrets from environment variables and a .env file, and refuse to start when a secret is missing
+- Keep secrets out of Git and out of logs
+
 ## JavaScript outside the browser
 
-Until now, every example ran the same way in the browser terminal and on your computer. That was possible because they only used the JavaScript **language**: values, functions, arrays, promises. From this lesson on, you will use things that only exist on a computer: files, network ports, environment variables.
+Until now, almost every example ran the same way in the browser terminal and on your computer. That was possible because they only used the JavaScript **language**: values, functions, arrays, promises. From this lesson on, you will use things that only exist on a computer: files, network ports, environment variables.
 
 JavaScript itself has no way to read a file or open a network connection. The program that runs your code adds those abilities. That program is called the **runtime**:
 
@@ -112,9 +120,9 @@ libuv: 1.52.1
 
 Your JavaScript runs on **one thread**: one line at a time, never two at once. Yet a Node.js server answers thousands of people. How?
 
-In [Asynchronous JavaScript](https://zudojs.oyinlola.site/learn/js-async) you saw that code which has to wait says "call me back when the answer is ready" and moves on. In Node.js, libuv does the waiting. When a file has been read or a timer is due, libuv puts the callback in a queue. The **event loop** is the part of Node.js that takes the next callback from a queue and runs it, over and over, until there is nothing left to wait for. Then the program ends.
+You studied the answer in [The event loop](https://zudojs.oyinlola.site/learn/js-event-loop). Here is the short version, now that you know which part does what: libuv does the waiting. When a file has been read or a timer is due, libuv puts the callback in a queue. The **event loop** takes the next callback from a queue and runs it, over and over, until there is nothing left to wait for. Then the program ends. The loop visits its queues in a fixed cycle of **phases** (timers, I/O, `setImmediate`, close callbacks), drawn in [Node.js: nextTick, setImmediate and the phases](https://zudojs.oyinlola.site/learn/js-event-loop#node).
 
-There are several queues, and the order between them matters when you debug. This example schedules work five different ways. It does so inside the callback of a file read, which is where server code almost always runs: inside a callback for "a request arrived" or "the database answered".
+As a refresher, this example schedules work five different ways. It does so inside the callback of a file read, which is where server code almost always runs: inside a callback for "a request arrived" or "the database answered".
 
 event-loop.jsNode.js only
 
@@ -170,7 +178,7 @@ promise
 nextTick
 ```
 
-You rarely need to care which microtask runs first. What matters is the big picture: synchronous code, then microtasks, then the event loop's I/O, `setImmediate` and timers.
+You rarely need to care which microtask runs first. What matters is the big picture: synchronous code, then microtasks, then the event loop's I/O, `setImmediate` and timers. If you need the details again, the phases diagram in [The event loop](https://zudojs.oyinlola.site/learn/js-event-loop#node) has them.
 
 At the top level of a file, outside any I/O callback, the order of `setTimeout(…, 0)` and `setImmediate` is not fixed. It depends on how fast your computer started the program. Here is a two-line file, `order.js`, run four times:
 
@@ -219,7 +227,7 @@ The busy loop finished
 The timer asked for 10 ms and ran after 218 ms
 ```
 
-The timer was due after 10 ms, but it could not run until the loop let go of the thread. In a server, that means every other user waits. Heavy work (big calculations, reading huge files in one go) should be done in small pieces, with streams, or in a separate worker. You will meet streams in [Streams and buffers](https://zudojs.oyinlola.site/learn/node-streams).
+The timer was due after 10 ms, but it could not run until the loop let go of the thread. In a server, that means every other user waits. Heavy work (big calculations, reading huge files in one go) should be done in small pieces, with streams, or in a separate thread. [The event loop](https://zudojs.oyinlola.site/learn/js-event-loop#starvation) showed how to slice work; in this course you will meet streams in [Streams and buffers](https://zudojs.oyinlola.site/learn/node-streams) and worker threads in [Events, processes and workers](https://zudojs.oyinlola.site/learn/node-events-processes#workers).
 
 ## The Node.js APIs
 
@@ -234,7 +242,7 @@ Node.js comes with dozens of **built-in modules**. You import them like your own
 - `node:os`: facts about the computer.
 - `node:test`: a built-in test runner.
 
-A few things are **global**, so you use them with no import at all: `process`, `console`, timers, `fetch`, `URL` and `Buffer`. Older tutorials use `require(…)` to load modules. That is the CommonJS system, and it does not exist in an ES module:
+A few things are **global**, so you use them with no import at all: `process`, `console`, timers, `fetch`, `URL` and `Buffer`. Older tutorials use `require(…)` to load modules. That is the CommonJS system from [Module systems in depth](https://zudojs.oyinlola.site/learn/js-module-systems), and `require` does not exist in an ES module:
 
 globals.jsNode.js only
 
@@ -254,7 +262,7 @@ Buffer: function
 require: undefined
 ```
 
-If you copy code that uses `const fs = require("fs")`, write `import fs from "node:fs"` instead. The next lesson, [Files, paths and your computer](https://zudojs.oyinlola.site/learn/node-apis), covers `fs`, `path`, `os`, `crypto` and `events` in detail.
+If you copy code that uses `const fs = require("fs")`, write `import fs from "node:fs"` instead ([Mixing the two in Node.js 24](https://zudojs.oyinlola.site/learn/js-module-systems#interop) covers the cases where you really need both). The next lesson, [Files, paths and your computer](https://zudojs.oyinlola.site/learn/node-apis), covers `fs`, `path`, `os`, `crypto` and `events` in detail.
 
 ## The process object
 
@@ -364,13 +372,31 @@ total memory (rss): 51.0 MB
 used by JavaScript objects: 3.8 MB
 ```
 
-Your numbers will differ on every run. **rss** (resident set size) is all the memory the process holds; **heapUsed** is the part your JavaScript objects use. If a server's memory only ever grows, something keeps objects it no longer needs. That is called a memory leak.
+Your numbers will differ on every run. **rss** (resident set size) is all the memory the process holds; **heapUsed** is the part your JavaScript objects use. If a server's memory only ever grows, something keeps objects it no longer needs: a memory leak, which you learned to hunt in [Memory and garbage collection](https://zudojs.oyinlola.site/learn/js-memory#measuring).
 
 ## Environment variables
 
 A program needs settings that change between your computer and the server: the port to listen on, the database address, secret keys. These must not be written in the code. Code is shared, copied and pushed to GitHub. Secrets must never be.
 
 The standard answer is **environment variables**: named text values the operating system hands to every process it starts. Node.js puts them in `process.env`. Every value is a string, or `undefined` when it is not set.
+
+REASON IT OUT
+
+### Before you write config.js: which settings may have a default?
+
+The Task API needs two settings: `PORT` and `TASKS_API_KEY`. Think it through before reading the code:
+
+- What should happen when `PORT` is not set? When `TASKS_API_KEY` is not set? Is the answer the same for both?
+- What type is `process.env.PORT` when it is set to `4000`?
+- Who reads your terminal output and your log files? What may the program print about the key?
+
+**Show the reasoning**
+
+A port is not a secret and any free port works on your computer, so a default such as 3000 is safe. A missing API key is different: a default key would be written in the code, pushed to GitHub and shared with everyone, which is the same as having no key. So the program must refuse to start without one, and say which variable is missing.
+
+Every environment variable is text, so `"4000"` must be converted with `Number` (and, as the last exercise shows, checked, because `Number("abc")` is `NaN`).
+
+Logs are read by many people and kept for a long time, so the program may say that the key was loaded, or how long it is, but never print the key itself.
 
 config.jsNode.js only
 
@@ -406,7 +432,7 @@ PORT=4000
 TASKS_API_KEY=replace-me-with-a-long-random-value
 ```
 
-To make a real random key, let Node.js generate one for you and paste it in:
+To make a real random key, let Node.js generate one for you and paste it into `.env` in place of the placeholder:
 
 Terminal on your computer
 
@@ -422,10 +448,10 @@ Terminal on your computer
 ```bash
 $ node --env-file=.env config.js
 Port: 4000
-API key loaded (35 characters)
+API key loaded (64 characters)
 $ PORT=5000 node --env-file=.env config.js
 Port: 5000
-API key loaded (35 characters)
+API key loaded (64 characters)
 $ node --env-file=missing.env config.js
 node: missing.env: not found
 ```
@@ -556,7 +582,7 @@ Every value in `process.env` is text that someone typed. Check it before you tru
 - `process.argv` holds the command-line arguments, `process.exitCode` reports success (0) or failure, and `process.cwd()` is where the program was started.
 - Settings and secrets come from `process.env`. Load a `.env` file with `node --env-file=.env`, fail loudly when a secret is missing, and never commit `.env`.
 
-Next, you will use the built-in modules to work with files, paths and the computer itself.
+Next: [Files, paths and your computer](https://zudojs.oyinlola.site/learn/node-apis), where you use the built-in modules to work with files, paths and the computer itself.
 
 ## Test yourself
 

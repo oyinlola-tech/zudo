@@ -1,12 +1,12 @@
 ---
-title: "Loops"
+title: "Loops — ZudoJS Academy"
 description: "Repeat work with for, while, do...while, for...of and for...in, control a loop with break and continue, and build a number guessing game."
 source: https://zudojs.oyinlola.site/learn/js-loops
 ---
 
-LESSON 9 OF 84
+LEVEL 2 · LESSON 7 OF 19
 
-JavaScript fundamentals Foundation
+Control flow Foundation
 
 # Loops
 
@@ -17,6 +17,14 @@ Repeat work with for, while, do...while, for...of and for...in, control a loop w
 - **You build:** A number guessing game, tested with a fixed list of guesses, that you can also play in your terminal
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Repeat work with for, while and do...while, and make sure every loop ends
+- Loop over lists and strings with for...of, and over object keys with for...in
+- Control a loop with break, continue and labels
+- Choose the right loop for a job
+- Separate a program's rules from its input so a loop can be tested with fixed data
 
 ## Why loops exist
 
@@ -127,7 +135,7 @@ You will rarely need `do...while`. It fits "do this, then ask whether to do it a
 
 ## for...of: one iteration per item
 
-Most of the time you loop over a list of things. `for...of` gives you each item in turn, with no counter to manage. You met it briefly in [the first lesson](https://zudojs.oyinlola.site/learn/js-values#booleans):
+Most of the time you loop over a list of things. `for...of` gives you each item in turn, with no counter to manage. You met it briefly in [Values, variables and types](https://zudojs.oyinlola.site/learn/js-values#booleans):
 
 for-of.js
 
@@ -242,7 +250,45 @@ row 2:   2   4   6   8
 row 3:   3   6   9  12
 ```
 
-That is a small multiplication table. `padStart(4)` pads each number with spaces to 4 characters, so the columns line up. 3 outer iterations × 4 inner iterations = 12 cells. Nested loops multiply quickly: two loops over 1000 items each make a million iterations. A `break` inside the inner loop only stops the inner loop.
+That is a small multiplication table. `padStart(4)` pads each number with spaces to 4 characters, so the columns line up. 3 outer iterations × 4 inner iterations = 12 cells. Nested loops multiply quickly: two loops over 1000 items each make a million iterations.
+
+### Leaving nested loops with a label
+
+A `break` inside the inner loop only stops the inner loop; the outer one carries on. To stop both at once, put a **label** (a name followed by a colon) in front of the outer loop and name it in the `break`. `continue` takes a label too. Here a warehouse looks for the first shelf that still has rice:
+
+labels.js
+
+```ts
+const shelves = [
+  ["beans", "oil"],
+  ["salt", "rice", "sugar"],
+  ["rice", "garri"],
+];
+
+let found = "not in stock";
+search: for (let s = 0; s < shelves.length; s++) {
+  for (let slot = 0; slot < shelves[s].length; slot++) {
+    console.log(`checking shelf ${s}, slot ${slot}`);
+    if (shelves[s][slot] === "rice") {
+      found = `shelf ${s}, slot ${slot}`;
+      break search;
+    }
+  }
+}
+console.log("rice:", found);
+```
+
+Output of `node labels.js` and of the browser terminal
+
+```ts
+checking shelf 0, slot 0
+checking shelf 0, slot 1
+checking shelf 1, slot 0
+checking shelf 1, slot 1
+rice: shelf 1, slot 1
+```
+
+The search stopped at the first rice, and shelf 2 was never checked. Without the label, `break` would only have left shelf 1's inner loop, and the outer loop would have gone on to shelf 2 and overwritten `found`. Labels are rare in everyday code: often the cleaner fix is to put the loops in a function and `return` as soon as you find the answer, which you will do in [Functions](https://zudojs.oyinlola.site/learn/js-functions).
 
 ## Choosing the right loop
 
@@ -257,6 +303,24 @@ In [the lesson on arrays](https://zudojs.oyinlola.site/learn/js-arrays) you will
 ## Build: a number guessing game
 
 The computer picks a secret number from 1 to 100. The player guesses; after each guess the game says "too low", "too high" or "correct". The player has 7 tries.
+
+REASON IT OUT
+
+### Before you code: what counts as a try?
+
+Before writing the game, decide its rules for the awkward cases. A test can only check rules you have decided.
+
+- The player types `fifty`, an empty line, `12.5` or `150`. Should any of those use up one of the 7 tries?
+- When exactly does the loop stop? List every way the game can end.
+- How can you test a game whose secret number is random and whose input comes from a keyboard?
+
+**Show the reasoning**
+
+**Bad input:** none of these is a real guess, so none should cost a try; the game should say what was wrong and ask again. That is a `continue`: skip the rest of this turn without counting it.
+
+**Ways to end:** the guess is correct (the player wins), or the seventh real guess was wrong (the player loses). When the guesses come from a fixed list, there is a third: the list runs out. Each ending needs its own line of code, or the loop runs on too long or stops too early.
+
+**Testing:** make the unknowns into parameters. The rules go in a function that receives the secret and the guesses, so a test can pass `42` and `["50", "25", "abc"]` and know the right answer in advance. Only a thin outer part touches `Math.random()` and the keyboard.
 
 A game that reads the keyboard is hard to test, because a test cannot type. So split it in two: a function with the rules, which you can test with a fixed list of guesses, and a small interactive shell around it.
 
@@ -394,7 +458,7 @@ Guess 7: 52
 Correct! You needed 7 tries.
 ```
 
-A clever player always guesses the middle of the numbers that are left. That halves the range each time, so 7 tries are always enough for 100 numbers: 2 to the power of 7 is 128.
+A clever player always guesses the middle of the numbers that are left. That halves the range each time, so 7 tries are always enough for 100 numbers: 7 halvings can find the secret among up to 127 numbers (2 to the power of 7, minus 1). This idea, called binary search, returns in [Linear and binary search](https://zudojs.oyinlola.site/learn/dsa-searching).
 
 ## Practice
 
@@ -491,9 +555,11 @@ You need the position, so a counting `for` loop fits. `titles[i]` reads the item
 - A loop repeats a block. Each run is an iteration.
 - `for` has a counter; `while` repeats until a condition fails; `do...while` always runs once.
 - `for...of` gives each item of a list or string; `for...in` gives the keys of an object.
-- `break` stops the loop; `continue` skips to the next iteration.
+- `break` stops the loop; `continue` skips to the next iteration. A label (`outer:`) lets them reach an outer loop.
 - Make sure every loop moves towards its end, or it runs forever.
 - Put logic in a function you can test with fixed input, and keep the keyboard part thin.
+
+Next, [Functions](https://zudojs.oyinlola.site/learn/js-functions): package logic into reusable, testable pieces.
 
 ## Test yourself
 

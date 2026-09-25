@@ -1,16 +1,16 @@
 ---
-title: "Capstone: ShopFlow"
-description: "The final project. Plan and build ShopFlow, a small online shop, with ZudoJS. A complete, runnable core for accounts, products and a checkout that never oversells, followed by milestones with acceptance criteria that take it to a modular monolith and then to services."
+title: "Capstone: ShopFlow — ZudoJS Academy"
+description: "Plan and build ShopFlow with ZudoJS: a runnable core for accounts, products and a checkout that never oversells, then milestones toward services."
 source: https://zudojs.oyinlola.site/learn/capstone-shopflow
 ---
 
-LESSON 83 OF 84
+LEVEL 19 · LESSON 8 OF 10
 
-Production Production
+Capstone Production
 
 # Capstone: ShopFlow
 
-The final project. Plan and build ShopFlow, a small online shop, with ZudoJS. A complete, runnable core for accounts, products and a checkout that never oversells, followed by milestones with acceptance criteria that take it to a modular monolith and then to services.
+Plan and build ShopFlow with ZudoJS: a runnable core for accounts, products and a checkout that never oversells, then milestones toward services.
 
 - **120 min** to read and try
 - **You need:** Every ZudoJS lesson, Production engineering and Deploying a ZudoJS app
@@ -18,9 +18,18 @@ The final project. Plan and build ShopFlow, a small online shop, with ZudoJS. A 
 
   [Test yourself](#test)
 
+BY THE END OF THIS LESSON YOU CAN
+
+- Turn a product brief into an architecture, a composition root and a plan of milestones with acceptance criteria
+- Authenticate users with hashed passwords and hashed session tokens, and enforce permissions at every protected route
+- Write a checkout that takes stock and creates an order in one transaction with a conditional UPDATE, so it never oversells under concurrent buyers
+- Cache a read-heavy list with @zudojs/cache and invalidate it by tag on every write
+- Publish side effects (metrics, cache, a receipt e-mail) from an event fired only after commit, never from inside the transaction
+- Design rate limits and a migration path (monolith to modules to services) that a real team could follow
+
 ## The brief
 
-**ShopFlow** is an online shop. You have met it in pieces throughout this part of the course. Now you build it as one application, the way you would at work: from a brief, with a plan, in steps that each end with something that runs and is tested.
+**ShopFlow** is an online shop. You have met it in pieces across earlier ZudoJS lessons — architecture, events, and distributed systems among them. Now you build it as one application, the way you would at work: from a brief, with a plan, in steps that each end with something that runs and is tested.
 
 | Area | What ShopFlow must do |
 | --- | --- |
@@ -295,6 +304,18 @@ export function createOrders(db: PGlite, bus: EventBus) {
 
 The `order.placed` event is published *after* the transaction has committed, so no listener ever reacts to an order that was rolled back. The other risk, a crash between the commit and the publish, is what the outbox from the microservices lesson fixes. It is one of the milestones.
 
+## Before you write the checkout
+
+REASON IT OUT
+
+### Why a conditional UPDATE instead of read-then-write, and why publish after commit?
+
+Two customers both see "1 left". If the checkout first read the stock and then ran a separate `UPDATE`, what could go wrong? And the event publishes after commit, not inside the transaction — what would break if it published before commit, and what does the code above still get wrong if it crashes between the commit and the publish?
+
+**Show the reasoning**
+
+Read-then-write is two statements with a gap: both customers read "1 left" before either writes, so both proceed and stock goes negative. Folding `stock >= $1` into the `UPDATE`'s `WHERE` makes the check and the write one atomic statement, so the second customer's row matches nothing. Publishing inside the transaction would let a listener see an order a later line then rolls back. Publishing after commit avoids that, but a crash between the commit and the publish still loses the event — a gap only a transactional outbox, written in the same transaction as the order, actually closes.
+
 ## Wiring the shop
 
 `app.ts` is the composition root. It creates the shared infrastructure once, and the three modules on top of it. It also decides what happens after a sale: count it in a metric, clear the product cache (the stock changed), and queue the receipt e-mail with retries. Permissions come from `@zudojs/permissions`: customers may read products and create orders; admins may do everything.
@@ -359,7 +380,7 @@ export type ShopFlow = Awaited<ReturnType<typeof createShopFlow>>;
 
 ## The HTTP API
 
-The HTTP layer is thin: it reads the body, finds the user from the `Authorization: Bearer …` header, checks the permission, and calls a module. Errors from `@zudojs/errors` carry their own status code (400, 401, 403, 409), and `@zudojs/http` turns them into JSON answers by itself. Any other error becomes a plain 500 that reveals nothing. Login has its own rate limit, as recommended in [the authentication lesson](https://zudojs.oyinlola.site/learn/zudo-auth).
+The HTTP layer is thin: it reads the body, finds the user from the `Authorization: Bearer …` header, checks the permission, and calls a module. Errors from `@zudojs/errors` carry their own status code (400, 401, 403, 409), and `@zudojs/http` turns them into JSON answers by itself. Any other error becomes a plain 500 that reveals nothing to the client — and nothing to your logs either, since `router.dispatch` is called directly with no logging `catch` around it. [A whole project through the CLI](https://zudojs.oyinlola.site/learn/zudo-cli-project#problem-4) hits the same gap and fixes it with a `createDispatch` wrapper that logs the error before rethrowing; wrap this handler's `dispatch` the same way before you rely on it in production. Login has its own rate limit, as recommended in [the authentication lesson](https://zudojs.oyinlola.site/learn/zudo-auth).
 
 http.tsNode.js only
 
@@ -587,7 +608,7 @@ The core covers the hardest rule of the brief. Finish ShopFlow in these mileston
 
 - `POST /logout` deletes the session; the old token then gets 401.
 - Expired sessions are refused, and a scheduled job with `@zudojs/scheduler` deletes them every night.
-- Login is limited per IP *and* per e-mail: the sixth wrong password within a minute gets 429.
+- Login is limited per IP *and* per e-mail: the sixth wrong password for one e-mail within a minute gets 429. A per-IP `createRateLimiter` like the core's `logins` counts every attempt, successful ones included, not only wrong passwords — so users behind one shared IP (an office, a campus, a carrier-grade NAT) can lock each other out of accounts they never touched. Keep the per-IP limit as a coarse defence against a single attacker, but make the per-e-mail limit the one that actually protects an account.
 - Session tokens travel in an `HttpOnly; Secure; SameSite=Lax` cookie for browser clients, with CSRF protection from `@zudojs/security` on state-changing routes.
 - Optional: "Sign in with GitHub" with `@zudojs/auth-oauth`, from [the OAuth lesson](https://zudojs.oyinlola.site/learn/zudo-oauth), linked to an existing account only by a verified e-mail.
 
@@ -684,7 +705,7 @@ Two checkouts for the last mug run at the same time. Both `SELECT` and see 1. Bo
 - Side effects (metrics, cache, receipt e-mail) hang off an event published after the commit, and the tests pin down the rules that matter.
 - Six milestones take it from here to a complete shop, a modular monolith and finally services, each with criteria you can test.
 
-One step is left: a final challenge, where you find and fix the problems in an application someone else wrote.
+Next, [Capstone: a production SaaS](https://zudojs.oyinlola.site/learn/capstone-saas) takes a multi-tenant platform from a brief to production the same way, with real payments, tenant isolation and its own deployment milestone.
 
 ## Test yourself
 

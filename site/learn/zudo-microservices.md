@@ -1,22 +1,31 @@
 ---
-title: "Microservices"
-description: "Why some teams split one application into many services, why you should not start that way, and how services find and call each other, stay consistent without distributed transactions, survive failures and stay observable."
+title: "Microservices — ZudoJS Academy"
+description: "Why teams split into microservices, why not to start there, and how services discover, call each other, stay consistent, survive failures and stay observable."
 source: https://zudojs.oyinlola.site/learn/zudo-microservices
 ---
 
-LESSON 80 OF 84
+LEVEL 15 · LESSON 3 OF 5
 
-Architecture with ZudoJS Advanced
+Architecture modes Advanced
 
 # Microservices
 
-Why some teams split one application into many services, why you should not start that way, and how services find and call each other, stay consistent without distributed transactions, survive failures and stay observable.
+Why teams split into microservices, why not to start there, and how services discover, call each other, stay consistent, survive failures and stay observable.
 
 - **55 min** to read and try
 - **You need:** From monolith to modular monolith, and the lessons on HTTP, queues and observability
 - **You build:** Two ShopFlow services that call each other over HTTP with timeouts, retries, idempotency keys and a shared trace
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Decide when splitting into services pays for the network problems it creates
+- Give services a discovery mechanism and call each other over HTTP with a timeout
+- Add retries with backoff and a circuit breaker around a flaky dependency
+- Make a request idempotent with an idempotency key so a retried call cannot double-charge
+- Replace a cross-service transaction with an outbox and a saga
+- Propagate a correlation id and traceparent across service calls for a shared trace
 
 ## Why microservices exist
 
@@ -386,11 +395,11 @@ Orders finished first. The mail provider failed twice, and the queue retried the
 
 > NOTE
 >
-> The queue's timers do not keep a Node.js process alive on their own. In a service that is fine, because the HTTP server keeps it running. In a short script like this one, something else has to wait, which is what the `while` loop does.
+> While a job is pending or being processed, the queue keeps Node.js alive on its own, as [the queue lesson](https://zudojs.oyinlola.site/learn/zudo-queue#recap) covers (`keepAlive: false` turns this off). The `while` loop here is not for that: it is so this script's own next lines, `getStats` and `close`, run after the retries finish instead of before them. In a service you would not need it, because nothing after the `add` call depends on this particular job's result.
 
 ## Consistency without distributed transactions
 
-In the monolith, "save the order and reduce the stock" was one database transaction. With two services and two databases there is no such thing. There is a protocol called **two-phase commit (2PC)** that tries to lock both databases and commit them together, but it is slow, needs every service up at the same time, and most modern databases and brokers do not support it across systems. Avoid it. Two patterns replace it.
+In [the monolith](https://zudojs.oyinlola.site/learn/zudo-monolith#checkout), "save the order and reduce the stock" was one database transaction. With two services and two databases there is no such thing. There is a protocol called **two-phase commit (2PC)** that tries to lock both databases and commit them together, but it is slow, needs every service up at the same time, and most modern databases and brokers do not support it across systems. Avoid it. Two patterns replace it.
 
 ### The outbox pattern
 
@@ -505,6 +514,16 @@ order confirmed: false
 ```
 
 This style, where one service tells the others what to do, is an **orchestrated** saga. In a **choreographed** saga there is no conductor: each service reacts to the previous service's event (`order.created` → inventory reserves → `stock.reserved` → payments charges …). Orchestration is easier to follow when you are starting. In a real saga every step is an HTTP call or a message with a timeout, retries and an idempotency key, and the saga's progress is saved in a table so it can continue after a crash.
+
+REASON IT OUT
+
+### Checkout spans three services: outbox, or saga?
+
+ShopFlow's checkout now touches orders, inventory and payments, each with its own database. Reserving stock is a single write inside the inventory service, but charging the card and confirming the order are separate steps that can fail independently. Would you reach for the outbox pattern here, the saga pattern, or both?
+
+**Show the reasoning**
+
+The outbox is not a competitor to the saga; it is how each saga step tells the rest of the system what it did. "Reserve stock" is one service's own write, so it fits the outbox alone: save the reservation and publish `stock.reserved` in one transaction. But "reserve, then charge, then confirm" is a sequence across three services with a rule about what to do when step two fails after step one succeeded — that is what only a saga expresses, because a single transaction cannot span three databases. So checkout needs a saga to sequence the steps and compensate on failure, and each step that changes its own service's data uses an outbox internally so its own "did it happen" question never depends on the broker being up at that exact moment.
 
 ## Following one request across services
 
@@ -647,7 +666,7 @@ Wrap the call: `const text = await breaker.call(askInventory).catch(() => "stock
 - No distributed transactions: the outbox publishes events reliably, and a saga undoes finished steps with compensations.
 - Pass a correlation id and a `traceparent` header on every call so one request can be followed through every service.
 
-Next, you take everything you built to production: configuration, secrets, logs, metrics, health checks and graceful shutdown.
+Next, in [Event-driven systems](https://zudojs.oyinlola.site/learn/zudo-event-driven), you take the outbox pattern from this lesson further: consumers that survive retries, duplicates, crashes, dead letters and a change to the event's own shape.
 
 ## Test yourself
 

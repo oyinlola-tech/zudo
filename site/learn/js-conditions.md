@@ -1,12 +1,12 @@
 ---
-title: "Making decisions"
+title: "Making decisions — ZudoJS Academy"
 description: "Let your program choose what to do with if, else if and else, the ternary operator and switch, and keep decisions readable with guard clauses."
 source: https://zudojs.oyinlola.site/learn/js-conditions
 ---
 
-LESSON 8 OF 84
+LEVEL 2 · LESSON 6 OF 19
 
-JavaScript fundamentals Foundation
+Control flow Foundation
 
 # Making decisions
 
@@ -17,6 +17,14 @@ Let your program choose what to do with if, else if and else, the ternary operat
 - **You build:** An age verification function, tested with valid and invalid inputs
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Choose between branches with if, else if and else, and order the conditions correctly
+- Pick between two values with the ternary operator
+- Compare one value against fixed options with switch, and avoid accidental fall-through
+- Flatten nested conditions into guard clauses that fail closed
+- Validate outside input before deciding, and test the boundary values
 
 ## if and else
 
@@ -63,7 +71,7 @@ Output of `node if-else.js` and of the browser terminal
 Saving "Buy milk"
 ```
 
-The condition does not have to be a boolean. JavaScript converts it using the truthy and falsy rules from [the first lesson of this part](https://zudojs.oyinlola.site/learn/js-values#booleans). `if (title)` is true for any non-empty string. That is handy, but be careful with numbers: `if (count)` is false when `count` is `0`.
+The condition does not have to be a boolean. JavaScript converts it using the truthy and falsy rules from [Values, variables and types](https://zudojs.oyinlola.site/learn/js-values#booleans). `if (title)` is true for any non-empty string. That is handy, but be careful with numbers: `if (count)` is false when `count` is `0`.
 
 ## Several choices with else if
 
@@ -230,7 +238,7 @@ Output of `node function-shape.js` and of the browser terminal
 
 `count` is a **parameter**: a variable that gets the value you pass in the parentheses when you call the function. `return` ends the function and hands back a value.
 
-Because `return` ends the function straight away, you can check the bad cases first and leave early. Each early check is called a **guard clause**. Compare the nested version with the guarded one:
+Because `return` ends the function straight away, you can check the bad cases first and leave early. Each early check is called a **guard clause**. You wrote guard clauses as negated conditions in [Conditional reasoning](https://zudojs.oyinlola.site/learn/logic-conditions); here they are in real JavaScript. Compare the nested version with the guarded one:
 
 guard.js
 
@@ -291,6 +299,24 @@ A sign-up form asks for the user's age. The value arrives as text, typed by a st
 - 13 to 17: they can sign up with a parent's consent.
 - 18 or older: they can sign up.
 
+REASON IT OUT
+
+### Before you code: what can the age field contain?
+
+The age arrives from a form, typed by a stranger. Before writing `checkAge`, work out:
+
+- Which inputs are not an age at all? Think of empty fields, missing fields, words, decimals and negative numbers.
+- Which exact ages sit on a boundary between two answers?
+- In which order must the checks run, and why can the "too young" check not come first?
+
+**Show the reasoning**
+
+**Not an age:** `""` and `"   "` (the field was left empty), `null` or `undefined` (the field was missing), `"abc"`, `"17.5"`, `"-4"` and `"200"`. Each needs a clear "invalid" answer, not a decision.
+
+**Boundaries:** 12 and 13 (too young or consent), 17 and 18 (consent or allowed), and 0 and 130 at the edges of the valid range. A `<` written where `<=` was meant only shows up on exactly these values, so each of them gets a test.
+
+**Order:** validate first, decide second. If the "under 13" check ran first, `Number("")`, which is `0`, would make an empty form say "too young", and `Number("abc")`, which is `NaN`, would fail every comparison and fall through to "allowed". Guard clauses that reject bad input must come before any rule that trusts the number.
+
 First validate the input with guard clauses, then decide. Test the function with many inputs, including bad ones, and print each result:
 
 age-check.js
@@ -343,7 +369,7 @@ abc   -> invalid: age must be a whole number
 Walk through a few lines of the output:
 
 - `"abc"` becomes `NaN`, and `Number.isInteger(NaN)` is `false`, so one check rejects both text and decimals.
-- The empty string needs its own check, because `Number("")` is `0`, as you saw in the first lesson. Without that guard, an empty form would say "rejected: too young".
+- The empty string needs its own check, because `Number("")` is `0`, as you saw in [Values, variables and types](https://zudojs.oyinlola.site/learn/js-values#coercion). Without that guard, an empty form would say "rejected: too young".
 - The boundary values `18`, `17`, `13` and `12` are tested on purpose. Bugs love the edges: `<` where you meant `<=`.
 - The decision part is only three lines, because the guards already threw out every bad input.
 
@@ -454,6 +480,8 @@ invalid total invalid total invalid total
 - `switch` compares one value with `===` against many cases. Remember `break`.
 - Guard clauses check the bad cases first and `return` early, which keeps code flat.
 - Validate every outside input before you make a decision with it, and test the edges.
+
+Next, [Loops](https://zudojs.oyinlola.site/learn/js-loops): repeat work as often as you need, and build a number guessing game.
 
 ## Test yourself
 

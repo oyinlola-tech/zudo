@@ -1,22 +1,31 @@
 ---
-title: "Security for every public API"
-description: "Protect the Task API from the open internet with @zudojs/security and the security helpers in @zudojs/http. Rate limiting, CORS, CSRF, security headers, HSTS and CSP, secure cookies, body limits, SSRF protection and input checks, each shown blocking a real attack."
+title: "Security for every public API — ZudoJS Academy"
+description: "Protect the Task API from the open internet with @zudojs/security: rate limiting, CORS, CSRF, security headers, secure cookies, body limits, SSRF checks."
 source: https://zudojs.oyinlola.site/learn/zudo-security
 ---
 
-LESSON 62 OF 84
+LEVEL 13 · LESSON 10 OF 12
 
-Users and security Core
+Security and identity Core
 
 # Security for every public API
 
-Protect the Task API from the open internet with @zudojs/security and the security helpers in @zudojs/http. Rate limiting, CORS, CSRF, security headers, HSTS and CSP, secure cookies, body limits, SSRF protection and input checks, each shown blocking a real attack.
+Protect the Task API from the open internet with @zudojs/security: rate limiting, CORS, CSRF, security headers, secure cookies, body limits, SSRF checks.
 
 - **50 min** to read and try
 - **You need:** The Task API project, and the authentication and permissions lessons
 - **You build:** A Task API that refuses login floods, other websites, oversized bodies and SSRF URLs, and sends safe headers on every response
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Rate limit logins strictly and the whole API generously, keyed on a real connection address
+- Allow-list origins with CORS instead of a wildcard, and bind CSRF tokens to the session
+- Send secure cookies and security headers, including a strict CSP and HSTS, on every response
+- Enforce body-size limits with values checked as real numbers
+- Refuse SSRF targets by URL, by resolved address and by redirect target, not by URL alone
+- Treat threat detectors as a logging last line, with parameterized SQL and schema validation as the real defence
 
 ## Defense in depth
 
@@ -421,6 +430,18 @@ mixed.attacker.example    blocked: resolves to a private address
 >
 > A clever DNS server can answer "public" to your check and "private" a moment later, when `fetch` looks the name up again (**DNS rebinding**). And a public page can answer with a redirect to `http://169.254.169.254/`. So when you fetch: use `redirect: "manual"` and check every redirect target the same way, and for high-risk features connect to the exact address you checked, or send outbound requests through a proxy that only reaches the public internet.
 
+REASON IT OUT
+
+### checkPreviewUrl already resolved the name and found only public addresses. Is the fetch that follows now safe?
+
+`checkPreviewUrl` resolved `preview.example`, saw a public address, and returned `ok`. Your code then calls `fetch(url)`, which resolves the same hostname *again*, on its own, to actually connect. The attacker controls the DNS server for their own domain and can answer differently each time it is asked. What does that let them do, and does resolving the name yourself before fetching actually close the hole?
+
+**Show the reasoning**
+
+It closes the naive version of the hole (a hostname that always points at a private address) but not the general one. Because `checkPreviewUrl` and `fetch` each do their own DNS lookup, at their own moment in time, an attacker's name server can give a public address to the first lookup and a private one to the second — the check passes, and the connection that follows goes somewhere else entirely. This is a time-of-check-to-time-of-use gap, and it exists precisely because "check the URL" and "use the URL" are two separate operations against a resource (a DNS answer) that the attacker controls and can change between them.
+
+Closing it for real means removing the second, independent lookup: resolve the name once, verify that address, and then connect to *that exact IP* instead of letting `fetch` re-resolve the hostname — or route the request through a proxy that enforces the same allow-list at connection time, so no path to the private network exists even if a check is skipped. The general lesson is not specific to DNS: whenever a check and the action it guards are not atomic, the resource being checked can change in between.
+
 ## Input checks are the last line, not the first
 
 @zudojs/security can look at text and guess whether it is an attack. `detectThreats` returns labels such as `SQL_INJECTION` or `XSS`. These are **heuristics**: patterns that often appear in attacks. See how well they guess:
@@ -655,6 +676,10 @@ Every attack was stopped by a different layer:
 4. The metadata address and the IPv6 form of a private address got `400`. A public URL was accepted.
 5. The security middleware added its headers to every response.
 
+> THAT HEADER CHECK ONLY ASKED A 200
+>
+> Step 5 above only asks a plain `200` response for its headers. In the published `@zudojs/http` 1.4.4, a response built outside the normal route return — the `401` from a thrown `unauthorized()`, the adapter's own `413` for an oversized body, or an uncaught `500` — comes back without `createSecurityMiddleware()`'s headers, because the pipeline never gets to run on it. [A production security review](https://zudojs.oyinlola.site/learn/zudo-production-security) covers checking every status code a route can return, not just its happy path.
+
 Run it on your computer. Both files go in the same folder:
 
 Terminal on your computer
@@ -752,7 +777,7 @@ For each attack, name the layer that stops it: (a) a script on `evil.example` re
 - Before fetching a user's URL: `isSafeUrl`, then resolve the name and check every address, and handle redirects.
 - Threat detectors are a last line for logging. Parameterized SQL, output encoding and schema validation are the real defences.
 
-The Task API is now protected at every layer. The next part of the course moves work out of the request: caching, events and background jobs.
+The Task API is now protected at every layer. Next, [Caching](https://zudojs.oyinlola.site/learn/zudo-cache) keeps copies of slow results so it can also answer fast.
 
 ## Test yourself
 

@@ -1,22 +1,30 @@
 ---
-title: "Multi-tenancy"
-description: "Serve many companies from one Task API without ever mixing their data. Tenant ids, resolvers and trust levels, resolver chains, AsyncLocalStorage context and tenant-scoped queries with @zudojs/tenancy."
+title: "Multi-tenancy — ZudoJS Academy"
+description: "Serve many companies from one Task API without mixing their data: tenant ids, resolvers, trust levels and tenant-scoped queries with @zudojs/tenancy."
 source: https://zudojs.oyinlola.site/learn/zudo-tenancy
 ---
 
-LESSON 77 OF 84
+LEVEL 14 · LESSON 16 OF 18
 
-Platform features Advanced
+Platform Advanced
 
 # Multi-tenancy
 
-Serve many companies from one Task API without ever mixing their data. Tenant ids, resolvers and trust levels, resolver chains, AsyncLocalStorage context and tenant-scoped queries with @zudojs/tenancy.
+Serve many companies from one Task API without mixing their data: tenant ids, resolvers, trust levels and tenant-scoped queries with @zudojs/tenancy.
 
 - **45 min** to read and try
 - **You need:** The Task API project, the auth and database lessons
 - **You build:** A Task API where each company only ever sees its own tasks, with the tenant taken from the verified session and never from a header
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Normalize and validate a tenant id so it is safe in keys, paths and log lines
+- Resolve which tenant a request belongs to and rank sources by trust level
+- Chain resolvers by priority and refuse an untrusted or inactive tenant with the same generic answer
+- Carry the current tenant through a request with AsyncLocalStorage instead of a parameter
+- Scope every query and cache key to the tenant in context, so another tenant's row reads as a 404
 
 ## One app, many customers
 
@@ -154,6 +162,16 @@ A **resolver chain** asks its resolvers in order of **priority** (the JWT resolv
 Two more safety details: `www` and the bare domain do not count as tenants, and a resolver that *throws* (for example on an invalid token) stops the whole chain. A failed login can never fall through to the header.
 
 ## Enforce trust and status
+
+REASON IT OUT
+
+### A tenant id can fail for three different reasons: it does not exist, it exists but is suspended, or it was resolved from an untrusted source. Should the client see which one happened?
+
+Imagine you are an attacker who does not know which company names are Task API customers. If "unknown tenant" and "suspended tenant" produced different responses, what could you learn by trying tenant ids such as `acme`, `initech` and a hundred guesses, and watching which response each one got?
+
+**Show the reasoning**
+
+A different response per reason turns the endpoint into an oracle: a 404 for guesses that do not exist and a distinct answer, say 403, for `initech` would confirm that Initech is a real, if suspended, customer — information the client had no business learning, and a plausible first step in social-engineering or targeting that company. That is why an unknown tenant and a suspended one get the identical `404 Tenant not found`: from outside, "does not exist" and "exists but you may not use it" must be indistinguishable, the same reasoning that made a missing task and someone else's task both answer 404 earlier in this course. The untrusted-source case is different in kind, not degree: it is not a fact about the tenant, it is a fact about how the request itself was resolved, so it is allowed to answer `403` without revealing anything about which tenants exist.
 
 Resolving is not enough: you must also check that the answer is trustworthy and that the tenant may use the app. `assertTrustLevel` refuses anything below the level you require, and `createTenantManager` loads the tenant and refuses tenants that are not active:
 
@@ -346,7 +364,7 @@ This is the test that matters. Acme asked for task 2 by its id, which is easy to
 
 > TIP
 >
-> Use the tenant in other keys too. `tenantKey(tenantId, "tasks:list")` builds a cache key like `tenant:acme:tasks\:list`, so one tenant's cached list is never served to another, and `assertTenantOwnership(resource, tenantId)` throws a `TenantIsolationError` if an object from the wrong tenant reaches your code.
+> Scope other keys to the tenant too, but through [the cache's](https://zudojs.oyinlola.site/learn/zudo-cache) own `namespace` option, not by joining the tenant into the key text yourself: `cache.set("tasks.list", value, { namespace: tenantId })` keeps one tenant's cached list from ever being served to another. `@zudojs/cache` rejects any key or namespace containing its `:` separator with `ERR_INVALID_INPUT`, so a colon-joined string such as what `tenantKey(tenantId, "tasks:list")` builds would throw the moment you passed it in as a single cache key, rather than scoping anything. `assertTenantOwnership(resource, tenantId)` still throws a `TenantIsolationError` if an object from the wrong tenant reaches your code.
 
 ## Put it together: a multi-tenant Task API
 
@@ -518,6 +536,8 @@ For each case, say which resolver you would use and whether it is safe on its ow
 - A resolver chain asks by priority. Require `verified` trust, and refuse tenants that are not active without saying why. `createResolveTenantMiddleware` does all of it for a route, and answers an unknown and a suspended tenant with the same 404.
 - The tenant context lives in AsyncLocalStorage: `run` sets it, `requireCurrentTenant` reads it, and code outside a tenant fails loudly.
 - Every query filters on `tenant_id`, taken from the context and passed as a parameter. Another tenant's row is a 404.
+
+Next, [Plugins](https://zudojs.oyinlola.site/learn/zudo-plugins) lets other code extend the Task API through a fixed interface, without editing it.
 
 ## Test yourself
 

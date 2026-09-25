@@ -1,28 +1,55 @@
 ---
-title: "Modern JavaScript"
+title: "Modern JavaScript — ZudoJS Academy"
 description: "Take a piece of old-style JavaScript and rewrite it step by step with the modern syntax a backend uses every day, fixing real bugs on the way."
 source: https://zudojs.oyinlola.site/learn/js-modern
 ---
 
-LESSON 13 OF 84
+LEVEL 2 · LESSON 12 OF 19
 
-JavaScript fundamentals Foundation
+Arrays and objects Foundation
 
 # Modern JavaScript
 
 Take a piece of old-style JavaScript and rewrite it step by step with the modern syntax a backend uses every day, fixing real bugs on the way.
 
 - **35 min** to read and try
-- **You need:** Objects and JSON, and the lessons before it
+- **You need:** Objects in depth, and the lessons before it
 - **You build:** A task formatter refactored from old-style code to modern JavaScript, with its hidden bugs fixed
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Read old-style JavaScript and rewrite it with modern syntax without changing its behaviour
+- Replace
+- defaults with ?? and default parameters, and explain why null skips a default
+- Destructure objects, arrays and parameters with renaming, defaults and nesting
+- Tell spread from rest by where the three dots stand
+- Refactor safely by running the old and new versions on the same inputs
 
 ## The code you will modernise
 
 JavaScript has changed a lot since 2015. You will still meet old-style code: in older projects, in answers online, and in code written by people who learned JavaScript long ago. You need to read both styles, and write the modern one.
 
 This lesson does not introduce a new topic. It takes one piece of old-style code and improves it, one tool at a time. Here is the starting point: a function that turns a task into a line of text for a report.
+
+REASON IT OUT
+
+### Before you refactor: where can the behaviour change?
+
+A refactor should change how code is written, not what it does, except for the bugs you meant to fix. Read `formatTask` below before you run it, and think:
+
+- Each `x || fallback` replaces *every* falsy value. For `priority` and `prefix`, which falsy values could a caller send on purpose?
+- If you replace `options.prefix || "-"` with a default parameter, which inputs behave differently afterwards? Think about `""`, `undefined` and `null`.
+- How will you know the new version still gives the same answers for the normal cases?
+
+**Show the reasoning**
+
+**Falsy on purpose:** `priority: 0` (the most urgent) and `prefix: ""` (no prefix). `||` throws both away. Those are the bugs to fix.
+
+**Defaults change the edge cases:** a default parameter or `??` keeps `""` and `0`, which is the fix. A missing value (`undefined`) still gets the default, which keeps the old behaviour. But `null` behaves differently for the two tools: a default parameter does *not* replace `null`, while `??` does. If callers may send `null` (JSON has `null` but no `undefined`), use `??`.
+
+**Proof:** run the old and the new function side by side on the same list of inputs, including the edge cases, and compare. Any difference must be one you intended. The last section of this lesson does exactly that.
 
 old.js
 
@@ -90,7 +117,7 @@ The first two lines print the same text. The template literal is easier to read 
 
 ## Optional chaining and nullish coalescing
 
-Two operators replace most of the `&&` and `||` tricks in old code.
+You met both operators in [Operators](https://zudojs.oyinlola.site/learn/js-operators#nullish). They are the two tools that replace most of the `&&` and `||` tricks in old code, so here is a quick review aimed at refactoring, plus two forms you have not used yet: calling a method that may not exist, and `??=` on an object's property.
 
 - **Optional chaining** `a?.b`: if `a` is `null` or `undefined`, stop and give `undefined` instead of crashing. Otherwise read `a.b` as usual. It also works for calls, `a.b?.()`, and brackets, `a?.[key]`.
 - **Nullish coalescing** `a ?? b`: give `b` only when `a` is `null` or `undefined`. Unlike `||`, it keeps `0`, `""` and `false`.
@@ -554,6 +581,8 @@ en
 - Spread expands (`f(...list)`, `{ ...obj }`). Rest collects (`function f(...args)`, `const { id, ...rest } = obj`).
 - Use `const` by default, `let` when you reassign, and never `var`.
 - Refactor with the old and new versions side by side, checked on the same inputs.
+
+Next, [Scope and how code runs](https://zudojs.oyinlola.site/learn/js-scope): where a name can be used, why `let` fixes the `var` bugs, and how the call stack works.
 
 ## Test yourself
 

@@ -1,22 +1,30 @@
 ---
-title: "Streams and buffers"
-description: "Learn what the bytes behind text really are, then handle data piece by piece with readable, writable and transform streams, pipeline and readline, so a program can process files far bigger than its memory."
+title: "Streams and buffers — ZudoJS Academy"
+description: "Learn what bytes and buffers are, then process files far bigger than memory piece by piece with readable, writable and transform streams, pipeline and readline."
 source: https://zudojs.oyinlola.site/learn/node-streams
 ---
 
-LESSON 21 OF 84
+LEVEL 4 · LESSON 3 OF 20
 
-Node.js and npm Foundation
+Node.js Core
 
 # Streams and buffers
 
-Learn what the bytes behind text really are, then handle data piece by piece with readable, writable and transform streams, pipeline and readline, so a program can process files far bigger than its memory.
+Learn what bytes and buffers are, then process files far bigger than memory piece by piece with readable, writable and transform streams, pipeline and readline.
 
 - **35 min** to read and try
 - **You need:** Files, paths and your computer
 - **You build:** A program that generates a 200,000-line log file and counts its lines and words with streams
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Turn text into bytes and back with Buffer, and explain why cutting bytes can cut a character in half
+- Explain when a stream beats reading a whole file, and what readable, writable and transform streams do
+- Respect backpressure by waiting for drain when write returns false
+- Connect streams with pipeline and handle a failure anywhere in the chain
+- Read a huge file line by line with readline and for await
 
 ## Bytes and buffers
 
@@ -83,7 +91,7 @@ café
 
 ## Why streams
 
-In the last lesson, `readFile` loaded a whole file into memory at once. That is fine for a settings file. It is not fine for a 10 GB log file, a video upload or a database export: the program runs out of memory, and while it reads, it holds on to all of it.
+In [Files, paths and your computer](https://zudojs.oyinlola.site/learn/node-apis#fs), `readFile` loaded a whole file into memory at once. That is fine for a settings file. It is not fine for a 10 GB log file, a video upload or a database export: the program runs out of memory, and while it reads, it holds on to all of it.
 
 A **stream** handles data piece by piece. Each piece is called a **chunk**. You process one chunk, let it go, and take the next, so memory use stays small whatever the size of the data. There are three kinds you will use:
 
@@ -134,7 +142,7 @@ At the end, `out.end()` says "no more data", and the `"finish"` event says every
 
 ## Reading in chunks
 
-A readable stream can be used with `for await`, which you know from [Asynchronous JavaScript](https://zudojs.oyinlola.site/learn/js-async): each round of the loop waits for the next chunk.
+A readable stream is an async iterable, so it works with `for await...of`, which you know from [Generators](https://zudojs.oyinlola.site/learn/js-generators#async): each round of the loop waits for the next chunk.
 
 chunks.jsNode.js only
 
@@ -247,6 +255,25 @@ pipeline failed: ENOENT
 > Older code connects streams with `a.pipe(b)`. It handles backpressure, but when a stream fails it does not close the others or report the error in one place. That leaves files open and errors unnoticed. Use `pipeline`.
 
 ## Build: count lines and words
+
+REASON IT OUT
+
+### Before you build: counting lines in a file bigger than memory
+
+You want to count the lines, words and `done` tasks in a log file that may be 8 GB. Think it through first:
+
+- Could you `readFile` it and call `split("\n")`?
+- If you read chunks and split each chunk on `"\n"`, what happens to a line that crosses from one chunk into the next?
+- The file was written on Windows, with `\r\n` line endings. What does a split on `"\n"` leave at the end of each line?
+- The last line has no line break after it. Is it still counted?
+
+**Show the reasoning**
+
+Reading it whole fails: `readFile` refuses files over 2 GB, and a JavaScript string cannot hold more than about 512 million characters. Even a file that fits would hold all of its memory at once.
+
+Splitting each chunk yourself counts one line twice (half at the end of one chunk, half at the start of the next), and can cut a multi-byte character in half, as `café` showed. A `\r` would stay at the end of every line and break comparisons such as `line.endsWith("done")`.
+
+The fix is a tool that keeps the unfinished end of each chunk and joins it to the next one: `readline`. With `crlfDelay: Infinity` it treats `\r\n` as one line break, and it returns the last line even without a final line break.
 
 `createInterface` from `node:readline` takes a readable stream and gives you whole lines, one at a time, however the chunks were cut. With `for await`, reading a huge file line by line takes a few lines of code:
 
@@ -405,7 +432,7 @@ Output of `node longest.js`
 - Backpressure: when `write` returns `false`, wait for `"drain"`. `pipeline` from `node:stream/promises` does that for you and reports any failure in one place.
 - To read a file line by line, use `readline`'s `createInterface` with `for await`, never your own splitting of chunks.
 
-Next, you will learn npm properly: how packages, versions and lockfiles work, and how to install them safely.
+Next: [Events, processes and workers](https://zudojs.oyinlola.site/learn/node-events-processes), where one program coordinates its parts with events, runs other programs, moves heavy work to other threads and shuts down cleanly.
 
 ## Test yourself
 

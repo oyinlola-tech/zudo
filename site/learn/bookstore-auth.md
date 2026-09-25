@@ -1,22 +1,31 @@
 ---
-title: "\"BookStore API: authentication and tests\""
-description: "Add users to the BookStore. Hash passwords with scrypt, issue signed log-in tokens with a secret from the environment, protect the order routes, test it all with node:test, and then look honestly at what this hand-built backend now gets wrong."
+title: "\"BookStore API: authentication and tests\" — ZudoJS Academy"
+description: "Add users to the BookStore: scrypt password hashes, signed log-in tokens, protected order routes and node:test tests, then an honest review of what still hurts."
 source: https://zudojs.oyinlola.site/learn/bookstore-auth
 ---
 
-LESSON 43 OF 84
+LEVEL 7 · LESSON 10 OF 15
 
-Project: a TypeScript backend Core
+TypeScript on the server Core
 
 # "BookStore API: authentication and tests"
 
-Add users to the BookStore. Hash passwords with scrypt, issue signed log-in tokens with a secret from the environment, protect the order routes, test it all with node:test, and then look honestly at what this hand-built backend now gets wrong.
+Add users to the BookStore: scrypt password hashes, signed log-in tokens, protected order routes and node:test tests, then an honest review of what still hurts.
 
 - **50 min** to read and try
-- **You need:** "BookStore API: validation and PostgreSQL", and "Testing fundamentals"
+- **You need:** "BookStore API: validation and PostgreSQL", Testing fundamentals, and Cryptography with node:crypto
 - **You build:** A BookStore API where users register, log in, and see only their own orders, with a node:test suite
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Refuse to start without a strong signing secret from the environment
+- Store passwords as salted scrypt hashes and verify them in constant time
+- Issue and check HMAC-signed, expiring log-in tokens, and explain why a token can be read but not changed
+- Protect routes so the user id comes only from a verified token
+- Keep a log-in route from revealing which e-mails have accounts
+- Test tokens and the whole API with node:test, and list the structural problems a hand-built backend has
 
 ## Who is asking?
 
@@ -26,7 +35,7 @@ Right now anyone can place an order, and `GET /orders` shows everybody's orders.
 2. **Log in**: `POST /sessions` checks the password and hands back a signed **token**, a string that proves "this is user 7" until it expires.
 3. **Prove it**: every request to a protected route sends the token in the `Authorization` header. The server checks the signature and knows the user.
 
-Everything in this lesson uses `node:crypto`, which is built into Node.js. You install nothing.
+Everything in this lesson uses `node:crypto`, which is built into Node.js, so you install nothing. You met its tools one by one in [Cryptography with node:crypto](https://zudojs.oyinlola.site/learn/node-crypto); here they protect a real API.
 
 ## A secret from the environment
 
@@ -46,7 +55,7 @@ type Env = Readonly<Record<string, string | undefined>>;
 export function loadConfig(env: Env): Config {
   const raw = env["PORT"] ?? "3000";
   const port = Number(raw);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  if (!/^\d{1,5}$/.test(raw) || port > 65535) {
     throw new Error(`PORT must be a whole number from 0 to 65535, got "${raw}"`);
   }
   const tokenSecret = env["TOKEN_SECRET"];
@@ -125,9 +134,7 @@ $ export TOKEN_SECRET=$(node -p "require('node:crypto').randomBytes(32).toString
 
 ## Storing passwords safely
 
-If your database leaks, the attacker must not learn the passwords. So you store a **hash**: the output of a one-way function. You can check a password against the hash, but you cannot turn the hash back into the password.
-
-A fast hash like SHA-256 is the wrong tool: an attacker can try billions of guesses per second. Password hashes are **slow on purpose**. Node.js has one built in, **scrypt**. Each password also gets its own random **salt**, so two users with the same password get different hashes:
+If your database leaks, the attacker must not learn the passwords. So you store a **hash**: the output of a one-way function. You can check a password against the hash, but you cannot turn the hash back into the password. As [Cryptography with node:crypto](https://zudojs.oyinlola.site/learn/node-crypto#passwords) showed, it must be a password hash that is **slow on purpose**, such as **scrypt**, never a fast hash like SHA-256, and each password gets its own random **salt**, so two users with the same password get different hashes. Here is that code as a BookStore module:
 
 src/auth/password.tsNode.js only
 
@@ -159,7 +166,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
 - `scrypt` takes a callback, so `derive` wraps it in a `Promise` ([Asynchronous JavaScript](https://zudojs.oyinlola.site/learn/js-async)) to use it with `await`.
 - The stored string holds everything needed to check later: the method name, the salt and the key, separated by `$`.
-- `timingSafeEqual` compares two buffers in a time that does not depend on where they first differ. A normal `===` stops at the first different byte, and an attacker can measure that difference to guess a value piece by piece.
+- `timingSafeEqual` compares two buffers in a time that does not depend on where they first differ. A normal `===` stops at the first different byte, and an attacker can measure that difference to guess a value piece by piece ([Cryptography with node:crypto](https://zudojs.oyinlola.site/learn/node-crypto#timing)).
 
 try-password.tsNode.js only
 
@@ -352,6 +359,25 @@ export class UserRepository {
 }
 ```
 
+REASON IT OUT
+
+### What can a log-in route give away?
+
+An attacker has a list of a million e-mail addresses and wants to know which ones have BookStore accounts, so they can target those people. Before reading the routes, think about what the log-in and registration routes could reveal:
+
+- Log-in answers "No such user" for an unknown e-mail and "Wrong password" for a known one.
+- Both answers are the same, but for an unknown e-mail the server skips scrypt and answers in 2 ms instead of 80 ms.
+- Registration answers 409 "That e-mail is already registered".
+- Nothing limits how many log-in attempts one client makes.
+
+**Show the reasoning**
+
+Different messages reveal which e-mails exist, so both cases get the **same** message and status. A difference in *time* reveals the same thing: the attacker only has to measure. So the route runs one scrypt on both paths, as the code below does.
+
+Registration is harder: the new user must learn that the address is taken. Large sites answer every registration with "check your e-mail" and send the explanation to the address itself, so only its owner learns whether it had an account. The BookStore keeps the simple 409 and lists it as a known weakness in the review at the end of this lesson.
+
+Without a limit, an attacker can try a million passwords against one account. Every public log-in route needs a **rate limit**; that is on the review list too.
+
 The two user routes. Log-in answers with the **same** message whether the e-mail is unknown or the password is wrong, so it does not tell a stranger which e-mails have accounts:
 
 src/routes/users.tsNode.js only
@@ -501,7 +527,7 @@ Paste your own token after `TOKEN=`; it will differ from this one, because your 
 
 > NOT READY FOR THE INTERNET YET
 >
-> Nothing stops a script from trying a million passwords against `/sessions`. A public log-in route needs a **rate limit**: only a few attempts per minute per client. It is on the list below, and you will add one with `@zudojs/security` later in the course.
+> Nothing stops a script from trying a million passwords against `/sessions`. A public log-in route needs a **rate limit**: only a few attempts per minute per client. It is on the list below. [Rate limiting](https://zudojs.oyinlola.site/learn/api-rate-limiting) builds one, and ZudoJS provides one in `@zudojs/security`.
 
 ## Tests with node:test
 
@@ -565,7 +591,6 @@ tests/api.test.tsNode.js only
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
 
 import { createApp } from "../src/app.js";
@@ -579,7 +604,9 @@ let base = "";
 before(async () => {
   server.listen(0);
   await once(server, "listening");
-  base = `http://localhost:${(server.address() as AddressInfo).port}`;
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("expected a TCP address");
+  base = `http://localhost:${address.port}`;
 });
 
 after(async () => {
@@ -651,7 +678,7 @@ The BookStore works. It validates input, uses parameterized SQL, hashes password
 | **Testing friction** | To test one route you build a database, a secret, a router and a server, and tear them down again. There are no helpers for fake users, test data or a test client. |
 | **No logging or errors standard** | Logging is `console.log` and `console.error`. Your error codes (`not_found`, `invalid_id`) are your own invention, different from the next project's. |
 
-None of these is a bug you can fix with one clever line. They are **structural**: they come from having no common shape for the code. The next part of the course names that shape ([Backend architecture](https://zudojs.oyinlola.site/learn/backend-architecture)), and then shows how a framework takes over these jobs ([What a framework does](https://zudojs.oyinlola.site/learn/frameworks)).
+None of these is a bug you can fix with one clever line. They are **structural**: they come from having no common shape for the code. The next lesson, [Type-safe API layers](https://zudojs.oyinlola.site/learn/ts-api-layers), gives the BookStore that shape: controllers, services and repositories with typed boundaries, one place that wires them together, one typed error format, and services you can test without a database. That removes much of the wiring and testing pain, but not the missing lifecycle, configuration, security layers and logging. Those are the jobs a framework takes over: [Backend architecture](https://zudojs.oyinlola.site/learn/backend-architecture) and [What a framework does](https://zudojs.oyinlola.site/learn/frameworks), in the Software design and architecture course, show how, and ZudoJS does them for real.
 
 ## Practice
 
@@ -738,6 +765,8 @@ after 6 minutes: undefined
 - Protected routes take the user id from the verified token, never from the request body.
 - `node:test` tests pure functions easily, and a whole API with some effort.
 - The hand-built BookStore now shows its structural problems: boilerplate, manual wiring, no lifecycle, scattered configuration, missing security layers and testing friction.
+
+Next: [Type-safe API layers](https://zudojs.oyinlola.site/learn/ts-api-layers), where the BookStore is refactored into typed layers with DTOs, mappers, services, repositories and role checks.
 
 ## Test yourself
 

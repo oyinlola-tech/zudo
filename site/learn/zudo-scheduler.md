@@ -1,22 +1,30 @@
 ---
-title: "Scheduled tasks"
-description: "Run work on the clock, not on a request. Intervals, one-off runs and cron expressions, time zones, retries and failed runs, overlapping runs, restarts, and running a schedule on one instance only, with @zudojs/scheduler."
+title: "Scheduled tasks — ZudoJS Academy"
+description: "Run work on the clock, not a request: intervals, cron expressions, time zones, retries, overlapping runs and running on one instance with @zudojs/scheduler."
 source: https://zudojs.oyinlola.site/learn/zudo-scheduler
 ---
 
-LESSON 68 OF 84
+LEVEL 14 · LESSON 5 OF 18
 
-Events, messages and background work Advanced
+Background work Advanced
 
 # Scheduled tasks
 
-Run work on the clock, not on a request. Intervals, one-off runs and cron expressions, time zones, retries and failed runs, overlapping runs, restarts, and running a schedule on one instance only, with @zudojs/scheduler.
+Run work on the clock, not a request: intervals, cron expressions, time zones, retries, overlapping runs and running on one instance with @zudojs/scheduler.
 
 - **40 min** to read and try
 - **You need:** The background jobs lesson
 - **You build:** A weekday 09:00 digest and a nightly cleanup for the Task API, safe to run with several servers
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Define a job and schedule it to run once, repeatedly or on a cron expression
+- Write and verify cron expressions, and run them in UTC to avoid daylight-saving gaps
+- Retry a failing run, bound it with a timeout, and read its history from getExecutions
+- Choose an overlap policy for a run that outlasts its own interval
+- Make a duplicate run harmless when several instances share one schedule
 
 ## Work that the clock starts
 
@@ -550,7 +558,15 @@ worker: digest already sent today, skipping
 
 Both "servers" fired and queued a job, but only one digest went out. The day comes from `ctx.scheduledAt`, the time the run was due, so tomorrow's run is a new day. In the real Task API, `sentDays` is a database table with a unique `day` column: the database then refuses the second insert even when two workers on two machines try at the same moment.
 
-Why not use the queue's `deduplicationKey`? It only refuses a second job while the first one is still in the queue. Once the first digest job has finished, a job with the same key is accepted again. The idempotent processor protects you no matter when the duplicate arrives.
+REASON IT OUT
+
+### Both servers already queue the digest job with the same deduplicationKey. Isn't that enough on its own, without an idempotent processor too?
+
+Look again at how `deduplicationKey` works on the queue: it refuses a second job with the same key while a job with that key still exists in the queue. Server A's job runs and finishes in, say, 200 ms. Server B's own scheduler fires a little later — clocks and timers on two machines are never perfectly in step. Does the key still protect you at that point?
+
+**Show the reasoning**
+
+No: once server A's job has completed, it is no longer "in the queue" for deduplication purposes, so server B's job with the identical key is accepted as if it were the first one of the day, and the digest goes out twice. The key only protects against duplicates that arrive close together in time, while the original is still pending; it says nothing about a duplicate that arrives after the original already finished. The idempotent processor's check (`sentDays.has(job.data.day)`, backed by a unique database column in the real app) protects you regardless of when the duplicate shows up: seconds later, or the next time the process restarts and re-reads a stored schedule. Use the deduplication key as a cheap first filter, but keep the idempotency check as the guarantee you actually rely on.
 
 The production checklist for scheduled work:
 
@@ -617,6 +633,8 @@ A "recalculate statistics" job runs every 30 seconds but sometimes takes 45 seco
 - `overlap: "skip"` stops slow runs from piling up.
 - Nothing is stored: define recurring schedules in code, and store user-created ones in the database.
 - Several instances each run the schedule. Run it on one, or make duplicates harmless with a lock or a queue deduplication key.
+
+Next, [Serialization](https://zudojs.oyinlola.site/learn/zudo-serialization) covers what happens to a job's or a schedule's data once it has to cross a boundary as text: what plain JSON loses, and how to get it back.
 
 ## Test yourself
 

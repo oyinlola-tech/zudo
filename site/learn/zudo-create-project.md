@@ -1,22 +1,30 @@
 ---
-title: "Create the Task API project"
-description: "Install the ZudoJS command-line tool, create the Task API project with flags or by answering its questions, start it in development, find your way around the files, use every CLI command, and build and run it for production."
+title: "Create the Task API project — ZudoJS Academy"
+description: "Install the zudojs CLI, create the Task API project, run it in development, find your way around its files, try each command, and build it for production."
 source: https://zudojs.oyinlola.site/learn/zudo-create-project
 ---
 
-LESSON 48 OF 84
+LEVEL 12 · LESSON 3 OF 19
 
-Meet ZudoJS Core
+Entering ZudoJS Core
 
 # Create the Task API project
 
-Install the ZudoJS command-line tool, create the Task API project with flags or by answering its questions, start it in development, find your way around the files, use every CLI command, and build and run it for production.
+Install the zudojs CLI, create the Task API project, run it in development, find your way around its files, try each command, and build it for production.
 
 - **50 min** to read and try
 - **You need:** "Welcome to ZudoJS" and "Your first Zudo code", Node.js 24 and a working internet connection
 - **You build:** A ZudoJS Task API that runs in development with npm run dev, publishes its own API docs, and runs in production from compiled JavaScript
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Install the zudojs CLI, or run it with npx when a global install is not possible
+- Create a project with flags or by answering the CLI's questions
+- Start the server in development and check it with a browser and curl
+- Name the job of each important generated file
+- Build the project and run it for production, and explain what a graceful shutdown does
 
 ## Install the ZudoJS command-line tool
 
@@ -250,13 +258,25 @@ This is the pattern from [Your first Zudo code](https://zudojs.oyinlola.site/lea
 
 The long list of headers in the middle are **security headers**. Every response gets them, with no work from you. For example, `x-frame-options: DENY` stops other websites from showing your pages inside theirs, and `x-content-type-options: nosniff` stops browsers from guessing a file's type. The [security lesson](https://zudojs.oyinlola.site/learn/zudo-security) explains each one.
 
-`/tasks` does not exist yet, so the server answers 404. Building it is the next part of the course. `/api/v1/examples` is an **example resource** the CLI wrote so you can see a complete endpoint: it answers `[]`, an empty list of examples.
+`/tasks` does not exist yet, so the server answers 404. You build it yourself in [Routes, requests and responses](https://zudojs.oyinlola.site/learn/zudo-http). `/api/v1/examples` is an **example resource** the CLI wrote so you can see a complete endpoint: it answers `[]`, an empty list of examples.
 
 > TIP
 >
 > On Windows PowerShell, type `curl.exe` instead of `curl`. Plain `curl` there is a different command with different output.
 
 The times, dates and ids you see will be your own. To stop the server, click into its terminal and press Ctrl + C.
+
+REASON IT OUT
+
+### Who can reach this server?
+
+The last startup line said `Listening on http://0.0.0.0:3000`. Before reading on, think it through: who can send requests to your laptop on port 3000 right now? Is that what you want in a café's Wi-Fi? And on a production server behind a load balancer? The `/health` body says `"checks":{}`: what should `/health` answer while the app is still starting, and why would a hosting platform care?
+
+**Show the reasoning**
+
+- `0.0.0.0` means every network address of the computer, so anyone on the same network who knows your IP address can call the API, not only you. On a shared Wi-Fi that exposes a half-finished API to strangers. For development, listening on `127.0.0.1` (only this computer) is safer; [Configuration](https://zudojs.oyinlola.site/learn/zudo-config) changes the default to exactly that.
+- On a production server, `0.0.0.0` is right: the load balancer runs on another machine and must be able to connect.
+- While the app starts or stops, `/health` should answer 503, not 200. A platform only sends traffic to an instance whose health check passes, so a truthful 503 keeps users away from an app that cannot serve them yet. `checks` is empty because nothing outside the app, such as a database, is connected yet; once one is, it is listed there.
 
 ## What the CLI generated
 
@@ -526,7 +546,7 @@ All checks passed!
 
 ## Every CLI command
 
-You have used `create` and `doctor`. `zudojs --help` lists all seven. Run it inside `task-api`:
+You have used `create` and `doctor`. `zudojs --help` lists all seven. This section tries each one once; the next lesson, [The ZudoJS CLI in depth](https://zudojs.oyinlola.site/learn/zudo-cli), covers every option, the naming and wiring rules, and the errors. Run it inside `task-api`:
 
 Terminal on your computer
 
@@ -600,7 +620,7 @@ Zudojs dependencies
   @zudojs/validation: ^1.1.2
 ```
 
-The `^` in front of each version means "this version or any later one without breaking changes" ([npm packages](https://zudojs.oyinlola.site/learn/npm-packages) explained it). Your numbers can be higher.
+The `^` in front of each version means "this version or any later one without breaking changes" ([npm and packages](https://zudojs.oyinlola.site/learn/npm-packages) explained it). Your numbers can be higher.
 
 ## Generate code
 
@@ -630,7 +650,7 @@ Dry run: 3 files would be generated (nothing written):
 
 The CLI read `.zudojs/manifest.json`, saw a monolith, and chose the folders to match. In a modular monolith the same command would place the files inside a module. The last two lines of the first list are files it would *update*: it adds the new routes to `registerRoutes` and the new controller to `src/container.ts`, so the endpoint works with no wiring by hand. The middleware works the same way: besides `audit.middleware.ts`, it would export the new function from `src/middlewares/index.ts` and add `auditMiddleware()` to the list of middleware in `src/server.ts`, between the `// zudojs:server-middleware` markers.
 
-Do not run that one for real in `task-api`: in the next lessons you build `/tasks` yourself, so you understand every line. Try it for real in your practice project instead:
+Do not run that one for real in `task-api`: later in this course you build `/tasks` yourself, so you understand every line. Try it for real in your practice project instead:
 
 Terminal on your computer
 
@@ -753,7 +773,7 @@ $ curl -s http://localhost:3000/openapi.json | head -4
 
 Now open [http://localhost:3000/docs](http://localhost:3000/docs) in your browser. It is an interactive page built from that document: click a route, then **Try it out**, and you can send a real request to your running server. The [OpenAPI lesson](https://zudojs.oyinlola.site/learn/zudo-openapi) goes further.
 
-Other features write more. `zudojs add database`, for example, writes a database connection in `src/integrations/`, adds `DATABASE_URL` to `.env.example` and new scripts to `package.json`. You will use it in the data part of the course.
+Other features write more. `zudojs add database`, for example, writes a database connection in `src/integrations/`, adds `DATABASE_URL` to `.env.example` and new scripts to `package.json`. You will use it in [Databases with @zudojs/database](https://zudojs.oyinlola.site/learn/zudo-database).
 
 ## Build and run for production
 
@@ -902,7 +922,7 @@ Copy `.env.example` to `.env` and set `CORS_ORIGINS=https://tasks.example.com`, 
 - The CLI has seven commands: `create`, `dev`, `build`, `generate`, `add`, `doctor` and `info`. `generate resource` writes a whole endpoint and registers it; `--dry-run` shows what would be written. `add openapi` serves `/openapi.json` and a docs page at `/docs`.
 - For production, `npm run build` compiles `src/` into `dist/`, and `NODE_ENV=production npm start` runs it with plain Node.js. Ctrl + C or `SIGTERM` shuts it down gracefully.
 
-You have a running ZudoJS backend. Next, you will give it real routes: `GET /tasks`, `POST /tasks` and friends, using the `TaskService` and schema you wrote in [Your first Zudo code](https://zudojs.oyinlola.site/learn/zudo-first-code).
+You have a running ZudoJS backend. Before you give it real routes, using the `TaskService` and schema you wrote in [Your first Zudo code](https://zudojs.oyinlola.site/learn/zudo-first-code), learn the tool that made it. Next, [The ZudoJS CLI in depth](https://zudojs.oyinlola.site/learn/zudo-cli).
 
 ## Test yourself
 

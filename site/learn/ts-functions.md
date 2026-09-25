@@ -1,22 +1,30 @@
 ---
-title: "Typing functions"
-description: "Give functions parameter and return types, use optional, default and rest parameters, describe functions and callbacks as types, type async functions with Promise, and meet overloads."
+title: "Typing functions — ZudoJS Academy"
+description: "Type parameters and return values, use optional, default and rest parameters, write function types for callbacks, type async functions, and meet overloads."
 source: https://zudojs.oyinlola.site/learn/ts-functions
 ---
 
-LESSON 34 OF 84
+LEVEL 5 · LESSON 5 OF 23
 
-TypeScript Foundation
+Everyday types Foundation
 
 # Typing functions
 
-Give functions parameter and return types, use optional, default and rest parameters, describe functions and callbacks as types, type async functions with Promise, and meet overloads.
+Type parameters and return values, use optional, default and rest parameters, write function types for callbacks, type async functions, and meet overloads.
 
 - **35 min** to read and try
-- **You need:** Basic types
+- **You need:** Basic types and Type inference in depth
 - **You build:** Typed task helpers - filters, callbacks and an async loader - that the compiler checks at every call
 
   [Test yourself](#test)
+
+BY THE END OF THIS LESSON YOU CAN
+
+- Type every parameter and decide when to write a return type
+- Use optional, default and rest parameters and predict which calls compile
+- Describe a function with a function type and type callbacks
+- Type async functions with Promise<T> and catch a missing await
+- Choose between overloads and a union parameter
 
 ## Parameters and return types
 
@@ -122,6 +130,24 @@ Buy milk #home #shop
 - `note?: string` is an **optional parameter**. Inside the function its type is `string | undefined`, so you must check it before using it as a string.
 - `...tags: string[]` is a **rest parameter**. It collects any number of extra arguments into an array.
 
+REASON IT OUT
+
+### Optional, default, or required?
+
+You are designing `formatTask(title, priority, note)` for the task list. Before looking at the checks below, decide:
+
+1. Which parameter can never be missing, and what should happen if a caller leaves it out?
+2. Should a missing priority be `undefined` inside the function, or already the normal value?
+3. What does a caller who wants a note but the default priority write, and what value does `priority` get then?
+4. What is the type of `note` inside the function, and what must the code do before calling `note.toUpperCase()`?
+
+**Show the reasoning**
+
+1. The title. A task without one is meaningless, so it is a required parameter, and `formatTask()` must be a compile error, not a runtime surprise.
+2. Already the normal value. A default parameter (`priority: number = 1`) means the body never has to handle a missing priority, and its type inside the function is plain `number`.
+3. `formatTask("Call Ada", undefined, "after 5pm")`. A default applies whenever the argument is `undefined`, whether it was left out or passed explicitly, so `priority` is `1`. (`null` does not trigger the default.)
+4. `string | undefined`. The function must check it first, with `note === undefined`, `?.` or `??`; the compiler refuses `note.toUpperCase()` until it has.
+
 Optional and default parameters must come after the required ones. Every call is checked against this list:
 
 params.ts
@@ -195,7 +221,7 @@ Output of `npx tsx filters.ts` and of the browser terminal
 [ 'Fix login bug' ]
 ```
 
-Notice that `(task) => !task.done` has no type on `task`, and yet there is no TS7006 error. The variable's type, `TaskFilter`, already says what the parameter is, so TypeScript fills it in. This is called **contextual typing**. It is also why `tasks.filter((task) => …)` never needs an annotation: `filter` is declared to call its callback with an element of the array.
+Notice that `(task) => !task.done` has no type on `task`, and yet there is no TS7006 error. The variable's type, `TaskFilter`, already says what the parameter is, so TypeScript fills it in: the **contextual typing** you met in [Type inference in depth](https://zudojs.oyinlola.site/learn/ts-inference#contextual). It is also why `tasks.filter((task) => …)` never needs an annotation: `filter` is declared to call its callback with an element of the array.
 
 ## Callback types
 
@@ -363,6 +389,8 @@ Output of `npx tsx jobs.ts` and of the browser terminal
 ```json
 [ 'email sent', 'log written' ]
 ```
+
+[Async TypeScript](https://zudojs.oyinlola.site/learn/ts-async), at the end of this course, returns to async functions: typing `Promise.all`, timeouts and async generators.
 
 ## Overloads, briefly
 
@@ -548,6 +576,8 @@ The id is a string, not a number; the message is missing; and `notify` returns a
 - A callback may ignore parameters; a `void` return means the result is ignored.
 - An `async` function returns `Promise<T>`. Forgetting `await` is a type error.
 - Overloads list several call forms for one function. Prefer a union when the return type does not change.
+
+Next: [Interfaces, unions and literal types](https://zudojs.oyinlola.site/learn/ts-objects), where you give object shapes names and model data that can take several forms.
 
 ## Test yourself
 
