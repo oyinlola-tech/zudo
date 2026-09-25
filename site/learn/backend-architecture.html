@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Backend architecture — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/backend-architecture.md" title="Markdown version">
-  <meta name="description" content="Give backend code a shape. Learn controllers, services, repositories, models and DTOs, middleware, dependency injection and configuration, the difference between domain, application and infrastructure code, and which way dependencies must point. Then refactor the BookStore's orders into those layers.">
+  <meta name="description" content="Apply separation of concerns and SOLID to a whole backend: domain, application and infrastructure layers, ports, dependency injection and a composition root.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/backend-architecture">
@@ -97,10 +97,10 @@
         <div class="lx-hero-tag">LEVEL 11 · LESSON 6 OF 12</div>
         <p class="lx-hero-part">Architecture <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>Backend architecture</h1>
-        <p class="lx-hero-lead">Give backend code a shape. Learn controllers, services, repositories, models and DTOs, middleware, dependency injection and configuration, the difference between domain, application and infrastructure code, and which way dependencies must point. Then refactor the BookStore's orders into those layers.</p>
+        <p class="lx-hero-lead">Apply separation of concerns and SOLID to a whole backend: domain, application and infrastructure layers, ports, dependency injection and a composition root.</p>
         <ul class="lx-hero-meta">
           <li><strong>45 min</strong> to read and try</li>
-          <li><strong>You need:</strong> The three BookStore API lessons</li>
+          <li><strong>You need:</strong> Design principles through refactoring, SOLID, DRY, KISS and YAGNI, and Behavioural patterns</li>
           <li><strong>You build:</strong> The BookStore's order feature split into layers, with middleware, a composition root and a swappable database</li>
         </ul>
         <div class="lx-hero-actions">
@@ -109,11 +109,22 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Sort backend code into domain, application and infrastructure layers, and explain why dependencies must point inward</li>
+          <li>Define a port as an interface the application layer owns, and implement it from infrastructure so the concrete database can be swapped</li>
+          <li>Inject every dependency through a constructor and wire the whole graph in one composition root</li>
+          <li>Recognise middleware as the chain-of-responsibility pattern applied to HTTP requests</li>
+          <li>Load configuration once, validate it and freeze it before handing it to services</li>
+          <li>Test business rules against fake repositories instead of a real database</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="why">One job per piece of code</h2>
-<p>At the end of <a href="/learn/bookstore-auth">the last lesson</a> you listed the BookStore's problems. Many of them come from one thing: a single route handler does several jobs at once. The order route reads a header, checks a token, parses a body, runs SQL, applies the stock rule and formats the answer. To change any one of those, you must read all of them.</p>
-<p><strong>Separation of concerns</strong> is the fix: each piece of code has one job, and knows as little as possible about the others. Backend developers everywhere use the same names for the usual pieces:</p>
+<p><a href="/learn/design-principles#separation">Design principles through refactoring</a> pulled one tangled function apart by separation of concerns, cohesion and coupling; <a href="/learn/design-solid#srp">SOLID, DRY, KISS and YAGNI</a> gave the single-responsibility and dependency-inversion vocabulary for it. This lesson applies the same two ideas to a whole backend instead of one function. The BookStore's order route is the tangled function at application scale: it reads a header, checks a token, parses a body, runs SQL, applies the stock rule and formats the answer, all in one handler. To change any one of those, you must read all of them.</p>
+<p>Backend developers everywhere use the same names for the pieces a route handler's jobs split into:</p>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Piece</th><th>Its one job</th><th>In the BookStore</th></tr></thead>
 <tbody>
@@ -302,7 +313,8 @@ export class OrderService {
 }</script>
 </figure>
 <p>Read <code>place</code> out loud and it is the business process: check the amount, find the book, take the copies, record the order. There is no SQL, no status code and no header in it.</p>
-<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>With a real database, "find, then save" has a gap: two customers can both read "1 left". In <a href="/learn/bookstore-data">the data lesson</a> you closed that gap with a single SQL statement. A layered design keeps that fix inside the database repository, or uses a <strong>transaction</strong>, which a later lesson covers.</div>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Does the layering fix the race condition too?</h3><p><code>place</code> calls <code>this.books.find(bookId)</code>, then later <code>this.books.save(...)</code>. Two customers can both call <code>place</code> for the last copy, both read "1 left" before either saves, and both succeed. Does moving this code into a service, behind a port, remove that gap? Would a stricter type on <code>BookRepository</code> catch it?</p><details class="lx-solution"><summary>Show the reasoning</summary><p>No. Layering only moves code around; it does not add concurrency control. <code>find</code> then <code>save</code> is still two separate steps with a database round trip between them, whichever object calls them. No TypeScript type can express "no one else may read this row until I save it", because that is a runtime property of the database, not a shape of data.</p>
+<p>The fix has to live inside whichever repository implementation talks to the real database: a single SQL statement such as <code>UPDATE books SET stock = stock - $1 WHERE id = $2 AND stock >= $1</code> closes the gap in one round trip, as in <a href="/learn/bookstore-data">the data lesson</a>, or the two steps run inside one <strong>transaction</strong>. The <code>BookRepository</code> port stays exactly as written; only the PostgreSQL repository behind it needs to be correct.</p></details></div>
 </section>
 
 <section>
@@ -376,7 +388,7 @@ export class MemoryOrderRepository implements OrderRepository {
   }
 }</script>
 </figure>
-<p>The <strong>DTOs</strong> describe what crosses the network. The incoming DTO has only the fields a client may send: no <code>userId</code>, no price. The outgoing DTO is not the model either: it shows the total as <code>"25.98"</code> and leaves out <code>userId</code>. Your model can change without breaking clients, and internal fields never leak by accident:</p>
+<p>The <strong>DTOs</strong> describe what crosses the network, exactly as in <a href="/learn/ts-api-layers#entities-dtos">Type-safe API layers</a>: the incoming DTO has only the fields a client may send, no <code>userId</code> and no price, and the outgoing DTO shows the total as <code>"25.98"</code> and leaves <code>userId</code> out. Your model can change without breaking clients, and internal fields never leak by accident:</p>
 <figure class="lx-example" data-index="4" data-file="order.dto.ts" data-project="layers">
 <figcaption class="lx-bar"><span class="lx-file">order.dto.ts</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="4"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Order</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./model.js"</span><span class="t-pn">;</span>
@@ -447,7 +459,7 @@ export function toOrderDto(order: Order): OrderDto {
   };
 }</script>
 </figure>
-<p>The <strong>controller</strong> is thin. It checks that there is a user, parses the DTO, calls the service and formats the answer. The <code>userId</code> in its request comes from the verified token, as in the last lesson, never from the body:</p>
+<p>The <strong>controller</strong> is thin. It checks that there is a user, parses the DTO, calls the service and formats the answer. The <code>userId</code> in its request comes from a verified token, as in <a href="/learn/bookstore-auth">BookStore API: authentication and tests</a>, never from the body:</p>
 <figure class="lx-example" data-index="5" data-file="order.controller.ts" data-project="layers">
 <figcaption class="lx-bar"><span class="lx-file">order.controller.ts</span><button type="button" class="lx-edit" data-index="5" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="5"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> parsePlaceOrder<span class="t-pn">,</span> toOrderDto <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./order.dto.js"</span><span class="t-pn">;</span>
@@ -516,7 +528,7 @@ export class OrderController {
 
 <section>
 <h2 id="middleware">Middleware</h2>
-<p>The controller does not catch errors, and does not log. Those jobs are the same for every handler, so they belong in <strong>middleware</strong>: a function that takes the next handler and returns a new handler that does something before and after it.</p>
+<p>The controller does not catch errors, and does not log. Those jobs are the same for every handler, so they belong in <strong>middleware</strong>, the chain-of-responsibility pattern from <a href="/learn/design-patterns-behavioral#chain">Behavioural patterns</a> applied to HTTP: a function that takes the next handler and returns a new handler that does something before and after it.</p>
 <figure class="lx-example" data-index="6" data-file="middleware.ts" data-project="layers">
 <figcaption class="lx-bar"><span class="lx-file">middleware.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="6"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">DomainError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./model.js"</span><span class="t-pn">;</span>
@@ -577,11 +589,7 @@ export function use(handler: Handler, ...middlewares: Middleware[]): Handler {
   return middlewares.reduceRight((next, middleware) => middleware(next), handler);
 }</script>
 </figure>
-<ul>
-<li><code>handleErrors</code> turns a <code>DomainError</code> into a status code. This is the one place where the domain's words ("out of stock") meet HTTP's numbers (409).</li>
-<li><code>logRequests</code> gets its <code>log</code> function injected, so a test can collect the lines instead of printing them.</li>
-<li><code>use(handler, a, b)</code> wraps the handler so that <code>a</code> runs outermost, then <code>b</code>, then the handler: a <strong>pipeline</strong>. <code>reduceRight</code> is <code>reduce</code> (<a href="/learn/js-arrays">Arrays</a>) walking the list from the end, so it builds the pipeline from the inside out.</li>
-</ul>
+<p><code>handleErrors</code> is the one place where the domain's words ("out of stock") meet HTTP's numbers (409); <code>logRequests</code> gets its <code>log</code> function injected, so a test can collect the lines instead of printing them; <code>use(handler, a, b)</code> is the same <code>chain</code> pipeline as before, built with <code>reduceRight</code> instead of the explicit recursion, so that <code>a</code> runs outermost, then <code>b</code>, then the handler.</p>
 </section>
 
 <section>
@@ -686,7 +694,7 @@ log: user 1 -&gt; 200
 <li><strong>The database is replaceable.</strong> The service only knows the ports. The second exercise swaps in PostgreSQL without touching the service.</li>
 <li><strong>Cross-cutting jobs are written once</strong>, as middleware, not repeated in every handler.</li>
 </ul>
-<p>The cost is more files, and a composition root that grows with every class. Wiring dozens of services by hand, in the right order, with their settings and their shutdown, is exactly the kind of job the next lesson hands to a framework.</p>
+<p>The cost is more files, and a composition root that grows with every class. Wiring dozens of services by hand, in the right order, with their settings and their shutdown, only gets harder as the graph grows: <a href="/learn/arch-clean">Clean architecture: ports and adapters</a> pushes this same composition root further, and <a href="/learn/frameworks">What a framework does</a> is exactly the lesson where a framework takes that job off your hands.</p>
 </section>
 
 <section>
@@ -837,7 +845,7 @@ await db.close();</script>
 <li>Middleware wraps handlers for jobs every request shares, such as error mapping and logging.</li>
 <li>Configuration is read once, checked, frozen and injected.</li>
 </ul>
-<p>Next: what a framework is, and which of these jobs it takes off your hands.</p>
+<p>Next: <a href="/learn/arch-clean">Clean architecture: ports and adapters</a>, which takes this same domain/application/infrastructure split and enforces the dependency rule with four rings and a checker.</p>
 </section>
       </div>
 

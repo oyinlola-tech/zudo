@@ -1,10 +1,11 @@
 ---
 title: Feature flags
-description: Turn features on and off without deploying. Rules, evaluation context, percentage rollouts, A/B variants, kill switches and browser snapshots with @zudojs/feature-flags.
+description: Turn features on and off without deploying: rules, evaluation context, percentage rollouts, A/B variants and kill switches with @zudojs/feature-flags.
 minutes: 40
 youNeed: The Task API project and the observability lesson
 youBuild: Task comments rolled out to beta users and then to 20% of everyone, an A/B test for task sorting, and a kill switch for emails
 keywords: zudojs feature flags, feature toggle, gradual rollout, percentage rollout, a/b test, variants, kill switch, evaluation context, deterministic bucketing, snapshot
+objectives: Separate deploying code from releasing a feature with a flag served from a provider | Match rules in order against a server-built evaluation context, never the request body | Roll out a feature to a deterministic percentage of users and split them into A/B variants | Turn off a flag as a kill switch and give every non-boolean flag a safe offValue | Fail closed when the flag store is unreachable, and send only client-visible flags to the browser
 ---
 <section>
 <h2 id="why">Deploy is not release</h2>
@@ -167,6 +168,12 @@ grace sees by-date because of variant_assignment
 
 <section>
 <h2 id="kill-switch">Kill switches and safe defaults</h2>
+<reason title="A number flag such as upload-limit-mb has no natural off value. Why does the package fall back to defaultValue instead of always using 0?">
+<p><code>defaultValue</code> is the value a flag serves when its rules do not decide anything, which is usually meant to be a safe, ordinary value: 50 MB is a perfectly reasonable everyday upload limit. Now think about what "off" should mean for a flag that is not a simple on/off switch. Is there one answer that is correct for every number, string or object flag in every app, the way <code>false</code> is obviously correct for every boolean flag?</p>
+<answer>
+<p>There is not, and that is exactly why the package cannot pick one for you: 0 is the right "off" for an upload limit, but it would be the wrong "off" for a flag holding a page size (0 items per page breaks the page) or a timeout in milliseconds (0 means every request instantly times out). Falling back to <code>defaultValue</code> is the package's best guess at a value that will not crash anything, since that value was presumably already tested and shipped as the everyday case. It is a reasonable default default, but for a flag you might actually kill during an incident, it is the wrong choice, because "the everyday value" and "safe during an outage" are different questions. That is why <code>offValue</code> exists as an explicit, opt-in field: it lets you answer the second question separately, for the one flag where it matters, instead of the package guessing wrong for everyone.</p>
+</answer>
+</reason>
 <p>The mail provider is down, and every task completion tries to send an email and fails. You want emails off, now. Set <code>enabled: false</code>: the flag then ignores all its rules and serves its <strong>off value</strong>. For a boolean flag the off value is <code>false</code>. For a string, number or object flag there is no natural "off", so it serves its <code>defaultValue</code>, unless you declare an <code>offValue</code>:</p>
 <example file="kill-switch.ts">
 import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
@@ -407,4 +414,5 @@ user-3 false default
 <li>Build the context on the server from the verified user. A flag is not a permission.</li>
 <li>Snapshots send values, not rules, to the browser, and only for <code>visibility: "client"</code> flags. Delete flags when they are done.</li>
 </ul>
+<p>Next, <a href="/learn/zudo-tenancy">Multi-tenancy</a> serves many companies from one Task API, so every rule, query and cached value stays scoped to the right tenant.</p>
 </section>

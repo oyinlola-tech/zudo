@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Reading ZudoJS internals — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-internals.md" title="Markdown version">
-  <meta name="description" content="Open the published @zudojs packages in node_modules, map their boundaries and dependency graph, and trace how routing, scopes, wildcards and caching really work.">
+  <meta name="description" content="Open the published @zudojs packages in node_modules, map their dependency graph, and trace how routing, scopes, wildcards and caching really work.">
   <!-- seo:start -->
   <!-- seo:end -->
   <meta name="keywords" content="zudojs internals, read framework source, node_modules dist, package exports map, public api, barrel file, dependency graph, error architecture, isBaseError, AsyncLocalStorage, route matching, scoped dependency, event wildcard, cache stampede, characterization test">
@@ -72,7 +72,7 @@
         <div class="lx-hero-tag">LEVEL 18 · LESSON 1 OF 3</div>
         <p class="lx-hero-part">Framework engineering <span class="lx-tier lx-tier-advanced" title="Advanced: Learn it when your application needs it.">Advanced</span></p>
         <h1>Reading ZudoJS internals</h1>
-        <p class="lx-hero-lead">Open the published @zudojs packages in node_modules, map their boundaries and dependency graph, and trace how routing, scopes, wildcards and caching really work.</p>
+        <p class="lx-hero-lead">Open the published @zudojs packages in node_modules, map their dependency graph, and trace how routing, scopes, wildcards and caching really work.</p>
         <ul class="lx-hero-meta">
           <li><strong>60 min</strong> to read and try</li>
           <li><strong>You need:</strong> Reading framework source, Publishing TypeScript packages, TypeScript monorepos, and the ZudoJS lessons up to plugins and adapters</li>
@@ -122,7 +122,7 @@
 
 <section>
 <h2 id="which-code">Which code runs?</h2>
-<p>A published <code>@zudojs</code> package is <code>package.json</code>, a README, a LICENSE and <code>dist</code>: readable <code>tsc</code> output with its comments, and a <code>.d.ts</code> file next to every <code>.js</code> file. There is no <code>src</code> and no source map, although every file ends with a <code>sourceMappingURL</code> comment, so a debugger steps through <code>dist</code>. The previous lesson showed all of this for <code>@zudojs/http</code>.</p>
+<p>A published <code>@zudojs</code> package is <code>package.json</code>, a README, a LICENSE and <code>dist</code>: readable <code>tsc</code> output with its comments, and a <code>.d.ts</code> file next to every <code>.js</code> file. There is no <code>src</code> and no source map, although every file ends with a <code>sourceMappingURL</code> comment, so a debugger steps through <code>dist</code>. <a href="/learn/framework-read-source">Reading framework source</a> showed all of this for <code>@zudojs/http</code>.</p>
 <p>Before you read any of it, answer the first question from the reasoning above: is there exactly one copy of each package? npm puts a second copy in a nested <code>node_modules</code> folder when two packages need versions that cannot share one install. A short walk over the tree finds them:</p>
 <figure class="lx-example" data-index="0" data-file="copies.ts" data-project="inside">
 <figcaption class="lx-bar"><span class="lx-file">copies.ts</span><button type="button" class="lx-edit" data-index="0" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -396,7 +396,7 @@ http        1379 names   index.js: 44 "export *", 20 "export { … }"</pre></div
 
 <section>
 <h2 id="find">Finding the file behind a name</h2>
-<p>You know a name, say <code>matchesEventType</code>, and want its code. The text search from the previous lesson finds every file that <em>mentions</em> it, which is the right tool for "who uses this?". For "where is this defined, and through which barrels does it reach me?" you want the path Node itself follows: from <code>dist/index.js</code> through the re-exports to the file that <em>defines</em> the name. That is a small recursive walk:</p>
+<p>You know a name, say <code>matchesEventType</code>, and want its code. The text search from <a href="/learn/framework-read-source">Reading framework source</a> finds every file that <em>mentions</em> it, which is the right tool for "who uses this?". For "where is this defined, and through which barrels does it reach me?" you want the path Node itself follows: from <code>dist/index.js</code> through the re-exports to the file that <em>defines</em> the name. That is a small recursive walk:</p>
 <figure class="lx-example" data-index="4" data-file="tools/find-export.ts" data-project="inside">
 <figcaption class="lx-bar"><span class="lx-file">tools/find-export.ts</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> readFileSync <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:fs"</span><span class="t-pn">;</span>
@@ -922,7 +922,7 @@ for (const path of ["/admin/a/b/c", "/acme/reports/2026/7", "/payments/42"]) {
 </figure>
 <p>The admin route wins although it was registered second and has fewer segments, and registering it first would change nothing: order only breaks ties. <code>/payments/42</code> goes to <code>:reference</code>: the constrained <code>:id(\d+)</code> route tied, lost on registration order, and can never run. The <a href="/learn/zudo-routing#matching">routing lesson</a> shows how to catch such dead routes in a test.</p>
 <h3>An exported matcher that disagrees with the router</h3>
-<p>The previous lesson's search found that <code>RouteTree</code>, exported from the barrel as <code>createRouteTree</code>, is mentioned only inside its own folder: the router never uses it. Unused is one thing. Is it at least correct? Someone who finds it in the export list will assume it matches like the router:</p>
+<p><a href="/learn/framework-read-source">Reading framework source</a>'s search found that <code>RouteTree</code>, exported from the barrel as <code>createRouteTree</code>, is mentioned only inside its own folder: the router never uses it. Unused is one thing. Is it at least correct? Someone who finds it in the export list will assume it matches like the router:</p>
 <figure class="lx-example" data-index="17" data-file="route-tree.ts" data-project="inside">
 <figcaption class="lx-bar"><span class="lx-file">route-tree.ts</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createRouteTree <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>

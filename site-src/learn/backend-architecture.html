@@ -1,15 +1,16 @@
 ---
 title: Backend architecture
-description: Give backend code a shape. Learn controllers, services, repositories, models and DTOs, middleware, dependency injection and configuration, the difference between domain, application and infrastructure code, and which way dependencies must point. Then refactor the BookStore's orders into those layers.
+description: Apply separation of concerns and SOLID to a whole backend: domain, application and infrastructure layers, ports, dependency injection and a composition root.
 minutes: 45
-youNeed: The three BookStore API lessons
+youNeed: Design principles through refactoring, SOLID, DRY, KISS and YAGNI, and Behavioural patterns
 youBuild: The BookStore's order feature split into layers, with middleware, a composition root and a swappable database
 keywords: backend architecture, separation of concerns, controller service repository, dto, domain model, layered architecture, clean architecture, dependency direction, dependency injection, middleware, composition root, ports and adapters
+objectives: Sort backend code into domain, application and infrastructure layers, and explain why dependencies must point inward | Define a port as an interface the application layer owns, and implement it from infrastructure so the concrete database can be swapped | Inject every dependency through a constructor and wire the whole graph in one composition root | Recognise middleware as the chain-of-responsibility pattern applied to HTTP requests | Load configuration once, validate it and freeze it before handing it to services | Test business rules against fake repositories instead of a real database
 ---
 <section>
 <h2 id="why">One job per piece of code</h2>
-<p>At the end of <a href="/learn/bookstore-auth">the last lesson</a> you listed the BookStore's problems. Many of them come from one thing: a single route handler does several jobs at once. The order route reads a header, checks a token, parses a body, runs SQL, applies the stock rule and formats the answer. To change any one of those, you must read all of them.</p>
-<p><strong>Separation of concerns</strong> is the fix: each piece of code has one job, and knows as little as possible about the others. Backend developers everywhere use the same names for the usual pieces:</p>
+<p><a href="/learn/design-principles#separation">Design principles through refactoring</a> pulled one tangled function apart by separation of concerns, cohesion and coupling; <a href="/learn/design-solid#srp">SOLID, DRY, KISS and YAGNI</a> gave the single-responsibility and dependency-inversion vocabulary for it. This lesson applies the same two ideas to a whole backend instead of one function. The BookStore's order route is the tangled function at application scale: it reads a header, checks a token, parses a body, runs SQL, applies the stock rule and formats the answer, all in one handler. To change any one of those, you must read all of them.</p>
+<p>Backend developers everywhere use the same names for the pieces a route handler's jobs split into:</p>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Piece</th><th>Its one job</th><th>In the BookStore</th></tr></thead>
 <tbody>
@@ -126,7 +127,13 @@ export class OrderService {
 }
 </example>
 <p>Read <code>place</code> out loud and it is the business process: check the amount, find the book, take the copies, record the order. There is no SQL, no status code and no header in it.</p>
-<note>With a real database, "find, then save" has a gap: two customers can both read "1 left". In <a href="/learn/bookstore-data">the data lesson</a> you closed that gap with a single SQL statement. A layered design keeps that fix inside the database repository, or uses a <strong>transaction</strong>, which a later lesson covers.</note>
+<reason title="Does the layering fix the race condition too?">
+<p><code>place</code> calls <code>this.books.find(bookId)</code>, then later <code>this.books.save(...)</code>. Two customers can both call <code>place</code> for the last copy, both read "1 left" before either saves, and both succeed. Does moving this code into a service, behind a port, remove that gap? Would a stricter type on <code>BookRepository</code> catch it?</p>
+<answer>
+<p>No. Layering only moves code around; it does not add concurrency control. <code>find</code> then <code>save</code> is still two separate steps with a database round trip between them, whichever object calls them. No TypeScript type can express "no one else may read this row until I save it", because that is a runtime property of the database, not a shape of data.</p>
+<p>The fix has to live inside whichever repository implementation talks to the real database: a single SQL statement such as <code>UPDATE books SET stock = stock - $1 WHERE id = $2 AND stock >= $1</code> closes the gap in one round trip, as in <a href="/learn/bookstore-data">the data lesson</a>, or the two steps run inside one <strong>transaction</strong>. The <code>BookRepository</code> port stays exactly as written; only the PostgreSQL repository behind it needs to be correct.</p>
+</answer>
+</reason>
 </section>
 
 <section>
@@ -166,7 +173,7 @@ export class MemoryOrderRepository implements OrderRepository {
   }
 }
 </example>
-<p>The <strong>DTOs</strong> describe what crosses the network. The incoming DTO has only the fields a client may send: no <code>userId</code>, no price. The outgoing DTO is not the model either: it shows the total as <code>"25.98"</code> and leaves out <code>userId</code>. Your model can change without breaking clients, and internal fields never leak by accident:</p>
+<p>The <strong>DTOs</strong> describe what crosses the network, exactly as in <a href="/learn/ts-api-layers#entities-dtos">Type-safe API layers</a>: the incoming DTO has only the fields a client may send, no <code>userId</code> and no price, and the outgoing DTO shows the total as <code>"25.98"</code> and leaves <code>userId</code> out. Your model can change without breaking clients, and internal fields never leak by accident:</p>
 <example file="order.dto.ts" project="layers">
 import type { Order } from "./model.js";
 
@@ -202,7 +209,7 @@ export function toOrderDto(order: Order): OrderDto {
   };
 }
 </example>
-<p>The <strong>controller</strong> is thin. It checks that there is a user, parses the DTO, calls the service and formats the answer. The <code>userId</code> in its request comes from the verified token, as in the last lesson, never from the body:</p>
+<p>The <strong>controller</strong> is thin. It checks that there is a user, parses the DTO, calls the service and formats the answer. The <code>userId</code> in its request comes from a verified token, as in <a href="/learn/bookstore-auth">BookStore API: authentication and tests</a>, never from the body:</p>
 <example file="order.controller.ts" project="layers">
 import { parsePlaceOrder, toOrderDto } from "./order.dto.js";
 import type { OrderService } from "./order.service.js";
@@ -239,7 +246,7 @@ export class OrderController {
 
 <section>
 <h2 id="middleware">Middleware</h2>
-<p>The controller does not catch errors, and does not log. Those jobs are the same for every handler, so they belong in <strong>middleware</strong>: a function that takes the next handler and returns a new handler that does something before and after it.</p>
+<p>The controller does not catch errors, and does not log. Those jobs are the same for every handler, so they belong in <strong>middleware</strong>, the chain-of-responsibility pattern from <a href="/learn/design-patterns-behavioral#chain">Behavioural patterns</a> applied to HTTP: a function that takes the next handler and returns a new handler that does something before and after it.</p>
 <example file="middleware.ts" project="layers">
 import { DomainError } from "./model.js";
 import type { Request, Response } from "./order.controller.js";
@@ -270,11 +277,7 @@ export function use(handler: Handler, ...middlewares: Middleware[]): Handler {
   return middlewares.reduceRight((next, middleware) => middleware(next), handler);
 }
 </example>
-<ul>
-<li><code>handleErrors</code> turns a <code>DomainError</code> into a status code. This is the one place where the domain's words ("out of stock") meet HTTP's numbers (409).</li>
-<li><code>logRequests</code> gets its <code>log</code> function injected, so a test can collect the lines instead of printing them.</li>
-<li><code>use(handler, a, b)</code> wraps the handler so that <code>a</code> runs outermost, then <code>b</code>, then the handler: a <strong>pipeline</strong>. <code>reduceRight</code> is <code>reduce</code> (<a href="/learn/js-arrays">Arrays</a>) walking the list from the end, so it builds the pipeline from the inside out.</li>
-</ul>
+<p><code>handleErrors</code> is the one place where the domain's words ("out of stock") meet HTTP's numbers (409); <code>logRequests</code> gets its <code>log</code> function injected, so a test can collect the lines instead of printing them; <code>use(handler, a, b)</code> is the same <code>chain</code> pipeline as before, built with <code>reduceRight</code> instead of the explicit recursion, so that <code>a</code> runs outermost, then <code>b</code>, then the handler.</p>
 </section>
 
 <section>
@@ -344,7 +347,7 @@ log: user 1 -> 200
 <li><strong>The database is replaceable.</strong> The service only knows the ports. The second exercise swaps in PostgreSQL without touching the service.</li>
 <li><strong>Cross-cutting jobs are written once</strong>, as middleware, not repeated in every handler.</li>
 </ul>
-<p>The cost is more files, and a composition root that grows with every class. Wiring dozens of services by hand, in the right order, with their settings and their shutdown, is exactly the kind of job the next lesson hands to a framework.</p>
+<p>The cost is more files, and a composition root that grows with every class. Wiring dozens of services by hand, in the right order, with their settings and their shutdown, only gets harder as the graph grows: <a href="/learn/arch-clean">Clean architecture: ports and adapters</a> pushes this same composition root further, and <a href="/learn/frameworks">What a framework does</a> is exactly the lesson where a framework takes that job off your hands.</p>
 </section>
 
 <section>
@@ -446,5 +449,5 @@ await db.close();
 <li>Middleware wraps handlers for jobs every request shares, such as error mapping and logging.</li>
 <li>Configuration is read once, checked, frozen and injected.</li>
 </ul>
-<p>Next: what a framework is, and which of these jobs it takes off your hands.</p>
+<p>Next: <a href="/learn/arch-clean">Clean architecture: ports and adapters</a>, which takes this same domain/application/infrastructure split and enforces the dependency rule with four rings and a checker.</p>
 </section>

@@ -1,11 +1,12 @@
 ---
 title: Testing a ZudoJS app
-description: Test the Task API with Vitest and @zudojs/testing. Control time with a test clock, replace services with mocks and recording buses, wire fakes through a test container, clean up in the right order, and run integration tests against a real HTTP server.
+description: Test the Task API with Vitest and @zudojs/testing: a test clock, mocks and recording buses, a test container, ordered cleanup, and real HTTP integration tests.
 minutes: 45
 youNeed: The testing basics lesson, and the Task API with its events, queue and HTTP routes
 youBuild: A Vitest suite for the Task API with unit tests on fake time and fake services, and an integration test over real HTTP
 keywords: zudojs testing, vitest, createTestClock, createMockFn, createSpyLogger, createTestEventBus, createTestQueue, createTestContainer, createCleanupManager, createHttpTestClient, integration test, structural assertions
 tier: core
+objectives: Replace a clock, a logger, an event bus and a mailer with controllable test doubles | Move fake time forward instead of waiting on real timers | Wire a test container with fakes at the edges, through the app's own real registration code | Register cleanup in the right order so every test releases what it started, even after a failure | Compare values structurally instead of by how they print, and catch a Set that JSON would hide | Send real HTTP requests to a router in an integration test and assert on the response
 ---
 <section>
 <h2 id="what">What @zudojs/testing adds</h2>
@@ -152,6 +153,12 @@ export function registerTasks(container: Container): void {
   }), [CLOCK, LOGGER, EVENTS, MAILER, CONFIG]);
 }
 </example>
+<reason title="registerFactory takes an inject list, [CLOCK, LOGGER, EVENTS, MAILER, CONFIG]. Why not just call container.resolve(CLOCK) and the others inside the factory body, and skip the array?">
+<p>Both read the same five values, and both work the first time you resolve <code>TASKS</code>. The difference only shows up once something changes after that: a test replaces <code>CLOCK</code> with a different fake partway through, or your app hot-reloads a config value. Does the container have any way to know that <code>TASKS</code> needs rebuilding when <code>CLOCK</code> changes, if the factory never told it?</p>
+<answer>
+<p>Resolving a dependency by calling <code>container.resolve(token)</code> from inside a factory is a <strong>service locator</strong>: the factory fetches what it needs from the container itself, instead of declaring it. The container's dependency tracking, the mechanism <code>replace()</code> uses to know which cached singletons to rebuild, only sees dependencies that were resolved as part of building the token it is currently constructing &mdash; which is exactly what the <code>inject</code> array arranges. A locator-style resolve happens through the container's public, top-level <code>resolve()</code> method, outside that bookkeeping, so the container has no record that <code>TASKS</code> ever touched <code>CLOCK</code>. Register <code>TASKS</code> as a singleton, then call <code>container.replace(CLOCK, …)</code> in a later test: with the inject list, the next <code>resolve(TASKS)</code> rebuilds it with the new clock; with a locator inside the factory, the old, now-stale <code>TASKS</code> instance is served forever. The array costs one extra argument and buys back the container's ability to reason about what depends on what.</p>
+</answer>
+</reason>
 <p>The test registers fakes for everything outside, then calls the <em>real</em> <code>registerTasks</code>. Config says a user may only have one open task:</p>
 <example file="container.ts" project="tt" browser="no">
 import { assertRejects, createMockFn, createSpyLogger, createTestClock, createTestConfigManager, createTestContainer, createTestEventBus } from "@zudojs/testing";
@@ -481,5 +488,5 @@ messages.dispose();
 <li><code>createTestContainer</code> and <code>createTestConfigManager</code> let tests use the app's real wiring with fakes at the edges. A cleanup manager stops everything in reverse order, even after a failure.</li>
 <li>Structural assertions compare content, sets and dates included. <code>createHttpTestClient</code> serves your router on a free port and checks real answers with <code>.expect(…)</code> chains.</li>
 </ul>
-<p>Next, you make the Task API tell you what it is doing in production, with structured logs.</p>
+<p>Next, <a href="/learn/zudo-testing-apps">Testing a ZudoJS application layer by layer</a> tests the whole Task API one layer at a time: services, repositories, auth, events and queues, CQRS and HTTP.</p>
 </section>

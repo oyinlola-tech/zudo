@@ -1,11 +1,12 @@
 ---
 title: Observability
-description: See inside a running Task API. Metrics count what happens, traces show where the time goes, and logs, metrics and traces share one trace id across requests and services, with @zudojs/observability.
+description: See inside a running Task API: metrics count what happens, traces show where time goes, and logs share one trace id with @zudojs/observability.
 minutes: 45
 youNeed: The Task API project and the logging lesson
 youBuild: A Task API that measures every request, traces slow ones step by step, and links every log line to its trace
 keywords: zudojs observability, metrics, counter, gauge, histogram, percentile, p95, tracing, span, trace id, traceparent, context propagation, AsyncLocalStorage, exporter, sampling, correlation id
 tier: production
+objectives: Choose a counter, a gauge or a histogram for a metric, and read percentiles instead of the mean | Avoid a cardinality explosion by keeping unbounded values such as user ids out of metric labels | Trace one request as a tree of spans with withSpan, and read which step took the time | Carry a trace id through await calls with AsyncLocalStorage, with no request parameter to pass it | Propagate a trace across services with the traceparent header, treating it as untrusted | Sample traces in production so every request still counts in metrics without recording every span
 ---
 <section>
 <h2 id="why">Three questions, three signals</h2>
@@ -402,6 +403,12 @@ caller flag 1 -> recording: true
 caller flag 0 -> recording: false
 </output>
 <p><code>createProbabilitySampler(0.1)</code> keeps about one trace in ten, chosen from the trace id. <code>createParentBasedSampler</code> follows the caller when there is one: the last number of <code>traceparent</code> (<code>01</code> or <code>00</code>) says whether the caller kept the trace. Metrics are not sampled: every request still counts.</p>
+<reason title="Traces are sampled at 10%, but metrics count every single request. Why not sample metrics the same way and save even more?">
+<p>Think about what each signal is for. A trace's job is to let you open one specific, interesting request and see every step of it in detail; you rarely need to see all of them, and a representative sample of "GET /tasks took 900ms, mostly in the database" tells you nearly as much as recording every single one. A metric's job is different: <code>http.requests</code> with <code>status="500"</code> going up is itself the signal that something is wrong, and the alert threshold, "more than 1% of requests fail", is a direct count. What happens to that percentage, and to the alert built on it, if only one in ten requests were counted?</p>
+<answer>
+<p>Sampling a count changes the count: if only 10% of requests are counted, a real 1% error rate now measures as roughly 1% of a tenth of the traffic, which is noisier and, at low volume, can swing across your alert threshold by chance alone. Worse, a rare but real problem, one failing request in ten thousand, might simply never land in the sample at all, so the metric would report zero errors while users are actually failing. Traces can afford to sample because you read one trace at a time and a representative example is almost as useful as every example. Metrics cannot, because their entire value is being an exact count you can alert on and trust; a sampled metric is a different, less reliable metric, not a cheaper version of the same one.</p>
+</answer>
+</reason>
 <p>Finally, call <code>await obs.shutdown()</code> in the Task API's <code>SIGTERM</code> handler, after the HTTP server has stopped, just like <code>runtime.stop()</code> in <a href="/learn/zudo-runtime">the runtime lesson</a>. In unit tests, <code>createNoopObservability()</code> gives an object with the same methods that records nothing.</p>
 </section>
 
@@ -475,4 +482,5 @@ POST /tasks 65ms  trace=444c92b07bd4e081c4d859fec64ab6ab
 <li>The <code>traceparent</code> header carries the trace to other services. A malformed one starts a fresh trace.</li>
 <li>Exporters send batches: always <code>await obs.shutdown()</code>. In production, use real exporters and sample traces.</li>
 </ul>
+<p>Next, <a href="/learn/zudo-docs">Documentation as data with @zudojs/docs</a> turns the Task API's own Markdown docs into checked data, the same way this lesson turned what the app does at runtime into checked signals.</p>
 </section>

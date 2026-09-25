@@ -1,0 +1,648 @@
+<question id="cs-slice" type="choice">
+<q>Why does the capstone build one vertical slice (a parent pays a term fee) end to end before anything else?</q>
+<option>Because payments are the easiest feature to build</option>
+<option correct>It crosses every layer where mistakes are expensive, so it proves the architecture works together, and everything else can be planned as milestones on top of it</option>
+<option>Because ZudoJS requires the payment module to be registered first</option>
+<option>So the admin screens can be skipped entirely</option>
+<explain><p>A vertical slice runs through HTTP, identity, tenancy, permissions, the provider, the database, events, jobs and observability at once. If those pieces fit together for the riskiest flow, the rest is incremental work with known acceptance criteria.</p></explain>
+</question>
+
+<question id="cs-idem-key" type="choice">
+<q>Ada's phone sends the same payment request twice because of a weak network. What makes her be charged once?</q>
+<option>The rate limiter blocks the second request</option>
+<option>The browser deduplicates identical POST requests</option>
+<option correct>The Idempotency-Key header, stored with a unique constraint per school: the second request finds the first payment and returns it; and one level down, the same provider reference is never charged twice</option>
+<option>The permissions engine refuses a second payment</option>
+<explain><p>Idempotency is a protocol between client and server (the key) and again between server and provider (the reference). The unique constraint makes it hold even when two copies race.</p></explain>
+</question>
+
+<question id="cs-timeout-status" type="choice">
+<q>KoboPay does not answer within the timeout on any of the three attempts. What does FeesDesk answer, and why?</q>
+<option>500, because an error happened</option>
+<option>402, because the payment failed</option>
+<option correct>202 with the payment still pending, because the charge may or may not have happened; reconciliation settles it later</option>
+<option>201, assuming the provider will succeed</option>
+<explain><p>A timeout means "no answer", not "no". Reporting failure could make the parent pay again and be charged twice; reporting success could credit money that never arrived. Pending is the only honest state.</p></explain>
+</question>
+
+<question id="cs-charge-outside" type="choice">
+<q>Why is the card charged <em>between</em> two transactions instead of inside one?</q>
+<option>The transaction manager forbids network calls</option>
+<option correct>A transaction held open during a slow network call keeps its locks and connection for seconds, and a provider charge cannot be rolled back anyway; recording the intention before and the outcome after keeps both sides consistent</option>
+<option>PGlite cannot run fetch inside a transaction</option>
+<option>It makes the charge faster</option>
+<explain><p>Rolling back a database transaction does not un-charge a card. So FeesDesk records "pending" first, charges, then settles in a second short transaction. A crash in between leaves a pending payment with a reference that reconciliation can finish.</p></explain>
+</question>
+
+<question id="cs-reserve" type="choice">
+<q>Two phones pay the full ₦450,000 for the same bill at the same moment. What stops the school receiving ₦900,000?</q>
+<option>The cache holds the bill for 60 seconds</option>
+<option>The HTTP server handles one request at a time</option>
+<option correct>The reservation: in one transaction, the bill is locked and the new payment is allowed only up to the amount minus what is paid <em>and</em> pending; the second request sees the first one pending and is refused</option>
+<option>KoboPay refuses the second charge</option>
+<explain><p>Subtracting pending payments is what closes the race: the first payment is not yet paid when the second request checks. The <code>CHECK (paid_kobo &lt;= amount_kobo)</code> constraint is the last line of defence if the code is ever wrong.</p></explain>
+</question>
+
+<question id="cs-404" type="choice">
+<q>Tunde, from another school, tries to pay Ada's bill by changing the id in the URL. Why does he get 404 rather than 403?</q>
+<option>403 is reserved for administrators</option>
+<option correct>A 403 would confirm that the bill exists; answering 404 for bills the caller may not even see makes ids impossible to probe</option>
+<option>The router cannot produce 403</option>
+<option>Because the bill really does not exist in the database</option>
+<explain><p><code>requireAccess</code> first asks whether the caller may read the bill. If not, it is "not found", exactly like a missing one. Only someone who can see the bill gets the more precise 403 for an action they may not take.</p></explain>
+</question>
+
+<question id="cs-trust" type="choice">
+<q>Which facts does FeesDesk take from the payment request itself?</q>
+<option>The school, the parent and the amount</option>
+<option>The school and the price</option>
+<option correct>Only the bill id and the amount (both checked); the school and parent come from the session, the price from the bill in the database</option>
+<option>Everything, after schema validation</option>
+<explain><p>Validation proves a value has the right shape, not that the caller is entitled to it. Identity and tenant come from the server's own session record; money owed comes from the database.</p></explain>
+</question>
+
+<question id="cs-retry-which" type="choice">
+<q>Which KoboPay outcomes does <code>chargeWithRetry</code> retry?</q>
+<option>Every error, up to three times</option>
+<option>Only declines, in case the card works the second time</option>
+<option correct>Only a 503 and a timeout: failures that might pass. A decline is an answer, and a 401 from a wrong secret will not fix itself</option>
+<option>Nothing; retries are the queue's job</option>
+<explain><p>Retrying a permanent failure wastes time and can hide a configuration bug; retrying a decline is rude to the parent's bank. The <code>retryIf</code> predicate encodes which failures are transient.</p></explain>
+</question>
+
+<question id="cs-reference" type="choice">
+<q>Why must all three attempts of one charge send the same reference?</q>
+<option>The provider requires a reference on every call</option>
+<option correct>An attempt that timed out may still have been charged; with the same reference the provider returns that charge instead of making a second one</option>
+<option>It makes the logs easier to read</option>
+<option>The rate limiter keys on the reference</option>
+<explain><p>In the provider example, the slow charge timed out three times and KoboPay still made exactly one charge. Idempotent references are what make retries safe for money.</p></explain>
+</question>
+
+<question id="cs-after-commit" type="choice">
+<q>Why is <code>fee.paid</code> published after the settle transaction commits, not inside it?</q>
+<option>Events cannot be published inside async functions</option>
+<option correct>Listeners queue receipts and clear caches; if they ran before commit and the transaction then rolled back, a receipt would go out for money that was never recorded</option>
+<option>Publishing inside a transaction is slower</option>
+<option>The event bus has no access to the database</option>
+<explain><p>Side effects follow facts. The remaining risk, a crash between commit and publish, is what an outbox table fixes (Milestone 3).</p></explain>
+</question>
+
+<question id="cs-context-leak" type="choice">
+<q>With a plain <code>tx.afterCommit(…)</code>, the receipt job kept failing with "Transaction is closed". What was happening?</q>
+<option>The queue ran jobs before the commit</option>
+<option>PGlite closes after every transaction</option>
+<option correct>Work started from the afterCommit callback inherited the finished transaction's async context, so the job's queries and even a new <code>manager.run</code> joined the committed transaction</option>
+<option>The job used the wrong school</option>
+<explain><p>AsyncLocalStorage context flows into everything started from a callback, including timers and queued jobs. Running the callback through <code>context.exit</code> starts that work with no transaction in scope. It is reported as a defect of the published package.</p></explain>
+</question>
+
+<question id="cs-job-tenant" type="choice">
+<q>Why does a receipt job carry only <code>{ schoolId, paymentId }</code>, and call <code>identity.runAs(schoolId, …)</code>?</q>
+<option>Queues can only store two fields</option>
+<option correct>Jobs run outside any request, so there is no tenant context; the worker re-enters the school explicitly and reloads current data, so it can neither act on stale data nor leak across schools</option>
+<option>To make the job faster</option>
+<option>Because the parent's e-mail is secret</option>
+<explain><p>Every piece of background work needs its tenant restored the way a request gets it from the session. Carrying ids instead of copies also means a retried job sees the latest state.</p></explain>
+</question>
+
+<question id="cs-receipt-key" type="choice">
+<q>The queue may run the receipt job twice (a retry after a crash). Why is that harmless?</q>
+<option>The queue guarantees exactly-once delivery</option>
+<option correct>The storage key is fixed per payment (<code>…/receipts/FD-1.txt</code>), so a second run overwrites the same receipt; only the e-mail could be sent twice, which is acceptable for a receipt</option>
+<option>The job checks a global lock</option>
+<option>Receipts are stored in the cache</option>
+<explain><p>At-least-once delivery is the norm; design handlers so a repeat changes nothing important. Deterministic keys are the cheapest way.</p></explain>
+</question>
+
+<question id="cs-ready" type="choice">
+<q>What is the difference between <code>/health</code> and <code>/ready</code> in FeesDesk?</q>
+<option>They are the same endpoint under two names</option>
+<option correct><code>/health</code> says the process is alive; <code>/ready</code> says it should get traffic: the lifecycle is ready, the database answers, and KoboPay's health check passes</option>
+<option><code>/ready</code> is only for the OpenAPI document</option>
+<option><code>/health</code> checks the database and <code>/ready</code> checks nothing</option>
+<explain><p>A load balancer routes by readiness; an orchestrator restarts by liveness. Mixing them makes a slow dependency restart healthy processes.</p></explain>
+</question>
+
+<question id="cs-shutdown" type="choice">
+<q>The lifecycle starts <code>database</code>, then <code>receipts</code> and <code>scheduler</code>, then <code>http</code>. In which order does it stop, and why?</q>
+<option>The same order, so the database closes first</option>
+<option correct>The reverse: http stops taking requests and finishes those in progress, then the workers drain, then the database closes, because each part still needs the ones below it until it is done</option>
+<option>All at once, to be fast</option>
+<option>Only http stops; the rest are killed with the process</option>
+<explain><p>The acceptance suite proves it: a payment in progress during shutdown still answers 201.</p></explain>
+</question>
+
+<question id="cs-singleton" type="choice">
+<q>Why does <code>app.ts</code> pass <code>{ scope: ContainerScope.SINGLETON }</code> to <code>registerFactory</code>?</q>
+<option>Singletons are faster to type-check</option>
+<option correct>A factory registration creates a new object on every <code>resolve</code> by default; services that hold state or connections must be built once and shared</option>
+<option>The container refuses factories without a scope</option>
+<option>It makes the objects immutable</option>
+<explain><p>Without the scope, billing would get a second identity service with its own tenant manager. Know the default of every registration you write.</p></explain>
+</question>
+
+<question id="cs-cron" type="choice">
+<q>Reminders should go out at 08:00 in Lagos. Why is the cron expression <code>"0 7 * * 1-5"</code> with <code>timezone: "UTC"</code>?</q>
+<option>Cron always uses UTC by definition</option>
+<option correct>The published scheduler's cron trigger accepts only UTC or the server's own zone and throws for <code>"Africa/Lagos"</code>; Lagos is UTC+1 all year, so 07:00 UTC is 08:00 there</option>
+<option>So the reminders arrive an hour early</option>
+<option>Because weekdays start at 07:00</option>
+<explain><p>This conversion is only safe because Lagos has no daylight saving. For a zone that changes its offset, you would need a scheduler with real time-zone support or a job that checks the local time itself.</p></explain>
+</question>
+
+<question id="cs-rate-ip" type="choice">
+<q>The login limit test passed, yet the lesson calls the design bad. Why?</q>
+<option>Five attempts is too many</option>
+<option correct>It counts every login per IP, successes included: parents behind one mobile network lock each other out, while an attacker spread over many IPs is not stopped</option>
+<option>Rate limits should never return 429</option>
+<option>The limiter leaks memory</option>
+<explain><p>A test can pass and still describe the wrong behaviour. Count failures per account (school and e-mail), clear them on success, as in exercise 1.</p></explain>
+</question>
+
+<question id="cs-cache" type="choice">
+<q>What does the cache key <code>bills.greenfield.u-ada</code> with the tag <code>bills.greenfield</code> achieve?</q>
+<option>It makes the cache shared between schools</option>
+<option correct>Each school's and parent's list is cached separately, and a payment clears only its own school's entries through the tag</option>
+<option>It encrypts the cached data</option>
+<option>It stops the cache from expiring</option>
+<explain><p>Tenant ids belong in cache keys for the same reason they belong in queries. (The first version used colons, which the cache refuses with a 400: its key parts allow letters, digits, dots, dashes and underscores.)</p></explain>
+</question>
+
+<question id="cs-ledger" type="choice">
+<q>Why does a settled payment write <em>two</em> ledger rows, one positive and one negative?</q>
+<option>To make the table larger</option>
+<option correct>Double-entry bookkeeping: money moves from one account (fees receivable) to another (the provider's clearing account), and every school's ledger sums to zero, which is a check you can run at any time</option>
+<option>One row per retry</option>
+<option>PostgreSQL requires pairs of rows</option>
+<explain><p>A single "amount paid" column can drift without anyone noticing. Balanced entries make errors visible: a sum that is not zero means a bug.</p></explain>
+</question>
+
+<question id="cs-outbox" type="choice">
+<q>The process crashes right after the settle transaction commits and before <code>fee.paid</code> is published. What is lost, and what fixes it?</q>
+<option>The money; a retry of the request fixes it</option>
+<option correct>The receipt and the cache invalidation (the payment itself is safe); writing the event to an outbox table in the same transaction, published by a relay, fixes it</option>
+<option>Nothing, events are stored by the bus</option>
+<option>The ledger; a nightly job fixes it</option>
+<explain><p>The in-memory bus forgets everything on a crash. The outbox makes "the payment is recorded" and "the event will be published" one atomic fact.</p></explain>
+</question>
+
+<question id="cs-flag" type="choice">
+<q>How does Greenfield allow instalments while Unity does not, without any <code>if (school === …)</code> in billing?</q>
+<option>A column in the bills table</option>
+<option correct>A feature flag with a tenant rule, evaluated with <code>{ tenantId: bill.schoolId }</code>; enabling it for Unity is a change to the flag's data, not the code</option>
+<option>Two copies of the billing service</option>
+<option>A permission for each school</option>
+<explain><p>Per-customer behaviour belongs in configuration you can change and audit. The code only asks "is this allowed here?".</p></explain>
+</question>
+
+<question id="cs-statuses" type="choice">
+<q>What do 201, 202 and 402 mean for a payment response?</q>
+<option>Created, created later, and a server error</option>
+<option correct>The payment succeeded; its outcome is pending; the card was declined</option>
+<option>Three kinds of success</option>
+<option>Validation error, conflict, and not found</option>
+<explain><p>Distinct statuses let the client act without parsing text: show a receipt, show "we will confirm", or ask for another card.</p></explain>
+</question>
+
+<question id="cs-reconcile" type="choice">
+<q>When is it safe for the reconciliation job to simply resend a pending charge?</q>
+<option>Always</option>
+<option>Never; it must refund and start again</option>
+<option correct>Only when the provider is idempotent per reference, so resending returns the existing charge; otherwise it must look the charge up by reference and never charge again</option>
+<option>Only between midnight and 6 a.m.</option>
+<explain><p>Exercise 2 shows KoboPay returning the same <code>ch_1</code> for the same reference. Check this property of every provider you integrate before relying on it.</p></explain>
+</question>
+
+<question id="cs-out-idem" type="output">
+<q>What does this print?</q>
+<code file="idempotency.js">
+const payments = new Map();
+let charges = 0;
+
+async function pay(key, amountKobo) {
+  const previous = payments.get(key);
+  if (previous) {
+    if (previous.amountKobo !== amountKobo) return "409";
+    return previous.id;
+  }
+  charges += 1;
+  const payment = { id: `pay_${payments.size + 1}`, amountKobo };
+  payments.set(key, payment);
+  return payment.id;
+}
+
+console.log(await pay("ada-0001", 20000000), await pay("ada-0001", 20000000), await pay("ada-0001", 100), await pay("ada-0002", 100), charges);
+</code>
+<option correct>pay_1 pay_1 409 pay_2 2</option>
+<option>pay_1 pay_2 409 pay_3 3</option>
+<option>pay_1 pay_1 pay_1 pay_2 2</option>
+<option>pay_1 pay_1 409 pay_2 4</option>
+<explain><p>The same key with the same amount replays the first payment without charging; the same key with a different amount is a conflict; a new key is a new payment.</p></explain>
+</question>
+
+<question id="cs-out-outstanding" type="output">
+<q>What does this print?</q>
+<code file="outstanding.js">
+const bill = { amountKobo: 45000000, paidKobo: 10000000 };
+const payments = [
+  { amountKobo: 10000000, status: "succeeded" },
+  { amountKobo: 15000000, status: "pending" },
+  { amountKobo: 5000000, status: "declined" },
+];
+const pending = payments.filter((p) => p.status === "pending").reduce((sum, p) => sum + p.amountKobo, 0);
+const outstanding = bill.amountKobo - bill.paidKobo - pending;
+console.log(outstanding, outstanding >= 25000000);
+</code>
+<option correct>20000000 false</option>
+<option>35000000 true</option>
+<option>15000000 false</option>
+<option>25000000 true</option>
+<explain><p>Succeeded payments are already in <code>paidKobo</code>; pending ones are subtracted too, because they may still succeed; declined ones hold nothing. A new ₦250,000 payment would be refused.</p></explain>
+</question>
+
+<question id="cs-out-ledger" type="output">
+<q>What does this print?</q>
+<code file="ledger.js">
+const ledger = [];
+function settle(paymentId, amountKobo) {
+  ledger.push({ paymentId, account: "kobopay-clearing", amountKobo });
+  ledger.push({ paymentId, account: "fees-receivable", amountKobo: -amountKobo });
+}
+settle(1, 20000000);
+settle(2, 25000000);
+const balance = (account) => ledger.filter((e) => e.account === account).reduce((s, e) => s + e.amountKobo, 0);
+console.log(ledger.length, balance("kobopay-clearing"), balance("fees-receivable"), ledger.reduce((s, e) => s + e.amountKobo, 0));
+</code>
+<option correct>4 45000000 -45000000 0</option>
+<option>2 45000000 -45000000 0</option>
+<option>4 45000000 45000000 90000000</option>
+<option>4 25000000 -25000000 0</option>
+<explain><p>Each payment writes a balanced pair. The clearing account holds what the provider owes the school, receivables went down by the same amount, and the whole ledger sums to zero.</p></explain>
+</question>
+
+<question id="cs-out-flags" type="output">
+<q>What does this print?</q>
+<code file="flags.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([
+    { key: "installments", enabled: true, defaultValue: false, rules: [{ type: "tenant", tenants: ["greenfield"], value: true }] },
+  ]),
+});
+console.log(
+  await flags.isEnabled("installments", { tenantId: "greenfield" }),
+  await flags.isEnabled("installments", { tenantId: "unity" }),
+  await flags.isEnabled("installments"),
+);
+</code>
+<option correct>true false false</option>
+<option>true true false</option>
+<option>true false true</option>
+<option>false false false</option>
+<explain><p>The tenant rule serves <code>true</code> only for the listed tenants. Everyone else, including a call with no context at all, gets the default <code>false</code>: a missing context must never switch a feature on.</p></explain>
+</question>
+
+<question id="cs-out-errors" type="output">
+<q>What does this print?</q>
+<code file="errors.js">
+import { AuthorizationError, RateLimitError, ServiceUnavailableError } from "@zudojs/errors";
+
+for (const error of [new RateLimitError("Too many login attempts"), new AuthorizationError("Not allowed"), new ServiceUnavailableError("KoboPay answered 503")]) {
+  console.log(error.name, error.statusCode, error.expose);
+}
+</code>
+<option correct>RateLimitError 429 true
+AuthorizationError 403 true
+ServiceUnavailableError 503 false</option>
+<option>RateLimitError 429 true
+AuthorizationError 401 true
+ServiceUnavailableError 503 true</option>
+<option>RateLimitError 400 true
+AuthorizationError 403 true
+ServiceUnavailableError 500 false</option>
+<option>Error 500 false
+Error 500 false
+Error 500 false</option>
+<explain><p>Client errors are exposed: their message is safe to send. A 503 from a dependency is not: the client gets a generic answer while the log keeps "KoboPay answered 503". In FeesDesk it never reaches the client anyway, because <code>chargeWithRetry</code> retries it.</p></explain>
+</question>
+
+<question id="cs-out-transient" type="output">
+<q>What does this print?</q>
+<code file="transient.js">
+const transient = (error) => error.name === "ServiceUnavailableError" || error.name === "RPCTimeoutError";
+
+const failures = [
+  { name: "ServiceUnavailableError" },
+  { name: "RPCTimeoutError" },
+  { name: "Error", message: "KoboPay refused the request with 401" },
+  { name: "ValidationError" },
+];
+console.log(failures.map((f) => (transient(f) ? "retry" : "stop")).join(" "));
+</code>
+<option correct>retry retry stop stop</option>
+<option>retry retry retry stop</option>
+<option>retry stop stop stop</option>
+<option>retry retry retry retry</option>
+<explain><p>Only failures that might pass on their own are retried. A 401 means the secret is wrong; retrying it three times only delays the alert.</p></explain>
+</question>
+
+<question id="cs-out-backoff" type="output">
+<q>Exponential backoff without jitter, starting at 50 ms, capped at 500 ms. What does this print?</q>
+<code file="backoff.js">
+const delay = (attempt, base, max) => Math.min(max, base * 2 ** (attempt - 1));
+console.log([1, 2, 3, 4, 5].map((attempt) => delay(attempt, 50, 500)).join(" "));
+</code>
+<option correct>50 100 200 400 500</option>
+<option>50 100 150 200 250</option>
+<option>50 100 200 400 800</option>
+<option>100 200 400 500 500</option>
+<explain><p>Each retry waits twice as long, up to the cap. Real retries add jitter on top, so many clients do not retry at the same instant.</p></explain>
+</question>
+
+<question id="cs-out-status" type="output">
+<q>What does this print?</q>
+<code file="status.js">
+const STATUS = { succeeded: 201, pending: 202, declined: 402 };
+const payments = [{ status: "succeeded" }, { status: "declined" }, { status: "pending" }];
+console.log(payments.map((p) => STATUS[p.status]).join(" "), STATUS.refunded);
+</code>
+<option correct>201 402 202 undefined</option>
+<option>201 402 202 500</option>
+<option>201 202 402 undefined</option>
+<option>201 402 202 404</option>
+<explain><p>A lookup table keeps the mapping in one place. The last value is a warning: a status the table does not know gives <code>undefined</code>, so when you add refunds in Milestone 3, add them here too, and let TypeScript's <code>as const</code> table catch the omission.</p></explain>
+</question>
+
+<question id="cs-out-schema" type="output">
+<q>What does this print?</q>
+<code file="pay-body.js">
+import { schema } from "@zudojs/schema";
+
+const PayBillBody = schema.object({
+  amountKobo: schema.number().int().min(100).max(100_000_000),
+  cardToken: schema.string().min(4).max(64),
+});
+const result = PayBillBody.safeParse({ amountKobo: 250000, cardToken: "tok_visa", schoolId: "unity", priceKobo: 1 });
+console.log(result.success, JSON.stringify(result.data));
+</code>
+<option correct>true {"amountKobo":250000,"cardToken":"tok_visa"}</option>
+<option>true {"amountKobo":250000,"cardToken":"tok_visa","schoolId":"unity","priceKobo":1}</option>
+<option>false undefined</option>
+<option>true {"amountKobo":250000,"cardToken":"tok_visa","schoolId":"unity"}</option>
+<explain><p>Unknown fields are dropped, so a <code>schoolId</code> or a price in the body never reaches billing. The school comes from the session and the price from the bill.</p></explain>
+</question>
+
+<question id="cs-out-cqrs" type="output">
+<q>What does this print?</q>
+<code file="bus.js">
+import { createCommandBus } from "@zudojs/cqrs";
+
+const commands = createCommandBus().register("PayBill", (command) => `school ${command.schoolId} pays bill ${command.billId}`);
+console.log(await commands.execute({ type: "PayBill", billId: 1, schoolId: "greenfield" }));
+console.log(commands.has("PayBill"), commands.has("RefundPayment"));
+</code>
+<option correct>school greenfield pays bill 1
+true false</option>
+<option>school undefined pays bill 1
+true false</option>
+<option>school greenfield pays bill 1
+true true</option>
+<option>PayBill
+true false</option>
+<explain><p>A command's payload fields sit next to its <code>type</code>. The bus routes by type; a missing handler (<code>RefundPayment</code>) is only discovered at run time, which is why the acceptance suite exercises every command.</p></explain>
+</question>
+
+<question id="cs-out-cache-keys" type="output">
+<q>The cache accepts key parts matching <code>/^[a-zA-Z0-9._\-]+$/</code>. What does this print?</q>
+<code file="keys.js">
+const valid = (key) => /^[a-zA-Z0-9._\-]+$/.test(key);
+const key = (school, user) => `bills.${school}.${user}`;
+console.log(valid("bills:greenfield:u-ada"), valid(key("greenfield", "u-ada")), valid(key("unity", "u tunde")));
+</code>
+<option correct>false true false</option>
+<option>true true false</option>
+<option>false true true</option>
+<option>true true true</option>
+<explain><p>Colons and spaces are refused. Build keys from ids you control, never from free text, and include the school so two tenants can never share an entry.</p></explain>
+</question>
+
+<question id="cs-out-rules" type="output">
+<q>A simplified version of FeesDesk's checks, in the same order. What does this print?</q>
+<code file="checks.js">
+function pay({ canSee, canPay, amount, outstanding, partAllowed }) {
+  if (!canSee) return 404;
+  if (!canPay) return 403;
+  if (amount > outstanding) return 400;
+  if (amount < outstanding && !partAllowed) return 400;
+  return 201;
+}
+const ada = { canSee: true, canPay: true, amount: 20000000, outstanding: 45000000, partAllowed: true };
+console.log(pay(ada), pay({ ...ada, partAllowed: false }), pay({ ...ada, canPay: false, canSee: true }), pay({ ...ada, canSee: false, amount: 99999999999 }));
+</code>
+<option correct>201 400 403 404</option>
+<option>201 400 403 400</option>
+<option>201 201 403 404</option>
+<option>201 400 404 404</option>
+<explain><p>Visibility is checked before anything else, so a caller who may not see the bill learns nothing, not even that their amount was too large.</p></explain>
+</question>
+
+<question id="cs-code-outstanding" type="code" file="outstanding.js">
+<q><p>Write <code>outstanding(bill, payments)</code>: the bill's amount minus what is paid minus every <em>pending</em> payment. Declined payments count for nothing.</p></q>
+<starter>
+function outstanding(bill, payments) {
+  // your code here
+}
+
+const bill = { amountKobo: 45000000, paidKobo: 20000000 };
+console.log(outstanding(bill, []));
+console.log(outstanding(bill, [{ amountKobo: 5000000, status: "pending" }, { amountKobo: 25000000, status: "declined" }]));
+</starter>
+<solution>
+function outstanding(bill, payments) {
+  const pending = payments
+    .filter((payment) => payment.status === "pending")
+    .reduce((sum, payment) => sum + payment.amountKobo, 0);
+  return bill.amountKobo - bill.paidKobo - pending;
+}
+
+const bill = { amountKobo: 45000000, paidKobo: 20000000 };
+console.log(outstanding(bill, []));
+console.log(outstanding(bill, [{ amountKobo: 5000000, status: "pending" }, { amountKobo: 25000000, status: "declined" }]));
+</solution>
+<expected>25000000
+20000000</expected>
+<explain><p>Pending payments reserve their amount until they are settled or declined. Without that, two simultaneous payments could each see the full amount outstanding.</p></explain>
+</question>
+
+<question id="cs-code-transient" type="code" file="transient.js">
+<q><p>Write <code>isTransient(error)</code> that returns <code>true</code> for errors worth retrying: <code>statusCode</code> 503, 504 or 429, or a <code>name</code> ending in <code>TimeoutError</code>.</p></q>
+<starter>
+function isTransient(error) {
+  // your code here
+}
+
+const errors = [{ statusCode: 503 }, { name: "RPCTimeoutError" }, { statusCode: 401 }, { statusCode: 429 }, { name: "ValidationError", statusCode: 400 }];
+console.log(errors.map(isTransient).join(" "));
+</starter>
+<solution>
+function isTransient(error) {
+  if ([429, 503, 504].includes(error.statusCode)) return true;
+  return typeof error.name === "string" && error.name.endsWith("TimeoutError");
+}
+
+const errors = [{ statusCode: 503 }, { name: "RPCTimeoutError" }, { statusCode: 401 }, { statusCode: 429 }, { name: "ValidationError", statusCode: 400 }];
+console.log(errors.map(isTransient).join(" "));
+</solution>
+<expected>true true false true false</expected>
+<explain><p>429 and 503 say "not now", 504 and timeouts say "no answer in time". A 400 or 401 will give the same answer however often you ask.</p></explain>
+</question>
+
+<question id="cs-code-once" type="code" file="once.js">
+<q><p>Write <code>once(key, operation)</code>: the first call with a key runs <code>operation()</code> and remembers its promise; later calls with the same key return the same promise, even while the first is still running.</p></q>
+<starter>
+const results = new Map();
+function once(key, operation) {
+  // your code here
+}
+
+let charges = 0;
+const charge = () => new Promise((resolve) => setTimeout(() => resolve(`ch_${++charges}`), 10));
+const all = await Promise.all([once("fd_greenfield_1", charge), once("fd_greenfield_1", charge), once("fd_unity_3", charge)]);
+console.log(all.join(" "), charges);
+</starter>
+<solution>
+const results = new Map();
+function once(key, operation) {
+  if (!results.has(key)) results.set(key, operation());
+  return results.get(key);
+}
+
+let charges = 0;
+const charge = () => new Promise((resolve) => setTimeout(() => resolve(`ch_${++charges}`), 10));
+const all = await Promise.all([once("fd_greenfield_1", charge), once("fd_greenfield_1", charge), once("fd_unity_3", charge)]);
+console.log(all.join(" "), charges);
+</solution>
+<expected>ch_1 ch_1 ch_2 2</expected>
+<explain><p>Storing the promise, not the result, is what covers the simultaneous case: the second call arrives before the first finished. This is how a provider can honour an idempotency key under concurrency.</p></explain>
+</question>
+
+<question id="cs-code-ledger" type="code" file="ledger.js">
+<q><p>Write <code>entriesFor(payment)</code> returning the two ledger rows of a settled payment: <code>kobopay-clearing</code> with the amount, <code>fees-receivable</code> with minus the amount. Print whether the rows sum to zero.</p></q>
+<starter>
+function entriesFor(payment) {
+  // your code here
+}
+
+const rows = entriesFor({ id: 7, schoolId: "greenfield", amountKobo: 35000000 });
+console.log(rows.map((row) => `${row.account} ${row.amountKobo}`).join(" | "));
+console.log(rows.reduce((sum, row) => sum + row.amountKobo, 0) === 0);
+</starter>
+<solution>
+function entriesFor(payment) {
+  return [
+    { schoolId: payment.schoolId, paymentId: payment.id, account: "kobopay-clearing", amountKobo: payment.amountKobo },
+    { schoolId: payment.schoolId, paymentId: payment.id, account: "fees-receivable", amountKobo: -payment.amountKobo },
+  ];
+}
+
+const rows = entriesFor({ id: 7, schoolId: "greenfield", amountKobo: 35000000 });
+console.log(rows.map((row) => `${row.account} ${row.amountKobo}`).join(" | "));
+console.log(rows.reduce((sum, row) => sum + row.amountKobo, 0) === 0);
+</solution>
+<expected>kobopay-clearing 35000000 | fees-receivable -35000000
+true</expected>
+<explain><p>Each row carries the school and the payment, so the books can be checked per school and traced back to a payment. The zero sum is an invariant a test can assert after every scenario.</p></explain>
+</question>
+
+<question id="cs-code-delays" type="code" file="delays.js">
+<q><p>Write <code>delays(attempts, base, max)</code> returning the waits <em>between</em> attempts for exponential backoff: <code>attempts - 1</code> numbers, doubling from <code>base</code>, capped at <code>max</code>.</p></q>
+<starter>
+function delays(attempts, base, max) {
+  // your code here
+}
+
+console.log(delays(3, 50, 500));
+console.log(delays(6, 100, 1000));
+console.log(delays(1, 50, 500));
+</starter>
+<solution>
+function delays(attempts, base, max) {
+  return Array.from({ length: Math.max(0, attempts - 1) }, (_, i) => Math.min(max, base * 2 ** i));
+}
+
+console.log(delays(3, 50, 500));
+console.log(delays(6, 100, 1000));
+console.log(delays(1, 50, 500));
+</solution>
+<expected>[ 50, 100 ]
+[ 100, 200, 400, 800, 1000 ]
+[]</expected>
+<explain><p>Three attempts need two waits. That is how <code>chargeWithRetry</code>'s <code>attempts: 3</code> reads: three calls in total, not three retries.</p></explain>
+</question>
+
+<question id="cs-code-reserve" type="code" file="reserve.js">
+<q><p>Finish <code>reserve(billId, amount)</code> so that two simultaneous full payments cannot both be reserved: check the outstanding amount and record the pending payment with no <code>await</code> in between. Throw <code>new Error("too much")</code> when the amount is more than is left.</p></q>
+<starter>
+const bill = { id: 1, amountKobo: 45000000, paidKobo: 0 };
+const pending = [];
+
+async function reserve(billId, amount) {
+  // your code here
+}
+
+const results = await Promise.allSettled([reserve(1, 45000000), reserve(1, 45000000)]);
+console.log(results.map((r) => r.status).join(" "), pending.length);
+</starter>
+<solution>
+const bill = { id: 1, amountKobo: 45000000, paidKobo: 0 };
+const pending = [];
+
+async function reserve(billId, amount) {
+  const held = pending.filter((p) => p.billId === billId).reduce((sum, p) => sum + p.amount, 0);
+  if (amount > bill.amountKobo - bill.paidKobo - held) throw new Error("too much");
+  pending.push({ billId, amount });
+}
+
+const results = await Promise.allSettled([reserve(1, 45000000), reserve(1, 45000000)]);
+console.log(results.map((r) => r.status).join(" "), pending.length);
+</solution>
+<expected>fulfilled rejected 1</expected>
+<explain><p>In one process, "no await between check and write" makes the step indivisible. In PostgreSQL the same guarantee comes from locking the bill row inside a transaction, which is what <code>FOR UPDATE</code> in <code>reserve</code> does.</p></explain>
+</question>
+
+<question id="cs-code-lock" type="code" file="lockout.js">
+<q><p>Write a login guard: <code>attempt(account, passwordOk)</code> returns <code>429</code> once an account has 3 failures, <code>401</code> for a wrong password (counting it), and <code>201</code> for a right one (clearing the count). Accounts are compared case-insensitively.</p></q>
+<starter>
+const failures = new Map();
+function attempt(account, passwordOk) {
+  // your code here
+}
+
+const out = [];
+for (const ok of [false, false, true, false, false, false, true]) out.push(attempt("greenfield/Ada@Example.com", ok));
+out.push(attempt("greenfield/kemi@example.com", true));
+console.log(out.join(" "));
+</starter>
+<solution>
+const failures = new Map();
+function attempt(account, passwordOk) {
+  const key = account.toLowerCase();
+  if ((failures.get(key) ?? 0) >= 3) return 429;
+  if (!passwordOk) {
+    failures.set(key, (failures.get(key) ?? 0) + 1);
+    return 401;
+  }
+  failures.delete(key);
+  return 201;
+}
+
+const out = [];
+for (const ok of [false, false, true, false, false, false, true]) out.push(attempt("greenfield/Ada@Example.com", ok));
+out.push(attempt("greenfield/kemi@example.com", true));
+console.log(out.join(" "));
+</solution>
+<expected>401 401 201 401 401 401 429 201</expected>
+<explain><p>The success after two failures clears the count; three more failures lock the account, and even the right password is refused while locked. Kemi, on the same network, is never affected. A real version lets the lock expire, as <code>createRateLimiter</code>'s window does.</p></explain>
+</question>

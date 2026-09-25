@@ -1,6 +1,6 @@
 ---
 title: Decorators
-description: Write TC39 standard decorators for classes, methods, fields and accessors, see the JavaScript tsc really emits, and compare them with legacy experimentalDecorators.
+description: Write TC39 standard decorators for classes, methods, fields and accessors, see the JavaScript tsc emits, and compare them with experimentalDecorators.
 minutes: 60
 youNeed: Classes, Conditional types, and the three type-safe infrastructure lessons before this one
 youBuild: Audit, retry, bind, validation and registration decorators for a payments service, column metadata that generates SQL, a type-checked injectable decorator, and a side-by-side look at legacy decorator metadata
@@ -79,7 +79,7 @@ paid out mer_tunde ₦90000
 [ 'charge(cus_ada, 1850000)', 'payout(mer_tunde, 9000000)' ]
 </output>
 <p>The replacement function is a <strong>wrapper</strong>: it does the extra work, then calls the original with the same <code>this</code> and arguments, and returns its result. The <code>@</code> syntax does the same replacement for you, right where the method is written, so the rule is visible and cannot be forgotten in another file. Here is the typed version, written against TypeScript's built-in decorator types:</p>
-<example file="audited.ts" project="payments" browser="no">
+<example file="audited.ts" project="payments">
 export const auditLog: string[] = [];
 
 export function audited<This, Args extends unknown[], R>(
@@ -93,7 +93,7 @@ export function audited<This, Args extends unknown[], R>(
   };
 }
 </example>
-<example file="payments.ts" project="payments" browser="no">
+<example file="payments.ts" project="payments">
 import { audited, auditLog } from "./audited.js";
 
 class PaymentService {
@@ -130,7 +130,7 @@ paid out mer_tunde ₦90000
 <ul>
 <li><code>ClassMethodDecoratorContext&lt;This, Value&gt;</code> is the context type for methods. <code>This</code> is the class instance type and <code>Value</code> the method's type, so one generic decorator works for any method and keeps its exact parameter and return types. <code>context.name</code> is a <code>string | symbol</code>, hence <code>String(…)</code>.</li>
 <li>The decorator's return type must be assignable to the method it replaces. A wrapper that returned a <code>number</code> for a <code>string</code> method would not compile.</li>
-<li>These examples are marked "Node.js only": the next section explains why no browser, and not even plain Node, can run the <code>@</code> syntax today.</li>
+<li>Plain Node cannot run the <code>@</code> syntax directly, on this site or anywhere else: the next section explains why, and which compilers make it work, including this site's browser terminal.</li>
 </ul>
 </section>
 
@@ -143,7 +143,7 @@ paid out mer_tunde ₦90000
 <tr><td><code>tsc</code>, then <code>node</code></td><td>Yes</td><td>tsc rewrites decorators into helper calls (shown later in this lesson)</td></tr>
 <tr><td><code>tsx</code>, esbuild and the bundlers and test runners built on such transpilers</td><td>Yes</td><td>esbuild rewrites them the same way (check your tool's documentation for the decorator version it supports)</td></tr>
 <tr><td><code>node file.ts</code> (type stripping)</td><td>No</td><td>Stripping only removes types; <code>@</code> is JavaScript syntax the engine does not know yet</td></tr>
-<tr><td>This site's browser terminal</td><td>No</td><td>Its compiler (Babel) is not configured for decorators</td></tr>
+<tr><td>This site's browser terminal</td><td>Standard: yes. Legacy: no</td><td>Its compiler (Babel) is configured with the standard (2023-11) decorators plugin, not with <code>experimentalDecorators</code></td></tr>
 <tr><td>Node.js 24 or a browser, directly</td><td>No</td><td>No native support</td></tr>
 </tbody>
 </table></div>
@@ -159,7 +159,7 @@ SyntaxError: Invalid or unexpected token
 
 Node.js v24.19.0
 </shell>
-<p>Node's type stripping passed the <code>@logged</code> line through untouched, because it is not a type, and the engine refused it. That is also why the examples with <code>@</code> on this page run on your computer with <code>npx tsx</code>, not in the browser terminal. The examples without the syntax, like the one above that applies a decorator by hand, still run in the browser.</p>
+<p>Node's type stripping passed the <code>@logged</code> line through untouched, because it is not a type, and the engine refused it. That is why every example with <code>@</code> on this page runs through a compiler rather than directly: on your computer that means <code>npx tsx</code>, and in the browser terminal it means the same standard-decorator transform Babel is configured for here. The legacy <code>experimentalDecorators</code> examples later in this lesson are the exception: this site's browser terminal is not configured for that mode, so they stay Node.js only.</p>
 </section>
 
 <section>
@@ -313,7 +313,7 @@ RangeError: stock cannot be negative (got -3)
 
 <h3 id="classes">Class decorators and registration</h3>
 <p>Class decorators are how frameworks <em>discover</em> your code: "this class handles <code>order.place</code>", "this class is a controller for <code>/orders</code>". A decorator factory can check the class against the command it claims to handle, which gives you the typed handler table of <a href="/learn/ts-typed-cqrs">Type-safe CQRS</a> in decorator form:</p>
-<example file="registry.ts" project="registry" browser="no">
+<example file="registry.ts" project="registry">
 export interface Commands {
   "order.place": { customerId: string; skus: string[] };
   "order.cancel": { orderId: string };
@@ -340,7 +340,7 @@ export function execute<K extends keyof Commands>(type: K, input: Commands[K]): 
   return handler.execute(input);
 }
 </example>
-<example file="place-order.ts" project="registry" browser="no">
+<example file="place-order.ts" project="registry">
 import { handles } from "./registry.js";
 import type { Commands } from "./registry.js";
 
@@ -378,8 +378,19 @@ wrong-handler.ts:3:2 - error TS1238: Unable to resolve signature of class decora
 
 Found 1 error in wrong-handler.ts:3
 </output>
+<reason title="What the compiler can't catch">
+<p><code>wrong-handler.ts</code> just failed to compile because its input type was wrong. Before you read on, think:</p>
+<ul>
+<li>Does that same check know whether <code>"order.cancel"</code> has a handler at all?</li>
+<li>When does <code>handles("order.place")</code> actually run: when its class is written, or only under some condition?</li>
+<li>What would make a correctly typed handler class silently never run in a real program?</li>
+</ul>
+<answer>
+<p>The decorator's type check only fires when the class is decorated, and a class is decorated when its module executes, which happens when something imports it. A handler file that nobody imports never registers, and nothing about the compiler's checking catches that: the types only ever see the classes that got imported and defined. So <code>"order.cancel"</code> can have a perfectly typed, perfectly correct handler sitting right there in the project, and the program still resolves it to "no handler" at runtime.</p>
+</answer>
+</reason>
 <p>A handler whose input does not match its command does not compile. Now the trap that every decorator-based framework shares. The decorator registers the class when the class is <em>defined</em>, which happens when its module is <em>imported</em>. A program that never imports <code>place-order.ts</code> never runs the decorator:</p>
-<example file="main-forgot.ts" project="registry" browser="no">
+<example file="main-forgot.ts" project="registry">
 import { execute } from "./registry.js";
 
 console.log(execute("order.place", { customerId: "cus_ada", skus: ["RICE-50KG"] }));
@@ -387,7 +398,7 @@ console.log(execute("order.place", { customerId: "cus_ada", skus: ["RICE-50KG"] 
 <output>
 no handler for order.place
 </output>
-<example file="main.ts" project="registry" browser="no">
+<example file="main.ts" project="registry">
 import "./place-order.js";
 import { execute } from "./registry.js";
 
@@ -531,13 +542,13 @@ initializer of status field
   }
 }
 </file>
-<example file="polyfill.ts" project="meta" browser="no">
+<example file="polyfill.ts" project="meta">
 if (typeof Symbol.metadata !== "symbol") {
   Object.defineProperty(Symbol, "metadata", { value: Symbol.for("Symbol.metadata") });
 }
 </example>
 <p>Using <code>Symbol.for("Symbol.metadata")</code> matters: it is the same symbol esbuild (and so <code>tsx</code>) falls back to, so code compiled by either tool finds the same metadata. Now a <code>@column</code> decorator that records each field's database type:</p>
-<example file="columns.ts" project="meta" browser="no">
+<example file="columns.ts" project="meta">
 import "./polyfill.js";
 
 type ColumnType = "text" | "integer" | "boolean";
@@ -571,7 +582,7 @@ console.log(columnsOf(PerishableProduct));
 { sku: 'text', priceKobo: 'integer', shelfLifeDays: 'integer' }
 </output>
 <p>Look at the first line: <code>Product</code> now claims a <code>shelfLifeDays</code> column it does not have. A subclass's metadata object <em>inherits</em> from its parent's through the prototype chain, so that <code>PerishableProduct</code> sees the parent's columns. <code>context.metadata.columns ??= {}</code> found the parent's inherited <code>columns</code> object and added to it. Every metadata decorator must create its own copy before writing:</p>
-<example file="columns-fixed.ts" project="meta" browser="no">
+<example file="columns-fixed.ts" project="meta">
 import "./polyfill.js";
 
 type ColumnType = "text" | "integer" | "boolean";
@@ -891,7 +902,7 @@ $ node dist/services.js
 <h2 id="frameworks">Why frameworks use decorators</h2>
 <p>Decorators let a framework read your intentions from the code itself: <em>this class is a controller at <code>/orders</code>, this method handles <code>POST</code>, this field must be an e-mail, this class is injectable</em>. The alternative is a separate registration file that repeats every name, and drifts. They also let the framework wrap your methods (transactions, caching, permission checks) without you calling it. The price is that behaviour is added somewhere you do not see, registration depends on imports, and the code only runs through a compiler.</p>
 <p>With standard decorators you can keep most of the type safety of the earlier lessons. This <code>@injectable</code> registers a class under a token and checks the constructor against its dependency tokens, using the <code>TypesOf</code> type from <a href="/learn/ts-typed-di">the DI lesson</a>:</p>
-<example file="injectable.ts" project="inject" browser="no">
+<example file="injectable.ts" project="inject">
 export class Token<T> {
   declare readonly __type: T;
   constructor(readonly name: string) {}
@@ -922,7 +933,7 @@ export function resolve<T>(token: Token<T>): T {
   return (registration.create as (...deps: unknown[]) => unknown)(...args) as T;
 }
 </example>
-<example file="checkout.ts" project="inject" browser="no">
+<example file="checkout.ts" project="inject">
 import { Token, injectable, provide, resolve } from "./injectable.js";
 
 interface Clock {
@@ -997,7 +1008,7 @@ Found 1 error in checkout-wrong.ts:14
 
 <h3 id="zudo">Decorators in ZudoJS</h3>
 <p>Most ZudoJS packages avoid decorators and use explicit functions (<code>createToken</code>, <code>registerFactory</code>, <code>defineEvent</code>), which run anywhere and need no compiler option. <code>@zudojs/cqrs</code> is the exception: <code>CommandHandlerFor(type)</code> and <code>QueryHandlerFor(type)</code> mark a class as the handler for a request type. They are typed as the legacy <code>ClassDecorator</code>, but they only use the class they receive, so they work with standard decorators too. They only <em>mark</em> the class; discovering marked classes and registering them on a bus is your code's job:</p>
-<example file="zudo-handlers.ts" project="zudo" browser="no">
+<example file="zudo-handlers.ts" project="zudo">
 import { CommandHandlerFor, createCommand, createCommandBus, getCqrsType } from "@zudojs/cqrs";
 
 @CommandHandlerFor("order.place")

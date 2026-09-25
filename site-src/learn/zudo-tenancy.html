@@ -1,10 +1,11 @@
 ---
 title: Multi-tenancy
-description: Serve many companies from one Task API without ever mixing their data. Tenant ids, resolvers and trust levels, resolver chains, AsyncLocalStorage context and tenant-scoped queries with @zudojs/tenancy.
+description: Serve many companies from one Task API without mixing their data: tenant ids, resolvers, trust levels and tenant-scoped queries with @zudojs/tenancy.
 minutes: 45
 youNeed: The Task API project, the auth and database lessons
 youBuild: A Task API where each company only ever sees its own tasks, with the tenant taken from the verified session and never from a header
 keywords: zudojs tenancy, multi-tenancy, saas, tenant id, tenant isolation, tenant resolver, resolver chain, trust level, x-tenant-id, AsyncLocalStorage, tenant context, tenant_id column
+objectives: Normalize and validate a tenant id so it is safe in keys, paths and log lines | Resolve which tenant a request belongs to and rank sources by trust level | Chain resolvers by priority and refuse an untrusted or inactive tenant with the same generic answer | Carry the current tenant through a request with AsyncLocalStorage instead of a parameter | Scope every query and cache key to the tenant in context, so another tenant's row reads as a 404
 ---
 <section>
 <h2 id="what">One app, many customers</h2>
@@ -121,6 +122,12 @@ nothing          no tenant
 
 <section>
 <h2 id="trust">Enforce trust and status</h2>
+<reason title="A tenant id can fail for three different reasons: it does not exist, it exists but is suspended, or it was resolved from an untrusted source. Should the client see which one happened?">
+<p>Imagine you are an attacker who does not know which company names are Task API customers. If "unknown tenant" and "suspended tenant" produced different responses, what could you learn by trying tenant ids such as <code>acme</code>, <code>initech</code> and a hundred guesses, and watching which response each one got?</p>
+<answer>
+<p>A different response per reason turns the endpoint into an oracle: a 404 for guesses that do not exist and a distinct answer, say 403, for <code>initech</code> would confirm that Initech is a real, if suspended, customer &mdash; information the client had no business learning, and a plausible first step in social-engineering or targeting that company. That is why an unknown tenant and a suspended one get the identical <code>404 Tenant not found</code>: from outside, "does not exist" and "exists but you may not use it" must be indistinguishable, the same reasoning that made a missing task and someone else's task both answer 404 earlier in this course. The untrusted-source case is different in kind, not degree: it is not a fact about the tenant, it is a fact about how the request itself was resolved, so it is allowed to answer <code>403</code> without revealing anything about which tenants exist.</p>
+</answer>
+</reason>
 <p>Resolving is not enough: you must also check that the answer is trustworthy and that the tenant may use the app. <code>assertTrustLevel</code> refuses anything below the level you require, and <code>createTenantManager</code> loads the tenant and refuses tenants that are not active:</p>
 <example file="enforce.ts" project="tenancy" browser="no">
 import { assertTrustLevel, createResolverChain, createHeaderResolver, createJwtResolver, createTenantContextStorage, createTenantManager, TenantError } from "@zudojs/tenancy";
@@ -281,7 +288,7 @@ acme asks for task 2: undefined
 globex sees: [ { id: 2, title: 'Globex: secret merger plan' } ]
 </output>
 <p>This is the test that matters. Acme asked for task 2 by its id, which is easy to guess because ids count up. The query found nothing, because task 2 belongs to Globex: <code>and tenant_id = $2</code> is part of the lookup. For the client, "belongs to someone else" and "does not exist" must look the same: a 404. Answering 403 would tell an attacker that the id exists.</p>
-<tip>Use the tenant in other keys too. <code>tenantKey(tenantId, "tasks:list")</code> builds a cache key like <code>tenant:acme:tasks\:list</code>, so one tenant's cached list is never served to another, and <code>assertTenantOwnership(resource, tenantId)</code> throws a <code>TenantIsolationError</code> if an object from the wrong tenant reaches your code.</tip>
+<tip>Scope other keys to the tenant too, but through <a href="/learn/zudo-cache">the cache's</a> own <code>namespace</code> option, not by joining the tenant into the key text yourself: <code>cache.set("tasks.list", value, { namespace: tenantId })</code> keeps one tenant's cached list from ever being served to another. <code>@zudojs/cache</code> rejects any key or namespace containing its <code>:</code> separator with <code>ERR_INVALID_INPUT</code>, so a colon-joined string such as what <code>tenantKey(tenantId, "tasks:list")</code> builds would throw the moment you passed it in as a single cache key, rather than scoping anything. <code>assertTenantOwnership(resource, tenantId)</code> still throws a <code>TenantIsolationError</code> if an object from the wrong tenant reaches your code.</tip>
 </section>
 
 <section>
@@ -438,4 +445,5 @@ rename Globex's task: false
 <li>The tenant context lives in AsyncLocalStorage: <code>run</code> sets it, <code>requireCurrentTenant</code> reads it, and code outside a tenant fails loudly.</li>
 <li>Every query filters on <code>tenant_id</code>, taken from the context and passed as a parameter. Another tenant's row is a 404.</li>
 </ul>
+<p>Next, <a href="/learn/zudo-plugins">Plugins</a> lets other code extend the Task API through a fixed interface, without editing it.</p>
 </section>

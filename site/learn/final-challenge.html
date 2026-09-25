@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Final production challenge — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/final-challenge.md" title="Markdown version">
-  <meta name="description" content="Someone else's gift-card feature works in the demo and fails everything else. Find its architectural problems, then make it production-ready step by step, with acceptance criteria, hints and worked solutions for the key fixes.">
+  <meta name="description" content="Someone else's gift-card feature works in the demo and fails everything else. Find its problems, fix them step by step, and prove each fix with a test.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/final-challenge">
@@ -93,7 +93,7 @@
         <div class="lx-hero-tag">LEVEL 19 · LESSON 10 OF 10</div>
         <p class="lx-hero-part">Capstone <span class="lx-tier lx-tier-production" title="Production: Learn it when you prepare a real application for deployment.">Production</span></p>
         <h1>Final production challenge</h1>
-        <p class="lx-hero-lead">Someone else's gift-card feature works in the demo and fails everything else. Find its architectural problems, then make it production-ready step by step, with acceptance criteria, hints and worked solutions for the key fixes.</p>
+        <p class="lx-hero-lead">Someone else's gift-card feature works in the demo and fails everything else. Find its problems, fix them step by step, and prove each fix with a test.</p>
         <ul class="lx-hero-meta">
           <li><strong>120 min</strong> to read and try</li>
           <li><strong>You need:</strong> The whole course, especially the ShopFlow capstone</li>
@@ -105,6 +105,17 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Read someone else's code for security, correctness, architecture and operations problems, and name at least ten before changing anything</li>
+          <li>Replace string-built SQL and a check-then-act redemption with parameterized queries and one atomic UPDATE that closes the race</li>
+          <li>Move authentication to a session token and authorization to "only your own wallet", removing every endpoint that trusts a caller-supplied user id</li>
+          <li>Wrap a debit and credit in one transaction and roll both back when either fails</li>
+          <li>Write tests that fail on the original code and pass on the fix, including one that redeems the same card twice at once</li>
+          <li>Work through a production checklist (events, queues, caching, rate limits, observability, OpenAPI, deployment) against a feature that started as a prototype</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="situation">The situation</h2>
@@ -688,6 +699,11 @@ end: user 1: 6000, user 2: 1000</pre></div>
 </section>
 
 <section>
+<h2 id="reason-redeem">Before you trust the fix</h2>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Why does folding the check into the UPDATE close the race, and does the fix need a test to prove it?</h3><p>The original code ran a <code>SELECT</code> for an unused card, then a separate <code>UPDATE</code>. Two redemptions of the same code sent together could both pass that <code>SELECT</code> before either <code>UPDATE</code> ran, so the card would pay twice. The fix folds the check into the <code>UPDATE</code> itself. Why does that close the race, and is reading the code enough, or do you still need a test that fires two redemptions at once?</p><details class="lx-solution"><summary>Show the reasoning</summary><p><code>UPDATE gift_cards SET redeemed_by = $1 WHERE code = $2 AND redeemed_by IS NULL RETURNING amount_cents</code> is one atomic statement: PostgreSQL locks the row for whichever request's <code>UPDATE</code> reaches it first, and the second request's <code>UPDATE</code> now matches <code>redeemed_by IS NULL</code> against a row that already has a redeemer, so it claims zero rows and throws <code>NotFoundError</code>. Reading the code is a hypothesis, not proof: a test that calls <code>redeem</code> twice with <code>Promise.allSettled</code> and asserts exactly one call is fulfilled is what turns "this should close the race" into a fact — the test Step 4 asks you to write.</p></details></div>
+</section>
+
+<section>
 <h2 id="tests">Step 4: prove it with tests</h2>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>One test per incident</h3><p>Write Vitest tests for the wallet module. Give every test a fresh database, so tests cannot affect each other. Include the race: redeem the same card twice <em>at the same time</em> with <code>Promise.allSettled</code>, and require exactly one success.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="6" data-file="wallets.test.ts" data-project="challenge">
 <figcaption class="lx-bar"><span class="lx-file">wallets.test.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
@@ -866,6 +882,7 @@ describe("wallets", () => {
       <a href="#identify" class="toc-link">Step 1: name the problems</a>
       <a href="#checklist" class="toc-link">Step 2: the checklist</a>
       <a href="#fix-core" class="toc-link">Step 3: fix security and data</a>
+      <a href="#reason-redeem" class="toc-link">Before you trust the fix</a>
       <a href="#tests" class="toc-link">Step 4: prove it with tests</a>
       <a href="#finish" class="toc-link">Step 5: make it production-ready</a>
       <a href="#ready" class="toc-link">You are now ready to build with ZudoJS</a>

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>The ZudoJS error system — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-errors.md" title="Markdown version">
-  <meta name="description" content="Handle failures the ZudoJS way. Tell expected errors from bugs, use and extend the error classes in @zudojs/errors, choose codes and categories, serialize errors safely for clients and fully for logs, and turn every error in the Task API into the right HTTP response.">
+  <meta name="description" content="Handle failures the ZudoJS way: expected errors versus bugs, your own error classes, safe bodies for clients, full logs, and one handler for the Task API.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-errors">
@@ -105,10 +105,10 @@
         <div class="lx-hero-tag">LEVEL 12 · LESSON 19 OF 19</div>
         <p class="lx-hero-part">Configuration, validation and errors <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>The ZudoJS error system</h1>
-        <p class="lx-hero-lead">Handle failures the ZudoJS way. Tell expected errors from bugs, use and extend the error classes in @zudojs/errors, choose codes and categories, serialize errors safely for clients and fully for logs, and turn every error in the Task API into the right HTTP response.</p>
+        <p class="lx-hero-lead">Handle failures the ZudoJS way: expected errors versus bugs, your own error classes, safe bodies for clients, full logs, and one handler for the Task API.</p>
         <ul class="lx-hero-meta">
           <li><strong>45 min</strong> to read and try</li>
-          <li><strong>You need:</strong> Schemas and validation in depth</li>
+          <li><strong>You need:</strong> "Validation rules with @zudojs/validation", and "Schemas and validation in depth"</li>
           <li><strong>You build:</strong> One error handler for the Task API that answers every failure with the right status, a stable code, validation details and a request id, and never leaks internals</li>
         </ul>
         <div class="lx-hero-actions">
@@ -117,6 +117,16 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Tell expected, operational failures from bugs, and answer each with the right status</li>
+          <li>Read and use the fields every ZudoJS error shares: statusCode, code, category, expose and isOperational</li>
+          <li>Write your own error class with a stable code, and decide what may go in its metadata</li>
+          <li>Serialize an error safely for a client and completely for your logs</li>
+          <li>Give every error in the Task API one consistent, safe response body with a request id</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="kinds">Two kinds of failure</h2>
@@ -271,7 +281,7 @@ try {
 </figure>
 <ul>
 <li>The <code>code</code> is your own string. Prefix it (<code>ERR_</code>) and keep it stable: clients will write <code>if (body.error.code === "ERR_TASK_ALREADY_DONE")</code>.</li>
-<li><code>metadata</code> holds facts about the failure. It is copied and frozen, so nobody can change it later. Only put in what a client may see, or what the log needs; never a password or a token.</li>
+<li><code>metadata</code> holds facts about the failure. It is copied and frozen, so nobody can change it later. Look at the last output: for an exposed error such as this 409, <code>serializePublicError</code> sends the metadata to the client. So only put there what a client may see. Facts for your logs only belong in the log line, or in the metadata of a 5xx error, which is never exposed. Never a password or a token.</li>
 <li><code>name</code> was set to the class name for you.</li>
 <li>409 Conflict fits: the request clashes with the current state of the task.</li>
 </ul>
@@ -379,6 +389,12 @@ NotFoundError  404 ERR_RESOURCE_NOT_FOUND   true</pre></div>
 <li>The <strong>client</strong> needs a code, a safe message, and nothing else. A stack trace, an SQL query or a file path tells an attacker how your system is built.</li>
 <li><strong>Your logs</strong> need everything: the stack, the cause, the metadata, so you can find the bug.</li>
 </ul>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>What may the client see?</h3><p>A request fails because the database refused a query. The error knows the failing SQL, the table name, the database host, a stack trace, and, because someone logged too much, the connection password. Before reading on, decide what the client's response body should contain, what your log should contain, and what should appear in neither. Would your answer change for a 404 whose metadata holds the missing task's id?</p><details class="lx-solution"><summary>Show the reasoning</summary><ul>
+<li><strong>The client</strong> of a 500 gets a stable code and a generic message, nothing else. SQL, table names, hosts and stack traces are a map of your system for an attacker, and the client cannot act on them anyway.</li>
+<li><strong>Your log</strong> gets everything that helps you fix the bug: the real message, the SQL, the stack and the cause.</li>
+<li><strong>Neither</strong> gets the password: logs are copied and read widely, so secrets are redacted even there.</li>
+<li>A <strong>404</strong> is different: the client made the mistake and needs to know which task was missing, so its message and a <code>taskId</code> in its metadata may be sent. That is why exposure depends on the status: 4xx errors are exposed, 5xx errors are not.</li>
+</ul></details></div>
 <p><code>serializePublicError(error)</code> is for clients. <code>error.toJSON()</code> is for logs. Here both look at a database failure whose metadata holds the failing SQL and, by mistake, a password:</p>
 <figure class="lx-example" data-index="4" data-file="serialize.ts">
 <figcaption class="lx-bar"><span class="lx-file">serialize.ts</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="4"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
@@ -631,7 +647,8 @@ export function toErrorResponse(thrown: unknown, requestId: string, report: Erro
 <ul>
 <li>It always answers, so no error is thrown on to a plain 500 any more. A bug still gets a 500, with the generic message from <code>serializePublicError</code>.</li>
 <li>Only bugs are reported. A 404 is not something to fix, and logging every one would bury the real problems. The <code>report</code> function is a parameter, so a test can see what would be logged; <code>logBugs</code> builds the real one from a logger.</li>
-<li>The body keeps the field names the generated code already uses, <code>error</code> and <code>code</code>, and adds the <code>requestId</code> (also sent as the <code>x-request-id</code> header). For a <code>SchemaError</code> it adds the <code>issues</code>, shaped like the generated <code>validationFailed</code> helper: a <code>path</code> and a <code>message</code> per problem. Nothing else from the error reaches the client.</li>
+<li>The body keeps the field names the generated code already uses, <code>error</code> and <code>code</code>, and adds the <code>requestId</code> (also sent as the <code>x-request-id</code> header). For a <code>SchemaError</code> it adds the <code>issues</code>, shaped like the generated <code>validationFailed</code> helper: a <code>path</code> and a <code>message</code> per problem. It takes only <code>code</code> and <code>message</code> from <code>serializePublicError</code>, so an exposed error's metadata does not reach the client either.</li>
+<li>The title rules from <a href="/learn/zudo-validation-rules#task-api">the last lesson</a> throw <code>@zudojs/validation</code>'s <code>ValidationError</code>, which <code>isSchemaValidationError</code> does not recognise, so their answers carry no <code>issues</code> list. Their <code>message</code> already names each failing field, as that lesson designed. The broken-task check from the same lesson throws an <code>InternalServerError</code>: not operational, so <code>logBugs</code> writes it to the log with its <code>taskId</code> and failing fields.</li>
 </ul>
 <p>In <code>src/server.ts</code>, import the two functions instead of <code>errorResponse</code>, build the reporter from the runtime's logger, and let <code>dispatch</code> return the answer:</p>
 <figure class="lx-example" data-index="9" data-file="src/server.ts (part)">
@@ -868,7 +885,7 @@ for (const id of [1, 1, 5]) {
 <li><code>serializePublicError</code> for clients, <code>toJSON()</code> for logs, <code>normalizeToBaseError</code> for anything thrown. Never send a stack trace.</li>
 <li>In <code>@zudojs/http</code>, one error-handling middleware just before the router catches every error a route throws, and gives it the same body with a request id.</li>
 </ul>
-<p>That completes the ZudoJS core: a runtime, a container, routes, middleware, configuration, validation and errors. The next part replaces the in-memory store with a real database.</p>
+<p>That completes ZudoJS fundamentals: the CLI, the core, runtime and lifecycle, dependency injection, routes, middleware, configuration, validation and errors. The next course, ZudoJS application development, replaces the in-memory store with a real database. Next, <a href="/learn/zudo-database">Databases with @zudojs/database</a>.</p>
 </section>
       </div>
 

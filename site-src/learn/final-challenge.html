@@ -1,10 +1,11 @@
 ---
 title: Final production challenge
-description: Someone else's gift-card feature works in the demo and fails everything else. Find its architectural problems, then make it production-ready step by step, with acceptance criteria, hints and worked solutions for the key fixes.
+description: Someone else's gift-card feature works in the demo and fails everything else. Find its problems, fix them step by step, and prove each fix with a test.
 minutes: 120
 youNeed: The whole course, especially the ShopFlow capstone
 youBuild: A secure, transactional, tested and deployable gift-card and wallet service, fixed from a broken one
 keywords: final challenge, code review, sql injection, parameterized queries, missing authentication, authorization, idor, transaction, race condition, validation, tests, production readiness, zudojs
+objectives: Read someone else's code for security, correctness, architecture and operations problems, and name at least ten before changing anything | Replace string-built SQL and a check-then-act redemption with parameterized queries and one atomic UPDATE that closes the race | Move authentication to a session token and authorization to "only your own wallet", removing every endpoint that trusts a caller-supplied user id | Wrap a debit and credit in one transaction and roll both back when either fails | Write tests that fail on the original code and pass on the fix, including one that redeems the same card twice at once | Work through a production checklist (events, queues, caching, rate limits, observability, OpenAPI, deployment) against a feature that started as a prototype
 tier: production
 ---
 <section>
@@ -364,6 +365,16 @@ end: user 1: 6000, user 2: 1000
 </ul>
 </solution>
 </exercise>
+</section>
+
+<section>
+<h2 id="reason-redeem">Before you trust the fix</h2>
+<reason title="Why does folding the check into the UPDATE close the race, and does the fix need a test to prove it?">
+<p>The original code ran a <code>SELECT</code> for an unused card, then a separate <code>UPDATE</code>. Two redemptions of the same code sent together could both pass that <code>SELECT</code> before either <code>UPDATE</code> ran, so the card would pay twice. The fix folds the check into the <code>UPDATE</code> itself. Why does that close the race, and is reading the code enough, or do you still need a test that fires two redemptions at once?</p>
+<answer>
+<p><code>UPDATE gift_cards SET redeemed_by = $1 WHERE code = $2 AND redeemed_by IS NULL RETURNING amount_cents</code> is one atomic statement: PostgreSQL locks the row for whichever request's <code>UPDATE</code> reaches it first, and the second request's <code>UPDATE</code> now matches <code>redeemed_by IS NULL</code> against a row that already has a redeemer, so it claims zero rows and throws <code>NotFoundError</code>. Reading the code is a hypothesis, not proof: a test that calls <code>redeem</code> twice with <code>Promise.allSettled</code> and asserts exactly one call is fulfilled is what turns "this should close the race" into a fact — the test Step 4 asks you to write.</p>
+</answer>
+</reason>
 </section>
 
 <section>

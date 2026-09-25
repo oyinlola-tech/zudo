@@ -299,3 +299,15 @@ Browser lessons use `runtime="dom"` examples (see the brief).
 - capstone-shopflow (*existing*).
 - **capstone-saas** — The final capstone: a production-grade SaaS combining core, DI, config, database, storage, cache, HTTP, API operations, validation, OpenAPI, security, auth, OAuth, permissions, services, repositories, commands, queries, events, queue, scheduler, messaging, RPC, plugins, adapters, flags, tenancy, transactions, retries, timeouts, shutdown, health, logs, metrics, tracing and tests — with the graduation standard as its checklist.
 - final-challenge (*existing*).
+
+## Graduation standard (from the user's ZudoJS outline, verbatim list)
+
+A student graduates when they can independently: design a backend; create a ZudoJS application; use the CLI;
+structure modules; configure the application; use dependency injection; build HTTP APIs; validate input;
+handle errors; authenticate users; authorize users; use OAuth; work with databases; use transactions; cache
+data; store files; publish events; process messages; run background jobs; schedule tasks; use CQRS; build RPC
+services; serialize distributed data; create adapters; create plugins; implement tenancy; use feature flags;
+generate OpenAPI documentation; test the system; instrument the system; secure the system; deploy the system;
+debug failures; reason about architecture; scale the system; read framework source code; extend ZudoJS. Most
+importantly, they understand why they are doing each of these things. (capstone-saas#graduation maps each to
+the lessons that teach it.)
