@@ -129,6 +129,7 @@
 <section>
 <h2 id="raw-request">What a request really looks like</h2>
 <p>In <a href="/learn/node-http">the node:http lesson</a> you wrote a server, and <code>node:http</code> handed you a neat <code>req</code> object. Under that object there is only text, sent over a network connection. That text follows a set of rules called <strong>HTTP</strong> (HyperText Transfer Protocol). A <strong>protocol</strong> is an agreement about who says what, and in which format.</p>
+<p>This course starts with the parts every backend shares, whatever language it is written in: HTTP, REST design and SQL. So the first lessons use short, plain JavaScript examples that you can read at a glance. From <a href="/learn/ts-node">TypeScript on Node.js</a> on, everything is typed, and you build the BookStore API in TypeScript.</p>
 <p>To see the text itself, skip <code>node:http</code> and use <code>node:net</code>, which gives you the raw connection. This server prints every byte it receives, then answers by writing an HTTP response by hand. <code>fetch</code> plays the client:</p>
 <figure class="lx-example" data-index="0" data-file="raw-request.js">
 <figcaption class="lx-bar"><span class="lx-file">raw-request.js</span><button type="button" class="lx-edit" data-index="0" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -501,6 +502,14 @@ server.listen(0, async () => {
 <li><strong>201 Created</strong>: everything is valid, and the title was trimmed.</li>
 </ul>
 <p>The body is read with <code>for await</code> because it arrives in pieces over the connection, as you saw with streams in <a href="/learn/node-streams">the streams lesson</a>. A real server also limits how many bytes it reads, so nobody can send a gigabyte of "JSON".</p>
+<h3>Headers that control caching</h3>
+<p>Browsers, proxies and CDNs keep copies of responses to avoid asking again. The server decides what they may keep with the <code>Cache-Control</code> response header:</p>
+<ul>
+<li><code>Cache-Control: no-store</code>: never keep a copy. Use it for anything personal, such as an account page or an API answer with a user's orders.</li>
+<li><code>Cache-Control: private, max-age=60</code>: only the user's own browser may keep it, for 60 seconds.</li>
+<li><code>Cache-Control: public, max-age=86400</code>: anyone, including a shared CDN, may keep it for a day. Right for a logo or a product photo.</li>
+</ul>
+<p>With an <code>ETag</code> header (a version label for the response), a browser can later ask "has it changed?" by sending that label back in <code>If-None-Match</code>. If it has not, the server answers <strong>304 Not Modified</strong> with no body, and the browser reuses its copy. <a href="/learn/backend-caching">Caching</a>, later in this course, builds caches inside your own server.</p>
 </section>
 
 <section>
@@ -718,6 +727,15 @@ after two PUTs: [
 ]</pre></div>
 </figure>
 <p>That is why a browser warns you before it resends a form (a <code>POST</code>), but reloads a normal page (a <code>GET</code>) without asking. Never change data in a <code>GET</code> handler: a link preview or a search engine could trigger it.</p>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>The answer never arrived</h3><p>A mobile app sends a request, the train enters a tunnel, and the connection drops before the response arrives. The app does not know whether the server did the work. For each request, decide: may the app simply send it again?</p>
+<ul>
+<li><code>GET /tasks/7</code></li>
+<li><code>PUT /tasks/7</code> with <code>{"title": "Buy oat milk", "done": true}</code></li>
+<li><code>DELETE /tasks/7</code>. The first attempt did delete it; what does the retry answer?</li>
+<li><code>POST /transfers</code> with <code>{"to": "0123456789", "amountKobo": 500000}</code></li>
+</ul><details class="lx-solution"><summary>Show the reasoning</summary><p><code>GET</code> is safe: it changed nothing, so repeating it is harmless. <code>PUT</code> is idempotent: the second one sets the task to the same state again, so the result is the same whether the first one arrived or not.</p>
+<p><code>DELETE</code> is idempotent too, but look closely at what that means. The retry probably answers <strong>404 Not Found</strong>, because the task is already gone. Idempotency is about the <em>state of the server</em> (after one or two deletes, task 7 is gone either way), not about getting the same status code back. A client that retries a <code>DELETE</code> should treat 404 as "done".</p>
+<p><code>POST /transfers</code> is neither safe nor idempotent. If the first request arrived, a retry sends ₦5,000 a second time. The app must not retry it blindly. The standard fix is an <strong>idempotency key</strong>: the client sends a unique id with the request, and the server remembers which ids it has already carried out. <a href="/learn/api-idempotency">Idempotency and safe retries</a> builds that.</p></details></div>
 </section>
 
 <section>
@@ -876,8 +894,10 @@ sid=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax</pre></div>
 <li><code>Content-Type</code> names the body's format. Check it, parse JSON inside <code>try</code>/<code>catch</code>, and validate every field.</li>
 <li>Cookies carry a random session id, never trusted data. Set <code>HttpOnly</code>, <code>Secure</code>, <code>SameSite=Lax</code> and a <code>Max-Age</code>.</li>
 <li>GET, HEAD and OPTIONS are safe. PUT and DELETE are idempotent. POST is neither.</li>
+<li><code>Cache-Control</code> tells browsers and CDNs what they may keep: <code>no-store</code> for personal data, <code>max-age</code> for the rest.</li>
 <li>2xx success, 3xx look elsewhere, 4xx the client's mistake, 5xx the server's.</li>
 </ul>
+<p>Next: <a href="/learn/rest-design">Designing a REST API</a>, where you turn these building blocks into an API that other developers can guess.</p>
 </section>
       </div>
 
