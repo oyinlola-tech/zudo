@@ -136,13 +136,13 @@ const results = await mapWithLimit(customers, 5, (to) => provider.send(to, "Week
 console.log("sent", provider.stats.sent, "| peak connections", provider.stats.peak);
 console.log("results in input order:", results[0].split(" to ")[1], "...", results.at(-1).split(" to ")[1]);
 
-// Pool against batches, with emails that take 5, 10, 15 or 20 ms.
+// Pool against batches: every fifth email is slow (50 ms), the others take 5 ms.
 async function inBatches(items, size, fn) {
   const out = [];
   for (let i = 0; i < items.length; i += size) out.push(...(await Promise.all(items.slice(i, i + size).map(fn))));
   return out;
 }
-const delayMs = (to) => 5 + ((Number(to.match(/\d+/)[0]) * 7) % 4) * 5;
+const delayMs = (to) => (Number(to.match(/\d+/)[0]) % 5 === 0 ? 50 : 5);
 const sample = customers.slice(0, 60);
 const times = {};
 
@@ -156,16 +156,16 @@ for (const [name, run] of [
   times[name] = Date.now() - start;
   console.log(`${name.padEnd(7)} sent ${p.stats.sent}, peak ${p.stats.peak}`);
 }
-console.log("the pool took less time than batches:", times.pool < times.batches);
+console.log("the pool took less than half as long as batches:", times.pool * 2 < times.batches);
 </example>
 <output>
 sent 1000 | peak connections 5
 results in input order: customer1@example.com ... customer1000@example.com
 pool    sent 60, peak 5
 batches sent 60, peak 5
-the pool took less time than batches: true
+the pool took less than half as long as batches: true
 </output>
-<p>All 1,000 emails went out, never more than 5 at once, and the results came back in customer order. In the comparison, both approaches respected the limit, but the pool was clearly faster, because it started a new email the moment any slot freed up, instead of waiting for the slowest email of each batch. With real emails that take 50 to 800 ms each, that difference is minutes.</p>
+<p>All 1,000 emails went out, never more than 5 at once, and the results came back in customer order. In the comparison, both approaches respected the limit, but the pool was much faster, because it started a new email the moment any slot freed up. Every batch of 5 contained one slow email, so each batch took 50 ms while four of its five slots sat idle for 45 of them. With real emails that take 50 to 800 ms each, that difference is minutes.</p>
 <h3>Failure and bad limits</h3>
 <example file="pool-failure.js" project="mail">
 import { mapWithLimit } from "./pool.js";
@@ -307,7 +307,7 @@ default reason: AbortError
 <ol>
 <li>If the signal is already aborted, fail at once.</li>
 <li>On abort, stop the work (here: clear the timer) and reject with <code>signal.reason</code>.</li>
-<li>When the work finishes normally, remove the abort listener, or every call leaves a listener behind on a long-lived signal (a memory leak, see <a href="/learn/js-memory">Memory</a>).</li>
+<li>When the work finishes normally, remove the abort listener, or every call leaves a listener behind on a long-lived signal (a memory leak, see <a href="/learn/js-memory">Memory and garbage collection</a>).</li>
 <li>Never resolve after rejecting, or the other way round (a promise ignores it anyway, but cleanup must still run once).</li>
 </ol>
 <file name="sleep.js" project="cancel">

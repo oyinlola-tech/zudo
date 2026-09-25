@@ -2,7 +2,7 @@
 title: Numbers in depth
 description: Learn how IEEE-754 doubles store numbers, where precision ends, how to round, parse and format naira amounts exactly, and when to reach for BigInt.
 minutes: 55
-youNeed: Mathematical reasoning (money in kobo), Values and types, and Strings in depth
+youNeed: Mathematical reasoning (money in kobo), Values, variables and types, and Strings in depth
 youBuild: A money module that parses typed naira amounts into kobo without floating point, rounds with an explicit rule, formats with Intl.NumberFormat and keeps 19-digit order ids exact
 keywords: javascript number, ieee 754, double precision, floating point, Number.EPSILON, MAX_SAFE_INTEGER, isSafeInteger, negative zero, toFixed, Math.round, banker's rounding, half even, BigInt, JSON bigint, Intl.NumberFormat, en-NG, naira, kobo, parse money
 objectives: Describe how a double stores a number and predict where integers and decimals stop being exact | Compare floating-point results with a tolerance, and recognise NaN, Infinity and negative zero | Round with a chosen rule, and explain why toFixed and Math.round disagree | Parse typed amounts into integer kobo without floating-point multiplication | Use BigInt for large ids and totals, including JSON round trips | Format money, percentages and compact numbers with Intl.NumberFormat
@@ -24,7 +24,7 @@ true
 false
 </output>
 <p>The id came out as <code>…955300</code>. The service looks up an order that does not exist, or worse, one that belongs to someone else. The second line is even more confusing: the literal in the code is rounded in exactly the same way, so comparing two wrong numbers says <code>true</code>. Only the string comparison reveals that the digits changed.</p>
-<p><a href="/learn/js-values#numbers">Values and types</a> showed that <code>0.1 + 0.2</code> is not <code>0.3</code>, and <a href="/learn/logic-math#kobo">Mathematical reasoning</a> fixed money by counting whole kobo. This lesson explains the number format underneath both problems, so you can predict exactly where numbers stay exact and where they do not, and then covers rounding, parsing, <code>BigInt</code> and formatting well enough to build a correct money module.</p>
+<p><a href="/learn/js-values#numbers">Values, variables and types</a> showed that <code>0.1 + 0.2</code> is not <code>0.3</code>, and <a href="/learn/logic-math#kobo">Mathematical reasoning</a> fixed money by counting whole kobo. This lesson explains the number format underneath both problems, so you can predict exactly where numbers stay exact and where they do not, and then covers rounding, parsing, <code>BigInt</code> and formatting well enough to build a correct money module.</p>
 </section>
 
 <section>
@@ -270,7 +270,7 @@ for (const input of ["₦1,250.50", "1.005", "1.05", "0.5", "-20", " ₦ 3,000 "
 
 <section>
 <h2 id="bigint">BigInt: exact integers of any size</h2>
-<p><a href="/learn/js-types-deep#two-families">Beyond primitives</a> introduced <code>bigint</code>, the primitive for integers of any size, written with an <code>n</code> suffix. Its rules come from one principle: <strong>JavaScript never converts between bigint and number silently</strong>, because either direction can lose information.</p>
+<p><a href="/learn/js-types-deep#two-families">Types in depth</a> introduced <code>bigint</code>, the primitive for integers of any size, written with an <code>n</code> suffix. Its rules come from one principle: <strong>JavaScript never converts between bigint and number silently</strong>, because either direction can lose information.</p>
 <example file="bigint-rules.js">
 const id = BigInt("1844674407370955169");
 console.log(id, id + 1n, typeof id);
@@ -306,7 +306,7 @@ TypeError: Do not know how to serialize a BigInt
 </ul>
 
 <h3>Large ids through JSON</h3>
-<p>The refund bug needs the id as text or as a bigint <em>before</em> <code>JSON.parse</code> turns it into a double. The best fix is on the sending side: APIs should send 64-bit ids as JSON strings, <code>"orderId": "1844674407370955169"</code>. Twitter, Discord and Stripe all do this for exactly this reason. When you do not control the sender, the <code>JSON.parse</code> <strong>reviver</strong> helps. The reviver is a function called for every value; its third argument gives the original source text of numbers, before rounding. For the way out, <code>JSON.rawJSON</code> inserts raw text into the output:</p>
+<p>The refund bug needs the id as text or as a bigint <em>before</em> <code>JSON.parse</code> turns it into a double. The best fix is on the sending side: APIs should send 64-bit ids as JSON strings, <code>"orderId": "1844674407370955169"</code>. Twitter (now X) and Discord both send their 64-bit ids this way, for exactly this reason. When you do not control the sender, the <code>JSON.parse</code> <strong>reviver</strong> helps. The reviver is a function called for every value; its third argument gives the original source text of numbers, before rounding. For the way out, <code>JSON.rawJSON</code> inserts raw text into the output:</p>
 <example file="json-ids.js">
 const body = '{"orderId": 1844674407370955169, "amountKobo": 1250000, "fee": 1.5}';
 
@@ -401,7 +401,8 @@ console.log(naira.format(123456789012345678n));
 const percent = new Intl.NumberFormat("en-NG", { style: "percent", maximumFractionDigits: 1 });
 const kg = new Intl.NumberFormat("en-NG", { style: "unit", unit: "kilogram" });
 console.log(percent.format(0.075), kg.format(2.5));
-console.log(new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 0 }).formatRange(5000, 10000));
+const range = new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 0 }).formatRange(5000, 10000);
+console.log(range.replace(/\s/g, ""));
 </example>
 <output>
 en-NG  NGN ₦1,234,567.50 2
@@ -413,12 +414,13 @@ ja-JP  JPY ￥1,234,568 0
 ₦90,071,992,547,409.93
 ₦123,456,789,012,345,678.00
 7.5% 2.5 kg
-₦5,000 – ₦10,000
+₦5,000–₦10,000
 </output>
 <ul>
 <li>The <strong>locale</strong> decides the separators and symbol position; the <strong>currency</strong> decides the symbol and how many decimals. <code>en-US</code> writes the naira as <code>NGN</code>, because the <code>₦</code> symbol would be unfamiliar there. The yen has no minor unit, so it has 0 decimals.</li>
 <li><code>format</code> also accepts a <strong>decimal string</strong> and a <strong>bigint</strong>, and formats them exactly. Passing the number <code>9007199254740993 / 100</code> already lost a kobo before the formatter saw it. Pass exact values with <code>koboToDecimalString</code> from the previous section.</li>
 <li>Percent style multiplies by 100: pass <code>0.075</code> for 7.5%.</li>
+<li><code>formatRange</code> formats a price range. The spaces around the dash differ between engines (Node.js and Chrome ship different versions of the locale data, and some use thin or no-break spaces), so the example removes them before printing. Never compare formatted text in tests across runtimes; compare the numbers.</li>
 </ul>
 <warn title="toFixed and Intl disagree">(1.005).toFixed(2) is <code>"1.00"</code>, because <code>toFixed</code> rounds the stored double, which is just below 1.005. <code>Intl.NumberFormat</code> with two decimals gives <code>"1.01"</code>, because it starts from the shortest decimal that represents the double, <code>1.005</code>, and rounds that. Two parts of the same app using different formatters can show different amounts. Round the kobo yourself, once, and then format a value that needs no rounding.</warn>
 </section>
@@ -581,7 +583,7 @@ check("number input refused", errorOf(() => parseNairaToKobo(1.05)), "TypeError"
 check("format -5 kobo", formatKobo(-5), "-₦0.05");
 
 let seed = 42;
-const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+const next = () => (seed = (seed * 48271) % 2147483647);
 let failures = 0;
 for (let i = 0; i < 5000; i++) {
   const kobo = (next() - 1073741824) * 3;
@@ -607,7 +609,7 @@ PASS number input refused -> TypeError
 PASS format -5 kobo -> -₦0.05
 PASS 5000 round trips -> 0
 </output>
-<p>The generator is a <strong>linear congruential generator</strong>, a very old formula for pseudo-random numbers. It is useless for security, but perfect for tests: seed 42 always produces the same 5,000 amounts, including negative ones, so a failure can be reproduced. Notice that the round trip goes through <code>formatKobo</code>, which prints <code>-₦…</code>, and the test removes the symbol because the parser expects the minus before it.</p>
+<p>The generator is a <strong>linear congruential generator</strong>, a very old formula for pseudo-random numbers. Its multiplier is small on purpose: <code>seed * 48271</code> stays below 2<sup>53</sup>, so every step is exact integer arithmetic. It is useless for security, but perfect for tests: seed 42 always produces the same 5,000 amounts, including negative ones, so a failure can be reproduced. Notice that the round trip goes through <code>formatKobo</code>, which prints <code>-₦…</code>, and the test removes the symbol because the parser expects the minus before it.</p>
 </section>
 
 <section>
@@ -618,7 +620,7 @@ PASS 5000 round trips -> 0
 <li><strong>Rates as basis points or as decimal strings</strong>, never as floating-point multipliers stored in configuration.</li>
 <li><strong>Validate numbers from outside with <code>Number.isSafeInteger</code> or <code>Number.isFinite</code></strong>, not with <code>typeof x === "number"</code>, which lets <code>NaN</code> and <code>Infinity</code> in. A JSON body with <code>"quantity": 1e308</code> is valid JSON.</li>
 <li><strong>Send 64-bit ids as strings in JSON</strong> and keep them as strings in your code.</li>
-<li><strong>Never use <code>Math.random()</code> for anything secret</strong> (tokens, OTPs, coupon codes). It is predictable. Use <code>crypto.getRandomValues</code> or Node's <code>crypto.randomInt</code>, covered in <a href="/learn/node-crypto">node:crypto</a>.</li>
+<li><strong>Never use <code>Math.random()</code> for anything secret</strong> (tokens, OTPs, coupon codes). It is predictable. Use <code>crypto.getRandomValues</code> or Node's <code>crypto.randomInt</code>, covered in <a href="/learn/node-crypto">Cryptography with node:crypto</a>.</li>
 <li><strong>Create <code>Intl.NumberFormat</code> objects once</strong> and reuse them; building one loads locale data.</li>
 </ul>
 </section>
