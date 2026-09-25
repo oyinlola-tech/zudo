@@ -250,6 +250,51 @@ export class OrdersRepository {
   }
 }
 </file>
+<p>The examples in this lesson start from a small helper: a fresh database with the schema, one customer and two products:</p>
+<file name="shop-db.ts" project="shop">
+import { PGlite } from "@electric-sql/pglite";
+import { migrate } from "./src/db.js";
+import { ProductsRepository } from "./src/repositories/products.repository.js";
+
+/** A fresh shop database with one customer and two products. */
+export async function shopDatabase(): Promise<PGlite> {
+  const db = new PGlite();
+  await migrate(db);
+  await db.query("INSERT INTO users (email, password_hash) VALUES ('ada@example.com', 'not-a-real-hash')");
+  const products = new ProductsRepository(db);
+  await products.upsert({ sku: "RICE-5KG", name: "Rice 5kg", priceKobo: 950_000, stock: 3 });
+  await products.upsert({ sku: "OIL-1L", name: "Palm oil 1L", priceKobo: 250_050, stock: 10 });
+  return db;
+}
+</file>
+<p>Before any service exists, the schema already guards the data. Try to break it:</p>
+<example file="schema-check.ts" project="shop" browser="no">
+import { shopDatabase } from "./shop-db.js";
+
+const db = await shopDatabase();
+const attempts: [string, string][] = [
+  ["an order for user 42", "INSERT INTO orders (user_id, status, total_kobo) VALUES (42, 'pending', 950000)"],
+  ["an order line pointing at nothing", "INSERT INTO order_lines (order_id, sku, quantity, price_kobo) VALUES (1, 'SUGAR-1KG', 1, 1)"],
+  ["negative stock", "UPDATE products SET stock = -1 WHERE sku = 'RICE-5KG'"],
+  ["a made-up role", "INSERT INTO users (email, password_hash, role) VALUES ('eve@example.com', 'x', 'owner')"],
+];
+for (const [label, sql] of attempts) {
+  try {
+    await db.query(sql);
+    console.log(`${label}: saved`);
+  } catch (error) {
+    console.log(`${label}: refused (${(error as { code?: string }).code})`);
+  }
+}
+await db.close();
+</example>
+<output>
+an order for user 42: refused (23503)
+an order line pointing at nothing: refused (23503)
+negative stock: refused (23514)
+a made-up role: refused (23514)
+</output>
+<p><code>23503</code> is PostgreSQL's code for a broken foreign key, <code>23514</code> for a failed <code>CHECK</code>. These rules hold for every piece of code that will ever touch the database, including a hurried script at 2 a.m. In a monolith with one database, rules <em>between</em> areas (an order must belong to a real user) come for free. Split the users and the orders into two databases and this protection is gone; you would have to check it in code, over the network.</p>
 </section>
 
 <section>
@@ -297,6 +342,51 @@ export function createAccounts(users: UsersRepository, token: TokenConfig) {
 export type Accounts = ReturnType<typeof createAccounts>;
 </file>
 <p><code>register</code> always creates a <code>customer</code> unless the <em>code</em> asks for an admin. The HTTP route never passes a role from the request, so nobody can sign up as an admin. Admins are created by a seed script or by another admin.</p>
+<p>The token settings for the examples are demo constants; in the real app they come from the environment, as in the auth lesson:</p>
+<file name="tokens.ts" project="shop">
+import type { TokenConfig } from "@zudojs/auth";
+
+// In the real app these come from the environment (see the auth lesson).
+export const tokens: TokenConfig = {
+  accessSecret: "demo-access-secret-at-least-32-characters",
+  refreshSecret: "demo-refresh-secret-at-least-32-characters",
+  accessTtl: 15 * 60,
+  refreshTtl: 7 * 24 * 60 * 60,
+  issuer: "shopflow",
+  audience: "shopflow",
+};
+</file>
+<example file="accounts.ts" project="shop" browser="no">
+import { BaseError } from "@zudojs/errors";
+import { UsersRepository } from "./src/repositories/users.repository.js";
+import { createAccounts } from "./src/services/auth.service.js";
+import { shopDatabase } from "./shop-db.js";
+import { tokens } from "./tokens.js";
+
+const db = await shopDatabase();
+const accounts = createAccounts(new UsersRepository(db), tokens);
+
+const bolaId = await accounts.register(" Bola@Example.com ", "a long enough passphrase");
+console.log("registered user", bolaId);
+for (const [email, password] of [["bola@example.com", "another passphrase"], ["chidi@example.com", "short"]]) {
+  try {
+    await accounts.register(email!, password!);
+  } catch (error) {
+    if (error instanceof BaseError) console.log(error.statusCode, error.message);
+  }
+}
+const { tokens: pair } = await accounts.auth.login({ identifier: "bola@example.com", password: "a long enough passphrase" });
+const claims = await accounts.auth.verifyToken(pair.accessToken);
+console.log("token for user", claims.sub, "with roles", claims.roles);
+await db.close();
+</example>
+<output>
+registered user 2
+409 That email is already registered
+400 A password needs at least 12 characters
+token for user 2 with roles [ 'customer' ]
+</output>
+<p>The email was normalized, so <code>" Bola@Example.com "</code> and <code>bola@example.com</code> are the same account, and the <code>UNIQUE</code> constraint turned the second sign-up into a 409. The token carries the user id and the role from the database.</p>
 <p>The products service holds the catalog's rules: what a SKU looks like, that prices are whole kobo above zero, that stock is never negative:</p>
 <file name="src/services/products.service.ts" project="shop">
 import { ValidationError } from "@zudojs/errors";
@@ -314,6 +404,38 @@ export function createProducts(products: ProductsRepository) {
   };
 }
 </file>
+<example file="catalog.ts" project="shop" browser="no">
+import { BaseError } from "@zudojs/errors";
+import { ProductsRepository } from "./src/repositories/products.repository.js";
+import { createProducts } from "./src/services/products.service.js";
+import { shopDatabase } from "./shop-db.js";
+
+const db = await shopDatabase();
+const products = createProducts(new ProductsRepository(db));
+
+const attempts = [
+  { sku: "sugar 1kg", name: "Sugar 1kg", priceKobo: 120_000, stock: 20 },
+  { sku: "SUGAR-1KG", name: "Sugar 1kg", priceKobo: 1_200.5, stock: 20 },
+  { sku: "SUGAR-1KG", name: "Sugar 1kg", priceKobo: 120_000, stock: 20 },
+];
+for (const product of attempts) {
+  try {
+    await products.save(product);
+    console.log("saved", product.sku);
+  } catch (error) {
+    if (error instanceof BaseError) console.log(error.statusCode, error.message);
+  }
+}
+console.log((await products.list()).map((product) => `${product.sku}: ${product.stock}`));
+await db.close();
+</example>
+<output>
+400 A SKU is 3 to 30 capital letters, digits or dashes
+400 Prices are whole kobo above zero
+saved SUGAR-1KG
+[ 'OIL-1L: 10', 'RICE-5KG: 3', 'SUGAR-1KG: 20' ]
+</output>
+<p>The service refuses a malformed SKU and a price with a fraction of a kobo before the database is asked. The rules are checked twice on purpose: the service gives clear messages, the database's <code>CHECK</code>s catch any code path that skips the service.</p>
 </section>
 
 <section>
@@ -416,23 +538,6 @@ export function createCheckout(db: Database, gateway: PaymentGateway, events: Ev
 
 export type Checkout = ReturnType<typeof createCheckout>;
 </file>
-<p>Two small helpers for the next examples: a database with one customer and two products, straight from SQL:</p>
-<file name="shop-db.ts" project="shop">
-import { PGlite } from "@electric-sql/pglite";
-import { migrate } from "./src/db.js";
-import { ProductsRepository } from "./src/repositories/products.repository.js";
-
-/** A fresh shop database with one customer and two products. */
-export async function shopDatabase(): Promise<PGlite> {
-  const db = new PGlite();
-  await migrate(db);
-  await db.query("INSERT INTO users (email, password_hash) VALUES ('ada@example.com', 'not-a-real-hash')");
-  const products = new ProductsRepository(db);
-  await products.upsert({ sku: "RICE-5KG", name: "Rice 5kg", priceKobo: 950_000, stock: 3 });
-  await products.upsert({ sku: "OIL-1L", name: "Palm oil 1L", priceKobo: 250_050, stock: 10 });
-  return db;
-}
-</file>
 <p>First, prove the transaction. This wrapper runs every transaction's work and then throws just before the commit, like a power cut at the worst moment:</p>
 <example file="power-cut.ts" project="shop" browser="no">
 import { createEventBus } from "@zudojs/events";
@@ -525,6 +630,31 @@ export function registerNotifications(events: EventBus, db: Queryable): void {
   });
 }
 </file>
+<p>Publish a paid order with a second, broken listener, as if an analytics feature had a bug:</p>
+<example file="notify.ts" project="shop" browser="no">
+import { createEventBus } from "@zudojs/events";
+import { registerNotifications } from "./src/services/notifications.service.js";
+import { shopDatabase } from "./shop-db.js";
+
+const db = await shopDatabase();
+const events = createEventBus();
+registerNotifications(events, db);
+events.on("order.paid", () => {
+  throw new Error("analytics service is down");
+});
+
+const result = await events.publishEvent({ type: "order.paid", payload: { orderId: 7, userId: 1, totalKobo: 2_150_050 } });
+console.log("handlers:", result.handlerCount, "failed:", result.failed);
+const { rows } = await db.query<{ message: string }>("SELECT message FROM notifications");
+console.log(rows.map((row) => row.message));
+events.dispose();
+await db.close();
+</example>
+<output>
+handlers: 2 failed: 1
+[ 'Order 7 is paid: ₦21,500.50. Thank you!' ]
+</output>
+<p>The broken listener failed, the notification was still written, and the publisher learned about the failure from the result instead of an exception. In checkout, that means a bug in some listener can never turn a paid order back into an error for the customer.</p>
 <p>The bus lives in the same process, so publishing costs a function call. It is not durable: if the process dies between the payment and the handler, the notification is lost. For a thank-you message that is acceptable. For something that must happen, such as shipping, <a href="/learn/zudo-microservices#consistency">the outbox pattern</a> writes the event in the same transaction as the order.</p>
 </section>
 
@@ -676,20 +806,7 @@ export async function startShop(tokens: TokenConfig) {
   };
 }
 </file>
-<p>Now use the shop the way its users would. The token secrets are demo constants; in the real app they come from the environment:</p>
-<file name="tokens.ts" project="shop">
-import type { TokenConfig } from "@zudojs/auth";
-
-// In the real app these come from the environment (see the auth lesson).
-export const tokens: TokenConfig = {
-  accessSecret: "demo-access-secret-at-least-32-characters",
-  refreshSecret: "demo-refresh-secret-at-least-32-characters",
-  accessTtl: 15 * 60,
-  refreshTtl: 7 * 24 * 60 * 60,
-  issuer: "shopflow",
-  audience: "shopflow",
-};
-</file>
+<p>Now use the shop the way its users would:</p>
 <example file="try-shop.ts" project="shop" browser="no">
 import { startShop } from "./src/server.js";
 import { tokens } from "./tokens.js";

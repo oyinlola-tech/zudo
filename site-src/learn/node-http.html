@@ -1,10 +1,11 @@
 ---
 title: An HTTP server with no framework
-description: Build a web server with nothing but Node.js's node:http module. Read the method, path, headers, query and body of each request, send JSON back with the right status code, and route requests by hand.
+description: Build a web server with only node:http: read the method, path, query, headers and body of a request, route by hand and answer JSON with the right status.
 minutes: 40
-youNeed: npm and packages
+youNeed: How the web works, What Node.js is, and Streams and buffers
 youBuild: A small tasks server that lists, finds and creates tasks, tested with fetch and curl
 keywords: node http createServer, node http server without express, request method url headers, response statusCode setHeader end, routing by hand, route parameters, query parameters URLSearchParams, request body json, body size limit, http status codes, curl
+objectives: Start a node:http server and answer a request with a status code, headers and a body | Read the method, URL, headers and query parameters of a request | Route requests by method and path, including route parameters, and answer 404 and 405 correctly | Read a JSON body safely with a size limit, a Content-Type check and a clear 400 for broken JSON | Test a server by starting it on port 0 and calling it with fetch, and try it by hand with curl
 ---
 <section>
 <h2 id="first-server">Your first server</h2>
@@ -210,7 +211,23 @@ null
 
 <section>
 <h2 id="body">Reading a request body</h2>
-<p>A <code>POST</code> request carries data in its <strong>body</strong>, usually JSON. You met streams in <a href="/learn/node-streams">Streams and buffers</a>: <code>req</code> is a readable stream, so the body arrives in chunks. Collect them, join them, then decode. Three things can go wrong, and each has its own status code:</p>
+<p>A <code>POST</code> request carries data in its <strong>body</strong>, usually JSON. You met streams in <a href="/learn/node-streams">Streams and buffers</a>: <code>req</code> is a readable stream, so the body arrives in chunks.</p>
+<reason title="Before you read a body: what can a stranger send?">
+<p>Your server will be reachable by anyone who can reach its port. Before writing <code>readJson(req)</code>, list what a client could send in the body of <code>POST /tasks</code>:</p>
+<ul>
+<li>How big can the body be, and what happens to your server's memory if you collect all of it?</li>
+<li>The client says <code>Content-Type: text/plain</code>, or says nothing. Should you still try to parse the body?</li>
+<li>The text is not valid JSON. Who should hear about it, and what should they be told?</li>
+<li>The JSON is valid, but it is <code>null</code>, a number, or an object without <code>title</code>.</li>
+</ul>
+<answer>
+<p>A body can be as big as the client likes, so the server must stop reading at a limit it chooses and answer 413; otherwise one request can fill its memory.</p>
+<p>A client that does not say it is sending JSON is either buggy or not talking to this API; answering 415 tells it exactly what to fix, instead of guessing.</p>
+<p>Broken JSON is the client's mistake, so it gets a 400 with a short message you wrote. The <code>SyntaxError</code> details stay on the server.</p>
+<p>Valid JSON is not the same as valid input: <code>JSON.parse("null")</code> succeeds. The shape and the values must be checked separately, which the build below does for <code>title</code>.</p>
+</answer>
+</reason>
+<p>So the plan is: collect the chunks, join them, then decode, and give each failure its own status code:</p>
 <ul>
 <li>The body is too big: <strong>413 Content Too Large</strong>. Without a limit, anyone can send gigabytes and fill your server's memory.</li>
 <li>The body is not JSON: <strong>415 Unsupported Media Type</strong> when the <code>Content-Type</code> is wrong, or <strong>400 Bad Request</strong> when the text does not parse.</li>
@@ -382,7 +399,7 @@ if (process.argv[1] === import.meta.filename) {
 </example>
 <p>A few details:</p>
 <ul>
-<li><code>req.setEncoding("utf8")</code> makes the stream decode bytes to text for you, and it handles characters split between chunks correctly.</li>
+<li><code>readJson</code> is the one from the previous section, with a larger limit. The routes read the URL once with <code>new URL(req.url, "http://localhost")</code> and route on <code>url.pathname</code>.</li>
 <li>The route for one task uses a regular expression that only matches a valid id, so <code>/tasks/abc</code> falls through to 404.</li>
 <li>The title is validated: it must be text, not empty, and not absurdly long. <code>body?.title</code> also copes with a body of <code>null</code>.</li>
 <li><code>process.argv[1] === import.meta.filename</code> is true only when you run <code>node server.js</code>, not when another file imports it. That lets the next file test the server without starting it on port 3000.</li>
@@ -456,6 +473,7 @@ $ curl http://localhost:3000/nothing
 {"error":"Not Found"}
 </shell>
 <p>Node.js added <code>Date</code>, <code>Connection</code>, <code>Keep-Alive</code> and <code>Content-Length</code> by itself. <code>Keep-Alive</code> lets a client reuse the same connection for its next request, which is faster. On Windows PowerShell, type <code>curl.exe</code> instead of <code>curl</code>, and put the JSON in double quotes with the inner quotes doubled or escaped; or simply use the test file above.</p>
+<note>Opening the URL in the address bar works. A web page from another address that calls this server with <code>fetch</code> is a different story: the browser refuses to hand it the response unless the server allows it with <strong>CORS</strong> headers. This server sends none yet; <a href="/learn/browser-networking#cors">Networking from JavaScript</a> explains the rule and adds them to the Task API.</note>
 <p>The tasks live in an array in memory, so they are gone when you stop the server. The next lesson grows this into a complete Task API, and shows what starts to hurt when you build everything by hand.</p>
 </section>
 
@@ -541,4 +559,5 @@ for (const query of ["", "?limit=5&offset=10", "?limit=500", "?offset=-1"]) {
 <li>A body is a stream of chunks. Enforce a size limit, check the <code>Content-Type</code>, and turn a failed <code>JSON.parse</code> into a 400 with your own message.</li>
 <li>Test a server by starting it on port 0 and calling it with <code>fetch</code>; try it by hand with <code>curl</code>.</li>
 </ul>
+<p>Next: <a href="/learn/node-task-api">Build a plain Node.js Task API</a>, where this server grows into a complete API with modules, middleware, central error handling and an API key.</p>
 </section>

@@ -1,10 +1,11 @@
 ---
 title: Streams and buffers
-description: Learn what the bytes behind text really are, then handle data piece by piece with readable, writable and transform streams, pipeline and readline, so a program can process files far bigger than its memory.
+description: Learn what bytes and buffers are, then process files far bigger than memory piece by piece with readable, writable and transform streams, pipeline and readline.
 minutes: 35
 youNeed: Files, paths and your computer
 youBuild: A program that generates a 200,000-line log file and counts its lines and words with streams
 keywords: node buffer, utf8 base64 hex encoding, Buffer.from toString, node streams, readable writable transform, stream pipeline, stream/promises, readline line by line, backpressure, drain, createReadStream, createWriteStream, gzip
+objectives: Turn text into bytes and back with Buffer, and explain why cutting bytes can cut a character in half | Explain when a stream beats reading a whole file, and what readable, writable and transform streams do | Respect backpressure by waiting for drain when write returns false | Connect streams with pipeline and handle a failure anywhere in the chain | Read a huge file line by line with readline and for await
 ---
 <section>
 <h2 id="buffers">Bytes and buffers</h2>
@@ -58,7 +59,7 @@ café
 
 <section>
 <h2 id="why-streams">Why streams</h2>
-<p>In the last lesson, <code>readFile</code> loaded a whole file into memory at once. That is fine for a settings file. It is not fine for a 10 GB log file, a video upload or a database export: the program runs out of memory, and while it reads, it holds on to all of it.</p>
+<p>In <a href="/learn/node-apis#fs">Files, paths and your computer</a>, <code>readFile</code> loaded a whole file into memory at once. That is fine for a settings file. It is not fine for a 10 GB log file, a video upload or a database export: the program runs out of memory, and while it reads, it holds on to all of it.</p>
 <p>A <strong>stream</strong> handles data piece by piece. Each piece is called a <strong>chunk</strong>. You process one chunk, let it go, and take the next, so memory use stays small whatever the size of the data. There are three kinds you will use:</p>
 <ul>
 <li>A <strong>readable</strong> stream gives you data: a file you read, a request arriving at your server.</li>
@@ -101,7 +102,7 @@ wrote 7688895 bytes, paused 117 times
 
 <section>
 <h2 id="readable">Reading in chunks</h2>
-<p>A readable stream can be used with <code>for await</code>, which you know from <a href="/learn/js-async">Asynchronous JavaScript</a>: each round of the loop waits for the next chunk.</p>
+<p>A readable stream is an async iterable, so it works with <code>for await...of</code>, which you know from <a href="/learn/js-generators#async">Generators</a>: each round of the loop waits for the next chunk.</p>
 <example file="chunks.js" project="log" browser="no">
 import { createReadStream } from "node:fs";
 
@@ -183,6 +184,20 @@ pipeline failed: ENOENT
 
 <section>
 <h2 id="build">Build: count lines and words</h2>
+<reason title="Before you build: counting lines in a file bigger than memory">
+<p>You want to count the lines, words and <code>done</code> tasks in a log file that may be 8 GB. Think it through first:</p>
+<ul>
+<li>Could you <code>readFile</code> it and call <code>split("\n")</code>?</li>
+<li>If you read chunks and split each chunk on <code>"\n"</code>, what happens to a line that crosses from one chunk into the next?</li>
+<li>The file was written on Windows, with <code>\r\n</code> line endings. What does a split on <code>"\n"</code> leave at the end of each line?</li>
+<li>The last line has no line break after it. Is it still counted?</li>
+</ul>
+<answer>
+<p>Reading it whole fails: <code>readFile</code> refuses files over 2 GB, and a JavaScript string cannot hold more than about 512 million characters. Even a file that fits would hold all of its memory at once.</p>
+<p>Splitting each chunk yourself counts one line twice (half at the end of one chunk, half at the start of the next), and can cut a multi-byte character in half, as <code>café</code> showed. A <code>\r</code> would stay at the end of every line and break comparisons such as <code>line.endsWith("done")</code>.</p>
+<p>The fix is a tool that keeps the unfinished end of each chunk and joins it to the next one: <code>readline</code>. With <code>crlfDelay: Infinity</code> it treats <code>\r\n</code> as one line break, and it returns the last line even without a final line break.</p>
+</answer>
+</reason>
 <p><code>createInterface</code> from <code>node:readline</code> takes a readable stream and gives you whole lines, one at a time, however the chunks were cut. With <code>for await</code>, reading a huge file line by line takes a few lines of code:</p>
 <example file="count.js" project="log" browser="no">
 import { createReadStream } from "node:fs";
@@ -303,5 +318,5 @@ console.log(longest);
 <li>Backpressure: when <code>write</code> returns <code>false</code>, wait for <code>"drain"</code>. <code>pipeline</code> from <code>node:stream/promises</code> does that for you and reports any failure in one place.</li>
 <li>To read a file line by line, use <code>readline</code>'s <code>createInterface</code> with <code>for await</code>, never your own splitting of chunks.</li>
 </ul>
-<p>Next, you will learn npm properly: how packages, versions and lockfiles work, and how to install them safely.</p>
+<p>Next: <a href="/learn/node-events-processes">Events, processes and workers</a>, where one program coordinates its parts with events, runs other programs, moves heavy work to other threads and shuts down cleanly.</p>
 </section>

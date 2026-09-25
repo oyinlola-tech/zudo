@@ -1,10 +1,11 @@
 ---
 title: Files, paths and your computer
-description: Use Node.js's built-in modules to build safe file paths, read and write files and folders, learn about the computer, make random ids and hashes, and announce events. Then save tasks to a JSON file.
+description: Build safe file paths, read and write files, handle missing files, make random ids and hashes, and announce events, then save a task list to a JSON file.
 minutes: 40
 youNeed: What Node.js is
 youBuild: A command-line task list that saves its tasks in a JSON file
 keywords: node path join resolve, fs/promises readFile writeFile, mkdir recursive, readdir, stat, ENOENT, node os module, crypto randomUUID randomBytes createHash, EventEmitter, json file database, path traversal
+objectives: Build file paths with node:path and keep a path from user input inside an allowed folder | Read, write, append, list and describe files with node:fs/promises, and handle ENOENT without hiding other errors | Make unguessable ids and tokens with node:crypto, and fingerprint data with SHA-256 | Announce and listen for events with EventEmitter, including the special error event | Save data to a JSON file safely with a temporary file and a rename, and explain the race condition a file cannot prevent
 ---
 <section>
 <h2 id="path">Paths: never glue them by hand</h2>
@@ -36,7 +37,7 @@ true
 <ul>
 <li><code>path.join</code> puts parts together with exactly one separator, and understands <code>..</code> ("the folder above"). String concatenation produced <code>data//tasks.json</code>.</li>
 <li><code>path.extname</code> gives the extension (only the last one), <code>path.basename</code> the file name, and <code>path.dirname</code> the folder it is in.</li>
-<li><code>path.resolve</code> turns a path into an <strong>absolute</strong> path, one that starts at the root of the disk, using the current working directory from <a href="/learn/node-runtime#process">the previous lesson</a>.</li>
+<li><code>path.resolve</code> turns a path into an <strong>absolute</strong> path, one that starts at the root of the disk, using the current working directory from <a href="/learn/node-runtime#process">What Node.js is</a>.</li>
 </ul>
 <p>On Windows, the same program prints <code>data\tasks.json</code>. Your code does not change; that is the point.</p>
 <p>To find a file next to your code, whatever folder the program was started from, join it to <code>import.meta.dirname</code>: <code>path.join(import.meta.dirname, "data", "tasks.json")</code>.</p>
@@ -201,7 +202,7 @@ df3db8a9ea05f22ce0238a243ce14e9e7829f22b5fdec7e6536f656849e46db1
 392572885fec86870d83f336795b4edc9d4f11348a9995cf795640eb76819174
 </output>
 <p>SHA-256 is a standard hash, so you get exactly these values on your computer too.</p>
-<warn title="NOT FOR PASSWORDS">Do not store passwords as <code>sha256</code> hashes. SHA-256 is designed to be fast, so an attacker who steals your database can try billions of guesses per second. Passwords need a slow, salted hash made for the job. You will use one in <a href="/learn/zudo-auth">the ZudoJS authentication lesson</a>.</warn>
+<warn title="NOT FOR PASSWORDS">Do not store passwords as <code>sha256</code> hashes. SHA-256 is designed to be fast, so an attacker who steals your database can try billions of guesses per second. Passwords need a slow, salted hash made for the job. You will use one, <code>scrypt</code>, in <a href="/learn/node-crypto#passwords">Cryptography with node:crypto</a>, which also covers tokens, HMAC signatures and encryption in depth.</warn>
 </section>
 
 <section>
@@ -237,12 +238,27 @@ nobody listened for error, so emit threw: disk full
 <li><code>once</code> listens for the first time only, which is why task 2 printed nothing.</li>
 <li>The <code>"error"</code> event is special. If nobody listens for it, <code>emit</code> throws, and an uncaught error ends the program. Always listen for <code>"error"</code> on emitters that can fail, such as servers and streams.</li>
 </ul>
-<p>Events keep code apart: the code that adds a task does not need to know about logging or e-mail. Later in the course, <a href="/learn/zudo-events">ZudoJS events</a> take this idea across a whole application.</p>
+<p>Events keep code apart: the code that adds a task does not need to know about logging or e-mail. <a href="/learn/node-events-processes#emitter">Events, processes and workers</a> goes deeper (async listeners, leaks, errors), and much later <a href="/learn/zudo-events">ZudoJS events</a> take this idea across a whole application.</p>
 </section>
 
 <section>
 <h2 id="build">Build: a task list saved to a JSON file</h2>
 <p>Now put the pieces together. The task list keeps its tasks in <code>data/tasks.json</code>, so they survive when the program ends. The store is an <code>EventEmitter</code>, so the program can react when something changes.</p>
+<reason title="Before you build: what can go wrong with a file as storage?">
+<p>The store reads the whole file, changes the list and writes it back. Before reading the code, list what can go wrong:</p>
+<ul>
+<li>What is in the file the very first time the program runs?</li>
+<li>The computer loses power halfway through <code>writeFile</code>. What is left on disk?</li>
+<li>Someone runs <code>add</code> with an empty title, or <code>done</code> with an id that does not exist.</li>
+<li>Two <code>add</code> calls run at the same moment. Which ids do they get?</li>
+</ul>
+<answer>
+<p>The first time, there is no file at all, so <code>readFile</code> throws <code>ENOENT</code>. That case means "no tasks yet" and should return an empty list; any other error (no permission, broken JSON) must still be thrown.</p>
+<p><code>writeFile</code> is not atomic: a crash can leave a half-written file that is no longer valid JSON, and every task is lost. Writing to a temporary file and then renaming it avoids that, because a rename replaces the file in one step.</p>
+<p>Bad input should fail with a clear message before anything is written, so both cases throw an <code>Error</code> the command-line program can print.</p>
+<p>The last question has no good answer with a plain file: both calls read the same list and pick the same next id. The end of this section shows the damage, and it is the reason databases exist.</p>
+</answer>
+</reason>
 <example file="store.js" project="store" browser="no">
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -380,7 +396,7 @@ console.log("tasks in the file:", saved.length);
 ids given out: 1 1
 tasks in the file: 1
 </output>
-<p>Both calls read the file while it was still empty, both picked id 1, and whichever write finished last replaced the other. One task is lost (which one changes from run to run), and nothing reported an error. This is called a <strong>race condition</strong>. Databases exist to solve exactly this, and you will switch to one in <a href="/learn/databases">Databases</a>.</p>
+<p>Both calls read the file while it was still empty, both picked id 1, and whichever write finished last replaced the other. One task is lost (which one changes from run to run), and nothing reported an error. This is a <strong>race condition</strong>, the same kind you met in <a href="/learn/js-concurrency#races">Concurrency and cancellation</a>. Databases exist to solve exactly this, and you will switch to one in <a href="/learn/databases">How databases work</a>.</p>
 </section>
 
 <section>
@@ -486,5 +502,5 @@ same after a change: false
 <li>An <code>EventEmitter</code> calls every listener when you <code>emit</code>. Always listen for <code>"error"</code>.</li>
 <li>A JSON file keeps data between runs, but loses writes when two happen at once. That is a job for a database.</li>
 </ul>
-<p>Next, you will learn what the bytes in a file really are, and how to handle files far too big to read in one go.</p>
+<p>Next: <a href="/learn/node-streams">Streams and buffers</a>, where you learn what the bytes in a file really are, and how to handle files far too big to read in one go.</p>
 </section>

@@ -2,9 +2,10 @@
 title: Objects and JSON
 description: Group related values into objects, read and change their properties, copy and take them apart safely, and turn them into JSON, the text format every API speaks.
 minutes: 40
-youNeed: Lessons on values, operators, conditions, loops, functions and arrays
+youNeed: Arrays, Functions and Types in depth
 youBuild: A small user profile system that creates, updates and publishes profiles safely
-keywords: javascript objects, properties, methods, nested objects, delete property, computed property, shorthand, Object.keys, Object.entries, Object.assign, spread, destructuring, structuredClone, JSON.stringify, JSON.parse
+keywords: javascript objects, properties, methods, nested objects, delete property, computed property, shorthand, Object.keys, Object.entries, Object.assign, spread, destructuring, structuredClone, JSON.stringify, JSON.parse, mass assignment
+objectives: Group related values into objects and read, add, change and delete their properties | Choose between an array and an object for a piece of data | Loop over and transform objects with Object.keys, values, entries and fromEntries | Copy and merge objects with spread and structuredClone, and take them apart with destructuring | Turn data into JSON and back, and know what JSON cannot carry | Accept outside changes safely with an allow-list instead of spreading them
 ---
 <section>
 <h2 id="objects">What an object is</h2>
@@ -62,8 +63,8 @@ Hello, I am Ada
 </output>
 <ul>
 <li><code>user.address.city</code> reads from left to right: take <code>user</code>, then its <code>address</code>, then that object's <code>city</code>.</li>
-<li><code>greet() { ... }</code> is the short way to write a method. You call it with brackets: <code>user.greet()</code>.</li>
-<li>Inside a method, <code>this</code> means "the object the method was called on", here <code>user</code>. The lesson <a href="/learn/js-classes">this, prototypes and classes</a> explains <code>this</code> fully.</li>
+<li><code>greet() { ... }</code> is the short way to write a method. You call it with parentheses: <code>user.greet()</code>.</li>
+<li>Inside a method, <code>this</code> means "the object the method was called on", here <code>user</code>. <a href="/learn/js-classes#this">this, prototypes and classes</a>, later in this course, shows how it can get lost, and <a href="/learn/js-this">this in depth</a>, in the Advanced JavaScript course, covers every rule.</li>
 </ul>
 </section>
 
@@ -94,7 +95,7 @@ undefined
 false true
 </output>
 <p>Reading a property that does not exist gives <code>undefined</code>. It does not crash. That is convenient, and it is also how typos slip through: <code>user.nmae</code> is just <code>undefined</code>. The <code>in</code> operator answers the question "does this object have a property with this name?".</p>
-<p>Reading a property of <code>undefined</code> <em>does</em> crash. If a user has no <code>address</code>, then <code>user.address.city</code> fails with <code>TypeError: Cannot read properties of undefined (reading 'city')</code>. You will learn a safe way to write it, <code>user.address?.city</code>, in <a href="/learn/js-modern">Modern JavaScript</a>.</p>
+<p>Reading a property of <code>undefined</code> <em>does</em> crash. If a user has no <code>address</code>, then <code>user.address.city</code> fails with <code>TypeError: Cannot read properties of undefined (reading 'city')</code>. The safe way to write it is <code>user.address?.city</code>, the optional chaining you met in <a href="/learn/js-operators#optional-chaining">Operators</a>.</p>
 </section>
 
 <section>
@@ -114,12 +115,12 @@ console.log(user.email);
 { name: 'Ada', age: 37, city: 'London' }
 undefined
 </output>
-<p>This works even though <code>user</code> is a <code>const</code>. <code>const</code> only stops the <em>name</em> <code>user</code> from pointing at a different object. It does not freeze the object itself. If you want an object that nobody can change, call <code>Object.freeze(user)</code>.</p>
+<p>This works even though <code>user</code> is a <code>const</code>. <code>const</code> only stops the <em>name</em> <code>user</code> from pointing at a different object. It does not freeze the object itself. If you want an object that nobody can change, call <code>Object.freeze(user)</code> (see <a href="/learn/js-types-deep#mutability">Types in depth</a>).</p>
 </section>
 
 <section>
 <h2 id="references">Objects are shared, not copied</h2>
-<p>This is the most important idea in the lesson. A variable does not hold the object itself. It holds a <strong>reference</strong>: an arrow pointing at the object. When you assign an object to a second variable, you copy the arrow, not the object:</p>
+<p>You met this in <a href="/learn/js-types-deep#copy-or-share">Types in depth</a>, and it matters more with every object you build: a variable holds a <strong>reference</strong> to an object, not the object itself. Assigning an object to a second variable, or passing it to a function, copies the reference, so both names point at the same object:</p>
 <example file="shared.js">
 const user = { name: "Ada", age: 36 };
 const sameUser = user;
@@ -135,8 +136,7 @@ console.log({ name: "Ada" } === { name: "Ada" });
 true
 false
 </output>
-<p>Changing <code>sameUser</code> changed <code>user</code>, because both names point at the same object. And <code>===</code> on objects asks "is this the <em>same</em> object?", not "do they look the same?". Two objects written separately are never equal, even with identical contents.</p>
-<p>The same happens when you pass an object to a function: the function receives the arrow, so it can change the caller's object. Many bugs in real backends come from a function quietly changing an object that someone else is still using. The next sections show how to make real copies.</p>
+<p>Changing <code>sameUser</code> changed <code>user</code>, and <code>===</code> on objects asks "is this the <em>same</em> object?", not "do they look the same?". Many bugs in real backends come from a function quietly changing an object that someone else is still using. The next sections show how to make real copies.</p>
 </section>
 
 <section>
@@ -332,6 +332,21 @@ string
 <li><code>updateProfile(profile, changes)</code>: apply the changes a user sends, and return a new profile.</li>
 <li><code>toPublic(profile)</code>: the version that is safe to send back as JSON.</li>
 </ol>
+<reason title="Before you code: what may a user change?">
+<p>The mobile app sends profile changes as JSON, for example <code>{"theme":"dark"}</code>. Anyone can send any JSON to your API, not only your app. Before writing <code>updateProfile</code>, think it through:</p>
+<ul>
+<li>A profile has <code>id</code>, <code>name</code>, <code>role</code>, <code>theme</code>, <code>language</code> and <code>bio</code>. Which of them may the user change about themselves?</li>
+<li>What happens if the code simply merges everything that was sent into the stored profile?</li>
+<li>What should happen to a field the server does not recognise, such as <code>"isVerified": true</code>?</li>
+<li>Should <code>updateProfile</code> change the profile it receives, or return a new one?</li>
+</ul>
+<answer>
+<p><strong>Editable:</strong> <code>name</code>, <code>theme</code>, <code>language</code> and <code>bio</code>. <strong>Never editable by the user:</strong> <code>id</code> (it identifies the record) and <code>role</code> (it decides what they are allowed to do).</p>
+<p><strong>Merging everything</strong> lets the caller set <code>role</code> to <code>"admin"</code> or change their <code>id</code> to someone else's. That is a real attack, shown next.</p>
+<p><strong>Unknown fields</strong> must be ignored (or rejected with an error). The safe design is an <strong>allow-list</strong>: name the fields that may change, and drop everything else. A block-list ("everything except <code>role</code>") breaks the day someone adds a new sensitive field.</p>
+<p><strong>New object:</strong> returning a new profile means the old one is still intact if a later step fails, and no other code holding the old object sees a half-applied change.</p>
+</answer>
+</reason>
 <p>Here is a first try at <code>updateProfile</code>. It has a serious bug:</p>
 <example file="profile-bug.js">
 function updateProfile(profile, changes) {
@@ -494,4 +509,5 @@ true false
 <li>Never spread outside input into stored data: keep an allow-list of the fields a user may change.</li>
 <li>JSON is the text format APIs use. <code>JSON.stringify</code> writes it and <code>JSON.parse</code> reads it. Dates become strings, and functions and <code>undefined</code> disappear.</li>
 </ul>
+<p>Next, <a href="/learn/js-objects-deep">Objects in depth</a>: lock an object's shape, check every write, and copy and compare objects on purpose.</p>
 </section>

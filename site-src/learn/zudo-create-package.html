@@ -1054,16 +1054,19 @@ const hangs: typeof fetch = (_url, init) =>
 
 const provider = createPaystackProvider({ secretKey: "sk_test_x", fetch: hangs, timeoutMs: 50 });
 const payments = createPaymentService({ provider });
+const keepAlive = setInterval(() => {}, 1_000);
 try {
   await payments.charge({ reference: "ORD-5", email: "ada@example.com", amountKobo: 50_000, authorizationCode: "AUTH_ok" });
 } catch (error) {
   if (isPaymentError(error)) console.log(error.code, error.statusCode, "cause:", (error.cause as Error).name);
+} finally {
+  clearInterval(keepAlive);
 }
 </example>
 <output>
 ERR_PAYMENT_PROVIDER 502 cause: TimeoutError
 </output>
-<p>A real <code>fetch</code> behaves like this fake: it rejects with the signal's reason when the signal aborts. Without the timeout, this charge would wait forever and hold the customer's request open. Print <code>error.name</code>, not the message, when you compare timeouts: the message text differs between runtimes.</p>
+<p>A real <code>fetch</code> behaves like this fake: it rejects with the signal's reason when the signal aborts. The <code>keepAlive</code> interval is there because the timer behind <code>AbortSignal.timeout</code> does not keep Node running on its own: with a real request, the open socket does; with a fake that only waits, plain <code>node</code> would exit with "unsettled top-level await" before the timeout fires. Without the timeout, this charge would wait forever and hold the customer's request open. Print <code>error.name</code>, not the message, when you compare timeouts: the message text differs between runtimes.</p>
 </solution>
 </exercise>
 </section>
