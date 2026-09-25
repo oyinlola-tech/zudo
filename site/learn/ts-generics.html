@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Generics — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/ts-generics.md" title="Markdown version">
-  <meta name="description" content="Write one function, interface or class that works for many types without losing type safety, set rules with constraints and keyof, give type parameters defaults, and build a Result type and a generic repository.">
+  <meta name="description" content="Write functions, interfaces and classes that work for many types without losing safety, constrain them with extends and keyof, and give them defaults.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/ts-generics">
@@ -110,10 +110,10 @@
         <div class="lx-hero-tag">LEVEL 5 · LESSON 14 OF 23</div>
         <p class="lx-hero-part">Generics and type operators <span class="lx-tier lx-tier-foundation" title="Foundation: Must understand before moving on.">Foundation</span></p>
         <h1>Generics</h1>
-        <p class="lx-hero-lead">Write one function, interface or class that works for many types without losing type safety, set rules with constraints and keyof, give type parameters defaults, and build a Result type and a generic repository.</p>
+        <p class="lx-hero-lead">Write functions, interfaces and classes that work for many types without losing safety, constrain them with extends and keyof, and give them defaults.</p>
         <ul class="lx-hero-meta">
           <li><strong>35 min</strong> to read and try</li>
-          <li><strong>You need:</strong> Interfaces, unions and literal types</li>
+          <li><strong>You need:</strong> Union types in depth and Tuples</li>
           <li><strong>You build:</strong> A typed Result helper and a generic in-memory repository for tasks and users</li>
         </ul>
         <div class="lx-hero-actions">
@@ -122,6 +122,16 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Explain what a type parameter is and why it beats any</li>
+          <li>Write generic functions and let TypeScript infer their type arguments</li>
+          <li>Write generic interfaces, type aliases and classes</li>
+          <li>Constrain a type parameter with extends and keyof, and read T[K]</li>
+          <li>Give a type parameter a default, and build a reusable Result type</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="why">Why generics</h2>
@@ -387,7 +397,19 @@ Found 1 error in pluck-typo.ts:5</pre></div>
 
 <section>
 <h2 id="result">A Result type, with defaults</h2>
-<p>Many functions can fail in expected ways: a port number out of range, a missing record. Instead of throwing, they can return an object that says whether it worked. You know the tool for that from <a href="/learn/ts-objects#discriminated">Interfaces, unions and literal types</a>: a discriminated union. Made generic, it works for any value and any error:</p>
+<p>Many functions can fail in expected ways: a port number out of range, a missing record. Instead of throwing, they can return an object that says whether it worked. You wrote one for transfers in <a href="/learn/ts-unions#result">Union types in depth</a>: a discriminated union, <code>TransferResult</code>. The problem is that every function needs its own copy. Made generic, one type works for any value and any error.</p>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Which type parameters does a Result need?</h3><p>Before you read the code, think about <code>parsePort(raw)</code>, which gives a port number or an error message, and <code>findUser(id)</code>, which gives a user or <code>"not-found" | "suspended"</code>.</p>
+<ol>
+<li>What changes from one function's result to the other's? Those are the type parameters.</li>
+<li>Which of them is the same in most functions, and could have a default?</li>
+<li>A helper <code>ok(value)</code> builds a success. What should its error type be, so that it fits any <code>Result</code>?</li>
+<li>Should a caller be able to read the value without first checking whether it worked?</li>
+</ol><details class="lx-solution"><summary>Show the reasoning</summary><ol>
+<li>The value type and the error type: <code>Result&lt;T, E&gt;</code>.</li>
+<li>The error: most simple functions report a message, so <code>E = string</code> keeps <code>Result&lt;number&gt;</code> short, and <code>findUser</code> can still say <code>Result&lt;User, "not-found" | "suspended"&gt;</code>.</li>
+<li><code>never</code>. A success has no error, and <code>never</code>, the empty type, fits wherever any error type is expected.</li>
+<li>No. The value must only be readable after a check of <code>ok</code>, which is exactly what a discriminated union gives you.</li>
+</ol></details></div>
 <figure class="lx-example" data-index="8" data-file="result.ts" data-project="gen">
 <figcaption class="lx-bar"><span class="lx-file">result.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="8"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">export</span> <span class="t-kw">type</span> <span class="t-ty">Result</span><span class="t-op">&lt;</span><span class="t-ty">T</span><span class="t-pn">,</span> <span class="t-ty">E</span> <span class="t-op">=</span> <span class="t-ty">string</span><span class="t-op">&gt;</span> <span class="t-op">=</span>
@@ -448,14 +470,38 @@ error: "http" is not a valid port</pre></div>
 <li><code>ok</code> returns <code>Result&lt;T, never&gt;</code>: a success can never hold an error, so it fits any <code>Result&lt;T, E&gt;</code>. The same goes for <code>err</code>.</li>
 <li>After <code>result.ok</code>, TypeScript knows which member you have. You cannot read <code>result.value</code> without checking first, so you cannot forget the failure case.</li>
 </ul>
-<p>Some ZudoJS packages use this idea: <code>@zudojs/schema</code>'s <code>safeParse</code> returns a result object with a <code>success</code> flag instead of throwing.</p>
+<p>Libraries use the same idea with other property names. <code>@zudojs/schema</code>'s <code>safeParse</code> never throws on bad data; it returns <code>{ success: true, data }</code> or <code>{ success: false, issues }</code>, and <code>success</code> is the discriminant:</p>
+<figure class="lx-example" data-index="9" data-file="safe-parse.ts" data-project="gen">
+<figcaption class="lx-bar"><span class="lx-file">safe-parse.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="9"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> <span class="t-ty">PortSchema</span> <span class="t-op">=</span> schema<span class="t-pn">.</span><span class="t-ty">number</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">int</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">min</span><span class="t-pn">(</span><span class="t-num">1</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">max</span><span class="t-pn">(</span><span class="t-num">65535</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> input <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-num">3000</span><span class="t-pn">,</span> <span class="t-num">99999</span><span class="t-pn">,</span> <span class="t-str">"3000"</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> result <span class="t-op">=</span> <span class="t-ty">PortSchema</span><span class="t-pn">.</span><span class="t-fn">safeParse</span><span class="t-pn">(</span>input<span class="t-pn">)</span><span class="t-pn">;</span>
+  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>result<span class="t-pn">.</span><span class="t-prop">success</span> <span class="t-op">?</span> <span class="t-tpl">`port <span class="t-op">${</span><span class="t-prop">result.data</span><span class="t-op">}</span>`</span> <span class="t-op">:</span> <span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">result.issues.length</span><span class="t-op">}</span> issue(s): <span class="t-op">${</span><span class="t-prop">result.issues[0]?.message</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { schema } from "@zudojs/schema";
+
+const PortSchema = schema.number().int().min(1).max(65535);
+
+for (const input of [3000, 99999, "3000"]) {
+  const result = PortSchema.safeParse(input);
+  console.log(result.success ? `port ${result.data}` : `${result.issues.length} issue(s): ${result.issues[0]?.message}`);
+}</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx safe-parse.ts</code> and of the browser terminal</div><pre class="lx-no-copy">port 3000
+1 issue(s): Expected &lt;= 65535, received 99999
+1 issue(s): Expected number, received string</pre></div>
+</figure>
+<p><a href="/learn/ts-validation">Runtime validation</a>, later in this course, builds a small schema library like this one yourself.</p>
 </section>
 
 <section>
 <h2 id="repository">Generic classes: a repository</h2>
-<p>Classes can be generic too. Here is a pattern ZudoJS uses everywhere: a <strong>repository</strong>, the one place that stores and finds one kind of record. Written once, it works for tasks, users or anything with an <code>id</code>:</p>
-<figure class="lx-example" data-index="9" data-file="repository.ts" data-project="gen">
-<figcaption class="lx-bar"><span class="lx-file">repository.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="9"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<p>Classes can be generic too. Here is a pattern you will meet again in <code>@zudojs/database</code>: a <strong>repository</strong>, the one place that stores and finds one kind of record. Written once, it works for tasks, users or anything with an <code>id</code>:</p>
+<figure class="lx-example" data-index="10" data-file="repository.ts" data-project="gen">
+<figcaption class="lx-bar"><span class="lx-file">repository.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="10"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">Entity</span> <span class="t-pn">{</span>
   <span class="t-kw">readonly</span> id<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
@@ -538,8 +584,8 @@ ada@example.com</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A generic findOrFail</h3><p>Using the <code>Result</code> type from this lesson, write <code>findOrFail&lt;T extends { id: number }&gt;(items: readonly T[], id: number): Result&lt;T&gt;</code> that returns the item, or the error <code>"Item 7 not found"</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="10" data-file="find-or-fail.ts" data-project="ex-find">
-<figcaption class="lx-bar"><span class="lx-file">find-or-fail.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="10"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A generic findOrFail</h3><p>Using the <code>Result</code> type from this lesson, write <code>findOrFail&lt;T extends { id: number }&gt;(items: readonly T[], id: number): Result&lt;T&gt;</code> that returns the item, or the error <code>"Item 7 not found"</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="11" data-file="find-or-fail.ts" data-project="ex-find">
+<figcaption class="lx-bar"><span class="lx-file">find-or-fail.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">type</span> <span class="t-ty">Result</span><span class="t-op">&lt;</span><span class="t-ty">T</span><span class="t-pn">,</span> <span class="t-ty">E</span> <span class="t-op">=</span> <span class="t-ty">string</span><span class="t-op">&gt;</span> <span class="t-op">=</span> <span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">true</span><span class="t-pn">;</span> value<span class="t-op">:</span> <span class="t-ty">T</span> <span class="t-pn">}</span> <span class="t-op">|</span> <span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">;</span> error<span class="t-op">:</span> <span class="t-ty">E</span> <span class="t-pn">}</span><span class="t-pn">;</span>
 
 <span class="t-kw">function</span> findOrFail<span class="t-op">&lt;</span><span class="t-ty">T</span> <span class="t-kw">extends</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-ty">number</span> <span class="t-pn">}</span><span class="t-op">&gt;</span><span class="t-pn">(</span>items<span class="t-op">:</span> <span class="t-kw">readonly</span> <span class="t-ty">T</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">,</span> id<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Result</span><span class="t-op">&lt;</span><span class="t-ty">T</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>
@@ -576,8 +622,8 @@ if (!missing.ok) console.log(missing.error);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx find-or-fail.ts</code> and of the browser terminal</div><pre class="lx-no-copy">Call Ada
 Item 7 not found</pre></div>
 </figure></details></div>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Group by a key</h3><p>Write <code>groupBy&lt;T, K&gt;(items: readonly T[], keyOf: (item: T) =&gt; K): Map&lt;K, T[]&gt;</code>. Group tasks by their <code>status</code> and print how many are in each group.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="11" data-file="group-by.ts" data-project="ex-group">
-<figcaption class="lx-bar"><span class="lx-file">group-by.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Group by a key</h3><p>Write <code>groupBy&lt;T, K&gt;(items: readonly T[], keyOf: (item: T) =&gt; K): Map&lt;K, T[]&gt;</code>. Group tasks by their <code>status</code> and print how many are in each group.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="12" data-file="group-by.ts" data-project="ex-group">
+<figcaption class="lx-bar"><span class="lx-file">group-by.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="12"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">function</span> groupBy<span class="t-op">&lt;</span><span class="t-ty">T</span><span class="t-pn">,</span> <span class="t-ty">K</span><span class="t-op">&gt;</span><span class="t-pn">(</span>items<span class="t-op">:</span> <span class="t-kw">readonly</span> <span class="t-ty">T</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">,</span> keyOf<span class="t-op">:</span> <span class="t-pn">(</span>item<span class="t-op">:</span> <span class="t-ty">T</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-ty">K</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Map</span><span class="t-op">&lt;</span><span class="t-ty">K</span><span class="t-pn">,</span> <span class="t-ty">T</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> groups <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Map</span><span class="t-op">&lt;</span><span class="t-ty">K</span><span class="t-pn">,</span> <span class="t-ty">T</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> item <span class="t-kw">of</span> items<span class="t-pn">)</span> <span class="t-pn">{</span>
@@ -624,8 +670,8 @@ for (const [status, group] of groupBy(tasks, (task) => task.status)) {
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx group-by.ts</code> and of the browser terminal</div><pre class="lx-no-copy">done 2
 doing 1</pre></div>
 </figure></details></div>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A typed stack</h3><p>Write a class <code>Stack&lt;T&gt;</code> with <code>push(item: T): void</code>, <code>pop(): T | undefined</code> and a <code>size</code> getter. Use it for an "undo" list of task titles.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="12" data-file="stack.ts" data-project="ex-stack">
-<figcaption class="lx-bar"><span class="lx-file">stack.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="12"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A typed stack</h3><p>Write a class <code>Stack&lt;T&gt;</code> with <code>push(item: T): void</code>, <code>pop(): T | undefined</code> and a <code>size</code> getter. Use it for an "undo" list of task titles.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="13" data-file="stack.ts" data-project="ex-stack">
+<figcaption class="lx-bar"><span class="lx-file">stack.ts</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="13"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">class</span> <span class="t-ty">Stack</span><span class="t-op">&lt;</span><span class="t-ty">T</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>
   <span class="t-kw">private</span> <span class="t-kw">readonly</span> items<span class="t-op">:</span> <span class="t-ty">T</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
 
@@ -680,6 +726,7 @@ console.log(undo.pop(), undo.size);</script>
 <li><code>E = string</code> gives a type parameter a default.</li>
 <li><code>Result&lt;T, E&gt;</code> makes failure part of the return type; a generic repository stores any kind of record.</li>
 </ul>
+<p>Next: <a href="/learn/ts-generic-design">Designing generic APIs</a>, where you decide which type parameters an API should have, and build a toolkit of generic types that fit together.</p>
 </section>
       </div>
 

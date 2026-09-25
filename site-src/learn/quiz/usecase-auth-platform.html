@@ -1,0 +1,770 @@
+<question id="uap-session-bound" type="choice">
+<q>Sabi's access tokens are JWTs that live 15 minutes. What makes it possible to end one of them <em>immediately</em> at logout?</q>
+<option>JWTs can be deleted from the client</option>
+<option>The token is encrypted, so the server can change the key</option>
+<option correct>Each token carries its session id (<code>sid</code>), and <code>auth.verifyToken</code> refuses a token whose session no longer exists</option>
+<option>Logout changes the signing secret</option>
+<explain><p>A plain JWT is valid until it expires; nothing on the server remembers it. Binding it to a session gives the server a row it can delete. One cheap lookup per request buys instant logout, "sign out everywhere" and role changes that take effect at once.</p></explain>
+</question>
+
+<question id="uap-refresh-replay" type="choice">
+<q>A refresh token that was already used comes back. What does the platform do, and why?</q>
+<option>Returns the same new pair again, because the client probably retried</option>
+<option>Refuses it and keeps everything else as it is</option>
+<option correct>Refuses it and ends every session of that user, because someone copied the token and the server cannot tell whether the thief or the owner used it first</option>
+<option>Locks the account for 15 minutes</option>
+<explain><p>A used refresh token should never come back. If it does, two parties have it. Ending all sessions forces both to log in again, and only the real user can. The demo showed the phone and the new laptop token dying too.</p></explain>
+</question>
+
+<question id="uap-revoke-atomic" type="choice">
+<q>Why does <code>createPgRevocationStore</code> implement <code>revokeIfNotRevoked</code> as a single <code>INSERT … ON CONFLICT DO NOTHING RETURNING</code>?</q>
+<option>Because PGlite has no transactions</option>
+<option correct>So two copies of the same refresh token arriving together cannot both see "not revoked"; the primary key lets exactly one insert win</option>
+<option>Because it is faster than a SELECT</option>
+<option>Because the interface requires SQL</option>
+<explain><p>"Check, then revoke" has a gap between two awaits. The unique key makes check and write one atomic step. Without the method, <code>@zudojs/auth</code> falls back to the racy pair, so always implement it in a real store.</p></explain>
+</question>
+
+<question id="uap-memory-store" type="choice">
+<q>Why does Sabi keep sessions in PostgreSQL instead of <code>createMemorySessionStore()</code>?</q>
+<option>The memory store does not support expiry</option>
+<option correct>Memory sessions vanish on restart and are not shared between servers, so a request on another server would find no session</option>
+<option>The memory store stores tokens in clear text</option>
+<option>PostgreSQL is faster than a Map</option>
+<explain><p>The memory store is fine for learning and single-process tests. In production, behind a load balancer, every server must see the same sessions: a database or Redis.</p></explain>
+</question>
+
+<question id="uap-two-clocks" type="choice">
+<q>A session has an idle timeout of 30 minutes and an absolute limit of 7 days. Ada uses the app every 10 minutes, day and night. When does her session end?</q>
+<option>Never, because it is always active</option>
+<option>After 30 minutes</option>
+<option correct>After 7 days: every use pushes the idle deadline forward, but never past the absolute limit</option>
+<option>After 15 minutes, when the access token expires</option>
+<explain><p>With only an idle timeout, a busy session (or a stolen one being used) lives forever. <code>LEAST(now() + ttl, absolute_expires_at)</code> in <code>touch</code> implements both clocks.</p></explain>
+</question>
+
+<question id="uap-reset-hash" type="choice">
+<q>Reset tokens are stored as SHA-256 hashes, while passwords use slow scrypt. Why is a fast hash acceptable for reset tokens?</q>
+<option>Reset tokens are not secret</option>
+<option>SHA-256 is slower than scrypt</option>
+<option correct>A reset token has 256 bits of randomness, so there is nothing to guess; slow hashing only helps against guessable inputs like human passwords</option>
+<option>Because reset tokens expire, the hash does not matter</option>
+<explain><p>Slow hashing protects low-entropy secrets from offline guessing. A random 32-byte token cannot be guessed in any number of tries, and a deterministic hash also lets you look the token up with <code>WHERE token_hash = $1</code>.</p></explain>
+</question>
+
+<question id="uap-reset-202" type="choice">
+<q>Why does <code>POST /v1/password-resets</code> answer 202 with the same message for known and unknown e-mails?</q>
+<option>Because the e-mail is sent later</option>
+<option correct>So the endpoint cannot be used to find out which e-mail addresses have accounts</option>
+<option>Because 404 is not allowed on POST</option>
+<option>To save a database query</option>
+<explain><p>A different answer for "no such account" is an enumeration oracle. The production concerns add the second half: the response time must not differ either, which is why the e-mail belongs on a queue.</p></explain>
+</question>
+
+<question id="uap-reset-fragment" type="choice">
+<q>The reset link is <code>https://sabi.example/reset-password#token=…</code>. What does putting the token after <code>#</code> achieve?</q>
+<option>It encrypts the token</option>
+<option correct>Browsers never send the fragment to a server, so the token stays out of server logs and Referer headers; the page's script reads it and POSTs it</option>
+<option>It makes the link shorter</option>
+<option>It makes the token expire when the tab closes</option>
+<explain><p>Query strings are logged by web servers and proxies and leak through the <code>Referer</code> header. The fragment stays in the browser. The token still travels, but only in a POST body to your API.</p></explain>
+</question>
+
+<question id="uap-reset-logout" type="choice">
+<q>Why does a successful password reset call <code>auth.logoutAll(user)</code>?</q>
+<option>To force the user to test the new password</option>
+<option>Because the old tokens are signed with the old password</option>
+<option correct>The usual reason for a reset is that someone else knows the password; their existing sessions must end with it</option>
+<option>It does not matter; tokens expire in 15 minutes anyway</option>
+<explain><p>Refresh tokens live 7 days, and an attacker with a session can keep refreshing. Changing the password without ending sessions leaves the attacker inside.</p></explain>
+</question>
+
+<question id="uap-reset-order" type="choice">
+<q><code>confirm</code> looks the token up <em>before</em> hashing the new password. What does that order protect?</q>
+<option>The token from being logged</option>
+<option correct>The server: guessing tokens costs one cheap query each instead of a deliberately slow scrypt run</option>
+<option>The password from being too short</option>
+<option>Nothing; the order is only style</option>
+<explain><p>An endpoint that runs expensive work before rejecting bad input can be used to burn CPU. Reject cheaply first. The conditional <code>UPDATE</code> afterwards still makes the token single-use if two requests race.</p></explain>
+</question>
+
+<question id="uap-roles-token" type="choice">
+<q>Roles ride in the access token. When an admin makes Tunde a tutor, how does Tunde's access change?</q>
+<option>His current token is updated in place</option>
+<option>After up to 15 minutes, when his token expires</option>
+<option correct>The role change calls <code>logoutAll</code> for Tunde, his old tokens die at once, and his next login gets a token that says tutor</option>
+<option>Only after the absolute session limit of 7 days</option>
+<explain><p>Tokens cannot be edited, only replaced. Because they are session-bound, ending the sessions is how you replace them at once. The same works for demotions, which is the case that matters for security.</p></explain>
+</question>
+
+<question id="uap-own-roles" type="choice">
+<q>Why does <code>PUT /v1/users/:id/roles</code> refuse an admin who tries to change their own roles?</q>
+<option>Admins have every permission already</option>
+<option correct>So the last admin cannot demote themselves by accident and leave nobody able to assign roles</option>
+<option>Because the token would become invalid</option>
+<option>Because of the CHECK constraint</option>
+<explain><p>Self-modification of privileges is a classic source of lockouts (and, the other way round, of escalation). Another admin, or a seed script on the server, handles it.</p></explain>
+</question>
+
+<question id="uap-register-role" type="choice">
+<q>A student registers with <code>{"email": "…", "name": "…", "password": "…", "roles": ["admin"]}</code>. Why does nothing happen with <code>roles</code>?</q>
+<option>The database rejects it</option>
+<option correct>The registration schema has no <code>roles</code> field, so it is stripped, and the insert always adds the <code>student</code> role</option>
+<option>The permission engine removes it</option>
+<option>JSON.parse drops unknown keys</option>
+<explain><p>The client never chooses its own privileges. The schema is the allow-list, and the SQL hard-codes the default role. Incident 4 came from copying the body into the database.</p></explain>
+</question>
+
+<question id="uap-oauth-key" type="choice">
+<q>Why are Kora identities stored by <code>(provider, provider_id)</code> and not by e-mail?</q>
+<option>E-mails are too long for a primary key</option>
+<option correct>The provider's id is stable, while a person's e-mail can change at the provider; keying by e-mail would lose or mix up links</option>
+<option>Because OAuth never returns an e-mail</option>
+<option>For performance</option>
+<explain><p><code>sub</code> is the provider's permanent id for that person. E-mail is only used once, to decide whether to link or create, and only when verified.</p></explain>
+</question>
+
+<question id="uap-unverified" type="choice">
+<q>Kora returns <code>email: "ada@example.com"</code> with <code>email_verified: false</code>, and no identity is linked yet. What does Sabi do?</q>
+<option>Links it to Ada's account, because the e-mail matches</option>
+<option>Creates a new account with that e-mail</option>
+<option correct>Refuses the sign-in: an unverified e-mail proves nothing about who owns the inbox</option>
+<option>Asks Kora again</option>
+<explain><p>Anyone can type any e-mail into a new provider account. Linking or creating on an unverified address hands out other people's accounts, or blocks the real owner from registering.</p></explain>
+</question>
+
+<question id="uap-prehijack" type="choice">
+<q>Mallory registered <code>bola@example.com</code> with a password before Bola joined. Bola now signs in with Kora (verified e-mail). What does Sabi do, and why?</q>
+<option>Refuses, because the e-mail is taken</option>
+<option>Creates a second account for Bola</option>
+<option>Links Kora to the account and leaves everything else unchanged</option>
+<option correct>Links Kora to the account, removes its password and ends its sessions: Bola proved the inbox, and the unverified password may belong to someone else</option>
+<explain><p>This is the pre-account takeover from incident 3. Linking alone would leave Mallory with a working password on Bola's account. Evicting whoever set an unverified password closes it; verifying e-mails at registration keeps real owners from being surprised.</p></explain>
+</question>
+
+<question id="uap-state-server" type="choice">
+<q>Where does Sabi keep the OAuth <code>state</code> and PKCE verifier between the start and the callback?</q>
+<option>In a cookie holding both values</option>
+<option>In the redirect URL</option>
+<option correct>In the <code>oauth_logins</code> table, keyed by the hash of a random login id; the browser only holds the login id in an HttpOnly cookie</option>
+<option>In localStorage</option>
+<explain><p>If the browser held the state itself, an attacker who controls the browser's inputs controls both sides of the comparison. On the server, it survives a callback that reaches another server, and deleting the row on use makes the callback single-use.</p></explain>
+</question>
+
+<question id="uap-ssrf-fetch" type="choice">
+<q>The tests give <code>@zudojs/auth-oauth</code> a <code>fetch</code> that sends <code>https://id.kora.example/…</code> requests to the fake Kora on <code>127.0.0.1</code>. Why not configure the endpoints as <code>http://127.0.0.1:…</code> directly?</q>
+<option>Because http is slower</option>
+<option correct>The package's SSRF guard refuses provider URLs on loopback and private addresses, a protection you want in production</option>
+<option>Because OAuth requires DNS</option>
+<option>Because PKCE only works with https</option>
+<explain><p>A provider URL pointing at an internal address could turn your server into a tool for reaching internal services. The guard blocks it; the test routes the public name to the local fake instead of weakening the guard.</p></explain>
+</question>
+
+<question id="uap-for-update" type="choice">
+<q>In <code>accountFor</code>, the lookup is <code>SELECT … FROM users WHERE email = $1 FOR UPDATE</code>. What does <code>FOR UPDATE</code> prevent?</q>
+<option>Reading an old e-mail</option>
+<option correct>Two simultaneous Kora logins for the same e-mail both deciding what to do with the same user row; the second waits for the first transaction</option>
+<option>Deleting the user</option>
+<option>SQL injection</option>
+<explain><p>The row lock serializes the two decisions. Where the row does not exist yet, the second insert then fails on the <code>users</code> or <code>identities</code> key instead of creating a duplicate.</p></explain>
+</question>
+
+<question id="uap-retry-after" type="choice">
+<q>Why does Sabi's error handler copy <code>headers</code> from the thrown error?</q>
+<option>To add CORS headers</option>
+<option correct>Some errors carry response headers, such as the lockout's <code>Retry-After</code>; a custom handler that builds its own response would otherwise drop them</option>
+<option>To copy the request id</option>
+<option>Because @zudojs/http requires it</option>
+<explain><p>@zudojs/http's built-in handling sends those headers; replacing it with your own handler means taking over that job. The lockout test checks the header, so this cannot silently break.</p></explain>
+</question>
+
+<question id="uap-logout-sid" type="choice">
+<q>Logout reads the session id from the verified token's <code>sid</code>, not from the request body. What would go wrong with a body field?</q>
+<option>Nothing, the body is validated</option>
+<option correct>A caller could send someone else's session id and end their session</option>
+<option>The body is not available in DELETE</option>
+<option>Session ids are too long for JSON</option>
+<explain><p>Anything that decides <em>whose</em> data a request touches must come from verified credentials, not from what the client says.</p></explain>
+</question>
+
+<question id="uap-lockout-scope" type="choice">
+<q>The auth service locks an e-mail after five wrong passwords. Which attack does that <em>not</em> stop, and what does?</q>
+<option>Guessing many passwords for one account; the per-address rate limit</option>
+<option correct>Trying one common password against thousands of accounts; the per-address rate limit on the login route</option>
+<option>Stolen refresh tokens; the lockout</option>
+<option>Replayed OAuth callbacks; the lockout</option>
+<explain><p>A lockout counts per account, so an attacker spreading guesses across many accounts never trips it. A limit per client address, and in production shared counters across servers, covers that case.</p></explain>
+</question>
+
+<question id="uap-oauth-null-password" type="choice">
+<q>Bola only ever signed in with Kora, so his <code>password_hash</code> is <code>NULL</code>. What happens when someone tries <code>POST /v1/sessions</code> with his e-mail and any password?</q>
+<option>They are logged in, because there is no password to check</option>
+<option>500, because the hash is NULL</option>
+<option correct>401: <code>checkPassword</code> returns false for an account without a password, without hashing anything</option>
+<option>400, because OAuth users cannot log in</option>
+<explain><p>A missing credential must mean "no", never "anything goes". Bola can still set a password with a reset link if he wants one.</p></explain>
+</question>
+
+<question id="uap-out-hash" type="output">
+<q>What does this print? (It needs Node.js.)</q>
+<code file="reset-hash.ts" browser="no">
+import { generatePasswordResetToken, hashTokenForStorage } from "@zudojs/crypto";
+
+const token = await generatePasswordResetToken();
+const stored = await hashTokenForStorage(token);
+console.log(token.startsWith("reset_"), stored.length, stored === (await hashTokenForStorage(token)), stored.includes(token));
+</code>
+<option correct>true 64 true false</option>
+<option>true 64 false false</option>
+<option>false 43 true false</option>
+<option>true 32 true true</option>
+<explain><p>The token carries a <code>reset_</code> prefix, the stored value is a 64-character hex SHA-256 digest, and hashing is deterministic, so the same token always finds the same row. The digest does not contain the token.</p></explain>
+</question>
+
+<question id="uap-out-verify-hash" type="output">
+<q>What does this print? (It needs Node.js.)</q>
+<code file="verify-hash.ts" browser="no">
+import { hashTokenForStorage, verifyTokenHash } from "@zudojs/crypto";
+
+const stored = await hashTokenForStorage("reset_abc123");
+console.log(await verifyTokenHash("reset_abc123", stored));
+console.log(await verifyTokenHash("reset_abc124", stored));
+console.log(await verifyTokenHash("reset_abc123", stored.toUpperCase()));
+</code>
+<option correct>true
+false
+true</option>
+<option>true
+false
+false</option>
+<option>true
+true
+true</option>
+<option>false
+false
+false</option>
+<explain><p><code>verifyTokenHash</code> compares a token with a stored hex digest in constant time, and hex digits compare case-insensitively, so a digest a database upper-cased still matches.</p></explain>
+</question>
+
+<question id="uap-out-roles" type="output">
+<q>What does this print?</q>
+<code file="roles.ts">
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "student", permissions: ["course:read"] },
+    { name: "tutor", inherits: ["student"], permissions: ["course:create"],
+      rules: [{ name: "own", effect: "allow", resource: "course", action: ["update"], condition: isOwner("tutorId") }] },
+  ],
+});
+const tunde = createPermissionActor("2", { roles: ["tutor"] });
+console.log(await engine.can(tunde, "course:read"));
+console.log(await engine.can(tunde, "course:update", { tutorId: 2 }));
+console.log(await engine.can(tunde, "course:update", { tutorId: 1 }));
+console.log(await engine.can(createPermissionActor("3", { roles: ["student"] }), "course:create"));
+</code>
+<option correct>true
+true
+false
+false</option>
+<option>false
+true
+false
+false</option>
+<option>true
+false
+false
+false</option>
+<option>true
+true
+true
+false</option>
+<explain><p>The tutor inherits <code>course:read</code>. The ownership rule compares the course's <code>tutorId</code> 2 with the actor id <code>"2"</code>; @zudojs/permissions treats a numeric database id and a string token id as the same id. A student has no <code>course:create</code>.</p></explain>
+</question>
+
+<question id="uap-out-token-claims" type="output">
+<q>What does this print? (It needs Node.js.)</q>
+<code file="claims.ts" browser="no">
+import { randomBytes } from "node:crypto";
+import { createTokenPair, toUserId, verifyAccessToken } from "@zudojs/auth";
+
+const config = { accessSecret: randomBytes(32).toString("hex"), refreshSecret: randomBytes(32).toString("hex") };
+const pair = createTokenPair(toUserId("7"), config, { roles: ["tutor"] });
+const claims = JSON.parse(Buffer.from(pair.accessToken.split(".")[1]!, "base64url").toString());
+console.log(claims.sub, claims.roles, claims.typ);
+console.log(verifyAccessToken(pair.refreshToken, config).valid);
+</code>
+<option correct>7 [ 'tutor' ] access
+false</option>
+<option>7 [ 'tutor' ] access
+true</option>
+<option>7 undefined access
+false</option>
+<option>undefined [ 'tutor' ] refresh
+false</option>
+<explain><p>Anyone can read a JWT's claims; that is why roles in a token are fine but secrets are not. A refresh token is signed with the other secret, so it is not a valid access token.</p></explain>
+</question>
+
+<question id="uap-out-least" type="output">
+<q>This mirrors the <code>touch</code> rule of the session store. What does it print?</q>
+<code file="touch.js">
+const MIN = 60_000;
+const created = 0;
+const absolute = created + 7 * 24 * 60 * MIN;
+const touch = (now, ttl) => Math.min(now + ttl, absolute);
+
+console.log(touch(10 * MIN, 30 * MIN) / MIN);
+console.log(touch(absolute - 5 * MIN, 30 * MIN) / MIN);
+console.log(touch(absolute - 5 * MIN, 30 * MIN) === absolute);
+</code>
+<option correct>40
+10080
+true</option>
+<option>40
+10105
+false</option>
+<option>30
+10080
+true</option>
+<option>40
+10075
+false</option>
+<explain><p>Ten minutes in, a touch moves the deadline to 40 minutes. Five minutes before the absolute limit, now + 30 minutes would pass it, so the deadline is the limit itself: 7 × 24 × 60 = 10080 minutes.</p></explain>
+</question>
+
+<question id="uap-out-single-use" type="output">
+<q>A single-use reset token over a Map. What does this print?</q>
+<code file="single-use.js">
+const resets = new Map([["h1", { userId: 4, expiresAt: 100, usedAt: null }]]);
+
+function use(hash, now) {
+  const row = resets.get(hash);
+  if (!row || row.usedAt !== null || row.expiresAt <= now) return "invalid";
+  row.usedAt = now;
+  return `password set for user ${row.userId}`;
+}
+
+console.log(use("h1", 50));
+console.log(use("h1", 60));
+console.log(use("h2", 60));
+resets.set("h3", { userId: 5, expiresAt: 100, usedAt: null });
+console.log(use("h3", 130));
+</code>
+<option correct>password set for user 4
+invalid
+invalid
+invalid</option>
+<option>password set for user 4
+password set for user 4
+invalid
+invalid</option>
+<option>password set for user 4
+invalid
+invalid
+password set for user 5</option>
+<option>invalid
+invalid
+invalid
+invalid</option>
+<explain><p>The first use marks the row; the second finds it used. An unknown hash and an expired row are both invalid, with the same answer. In SQL the check and the mark are one conditional <code>UPDATE</code>, so two requests cannot both pass.</p></explain>
+</question>
+
+<question id="uap-out-link-rules" type="output">
+<q>The Kora linking rules as a function. What does this print?</q>
+<code file="link.js">
+const identities = new Map([["kora:1001", 1]]);
+const users = [{ id: 1, email: "ada@example.com", verified: true }, { id: 2, email: "bola@example.com", verified: false }];
+
+function decide(profile) {
+  if (identities.has(`kora:${profile.sub}`)) return "sign in";
+  if (!profile.emailVerified) return "refuse";
+  const user = users.find((u) => u.email === profile.email);
+  if (!user) return "create";
+  return user.verified ? "link" : "link and evict";
+}
+
+console.log(decide({ sub: "1001", email: "other@example.com", emailVerified: false }));
+console.log(decide({ sub: "2002", email: "bola@example.com", emailVerified: true }));
+console.log(decide({ sub: "3003", email: "ada@example.com", emailVerified: false }));
+console.log(decide({ sub: "4004", email: "chidi@example.com", emailVerified: true }));
+</code>
+<option correct>sign in
+link and evict
+refuse
+create</option>
+<option>refuse
+link
+refuse
+create</option>
+<option>sign in
+link
+link
+create</option>
+<option>refuse
+link and evict
+refuse
+create</option>
+<explain><p>An existing link wins first, whatever the profile says now. Then an unverified e-mail is refused; a verified one creates an account, links a verified one, or links and evicts an unverified one.</p></explain>
+</question>
+
+<question id="uap-out-errors" type="output">
+<q>What does this print? (It needs Node.js.)</q>
+<code file="auth-errors.ts" browser="no">
+import { AccountLockedError, InvalidCredentialsError, TokenRevokedError } from "@zudojs/auth";
+
+for (const error of [new InvalidCredentialsError(), new AccountLockedError(), new TokenRevokedError()]) {
+  console.log(error.statusCode, error.code);
+}
+</code>
+<option correct>401 ERR_INVALID_CREDENTIALS
+423 ERR_ACCOUNT_LOCKED
+401 ERR_TOKEN_REVOKED</option>
+<option>401 ERR_INVALID_CREDENTIALS
+429 ERR_ACCOUNT_LOCKED
+401 ERR_TOKEN_REVOKED</option>
+<option>400 ERR_INVALID_CREDENTIALS
+423 ERR_ACCOUNT_LOCKED
+403 ERR_TOKEN_REVOKED</option>
+<option>401 ERR_AUTHENTICATION
+401 ERR_AUTHENTICATION
+401 ERR_AUTHENTICATION</option>
+<explain><p>Wrong credentials and a revoked token are both 401: the client must authenticate again. A lockout is 423 Locked, with the wait time in <code>Retry-After</code>.</p></explain>
+</question>
+
+<question id="uap-out-state" type="output">
+<q>What does this print? (It needs Node.js.)</q>
+<code file="state.ts" browser="no">
+import { generateState, verifyState } from "@zudojs/auth-oauth";
+
+const saved = generateState();
+console.log(verifyState(saved, saved));
+console.log(verifyState(saved, generateState()));
+console.log(verifyState(saved, ""));
+console.log(saved.length >= 32);
+</code>
+<option correct>true
+false
+false
+true</option>
+<option>true
+false
+true
+true</option>
+<option>true
+true
+false
+true</option>
+<option>true
+false
+false
+false</option>
+<explain><p>Only the exact saved value matches, compared in constant time. An empty state, which a forged callback might send, never matches. States are long random strings, so they cannot be guessed.</p></explain>
+</question>
+
+<question id="uap-out-cookie" type="output">
+<q>What does this print? (It needs Node.js.)</q>
+<code file="login-cookie.ts" browser="no">
+import { serializeCookie } from "@zudojs/http";
+
+console.log(serializeCookie("kora_login", "abc", { maxAge: 600, path: "/v1/oauth/kora" }));
+</code>
+<option correct>kora_login=abc; Max-Age=600; Path=/v1/oauth/kora; HttpOnly; Secure; SameSite=Lax</option>
+<option>kora_login=abc; Max-Age=600; Path=/v1/oauth/kora</option>
+<option>kora_login=abc; Max-Age=600; Path=/; HttpOnly; Secure; SameSite=Strict</option>
+<option>kora_login=abc; Path=/v1/oauth/kora; SameSite=None</option>
+<explain><p>@zudojs/http adds HttpOnly, Secure and SameSite=Lax by default. Lax still sends the cookie on the provider's top-level redirect back to the callback, and the path keeps it off every other request.</p></explain>
+</question>
+
+<question id="uap-code-lockout" type="code" file="lockout.js">
+<q>Write <code>createLockout({ maxFailures, lockMs })</code> returning <code>attempt(email, passwordOk, now)</code>. It returns <code>"ok"</code>, <code>"wrong"</code> or <code>"locked"</code>. After <code>maxFailures</code> consecutive wrong passwords the e-mail is locked for <code>lockMs</code>, even for the right password; a success resets the count. E-mails are compared after trimming and lower-casing. Print the results of the attempts below.</q>
+<starter>
+function createLockout({ maxFailures, lockMs }) {
+  // your code
+}
+
+const lockout = createLockout({ maxFailures: 3, lockMs: 1000 });
+const attempts = [
+  ["ada@example.com", false, 0], ["ADA@example.com ", false, 10], ["ada@example.com", false, 20],
+  ["ada@example.com", true, 30], ["ada@example.com", true, 1030], ["ada@example.com", false, 1040],
+];
+</starter>
+<solution>
+function createLockout({ maxFailures, lockMs }) {
+  const state = new Map();
+  return {
+    attempt(email, passwordOk, now) {
+      const key = email.trim().toLowerCase();
+      const entry = state.get(key) ?? { failures: 0, lockedUntil: 0 };
+      if (entry.lockedUntil > now) return "locked";
+      if (passwordOk) {
+        state.delete(key);
+        return "ok";
+      }
+      entry.failures += 1;
+      if (entry.failures >= maxFailures) {
+        entry.failures = 0;
+        entry.lockedUntil = now + lockMs;
+      }
+      state.set(key, entry);
+      return "wrong";
+    },
+  };
+}
+
+const lockout = createLockout({ maxFailures: 3, lockMs: 1000 });
+const attempts = [
+  ["ada@example.com", false, 0], ["ADA@example.com ", false, 10], ["ada@example.com", false, 20],
+  ["ada@example.com", true, 30], ["ada@example.com", true, 1030], ["ada@example.com", false, 1040],
+];
+console.log(attempts.map(([email, ok, now]) => lockout.attempt(email, ok, now)).join(" "));
+</solution>
+<expected>
+wrong wrong wrong locked ok wrong
+</expected>
+<explain><p>The third failure starts the lock, so even the right password at time 30 is refused. At 1030 the lock has passed and the success resets the count. Normalizing the e-mail stops an attacker from getting a fresh budget with <code>ADA@example.com</code>.</p></explain>
+</question>
+
+<question id="uap-code-rotation" type="code" file="rotation.js">
+<q>Write <code>createRefresher()</code> with <code>issue(userId)</code> (returns a new refresh token id and remembers it as unused) and <code>refresh(tokenId)</code>. A known unused token is marked used and a new one is issued for the same user; a used one ends every session of its user (all their tokens become unusable) and returns <code>"replay"</code>; an unknown one returns <code>"invalid"</code>. Use ids <code>t1</code>, <code>t2</code>, … Print the results below.</q>
+<starter>
+function createRefresher() {
+  // your code
+}
+
+const r = createRefresher();
+const laptop = r.issue("ada");
+const phone = r.issue("ada");
+</starter>
+<solution>
+function createRefresher() {
+  const tokens = new Map();
+  let next = 1;
+  const issue = (userId) => {
+    const id = `t${next++}`;
+    tokens.set(id, { userId, used: false });
+    return id;
+  };
+  return {
+    issue,
+    refresh(tokenId) {
+      const token = tokens.get(tokenId);
+      if (!token) return "invalid";
+      if (token.used) {
+        for (const [id, other] of tokens) if (other.userId === token.userId) tokens.delete(id);
+        return "replay";
+      }
+      token.used = true;
+      return issue(token.userId);
+    },
+  };
+}
+
+const r = createRefresher();
+const laptop = r.issue("ada");
+const phone = r.issue("ada");
+const next = r.refresh(laptop);
+console.log(laptop, phone, next);
+console.log(r.refresh(laptop), r.refresh(next), r.refresh(phone), r.refresh("t9"));
+</solution>
+<expected>
+t1 t2 t3
+replay invalid invalid invalid
+</expected>
+<explain><p>Replaying <code>t1</code> ends everything Ada has, so the honest new token <code>t3</code> and the phone's <code>t2</code> are gone too. That is the price of not knowing who used the token first.</p></explain>
+</question>
+
+<question id="uap-code-reset-token" type="code" file="reset-store.js">
+<q>Write <code>createResetStore()</code> with <code>issue(userId, now)</code> and <code>use(token, now)</code>. <code>issue</code> returns a random token (use <code>crypto.randomUUID()</code>), keeps only its SHA-256 hex digest (use <code>crypto.subtle.digest</code>), deletes the user's older tokens, and makes it valid for 30 minutes (1 800 000 ms). <code>use</code> returns the user id once, then <code>null</code>. Print the results below.</q>
+<starter>
+async function sha256(text) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function createResetStore() {
+  // your code
+}
+</starter>
+<solution>
+async function sha256(text) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function createResetStore() {
+  const rows = new Map();
+  return {
+    rows,
+    async issue(userId, now) {
+      for (const [hash, row] of rows) if (row.userId === userId) rows.delete(hash);
+      const token = crypto.randomUUID();
+      rows.set(await sha256(token), { userId, expiresAt: now + 1_800_000 });
+      return token;
+    },
+    async use(token, now) {
+      const hash = await sha256(token);
+      const row = rows.get(hash);
+      if (!row || row.expiresAt <= now) return null;
+      rows.delete(hash);
+      return row.userId;
+    },
+  };
+}
+
+const store = createResetStore();
+const first = await store.issue(4, 0);
+const second = await store.issue(4, 1000);
+console.log(await store.use(first, 2000), await store.use(second, 2000), await store.use(second, 3000));
+const late = await store.issue(5, 0);
+console.log(await store.use(late, 1_800_000), store.rows.size, [...store.rows.keys()].every((k) => k.length === 64));
+</solution>
+<expected>
+null 4 null
+null 1 true
+</expected>
+<explain><p>The second request replaced the first link, the second link worked once, and a link at exactly 30 minutes is expired. Only digests are stored: a leak of <code>rows</code> gives away no working link.</p></explain>
+</question>
+
+<question id="uap-code-can" type="code" file="can.ts">
+<q>With <code>@zudojs/permissions</code>, build an engine where <code>student</code> has <code>course:read</code>, <code>tutor</code> inherits <code>student</code>, has <code>course:create</code> and may <code>update</code> a course only when <code>isOwner("tutorId")</code>, and <code>admin</code> inherits <code>tutor</code> and has <code>course:*</code> and <code>user:assign-roles</code>. Print one line per actor: can it update course <code>{ tutorId: 2 }</code>, and can it assign roles?</q>
+<starter>
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+const actors = [
+  createPermissionActor("1", { roles: ["student"] }),
+  createPermissionActor("2", { roles: ["tutor"] }),
+  createPermissionActor("3", { roles: ["tutor"] }),
+  createPermissionActor("4", { roles: ["admin"] }),
+];
+</starter>
+<solution>
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "student", permissions: ["course:read"] },
+    { name: "tutor", inherits: ["student"], permissions: ["course:create"],
+      rules: [{ name: "own-courses", effect: "allow", resource: "course", action: ["update"], condition: isOwner("tutorId") }] },
+    { name: "admin", inherits: ["tutor"], permissions: ["course:*", "user:assign-roles"] },
+  ],
+});
+
+const actors = [
+  createPermissionActor("1", { roles: ["student"] }),
+  createPermissionActor("2", { roles: ["tutor"] }),
+  createPermissionActor("3", { roles: ["tutor"] }),
+  createPermissionActor("4", { roles: ["admin"] }),
+];
+for (const actor of actors) {
+  console.log(actor.id, actor.roles, await engine.can(actor, "course:update", { tutorId: 2 }), await engine.can(actor, "user:assign-roles"));
+}
+</solution>
+<expected>
+1 [ 'student' ] false false
+2 [ 'tutor' ] true false
+3 [ 'tutor' ] false false
+4 [ 'admin' ] true true
+</expected>
+<explain><p>Tutor 2 owns the course, tutor 3 does not. The admin's <code>course:*</code> allows every course action without the ownership rule, and only the admin may assign roles.</p></explain>
+</question>
+
+<question id="uap-code-verified-email" type="code" file="email-change.js">
+<q>Write <code>confirmEmail(users, verification)</code>. <code>verification</code> is <code>{ userId, email }</code> from a verification link. Mark the user's e-mail verified only if their current e-mail is still the one the link was sent to; return <code>true</code> or <code>false</code>. Print the results below.</q>
+<starter>
+const users = [{ id: 1, email: "ada@example.com", verified: false }, { id: 2, email: "new@example.com", verified: false }];
+
+function confirmEmail(users, verification) {
+  // your code
+}
+</starter>
+<solution>
+const users = [{ id: 1, email: "ada@example.com", verified: false }, { id: 2, email: "new@example.com", verified: false }];
+
+function confirmEmail(users, verification) {
+  const user = users.find((u) => u.id === verification.userId && u.email === verification.email);
+  if (!user) return false;
+  user.verified = true;
+  return true;
+}
+
+console.log(confirmEmail(users, { userId: 1, email: "ada@example.com" }));
+console.log(confirmEmail(users, { userId: 2, email: "old@example.com" }));
+console.log(users.map((u) => `${u.email}: ${u.verified}`).join(", "));
+</solution>
+<expected>
+true
+false
+ada@example.com: true, new@example.com: false
+</expected>
+<explain><p>User 2 changed their e-mail after the link was sent. Verifying anyway would mark an address as proven that nobody proved. Store the address with the token and compare it on use.</p></explain>
+</question>
+
+<question id="uap-code-roles-update" type="code" file="assign.js">
+<q>Write <code>assignRoles(actor, targetId, roles)</code>. Only an actor with role <code>admin</code> may assign; an admin may not change their own roles; every role must be one of <code>student</code>, <code>tutor</code>, <code>admin</code>; duplicates are removed and the result is sorted. Return <code>{ status, roles? }</code> with 403, 400 or 200. Print the four results as JSON.</q>
+<starter>
+function assignRoles(actor, targetId, roles) {
+  // your code
+}
+
+const grace = { id: 1, roles: ["admin"] };
+const tunde = { id: 2, roles: ["student"] };
+</starter>
+<solution>
+const ALLOWED = ["student", "tutor", "admin"];
+
+function assignRoles(actor, targetId, roles) {
+  if (!actor.roles.includes("admin")) return { status: 403 };
+  if (actor.id === targetId) return { status: 400 };
+  if (roles.length === 0 || !roles.every((role) => ALLOWED.includes(role))) return { status: 400 };
+  return { status: 200, roles: [...new Set(roles)].sort() };
+}
+
+const grace = { id: 1, roles: ["admin"] };
+const tunde = { id: 2, roles: ["student"] };
+console.log(JSON.stringify(assignRoles(tunde, 2, ["admin"])));
+console.log(JSON.stringify(assignRoles(grace, 1, ["student"])));
+console.log(JSON.stringify(assignRoles(grace, 2, ["tutor", "owner"])));
+console.log(JSON.stringify(assignRoles(grace, 2, ["tutor", "student", "tutor"])));
+</solution>
+<expected>
+{"status":403}
+{"status":400}
+{"status":400}
+{"status":200,"roles":["student","tutor"]}
+</expected>
+<explain><p>The permission check comes first, so a student learns nothing else. Self-changes and unknown roles are refused. In the platform, a successful change also ends the target's sessions.</p></explain>
+</question>
+
+<question id="uap-code-enumeration" type="code" file="reset-request.js">
+<q>Write <code>requestReset(email, users, outbox)</code> for the reset request endpoint. It always returns <code>{ status: 202, message: "If the address has an account, a reset link is on its way." }</code>, and only pushes <code>{ to }</code> into <code>outbox</code> when an active user with that e-mail exists (compare trimmed and lower-cased). Print both results and the outbox.</q>
+<starter>
+const users = [{ email: "ada@example.com", active: true }, { email: "gone@example.com", active: false }];
+const outbox = [];
+
+function requestReset(email, users, outbox) {
+  // your code
+}
+</starter>
+<solution>
+const users = [{ email: "ada@example.com", active: true }, { email: "gone@example.com", active: false }];
+const outbox = [];
+
+function requestReset(email, users, outbox) {
+  const wanted = email.trim().toLowerCase();
+  const user = users.find((u) => u.email === wanted && u.active);
+  if (user) outbox.push({ to: user.email });
+  return { status: 202, message: "If the address has an account, a reset link is on its way." };
+}
+
+const known = requestReset(" ADA@example.com", users, outbox);
+const unknown = requestReset("gone@example.com", users, outbox);
+console.log(JSON.stringify(known) === JSON.stringify(unknown), known.status);
+console.log(outbox);
+</solution>
+<expected>
+true 202
+[ { to: 'ada@example.com' } ]
+</expected>
+<explain><p>A caller cannot tell the two answers apart. A deactivated account gets no link either, and still the same answer. In production, the e-mail goes on a queue so the timing does not differ either.</p></explain>
+</question>

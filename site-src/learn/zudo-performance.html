@@ -336,27 +336,24 @@ $ node top-functions.mjs profiles/*.cpuprofile        # RATE_LIMIT_MAX=300
 <example file="rate-limiter-cost.ts" browser="no">
 import { createRateLimiter } from "@zudojs/security";
 
-function msPerThousand(max: number, checks: number): { first: number; last: number } {
+function lastThousandMs(max: number, checks: number): number {
   const limiter = createRateLimiter({ windowMs: 60_000, max });
-  const blocks: number[] = [];
-  for (let block = 0; block < checks / 1_000; block++) {
-    const start = performance.now();
-    for (let i = 0; i < 1_000; i++) limiter.check({ ip: "203.0.113.7" });
-    blocks.push(performance.now() - start);
-  }
+  for (let i = 0; i < checks - 1_000; i++) limiter.check({ ip: "203.0.113.7" });
+  const start = performance.now();
+  for (let i = 0; i < 1_000; i++) limiter.check({ ip: "203.0.113.7" });
+  const ms = performance.now() - start;
   limiter.destroy();
-  return { first: blocks[1]!, last: blocks.at(-1)! };
+  return ms;
 }
 
-const loadTest = msPerThousand(1_000_000, 8_000);
-const production = msPerThousand(300, 8_000);
-console.log("high limit: the last 1,000 checks at least 4x slower than the second 1,000:", loadTest.last > 4 * loadTest.first);
-console.log("limit of 300: the last 1,000 checks no more than 2x slower:", production.last < 2 * production.first);
+lastThousandMs(300, 8_000);
+const production = lastThousandMs(300, 8_000);
+const loadTest = lastThousandMs(1_000_000, 8_000);
+const productionLater = lastThousandMs(300, 16_000);
+console.log("after 8,000 checks from one client, a limit of 1,000,000 costs at least 5x a limit of 300:", loadTest > 5 * production);
+console.log("with a limit of 300, twice as many earlier checks cost no more than 2x:", productionLater < 2 * production);
 </example>
-<output>
-high limit: the last 1,000 checks at least 4x slower than the second 1,000: true
-limit of 300: the last 1,000 checks no more than 2x slower: true
-</output>
+<output></output>
 <p>So the second hot spot was produced by the test setup, not by production traffic, where thousands of clients each stay under 300. Two lessons: make the load test look like production (many client addresses, production settings), and know your tools' cost model. If you ever need a high per-client limit, such as for a trusted internal client, prefer a counter-based limiter (a fixed window or token bucket in Redis, from <a href="/learn/api-rate-limiting">the rate limiting lesson</a>) over a sliding log.</p>
 </section>
 

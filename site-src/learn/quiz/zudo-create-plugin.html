@@ -1,0 +1,881 @@
+<question id="zc-why-plugin" type="choice">
+<q>ShopFlow and the invoicing service want email receipts; the bookings app does not. Why build receipts as a plugin rather than as code inside ShopFlow?</q>
+<option>Plugins run faster than application code</option>
+<option correct>Each app decides with one <code>register</code> line whether it runs receipts, and the code exists once, outside every app</option>
+<option>Plugins cannot have bugs that affect the host</option>
+<option>Only plugins can listen to events</option>
+<explain><p>A plugin is an optional feature behind a fixed interface. The host stays unchanged, and switching the feature on or off is a registration, not a code change. It still runs with the host's full power, so it can break the host.</p></explain>
+</question>
+
+<question id="zc-initialize" type="choice">
+<q>The receipts plugin resolves the mailer from the container in <code>initialize</code>, not in <code>install</code>. Why?</q>
+<option><code>install</code> has no access to the container</option>
+<option correct>The manager runs each phase for all plugins before the next, so by <code>initialize</code> every plugin, including the mailer, has finished <code>install</code>, where it registers its service</option>
+<option><code>initialize</code> runs before <code>install</code></option>
+<option>Resolving in <code>install</code> would throw a <code>PluginStateError</code></option>
+<explain><p><code>install</code> is where plugins offer things; <code>initialize</code> is where they can rely on everything that was offered. The mailer is a dependency, so its <code>install</code> would run first anyway, but <code>initialize</code> also works for services from plugins that are not dependencies.</p></explain>
+</question>
+
+<question id="zc-cleanup-line" type="choice">
+<q>Why does the mailer call <code>context.registerDisposable</code> right after opening the connection in <code>start</code>, instead of closing the connection in its own <code>dispose</code> hook?</q>
+<option>Because <code>dispose</code> hooks are never called</option>
+<option correct>So the cleanup list only ever contains resources that really exist: a plugin that failed before opening, or was never started, has nothing to close</option>
+<option>Because disposables run faster than hooks</option>
+<option>Because <code>dispose</code> cannot be <code>async</code></option>
+<explain><p>A <code>dispose</code> hook runs whenever the plugin is disposed, including after a failed or skipped <code>start</code>, and would have to guess what exists. Registering cleanup next to the acquisition makes rollback exact.</p></explain>
+</question>
+
+<question id="zc-factory" type="choice">
+<q>Why is the plugin exported as <code>createReceiptsPlugin()</code> instead of a ready-made object?</q>
+<option>The manager only accepts functions</option>
+<option correct>Each host and each test gets fresh state in its own closure, and a retry after a rollback needs new plugin objects anyway</option>
+<option>Objects cannot have methods like <code>health()</code></option>
+<option>Factories make the plugin type-safe for <code>register</code> options</option>
+<explain><p>A disposed plugin cannot be started again. Sharing one object between hosts or tests would also share its counters and subscriptions. A factory avoids both problems.</p></explain>
+</question>
+
+<question id="zc-capability-when" type="choice">
+<q>The host grants <code>allowedCapabilities: ["events"]</code>. The receipts plugin declares <code>["events", "container"]</code>. When does it fail?</q>
+<option>At the first payment event</option>
+<option>In the plugin's <code>install</code> hook</option>
+<option correct>At <code>manager.register</code>, with a <code>PluginRegistrationError</code> naming the capability that is not granted</option>
+<option>Never: capabilities are documentation only</option>
+<explain><p>The manager compares declared capabilities with the allow-list when the plugin is registered. It is a declaration check that catches mistakes, not a sandbox: a plugin can still do anything the process can.</p></explain>
+</question>
+
+<question id="zc-version-when" type="choice">
+<q>Receipts requires <code>@mycompany/zudo-plugin-mailer@^2.0.0</code> and the host registers mailer 3.0.0. What has run when the error is thrown?</q>
+<option>The mailer's <code>install</code> and <code>start</code></option>
+<option>Every <code>install</code> hook</option>
+<option correct>No hook at all: dependencies and versions are checked at the beginning of <code>manager.start</code></option>
+<option>Only the receipts <code>install</code> hook</option>
+<explain><p>Resolution and version checks happen before the first phase, so there is nothing to roll back. The error is a <code>PluginDependencyVersionError</code>, a subclass of <code>PluginDependencyError</code>.</p></explain>
+</question>
+
+<question id="zc-options-typo" type="choice">
+<q>A host writes <code>manager.register(createReceiptsPlugin(), { form: "receipts@shopflow.ng" })</code>, with <code>form</code> instead of <code>from</code>. The plugin is typed <code>Plugin&lt;Partial&lt;ReceiptsOptions&gt; | undefined&gt;</code>. What catches the typo?</q>
+<option>TypeScript, because <code>register</code> checks options against the plugin's type</option>
+<option>The manager, because it compares options with the plugin's metadata</option>
+<option correct>Only the plugin's own validation in <code>install</code>: <code>register</code> types its second argument as <code>unknown</code></option>
+<option>Nothing: the plugin runs without a sender</option>
+<explain><p>In the published <code>@zudojs/plugins</code>, <code>register(plugin, options?: unknown)</code> accepts anything. Validating in <code>install</code> turns the typo into a failed start with a rollback, instead of receipts with no sender.</p></explain>
+</question>
+
+<question id="zc-can-resolve" type="choice">
+<q>Why does the receipts plugin check <code>typeof context.container.resolve === "function"</code> at run time?</q>
+<option>Because <code>resolve</code> is async</option>
+<option correct>Because the context's <code>PluginContainer</code> type only promises <code>register</code>; a host may pass a container that cannot resolve, and the plugin wants a clear error in <code>install</code> instead of a crash later</option>
+<option>Because tokens made with <code>Symbol.for</code> cannot be resolved</option>
+<option>Because TypeScript forbids calling methods on the container</option>
+<explain><p>The plugin context is deliberately minimal: plugins are expected to offer services. A plugin that consumes one depends on more than the type guarantees, so it checks and fails early with a message that says what the host must provide.</p></explain>
+</question>
+
+<question id="zc-symbol-token" type="choice">
+<q>Why is the mailer's container token <code>Symbol.for("@mycompany/zudo-plugin-mailer:Mailer")</code> rather than <code>Symbol("Mailer")</code> or <code>createToken("Mailer")</code>?</q>
+<option>Containers only accept global symbols</option>
+<option correct>Every copy of the contract module returns the same symbol, so receipts finds the service even if it loaded a different copy of the mailer package than the host</option>
+<option>It makes the token shorter</option>
+<option>Global symbols are private to the plugin</option>
+<explain><p><code>Symbol()</code> and <code>createToken()</code> create a new, unique key per module evaluation. <code>Symbol.for(key)</code> is shared through the global registry, the same idea as the <code>@zudojs/errors</code> brand.</p></explain>
+</question>
+
+<question id="zc-optional-purpose" type="choice">
+<q>Receipts lists the audit plugin under <code>optionalDependencies</code>. What does that do when audit is installed, and when it is not?</q>
+<option>Installed: receipts calls audit directly. Not installed: start fails</option>
+<option correct>Installed: audit starts before receipts, so it is listening before the first receipt. Not installed: nothing, receipts starts normally</option>
+<option>Installed: audit starts after receipts. Not installed: a warning is logged</option>
+<option>It has no effect on ordering; it is documentation</option>
+<explain><p>A present optional dependency takes part in ordering exactly like a required one; an absent one is ignored. Receipts never calls audit; audit listens for <code>receipt.sent</code>.</p></explain>
+</question>
+
+<question id="zc-events-vs-deps" type="choice">
+<q>When should one plugin talk to another through a declared dependency and a container service, and when through events?</q>
+<option>Always events: dependencies create coupling</option>
+<option>Always dependencies: events are unreliable</option>
+<option correct>A dependency and a service when you need something done and its result (receipts needs the mailer to send); events when you announce what happened and do not care who listens (receipt.sent for audit)</option>
+<option>Dependencies for sync code, events for async code</option>
+<explain><p>A dependency makes the manager guarantee presence and order. An event keeps the announcer unaware of its listeners, so audit, statistics or anything else can be added without touching receipts.</p></explain>
+</question>
+
+<question id="zc-no-await" type="choice">
+<q>The <code>payment.succeeded</code> handler starts <code>sendReceipt</code> and tracks it in <code>inFlight</code>, but does not <code>await</code> it. Why?</q>
+<option>Because event handlers cannot be async</option>
+<option correct>So the host's <code>publishEvent</code>, part of the payment request, returns at once instead of waiting for the mail server</option>
+<option>Because awaiting would send the receipt twice</option>
+<option>Because <code>inFlight</code> only accepts unresolved promises</option>
+<explain><p>The payment already succeeded; the receipt is follow-up work. Awaiting it would make every checkout as slow as the mail server. Tracking the promise lets <code>stop</code> wait for it at shutdown.</p></explain>
+</question>
+
+<question id="zc-stop-dispose" type="choice">
+<q>What is the difference between the receipts plugin's <code>stop</code> and its disposal?</q>
+<option>None; they are two names for one step</option>
+<option correct><code>stop</code> finishes work (refuses new payments, waits for receipts in flight); disposal then releases resources (unsubscribes, clears timers) through the disposables list</option>
+<option><code>stop</code> releases resources; disposal logs a summary</option>
+<option>Disposal only runs if <code>stop</code> threw</option>
+<explain><p>Finishing work needs the resources still in place, so it comes first. Releasing comes after, newest first, and also runs for plugins that never started.</p></explain>
+</question>
+
+<question id="zc-signal-when" type="choice">
+<q>When does a plugin's <code>context.signal</code> abort?</q>
+<option>When its <code>start</code> hook returns</option>
+<option>As soon as <code>manager.stop</code> is called, before any <code>stop</code> hook</option>
+<option correct>When the plugin is disposed, just before its disposables run, so work still in progress sees the shutdown before resources disappear under it</option>
+<option>Never: the host must abort it</option>
+<explain><p>The manager aborts each plugin's own signal at the start of its disposal. That is why the mailer's <code>send</code> takes the signal: a receipt that outlived <code>stop</code> fails fast instead of writing to a closed connection.</p></explain>
+</question>
+
+<question id="zc-health" type="choice">
+<q><code>manager.diagnostics()</code> reports the receipts plugin <code>healthy</code>, yet its last three receipts bounced. Why, and what fixes it?</q>
+<option>The diagnostics are cached; call them again</option>
+<option correct>Diagnostics derive health from the lifecycle state only (<code>started</code> means healthy); the plugin offers its own <code>health()</code> and the host reports both</option>
+<option>Bounces are not errors</option>
+<option>The manager only checks health during <code>start</code></option>
+<explain><p>Only the plugin knows whether its work succeeds. A health endpoint that combines lifecycle state with each plugin's own report catches a running-but-failing plugin.</p></explain>
+</question>
+
+<question id="zc-rollback-order" type="choice">
+<q>Mailer and receipts are started; then SMS alerts, which depends on receipts, throws in <code>start</code>. In what order are things undone?</q>
+<option>Mailer stopped, receipts stopped, then disposed in registration order</option>
+<option correct>Receipts stopped, mailer stopped; then SMS alerts, receipts and mailer disposed, dependents first</option>
+<option>Only SMS alerts is disposed; the others keep running</option>
+<option>Everything is disposed at once, in parallel</option>
+<explain><p>Rollback stops what was started in reverse dependency order, then disposes everything that holds resources in the same reverse order, including the failed plugin. The mailer's connection closes last because others depended on it.</p></explain>
+</question>
+
+<question id="zc-unnamed-error" type="choice">
+<q>In the published <code>@zudojs/plugins</code>, what does <code>catch (error)</code> around <code>manager.start</code> receive when a plugin's <code>start</code> throws <code>new Error("key rejected")</code>?</q>
+<option>A <code>PluginStartError</code> whose <code>pluginName</code> names the plugin</option>
+<option correct>The plugin's own <code>Error("key rejected")</code>, unwrapped; the plugin's name is only in <code>diagnostics()</code></option>
+<option>An <code>AggregateError</code> of all failures</option>
+<option>Nothing: <code>start</code> resolves and logs the error</option>
+<explain><p><code>PluginStartError</code> is exported but the manager never throws it. The lesson's <code>startPlugins</code> helper finds the failed plugin in the diagnostics and wraps the error, keeping the original as <code>cause</code>.</p></explain>
+</question>
+
+<question id="zc-restart" type="choice">
+<q>After a rolled-back start, you fix the configuration and call <code>manager.start(context)</code> again on the same manager. What happens?</q>
+<option>The plugins start normally</option>
+<option>Only the failed plugin is retried</option>
+<option correct>It throws <code>PluginStateError</code>: the plugins are <code>disposed</code>, and the state machine has no way back. Create a new manager with new plugin objects</option>
+<option>It waits until the old start finishes</option>
+<option>It starts the plugins twice</option>
+<explain><p>Disposal is final by design, so a released resource can never be used again. Factories make "new plugin objects" a one-line change.</p></explain>
+</question>
+
+<question id="zc-hang-exit" type="choice">
+<q>With <code>hookTimeout: 200</code>, a plugin's <code>start</code> returns a promise that never settles. The host starts plugins before its HTTP server listens. What happens under plain Node?</q>
+<option><code>PluginTimeoutError</code> after 200 ms, then rollback</option>
+<option>The process waits forever</option>
+<option correct>Node exits with code 13 ("unsettled top-level await") without a timeout error or rollback, because the manager's timeout timer is unref'd and nothing else keeps the process alive</option>
+<option>The manager retries the hook</option>
+<explain><p>An unref'd timer does not keep Node running. With no socket, timer or other work pending, Node ends the process. Holding the process open during start-up (the lesson's <code>keepAlive</code> interval) lets the timeout fire.</p></explain>
+</question>
+
+<question id="zc-capability-major" type="choice">
+<q>Version 1.3.0 of your plugin adds <code>"network"</code> to its <code>capabilities</code>. Why is that a breaking change?</q>
+<option>It changes the plugin's name</option>
+<option correct>Every host whose <code>allowedCapabilities</code> does not include <code>"network"</code> now fails at <code>register</code> after upgrading</option>
+<option>Capabilities are only read at build time</option>
+<option>It is not breaking; capabilities are optional</option>
+<explain><p>Capabilities are part of the contract with the host. Requiring a new one is like requiring a new peer dependency: installations that worked yesterday stop working, so it belongs in a major version.</p></explain>
+</question>
+
+<question id="zc-peer" type="choice">
+<q>The receipts package lists <code>@mycompany/zudo-plugin-mailer</code> in <code>peerDependencies</code> <em>and</em> the receipts plugin lists it in <code>dependencies</code>. What does each one check?</q>
+<option>They check the same thing twice</option>
+<option correct>The peer dependency makes npm install a compatible mailer package on disk; the plugin dependency makes the manager check the mailer plugin the host actually registered</option>
+<option>The peer dependency checks at run time, the plugin dependency at install time</option>
+<option>Only the plugin dependency matters; npm ignores peers</option>
+<explain><p>A host could have the package installed but register a different mailer plugin, or none. The two ranges should agree, and each guards a different mistake.</p></explain>
+</question>
+
+<question id="zc-duplicates" type="choice">
+<q>The host moves <code>payment.succeeded</code> from the in-process bus to a message queue that delivers at least once. What must the receipts plugin add?</q>
+<option>Nothing: the plugin cannot tell the difference</option>
+<option>A longer <code>hookTimeout</code></option>
+<option correct>A record of sent receipts by payment <code>reference</code>, so a duplicate delivery does not email the customer twice</option>
+<option>An optional dependency on the queue plugin</option>
+<explain><p>"At least once" means duplicates will happen. Deduplicating by a stable key makes the handler idempotent, exactly like the payment service's reference check.</p></explain>
+</question>
+
+<question id="zc-plugin-events" type="choice">
+<q>The host passes an <code>@zudojs/events</code> bus in the plugin context. The manager publishes <code>plugin:started</code>. Which subscription receives every plugin lifecycle event?</q>
+<option><code>events.on("plugin:*", …)</code></option>
+<option correct><code>events.on("plugin.*", …)</code>, because the bus normalizes <code>:</code> to <code>.</code> and <code>plugin.*</code> matches every <code>plugin.</code> type</option>
+<option><code>events.on("*plugin*", …)</code></option>
+<option>None: lifecycle events are internal to the manager</option>
+<explain><p><code>plugin:started</code> becomes <code>plugin.started</code> when published. A namespace wildcard matches it; <code>plugin:*</code> is not a valid pattern, because a wildcard is only allowed as the last segment after a dot.</p></explain>
+</question>
+
+<question id="zc-o-lifo" type="output">
+<q>This mimics a plugin context's disposables list. What does it print?</q>
+<code file="lifo.js">
+const disposables = [];
+const onDispose = (fn) => disposables.push({ dispose: fn });
+
+onDispose(() => console.log("close smtp connection"));
+onDispose(() => console.log("unsubscribe payment.succeeded"));
+onDispose(() => console.log("clear summary timer"));
+
+for (const d of disposables.splice(0).reverse()) d.dispose();
+console.log("left:", disposables.length);
+</code>
+<option correct>clear summary timer
+unsubscribe payment.succeeded
+close smtp connection
+left: 0</option>
+<option>close smtp connection
+unsubscribe payment.succeeded
+clear summary timer
+left: 0</option>
+<option>clear summary timer
+unsubscribe payment.succeeded
+close smtp connection
+left: 3</option>
+<option>close smtp connection
+left: 2</option>
+<explain><p>Cleanup runs newest first, the mirror of acquisition: the last thing set up may depend on the earlier ones. <code>splice(0)</code> takes the list and empties it, so a second disposal cannot run anything twice.</p></explain>
+</question>
+
+<question id="zc-o-toposort" type="output">
+<q>A simplified start-order resolver with optional dependencies. What does it print?</q>
+<code file="order.js">
+const plugins = {
+  receipts: { deps: ["mailer"], optional: ["audit"] },
+  mailer: { deps: [], optional: [] },
+  audit: { deps: [], optional: [] },
+};
+
+function startOrder(registered) {
+  const order = [];
+  const visit = (name) => {
+    if (order.includes(name)) return;
+    const p = plugins[name];
+    for (const d of [...p.deps, ...p.optional.filter((o) => registered.includes(o))]) visit(d);
+    order.push(name);
+  };
+  registered.forEach(visit);
+  return order.join(" ");
+}
+
+console.log(startOrder(["receipts", "mailer", "audit"]));
+console.log(startOrder(["receipts", "mailer"]));
+</code>
+<option correct>mailer audit receipts
+mailer receipts</option>
+<option>receipts mailer audit
+receipts mailer</option>
+<option>audit mailer receipts
+mailer receipts</option>
+<option>mailer audit receipts
+mailer audit receipts</option>
+<explain><p>A plugin is added only after all its dependencies. The optional <code>audit</code> joins the ordering only when it is registered; in the second call it is skipped, not reported missing.</p></explain>
+</question>
+
+<question id="zc-o-rollback" type="output">
+<q>A start with rollback, reduced to plain code. What does it print?</q>
+<code file="rollback-sim.js">
+async function startAll(plugins) {
+  const started = [];
+  try {
+    for (const p of plugins) {
+      await p.start();
+      started.push(p);
+    }
+  } catch (error) {
+    for (const p of started.reverse()) await p.stop();
+    throw error;
+  }
+}
+
+const make = (name, fails = false) => ({
+  start: async () => {
+    if (fails) throw new Error(`${name}: API key rejected`);
+    console.log("start", name);
+  },
+  stop: async () => console.log("stop", name),
+});
+
+await startAll([make("mailer"), make("receipts"), make("sms", true), make("stats")]).catch((e) => console.log(e.message));
+</code>
+<option correct>start mailer
+start receipts
+stop receipts
+stop mailer
+sms: API key rejected</option>
+<option>start mailer
+start receipts
+stop mailer
+stop receipts
+sms: API key rejected</option>
+<option>start mailer
+start receipts
+start stats
+stop stats
+stop receipts
+stop mailer
+sms: API key rejected</option>
+<option>start mailer
+start receipts
+sms: API key rejected</option>
+<explain><p>Only what really started is stopped, in reverse order, and the error is rethrown after the rollback. <code>stats</code> comes after the failure, so it never starts.</p></explain>
+</question>
+
+<question id="zc-o-capabilities" type="output">
+<q>The manager's capability check, copied. What does it print?</q>
+<code file="caps.js">
+function checkCapabilities(plugin, allowed) {
+  const denied = (plugin.capabilities ?? []).filter((c) => !allowed.includes(c));
+  return denied.length === 0 ? "ok" : `denied: ${denied.join(", ")}`;
+}
+
+const allowed = ["events", "container"];
+console.log(checkCapabilities({ capabilities: ["events"] }, allowed));
+console.log(checkCapabilities({ capabilities: ["events", "network", "filesystem"] }, allowed));
+console.log(checkCapabilities({}, allowed));
+</code>
+<option correct>ok
+denied: network, filesystem
+ok</option>
+<option>ok
+denied: network
+denied: none</option>
+<option>ok
+denied: network, filesystem
+denied: </option>
+<option>denied: events
+denied: network, filesystem
+ok</option>
+<explain><p>Every requested capability must be in the allow-list. A plugin that declares none passes, which is why capabilities catch honest mistakes but are no defence against a plugin that simply does not declare what it uses.</p></explain>
+</question>
+
+<question id="zc-o-versions" type="output">
+<q>What does this print?</q>
+<code file="versions.js" browser="no">
+import { satisfiesVersion } from "@zudojs/plugins";
+
+console.log(
+  satisfiesVersion("2.4.0", "^2.0.0"),
+  satisfiesVersion("3.0.0", "^2.0.0"),
+  satisfiesVersion("0.3.1", "^0.2.0"),
+  satisfiesVersion("2.0.0", "~2.1.0"),
+  satisfiesVersion("1.2.3", "latest"),
+);
+</code>
+<option correct>true false false false undefined</option>
+<option>true false true false false</option>
+<option>true true false false true</option>
+<option>true false false true undefined</option>
+<explain><p>A caret keeps the major (and, below 1.0.0, the minor); a tilde keeps major and minor, and 2.0.0 is below 2.1.0 anyway. <code>latest</code> is not a range the plugin system understands, so the answer is <code>undefined</code>, which the manager reports as an unsupported range.</p></explain>
+</question>
+
+<question id="zc-o-events" type="output">
+<q>What does this print?</q>
+<code file="lifecycle-events.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const seen = [];
+const events = { on() {}, off() {}, emit: (name, payload) => seen.push(`${name}(${payload.state})`) };
+
+const manager = new PluginManager();
+manager.register({ metadata: { name: "receipts" } });
+await manager.start(createPluginContext({ name: "shopflow" }, { events }));
+console.log(seen.join(" "));
+</code>
+<option correct>plugin:installing(installing) plugin:installed(installed) plugin:initializing(initializing) plugin:initialized(initialized) plugin:starting(starting) plugin:started(started)</option>
+<option>plugin:registered(registered) plugin:installed(installed) plugin:initialized(initialized) plugin:started(started)</option>
+<option>plugin:started(started)</option>
+<option>plugin.installing(installing) plugin.installed(installed) plugin.initializing(initializing) plugin.initialized(initialized) plugin.starting(starting) plugin.started(started)</option>
+<explain><p>Each phase emits an event when it begins and when it ends, with the new state in the payload. A plain sink receives the names with colons; only an <code>@zudojs/events</code> bus normalizes them to dots. <code>plugin:registered</code> is emitted only when the manager itself gets <code>events</code> in its options.</p></explain>
+</question>
+
+<question id="zc-o-diagnostics" type="output">
+<q>What does this print?</q>
+<code file="diagnostics.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager();
+manager.register({ metadata: { name: "mailer" } });
+manager.register({
+  metadata: { name: "sms" },
+  dependencies: [{ name: "mailer" }],
+  start: () => { throw new Error("gateway down"); },
+});
+await manager.start(createPluginContext({ name: "shopflow" })).catch(() => {});
+const report = manager.diagnostics();
+console.log(report.healthy, report.degraded, report.unhealthy, report.failed);
+console.log(report.plugins.map((p) => `${p.plugin.name}:${p.state}`).join(" "));
+</code>
+<option correct>0 1 1 1
+mailer:disposed sms:disposed</option>
+<option>1 0 1 1
+mailer:started sms:failed</option>
+<option>0 1 1 1
+mailer:stopped sms:failed</option>
+<option>0 2 0 0
+mailer:disposed sms:disposed</option>
+<option>0 0 2 2
+mailer:disposed sms:disposed</option>
+<explain><p>After the rollback both plugins are <code>disposed</code>. The failed one keeps its error, so it counts as unhealthy and failed; the other is merely not running, which the report calls degraded.</p></explain>
+</question>
+
+<question id="zc-o-options" type="output">
+<q>The receipts options parser, copied. What does it print?</q>
+<code file="options.js">
+function parse(value) {
+  const input = value ?? {};
+  const problems = [];
+  if (typeof input.from !== "string" || !/^[^@\s]+@[^@\s]+$/.test(input.from)) problems.push("from must be an email address");
+  const every = input.summaryEveryMs ?? 0;
+  if (!Number.isInteger(every) || every < 0) problems.push("summaryEveryMs must be a whole number >= 0");
+  if (problems.length > 0) return `invalid: ${problems.join("; ")}`;
+  return `ok from=${input.from} every=${every}`;
+}
+
+console.log(parse({ from: "receipts@shopflow.ng" }));
+console.log(parse({ form: "receipts@shopflow.ng", summaryEveryMs: 2.5 }));
+console.log(parse(undefined));
+</code>
+<option correct>ok from=receipts@shopflow.ng every=0
+invalid: from must be an email address; summaryEveryMs must be a whole number >= 0
+invalid: from must be an email address</option>
+<option>ok from=receipts@shopflow.ng every=undefined
+invalid: from must be an email address
+invalid: from must be an email address</option>
+<option>ok from=receipts@shopflow.ng every=0
+invalid: summaryEveryMs must be a whole number >= 0
+ok from=undefined every=0</option>
+<option>ok from=receipts@shopflow.ng every=0
+invalid: from must be an email address; summaryEveryMs must be a whole number >= 0
+TypeError: Cannot read properties of undefined</option>
+<explain><p>The default fills in <code>summaryEveryMs</code>; the typo leaves <code>from</code> missing and 2.5 is not an integer, so both problems are reported at once; <code>undefined</code> becomes an empty object instead of crashing.</p></explain>
+</question>
+
+<question id="zc-o-normalize" type="output">
+<q>What does this print?</q>
+<code file="normalize-plugin.js">
+import { matchesEventType, normalizeEventType } from "@zudojs/events";
+
+const type = normalizeEventType("plugin:started");
+console.log(type, matchesEventType(type, "plugin.*"), matchesEventType(type, "plugin.started"), matchesEventType(type, "payment.*"));
+</code>
+<option correct>plugin.started true true false</option>
+<option>plugin:started false false false</option>
+<option>plugin.started true false false</option>
+<option>plugin:started true true false</option>
+<explain><p>The bus turns <code>:</code> into <code>.</code> before matching, so the manager's <code>plugin:started</code> is routed as <code>plugin.started</code>: both the namespace wildcard and the exact type match it.</p></explain>
+</question>
+
+<question id="zc-o-start-error" type="output">
+<q>What does this print?</q>
+<code file="start-error.js">
+import { PluginStartError } from "@zudojs/errors";
+
+const cause = new Error("rates API returned 401");
+const error = new PluginStartError(`Plugin "fx-rates" failed to start: ${cause.message}`, "fx-rates", { cause });
+console.log(String(error));
+console.log(error.pluginName, error.statusCode, error.expose, error.cause === cause);
+</code>
+<option correct>PluginStartError [ERR_PLUGIN_START]: Plugin "fx-rates" failed to start: rates API returned 401
+fx-rates 500 false true</option>
+<option>Error: rates API returned 401
+undefined 500 false true</option>
+<option>PluginStartError [ERR_PLUGIN_START]: Plugin "fx-rates" failed to start: rates API returned 401
+fx-rates 500 true false</option>
+<option>PluginStartError: Plugin "fx-rates" failed to start
+fx-rates 503 false true</option>
+<explain><p>The wrapped error names the plugin, carries a stable code, is not exposed to clients (a start-up failure is internal), and keeps the original error as <code>cause</code> for the log.</p></explain>
+</question>
+
+<question id="zc-o-unref" type="output">
+<q>What does this print when run with Node?</q>
+<code file="unref.js" browser="no">
+const timer = setTimeout(() => console.log("timeout fired"), 50);
+timer.unref();
+console.log("end of script");
+</code>
+<option correct>end of script</option>
+<option>end of script
+timeout fired</option>
+<option>timeout fired
+end of script</option>
+<option>TypeError: timer.unref is not a function</option>
+<explain><p>An unref'd timer does not keep the process alive. With nothing else pending, Node exits before the 50 ms pass. The plugin manager's hook timeout uses such a timer, which is why a hanging hook at start-up can end the process instead of timing out.</p></explain>
+</question>
+
+<question id="zc-c-start-order" type="code" file="start-order-code.js">
+<q><p>Write <code>startOrder(plugins)</code>: every plugin after all its <code>deps</code>, and after its <code>optional</code> dependencies that are present in <code>plugins</code>; missing optional ones are ignored. Visit plugins in the given order. The program should print <code>db mailer audit receipts api</code>.</p></q>
+<starter>
+const plugins = {
+  api: { deps: ["receipts"], optional: [] },
+  receipts: { deps: ["mailer"], optional: ["audit", "sms"] },
+  mailer: { deps: ["db"], optional: [] },
+  audit: { deps: [], optional: [] },
+  db: { deps: [], optional: [] },
+};
+
+function startOrder(plugins) {
+  // your code here
+  return Object.keys(plugins);
+}
+
+console.log(startOrder(plugins).join(" "));
+</starter>
+<solution>
+const plugins = {
+  api: { deps: ["receipts"], optional: [] },
+  receipts: { deps: ["mailer"], optional: ["audit", "sms"] },
+  mailer: { deps: ["db"], optional: [] },
+  audit: { deps: [], optional: [] },
+  db: { deps: [], optional: [] },
+};
+
+function startOrder(plugins) {
+  const order = [];
+  const visit = (name) => {
+    if (order.includes(name)) return;
+    const p = plugins[name];
+    for (const dep of [...p.deps, ...p.optional.filter((o) => o in plugins)]) visit(dep);
+    order.push(name);
+  };
+  Object.keys(plugins).forEach(visit);
+  return order;
+}
+
+console.log(startOrder(plugins).join(" "));
+</solution>
+<expected>db mailer audit receipts api</expected>
+<explain><p>A depth-first visit adds a plugin only after its dependencies. <code>api</code> needs <code>receipts</code>, which needs <code>mailer</code> (which needs <code>db</code>) and the present optional <code>audit</code>; <code>sms</code> is not registered, so it is skipped. Any order that respects every dependency would be valid; this one follows the declaration order of each plugin's dependencies, as the manager does.</p></explain>
+</question>
+
+<question id="zc-c-disposables" type="code" file="disposables-code.js">
+<q><p>Write <code>createScope()</code> returning <code>onDispose(fn)</code> and <code>async disposeAll()</code>: run the handlers newest first, keep going when one throws, and at the end throw an <code>AggregateError</code> with all failures (if any). The program should print <code>timer cleared</code>, <code>connection closed</code>, <code>1 failure: unsubscribe failed</code>.</p></q>
+<starter>
+function createScope() {
+  // your code here
+  return { onDispose() {}, async disposeAll() {} };
+}
+
+const scope = createScope();
+scope.onDispose(() => console.log("connection closed"));
+scope.onDispose(() => { throw new Error("unsubscribe failed"); });
+scope.onDispose(() => console.log("timer cleared"));
+try {
+  await scope.disposeAll();
+} catch (error) {
+  console.log(`${error.errors.length} failure: ${error.errors.map((e) => e.message).join(", ")}`);
+}
+</starter>
+<solution>
+function createScope() {
+  const handlers = [];
+  return {
+    onDispose(fn) {
+      handlers.push(fn);
+    },
+    async disposeAll() {
+      const failures = [];
+      for (const fn of handlers.splice(0).reverse()) {
+        try {
+          await fn();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      if (failures.length > 0) throw new AggregateError(failures, "disposal failed");
+    },
+  };
+}
+
+const scope = createScope();
+scope.onDispose(() => console.log("connection closed"));
+scope.onDispose(() => { throw new Error("unsubscribe failed"); });
+scope.onDispose(() => console.log("timer cleared"));
+try {
+  await scope.disposeAll();
+} catch (error) {
+  console.log(`${error.errors.length} failure: ${error.errors.map((e) => e.message).join(", ")}`);
+}
+</solution>
+<expected>timer cleared
+connection closed
+1 failure: unsubscribe failed</expected>
+<explain><p>One failing cleanup must not strand the others: the connection still closes. Collecting every failure, as the manager's <code>PluginDisposeError</code> does in its <code>errors</code>, keeps the report complete.</p></explain>
+</question>
+
+<question id="zc-c-wrap" type="code" file="wrap-code.js">
+<q><p>Write <code>startPlugins(start, diagnostics)</code>: call <code>start()</code>; if it throws, find the failed plugin in <code>diagnostics()</code> and throw a <code>PluginStartError</code> from <code>@zudojs/errors</code> with the message <code>Plugin "NAME" failed to start: MESSAGE</code>, the plugin name, and the original error as <code>cause</code>. The program should print the two lines in <code>expected</code>.</p></q>
+<starter>
+import { PluginStartError } from "@zudojs/errors";
+
+async function startPlugins(start, diagnostics) {
+  // your code here
+  await start();
+}
+
+const start = async () => { throw new Error("SMS gateway rejected the API key"); };
+const diagnostics = () => ({ plugins: [{ plugin: { name: "mailer" }, failed: false }, { plugin: { name: "sms-alerts" }, failed: true }] });
+try {
+  await startPlugins(start, diagnostics);
+} catch (error) {
+  console.log(error.message);
+  console.log(error instanceof PluginStartError, error.pluginName, error.cause?.message);
+}
+</starter>
+<solution>
+import { PluginStartError } from "@zudojs/errors";
+
+async function startPlugins(start, diagnostics) {
+  try {
+    await start();
+  } catch (error) {
+    const failed = diagnostics().plugins.find((p) => p.failed);
+    if (!failed) throw error;
+    throw new PluginStartError(`Plugin "${failed.plugin.name}" failed to start: ${error.message}`, failed.plugin.name, { cause: error });
+  }
+}
+
+const start = async () => { throw new Error("SMS gateway rejected the API key"); };
+const diagnostics = () => ({ plugins: [{ plugin: { name: "mailer" }, failed: false }, { plugin: { name: "sms-alerts" }, failed: true }] });
+try {
+  await startPlugins(start, diagnostics);
+} catch (error) {
+  console.log(error.message);
+  console.log(error instanceof PluginStartError, error.pluginName, error.cause?.message);
+}
+</solution>
+<expected>Plugin "sms-alerts" failed to start: SMS gateway rejected the API key
+true sms-alerts SMS gateway rejected the API key</expected>
+<explain><p>The manager's diagnostics know which plugin failed; its thrown error does not. Combining the two gives operators a message that names the plugin, and code a typed error with the original cause.</p></explain>
+</question>
+
+<question id="zc-c-options" type="code" file="options-code.js">
+<q><p>Write <code>parseOptions(value)</code> for a statistics plugin: <code>intervalMs</code> must be an integer of at least 1000, and <code>label</code> a non-empty string. Report all problems in one <code>TypeError</code> joined by <code>"; "</code>, else return the options. The program should print <code>ok 60000 sales</code>, then <code>intervalMs must be an integer >= 1000; label must be a non-empty string</code>.</p></q>
+<starter>
+function parseOptions(value) {
+  // your code here
+  return value;
+}
+
+const good = parseOptions({ intervalMs: 60_000, label: "sales" });
+console.log("ok", good.intervalMs, good.label);
+try {
+  parseOptions({ intervalMs: 50, label: "" });
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function parseOptions(value) {
+  const input = value ?? {};
+  const problems = [];
+  if (!Number.isInteger(input.intervalMs) || input.intervalMs < 1000) problems.push("intervalMs must be an integer >= 1000");
+  if (typeof input.label !== "string" || input.label.trim() === "") problems.push("label must be a non-empty string");
+  if (problems.length > 0) throw new TypeError(problems.join("; "));
+  return { intervalMs: input.intervalMs, label: input.label };
+}
+
+const good = parseOptions({ intervalMs: 60_000, label: "sales" });
+console.log("ok", good.intervalMs, good.label);
+try {
+  parseOptions({ intervalMs: 50, label: "" });
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>ok 60000 sales
+intervalMs must be an integer >= 1000; label must be a non-empty string</expected>
+<explain><p>Called from <code>install</code>, a validator like this turns bad settings into a failed start with a rollback and a message that lists every problem at once.</p></explain>
+</question>
+
+<question id="zc-c-health" type="code" file="health-code.js">
+<q><p>Write <code>createTracker(limit)</code> with <code>success()</code>, <code>failure()</code> and <code>status()</code>: <code>status()</code> returns <code>"degraded"</code> once there have been <code>limit</code> failures in a row, and <code>"healthy"</code> otherwise; a success resets the count. The program should print <code>healthy healthy degraded healthy</code>.</p></q>
+<starter>
+function createTracker(limit) {
+  // your code here
+  return { success() {}, failure() {}, status: () => "healthy" };
+}
+
+const t = createTracker(2);
+const seen = [];
+t.failure(); seen.push(t.status());
+t.success(); t.failure(); seen.push(t.status());
+t.failure(); seen.push(t.status());
+t.success(); seen.push(t.status());
+console.log(seen.join(" "));
+</starter>
+<solution>
+function createTracker(limit) {
+  let inARow = 0;
+  return {
+    success() {
+      inARow = 0;
+    },
+    failure() {
+      inARow++;
+    },
+    status: () => (inARow >= limit ? "degraded" : "healthy"),
+  };
+}
+
+const t = createTracker(2);
+const seen = [];
+t.failure(); seen.push(t.status());
+t.success(); t.failure(); seen.push(t.status());
+t.failure(); seen.push(t.status());
+t.success(); seen.push(t.status());
+console.log(seen.join(" "));
+</solution>
+<expected>healthy healthy degraded healthy</expected>
+<explain><p>Counting failures in a row separates "one mailbox bounced" from "the mail system is down", and the reset on success lets health recover without a restart.</p></explain>
+</question>
+
+<question id="zc-c-drain" type="code" file="drain-code.js">
+<q><p>Complete <code>stop()</code>: stop accepting new jobs, wait for every job in flight (successful or failed) and return how many were waiting. The program should print <code>drained 3</code>, <code>done: 2 ok, 1 failed</code>, <code>after stop: rejected</code>.</p></q>
+<starter>
+const inFlight = new Set();
+let accepting = true;
+let ok = 0;
+let failed = 0;
+
+function submit(ms, fails = false) {
+  if (!accepting) return "rejected";
+  const job = new Promise((resolve, reject) => setTimeout(() => (fails ? reject(new Error("bounce")) : resolve()), ms))
+    .then(() => void ok++, () => void failed++)
+    .finally(() => inFlight.delete(job));
+  inFlight.add(job);
+  return "accepted";
+}
+
+async function stop() {
+  // your code here
+  return 0;
+}
+
+submit(20);
+submit(5, true);
+submit(10);
+console.log("drained", await stop());
+console.log(`done: ${ok} ok, ${failed} failed`);
+console.log("after stop:", submit(5));
+</starter>
+<solution>
+const inFlight = new Set();
+let accepting = true;
+let ok = 0;
+let failed = 0;
+
+function submit(ms, fails = false) {
+  if (!accepting) return "rejected";
+  const job = new Promise((resolve, reject) => setTimeout(() => (fails ? reject(new Error("bounce")) : resolve()), ms))
+    .then(() => void ok++, () => void failed++)
+    .finally(() => inFlight.delete(job));
+  inFlight.add(job);
+  return "accepted";
+}
+
+async function stop() {
+  accepting = false;
+  const waiting = inFlight.size;
+  await Promise.allSettled([...inFlight]);
+  return waiting;
+}
+
+submit(20);
+submit(5, true);
+submit(10);
+console.log("drained", await stop());
+console.log(`done: ${ok} ok, ${failed} failed`);
+console.log("after stop:", submit(5));
+</solution>
+<expected>drained 3
+done: 2 ok, 1 failed
+after stop: rejected</expected>
+<explain><p>Refuse new work first, or the drain may never end. <code>allSettled</code> waits for failures too, so one bounced mail cannot cut the drain short. In the plugin, <code>hookTimeout</code> puts an upper limit on this wait.</p></explain>
+</question>
+
+<question id="zc-c-adapter" type="code" file="adapter-code.js">
+<q><p>The plugin system adapts an event bus (<code>publishEvent({ type, payload })</code> and <code>on(type, handler)</code> returning a subscription) to the simpler <code>on/off/emit</code> interface plugins use, where handlers receive only the payload. Write <code>toPluginEvents(bus)</code>. The program should print <code>receipt for ORD-7</code> once: after <code>off</code>, the second publish reaches nobody.</p></q>
+<starter>
+import { createEventBus } from "@zudojs/events";
+
+function toPluginEvents(bus) {
+  // your code here
+  return { on() {}, off() {}, emit() {} };
+}
+
+const bus = createEventBus();
+const events = toPluginEvents(bus);
+const handler = (payload) => console.log("receipt for", payload.reference);
+events.on("payment.succeeded", handler);
+await events.emit("payment.succeeded", { reference: "ORD-7" });
+events.off("payment.succeeded", handler);
+await events.emit("payment.succeeded", { reference: "ORD-8" });
+</starter>
+<solution>
+import { createEventBus } from "@zudojs/events";
+
+function toPluginEvents(bus) {
+  const subscriptions = new Map();
+  return {
+    on(name, handler) {
+      subscriptions.set(handler, bus.on(name, (event) => handler(event.payload)));
+    },
+    off(name, handler) {
+      subscriptions.get(handler)?.unsubscribe();
+      subscriptions.delete(handler);
+    },
+    emit(name, payload) {
+      return bus.publishEvent({ type: name, payload });
+    },
+  };
+}
+
+const bus = createEventBus();
+const events = toPluginEvents(bus);
+const handler = (payload) => console.log("receipt for", payload.reference);
+events.on("payment.succeeded", handler);
+await events.emit("payment.succeeded", { reference: "ORD-7" });
+events.off("payment.succeeded", handler);
+await events.emit("payment.succeeded", { reference: "ORD-8" });
+</solution>
+<expected>receipt for ORD-7</expected>
+<explain><p><code>off</code> receives the plugin's handler, but the bus knows only the wrapper it was given, so the adapter must remember which subscription belongs to which handler. The real <code>toPluginEvents</code> keys that map by event name and handler.</p></explain>
+</question>
+
+<question id="zc-c-capabilities" type="code" file="capabilities-code.js">
+<q><p>Write <code>register(plugin, allowed)</code> that throws an <code>Error</code> with the message <code>Plugin "NAME" requests capabilities that are not granted: A, B.</code> when the plugin's <code>metadata.capabilities</code> include anything outside <code>allowed</code>, and otherwise returns <code>"registered NAME"</code>. The program should print the two lines in <code>expected</code>.</p></q>
+<starter>
+function register(plugin, allowed) {
+  // your code here
+  return `registered ${plugin.metadata.name}`;
+}
+
+const allowed = ["events", "container"];
+console.log(register({ metadata: { name: "receipts", capabilities: ["events", "container"] } }, allowed));
+try {
+  register({ metadata: { name: "exporter", capabilities: ["events", "network", "filesystem"] } }, allowed);
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function register(plugin, allowed) {
+  const denied = (plugin.metadata.capabilities ?? []).filter((c) => !allowed.includes(c));
+  if (denied.length > 0) {
+    throw new Error(`Plugin "${plugin.metadata.name}" requests capabilities that are not granted: ${denied.join(", ")}.`);
+  }
+  return `registered ${plugin.metadata.name}`;
+}
+
+const allowed = ["events", "container"];
+console.log(register({ metadata: { name: "receipts", capabilities: ["events", "container"] } }, allowed));
+try {
+  register({ metadata: { name: "exporter", capabilities: ["events", "network", "filesystem"] } }, allowed);
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>registered receipts
+Plugin "exporter" requests capabilities that are not granted: network, filesystem.</expected>
+<explain><p>Listing every denied capability, not just the first, lets the operator decide in one step whether to grant them or drop the plugin. The check runs at registration, before the plugin's code has done anything.</p></explain>
+</question>

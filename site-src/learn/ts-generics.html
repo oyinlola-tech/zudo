@@ -1,10 +1,11 @@
 ---
 title: Generics
-description: Write one function, interface or class that works for many types without losing type safety, set rules with constraints and keyof, give type parameters defaults, and build a Result type and a generic repository.
+description: Write functions, interfaces and classes that work for many types without losing safety, constrain them with extends and keyof, and give them defaults.
 minutes: 35
-youNeed: Interfaces, unions and literal types
+youNeed: Union types in depth and Tuples
 youBuild: A typed Result helper and a generic in-memory repository for tasks and users
 keywords: typescript generics, generic function, type parameter, generic interface, generic class, extends constraint, keyof constraint, default type parameter, Result type, generic repository
+objectives: Explain what a type parameter is and why it beats any | Write generic functions and let TypeScript infer their type arguments | Write generic interfaces, type aliases and classes | Constrain a type parameter with extends and keyof, and read T[K] | Give a type parameter a default, and build a reusable Result type
 ---
 <section>
 <h2 id="why">Why generics</h2>
@@ -184,7 +185,24 @@ Found 1 error in pluck-typo.ts:5
 
 <section>
 <h2 id="result">A Result type, with defaults</h2>
-<p>Many functions can fail in expected ways: a port number out of range, a missing record. Instead of throwing, they can return an object that says whether it worked. You know the tool for that from <a href="/learn/ts-objects#discriminated">Interfaces, unions and literal types</a>: a discriminated union. Made generic, it works for any value and any error:</p>
+<p>Many functions can fail in expected ways: a port number out of range, a missing record. Instead of throwing, they can return an object that says whether it worked. You wrote one for transfers in <a href="/learn/ts-unions#result">Union types in depth</a>: a discriminated union, <code>TransferResult</code>. The problem is that every function needs its own copy. Made generic, one type works for any value and any error.</p>
+<reason title="Which type parameters does a Result need?">
+<p>Before you read the code, think about <code>parsePort(raw)</code>, which gives a port number or an error message, and <code>findUser(id)</code>, which gives a user or <code>"not-found" | "suspended"</code>.</p>
+<ol>
+<li>What changes from one function's result to the other's? Those are the type parameters.</li>
+<li>Which of them is the same in most functions, and could have a default?</li>
+<li>A helper <code>ok(value)</code> builds a success. What should its error type be, so that it fits any <code>Result</code>?</li>
+<li>Should a caller be able to read the value without first checking whether it worked?</li>
+</ol>
+<answer>
+<ol>
+<li>The value type and the error type: <code>Result&lt;T, E&gt;</code>.</li>
+<li>The error: most simple functions report a message, so <code>E = string</code> keeps <code>Result&lt;number&gt;</code> short, and <code>findUser</code> can still say <code>Result&lt;User, "not-found" | "suspended"&gt;</code>.</li>
+<li><code>never</code>. A success has no error, and <code>never</code>, the empty type, fits wherever any error type is expected.</li>
+<li>No. The value must only be readable after a check of <code>ok</code>, which is exactly what a discriminated union gives you.</li>
+</ol>
+</answer>
+</reason>
 <example file="result.ts" project="gen">
 export type Result<T, E = string> =
   | { readonly ok: true; readonly value: T }
@@ -221,12 +239,28 @@ error: "http" is not a valid port
 <li><code>ok</code> returns <code>Result&lt;T, never&gt;</code>: a success can never hold an error, so it fits any <code>Result&lt;T, E&gt;</code>. The same goes for <code>err</code>.</li>
 <li>After <code>result.ok</code>, TypeScript knows which member you have. You cannot read <code>result.value</code> without checking first, so you cannot forget the failure case.</li>
 </ul>
-<p>Some ZudoJS packages use this idea: <code>@zudojs/schema</code>'s <code>safeParse</code> returns a result object with a <code>success</code> flag instead of throwing.</p>
+<p>Libraries use the same idea with other property names. <code>@zudojs/schema</code>'s <code>safeParse</code> never throws on bad data; it returns <code>{ success: true, data }</code> or <code>{ success: false, issues }</code>, and <code>success</code> is the discriminant:</p>
+<example file="safe-parse.ts" project="gen">
+import { schema } from "@zudojs/schema";
+
+const PortSchema = schema.number().int().min(1).max(65535);
+
+for (const input of [3000, 99999, "3000"]) {
+  const result = PortSchema.safeParse(input);
+  console.log(result.success ? `port ${result.data}` : `${result.issues.length} issue(s): ${result.issues[0]?.message}`);
+}
+</example>
+<output>
+port 3000
+1 issue(s): Expected <= 65535, received 99999
+1 issue(s): Expected number, received string
+</output>
+<p><a href="/learn/ts-validation">Runtime validation</a>, later in this course, builds a small schema library like this one yourself.</p>
 </section>
 
 <section>
 <h2 id="repository">Generic classes: a repository</h2>
-<p>Classes can be generic too. Here is a pattern ZudoJS uses everywhere: a <strong>repository</strong>, the one place that stores and finds one kind of record. Written once, it works for tasks, users or anything with an <code>id</code>:</p>
+<p>Classes can be generic too. Here is a pattern you will meet again in <code>@zudojs/database</code>: a <strong>repository</strong>, the one place that stores and finds one kind of record. Written once, it works for tasks, users or anything with an <code>id</code>:</p>
 <example file="repository.ts" project="gen">
 interface Entity {
   readonly id: number;
@@ -377,4 +411,5 @@ delete: Call Ada 1
 <li><code>E = string</code> gives a type parameter a default.</li>
 <li><code>Result&lt;T, E&gt;</code> makes failure part of the return type; a generic repository stores any kind of record.</li>
 </ul>
+<p>Next: <a href="/learn/ts-generic-design">Designing generic APIs</a>, where you decide which type parameters an API should have, and build a toolkit of generic types that fit together.</p>
 </section>

@@ -1,6 +1,6 @@
 ---
 title: Enums and their alternatives
-description: Write numeric, string and const enums, read the exact JavaScript tsc emits for each, learn the pitfalls and erasableSyntaxOnly, and replace enums with unions and as const objects.
+description: Write numeric, string and const enums, read the JavaScript tsc emits for each, avoid their pitfalls, and replace them with unions and as const objects.
 minutes: 45
 youNeed: Narrowing and Type assertions
 youBuild: A payment-status module migrated from a numeric enum to an as const object, without changing a single call site
@@ -64,10 +64,11 @@ console.log(TransferError.InsufficientFunds, TransferError.AccountBlocked, Trans
 51 62 91
 </output>
 <h3>What tsc emits</h3>
-<p>Everything else you have written in TypeScript disappears when compiled. An enum does not. Here is the real output of <code>tsc</code> for the <code>PaymentStatus</code> declaration:</p>
+<p>Everything else you have written in TypeScript disappears when compiled. An enum does not. Here is the real output of <code>tsc</code> for <code>status.ts</code>:</p>
 <shell>
 $ npx tsc --noEmit false --outDir dist
-$ cat dist/status.js
+</shell>
+<file name="dist/status.js" project="numeric" check="emit">
 var PaymentStatus;
 (function (PaymentStatus) {
     PaymentStatus[PaymentStatus["Pending"] = 0] = "Pending";
@@ -81,7 +82,7 @@ if (payment.status === PaymentStatus.Captured) {
 }
 console.log(payment.status, PaymentStatus.Refunded);
 export {};
-</shell>
+</file>
 <p>Read the middle line from the inside out. <code>PaymentStatus["Captured"] = 2</code> stores 2 under the name, and an assignment expression evaluates to the assigned value, so the outer part becomes <code>PaymentStatus[2] = "Captured"</code>: the name stored under the number. The function wrapped around it is an <strong>IIFE</strong> (an immediately invoked function expression), and <code>PaymentStatus || (PaymentStatus = {})</code> lets several declarations of the same enum add to one object. That emitted code is plain JavaScript; run it and print the object:</p>
 <example file="emitted.js" project="numeric">
 var PaymentStatus;
@@ -167,8 +168,7 @@ console.log(Currency);
 { Naira: 'NGN', Dollar: 'USD', Pound: 'GBP' }
 </output>
 <p>The emitted JavaScript has just one assignment per member:</p>
-<shell>
-$ cat dist/currency.js
+<file name="dist/currency.js" project="string" check="emit">
 var Currency;
 (function (Currency) {
     Currency["Naira"] = "NGN";
@@ -179,7 +179,7 @@ const price = { amount: 250000, currency: Currency.Naira };
 console.log(price, JSON.stringify(price));
 console.log(Currency);
 export {};
-</shell>
+</file>
 <p>String enums fix the unreadable-number problem: the JSON says <code>"NGN"</code>, which a person, a database column and another service all understand. But they have a property no other TypeScript type has: they are <strong>nominal</strong>. A <em>nominal</em> type is matched by its name, not by its shape. The string <code>"NGN"</code> is exactly the value of <code>Currency.Naira</code>, and it is still not accepted:</p>
 <example file="nominal.ts" project="string" check="tsc-error">
 enum Currency {
@@ -207,7 +207,7 @@ Found 1 error in nominal.ts:10
 
 <section>
 <h2 id="const-enums">const enums</h2>
-<p>A <code>const enum</code> is meant to leave no object behind at all. <code>tsc</code> replaces each use with the literal value, and deletes the declaration. With a default configuration, that is what happens:</p>
+<p>A <code>const enum</code> is meant to leave no object behind at all. <code>tsc</code> replaces each use with the literal value, and deletes the declaration. Without the <code>isolatedModules</code> setting, that is what happens. Here the course's <code>verbatimModuleSyntax</code> (which implies <code>isolatedModules</code>) is switched off for one run:</p>
 <file name="direction.ts" project="const-enum">
 const enum Direction {
   Credit = "CR",
@@ -217,17 +217,19 @@ const enum Direction {
 const entry = { amount: 5000, direction: Direction.Debit };
 console.log(entry);
 </file>
-<shell title="tsc with a default tsconfig">
-$ npx tsc --noEmit false --outDir dist
-$ cat dist/direction.js
+<shell title="tsc without isolatedModules">
+$ npx tsc --noEmit false --outDir dist --verbatimModuleSyntax false
+</shell>
+<file name="dist/direction.js" project="const-enum" check="emit" tsc="--verbatimModuleSyntax false">
 const entry = { amount: 5000, direction: "DR" /* Direction.Debit */ };
 console.log(entry);
 export {};
-</shell>
-<p>Now compile the same file with the settings this course uses (and ZudoJS uses): <code>verbatimModuleSyntax</code>, which turns on <code>isolatedModules</code>. The output is completely different:</p>
+</file>
+<p>Now compile the same file with the settings this course uses (and ZudoJS uses, and <code>tsc --init</code> writes): <code>verbatimModuleSyntax</code>, which turns on <code>isolatedModules</code>. The output is completely different:</p>
 <shell title="tsc with verbatimModuleSyntax (TypeScript 7)">
 $ npx tsc --noEmit false --outDir dist
-$ cat dist/direction.js
+</shell>
+<file name="dist/direction.js" project="const-enum" check="emit">
 var Direction;
 (function (Direction) {
     Direction["Credit"] = "CR";
@@ -236,8 +238,8 @@ var Direction;
 const entry = { amount: 5000, direction: Direction.Debit };
 console.log(entry);
 export {};
-</shell>
-<p>The reason is the way modern tools work. <code>tsx</code>, the browser terminal, bundlers and Node.js all translate <strong>one file at a time</strong>, without reading the others. To inline <code>Direction.Debit</code> in <code>ledger.ts</code>, a tool would have to open <code>direction.ts</code> to find out it is <code>"DR"</code>. So under <code>isolatedModules</code>, which exists to keep your code translatable file by file, a <code>const enum</code> is emitted and used like a normal enum. The one thing that still differs: a <code>const enum</code> has no reverse mapping you are allowed to use:</p>
+</file>
+<p>The reason is the way modern tools work. <code>tsx</code>, the browser terminal, bundlers and Node.js all translate <strong>one file at a time</strong>, without reading the others. To inline <code>Direction.Debit</code> in <code>ledger.ts</code>, a tool would have to open <code>direction.ts</code> to find out it is <code>"DR"</code>. So under <code>isolatedModules</code>, which exists to keep your code translatable file by file, a <code>const enum</code> is emitted and used like a normal enum (<code>isolatedModules</code> also switches on <code>preserveConstEnums</code>, the option that keeps the object). The one thing that still differs: a <code>const enum</code> has no reverse mapping you are allowed to use:</p>
 <example file="reverse-const.ts" project="const-enum" check="tsc-error">
 const enum Priority {
   Low,
@@ -343,7 +345,7 @@ $ node --experimental-transform-types status.ts
 send receipt
 2 3
 </shell>
-<p><code>const enum</code> is refused with exactly the same message. The <code>--experimental-transform-types</code> flag makes Node generate the enum code, but it is experimental and prints a warning on every start. The code that is <em>not</em> erasable is a short list: <code>enum</code>, <code>namespace</code> blocks with code in them, parameter properties (<code>constructor(private readonly id: string)</code>, from <a href="/learn/ts-classes#parameter-properties">Classes in TypeScript</a>) and the old <code>import x = require()</code> form.</p>
+<p><code>const enum</code> is refused with exactly the same message. The <code>--experimental-transform-types</code> flag makes Node generate the enum code, but it is experimental and prints a warning on every start. The code that is <em>not</em> erasable is a short list: <code>enum</code>, <code>namespace</code> blocks with code in them, parameter properties (<code>constructor(private readonly id: string)</code>, which <a href="/learn/ts-compiler#not-erased">What the TypeScript compiler does</a> showed and <a href="/learn/ts-classes#parameter-properties">Classes in TypeScript</a> covers) and the old <code>import x = require()</code> form.</p>
 <p>TypeScript 5.8 added a compiler option that makes <code>tsc</code> enforce this for you: <code>erasableSyntaxOnly</code>. Turn it on in a project that should run under <code>node</code> directly:</p>
 <file name="tsconfig.json" project="erasable">
 {
@@ -478,7 +480,7 @@ rate_limit
 <div class="lx-table-wrap"><table>
 <thead><tr><th></th><th>Numeric enum</th><th>String enum</th><th>const enum</th><th>Literal union</th><th><code>as const</code> object</th></tr></thead>
 <tbody>
-<tr><td>Runtime object</td><td>Yes</td><td>Yes</td><td>Only under <code>isolatedModules</code></td><td>No</td><td>Yes</td></tr>
+<tr><td>Runtime object</td><td>Yes</td><td>Yes</td><td>Only under <code>isolatedModules</code> (or <code>preserveConstEnums</code>)</td><td>No</td><td>Yes</td></tr>
 <tr><td>Readable stored values</td><td>No (numbers)</td><td>Yes</td><td>Depends</td><td>Yes</td><td>Yes</td></tr>
 <tr><td>Plain string or number accepted</td><td>Any number</td><td>No (nominal)</td><td>Same as enum</td><td>Yes, if a member</td><td>Yes, if a member</td></tr>
 <tr><td><code>Object.values</code> lists members</td><td>Doubled</td><td>Yes</td><td>No</td><td>No object</td><td>Yes</td></tr>
