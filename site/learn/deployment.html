@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Deploying a ZudoJS app — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/deployment.md" title="Markdown version">
-  <meta name="description" content="Take the Task API from your computer to a server. Build it for production, run it under systemd or in Docker, add PostgreSQL and Redis with Docker Compose, put Caddy in front for HTTPS, run migrations during a deployment, read the logs and back up the database.">
+  <meta name="description" content="Take the Task API to a server: build it, run with systemd or Docker Compose, add Postgres, Redis and Caddy for HTTPS, migrate safely, back up the database.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/deployment">
@@ -87,7 +87,7 @@
         <div class="lx-hero-tag">LEVEL 17 · LESSON 4 OF 5</div>
         <p class="lx-hero-part">Production <span class="lx-tier lx-tier-production" title="Production: Learn it when you prepare a real application for deployment.">Production</span></p>
         <h1>Deploying a ZudoJS app</h1>
-        <p class="lx-hero-lead">Take the Task API from your computer to a server. Build it for production, run it under systemd or in Docker, add PostgreSQL and Redis with Docker Compose, put Caddy in front for HTTPS, run migrations during a deployment, read the logs and back up the database.</p>
+        <p class="lx-hero-lead">Take the Task API to a server: build it, run with systemd or Docker Compose, add Postgres, Redis and Caddy for HTTPS, migrate safely, back up the database.</p>
         <ul class="lx-hero-meta">
           <li><strong>60 min</strong> to read and try</li>
           <li><strong>You need:</strong> The Task API project, Production engineering, and Docker installed (docker.com/get-started)</li>
@@ -99,6 +99,17 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Build the app for production and run the compiled output under systemd, restarting on crash and shutting down gracefully</li>
+          <li>Package it as a small, non-root, multi-stage Docker image</li>
+          <li>Run the app with PostgreSQL, Redis and a Caddy reverse proxy on a private network with Docker Compose</li>
+          <li>Get free, auto-renewing HTTPS for a domain, and trust forwarded headers only from your own proxy</li>
+          <li>Deploy a new version safely with expand-and-contract migrations, and roll back a bad release</li>
+          <li>Take a PostgreSQL backup and prove it by restoring it</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="overview">From your computer to a server</h2>
@@ -580,7 +591,7 @@ volumes:
 <li><strong>Volumes</strong> (<code>pgdata</code>, <code>redisdata</code>) keep the data when containers are replaced. Without them, every deployment would delete your database.</li>
 <li><code>depends_on</code> with <code>service_healthy</code> starts the app only after PostgreSQL and Redis pass their health checks.</li>
 <li><code>${POSTGRES_PASSWORD:?…}</code> takes the password from the environment or from a <code>.env</code> file next to <code>compose.yaml</code>, and stops with a message if it is missing. There is no default password.</li>
-<li><code>REDIS_URL</code> is ready for a shared cache or rate-limit store, as recommended in the previous lesson. <code>TRUST_PROXY: private</code> tells the app to believe <code>X-Forwarded-For</code> only from addresses on private networks, which is where Caddy sits.</li>
+<li><code>REDIS_URL</code> is ready for a shared cache or rate-limit store, as recommended in <a href="/learn/production-engineering">Production engineering</a>. <code>TRUST_PROXY: private</code> tells the app to believe <code>X-Forwarded-For</code> only from addresses on private networks, which is where Caddy sits.</li>
 </ul>
 <p>The proxy's configuration, <code>Caddyfile</code>, forwards every request to the app:</p>
 <pre class="lx-json"># Caddyfile
@@ -656,7 +667,7 @@ curl http://localhost:8080/health"><span class="lx-cmd"><span class="lx-prompt" 
 <span class="lx-res"> Container task-api-db-1 Started</span>
 <span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>curl http://localhost:8080/health</span>
 <span class="lx-res">{"status":"ok","checks":{"postgres":"up"},"timestamp":"2026-09-23T17:48:55.064Z"}</span></pre></figure>
-<p>Exactly as planned in the previous lesson: the generated <code>/health</code> is a readiness check. Without its database the app answers 503 and says which part is down, but it keeps running, logs one warning (you will see it in <a href="#logs">the logs</a> below), and recovers by itself when the database is back. Docker marks the container <code>unhealthy</code> after three failed checks but does not restart it; Kubernetes would stop sending it traffic.</p>
+<p>Exactly as planned in <a href="/learn/production-engineering">Production engineering</a>: the generated <code>/health</code> is a readiness check. Without its database the app answers 503 and says which part is down, but it keeps running, logs one warning (you will see it in <a href="#logs">the logs</a> below), and recovers by itself when the database is back. Docker marks the container <code>unhealthy</code> after three failed checks but does not restart it; Kubernetes would stop sending it traffic.</p>
 <div class="callout callout-note"><p class="lx-callout-label">NOTE</p>When this lesson's example was first run without the <code>pool.on("error", …)</code> line, stopping the database crashed the app: the proxy answered <code>502 Bad Gateway</code>, and <code>restart: unless-stopped</code> restarted the app over and over until the database was back. One missing listener turned a database restart into an outage.</div>
 </section>
 
@@ -709,7 +720,7 @@ docker compose logs app | grep -i &quot;shut&quot;"><span class="lx-cmd"><span c
 <span class="lx-res">app-1  | Received SIGTERM: shutting down.</span>
 <span class="lx-res">app-1  | 2026-09-23T22:33:13.290Z [INFO] [task-api] Initiating graceful shutdown. timeoutMs=30000</span>
 <span class="lx-res">app-1  | 2026-09-23T22:33:13.303Z [INFO] [task-api] Graceful shutdown complete.</span></pre></figure>
-<p><code>docker compose stop</code> sent <code>SIGTERM</code>. The first line comes from the signal handler in <code>src/server.ts</code>, and the next two show the graceful shutdown from the previous lesson taking 13 milliseconds. Add <code>-f</code> to follow logs live. Under systemd the same is <code>journalctl -u task-api</code>. Docker keeps logs in files that grow forever by default; limit them with the <code>logging</code> option (<code>max-size: "10m"</code>, <code>max-file: "3"</code>) or ship them to a log service, as the production lesson recommends.</p>
+<p><code>docker compose stop</code> sent <code>SIGTERM</code>. The first line comes from the signal handler in <code>src/server.ts</code>, and the next two show the graceful shutdown from <a href="/learn/production-engineering">Production engineering</a> taking 13 milliseconds. Add <code>-f</code> to follow logs live. Under systemd the same is <code>journalctl -u task-api</code>. Docker keeps logs in files that grow forever by default; limit them with the <code>logging</code> option (<code>max-size: "10m"</code>, <code>max-file: "3"</code>) or ship them to a log service, as the production lesson recommends.</p>
 </section>
 
 <section>
@@ -737,6 +748,9 @@ curl http://localhost:8080/health"><span class="lx-cmd"><span class="lx-prompt" 
 <span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>curl http://localhost:8080/health</span>
 <span class="lx-res">{"status":"ok","checks":{"postgres":"up"},"timestamp":"2026-09-23T17:49:26.911Z"}</span></pre></figure>
 <h3>Migrations that do not break the running app</h3>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Will this migration break the app that is still running?</h3><p>Step 3 migrates the database while the <em>old</em> app is still serving traffic; only step 4 replaces it, and that container needs its own 10-40 seconds to shut down gracefully. A migration for the next release runs <code>ALTER TABLE tasks RENAME COLUMN title TO name</code>.</p>
+<p>The old code still reads and writes <code>title</code> on every request. What happens the instant this migration commits, and how would you split the rename across two deployments to avoid it?</p><details class="lx-solution"><summary>Show the reasoning</summary><p>The instant the rename commits, every query the still-running old app sends for <code>title</code> starts failing, for as long as the old container takes to drain and stop: a guaranteed window of errors on every deployment, not a rare race.</p>
+<p>The fix is to split it, the <strong>expand and contract</strong> pattern: deployment 1 adds the new <code>name</code> column and ships code that writes both columns and reads whichever is present, so old and new code both work against the expanded schema. Only once no old code is left running does deployment 2 drop <code>title</code>. The same idea applies to any change the old code cannot tolerate: add before you remove, and never in the same release.</p></details></div>
 <p>Between step 3 and step 4, the <em>old</em> app runs against the <em>new</em> database. So every migration must work with both versions. Split breaking changes into two deployments, called <strong>expand and contract</strong>:</p>
 <ul>
 <li><strong>Renaming a column <code>title</code> to <code>name</code>:</strong> deployment 1 adds <code>name</code>, copies the data, and the new code writes both columns. Deployment 2, once no old code is left, removes <code>title</code>.</li>
@@ -842,7 +856,7 @@ docker image rm task-api:1.0.0"><span class="lx-cmd"><span class="lx-prompt" ari
 <li>Caddy gets and renews HTTPS certificates for your domain by itself. Trust forwarded headers only from your own proxy.</li>
 <li>Every deployment: back up, build a new tag, migrate, replace, check. Write migrations that suit both versions, and test your backups by restoring them.</li>
 </ul>
-<p>You can now ship a ZudoJS app. In the capstone you design and build a bigger one from scratch: ShopFlow.</p>
+<p>You can now ship a ZudoJS app by hand. Next, build a pipeline that does it for you on every push, in <a href="/learn/zudo-ci-cd">CI/CD with GitHub Actions</a>.</p>
 </section>
       </div>
 

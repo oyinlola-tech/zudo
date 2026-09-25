@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Production engineering — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/production-engineering.md" title="Markdown version">
-  <meta name="description" content="What changes when real users depend on your app. A checklist for configuration, secrets, logs, metrics, traces, health and readiness checks, graceful shutdown, timeouts, rate limits, caching and database performance, with a small runnable proof for each item.">
+  <meta name="description" content="A checklist for taking a ZudoJS app to production: config, secrets, logs, metrics, health checks, shutdown, rate limits, caching and database performance.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/production-engineering">
@@ -87,7 +87,7 @@
         <div class="lx-hero-tag">LEVEL 17 · LESSON 1 OF 5</div>
         <p class="lx-hero-part">Production <span class="lx-tier lx-tier-production" title="Production: Learn it when you prepare a real application for deployment.">Production</span></p>
         <h1>Production engineering</h1>
-        <p class="lx-hero-lead">What changes when real users depend on your app. A checklist for configuration, secrets, logs, metrics, traces, health and readiness checks, graceful shutdown, timeouts, rate limits, caching and database performance, with a small runnable proof for each item.</p>
+        <p class="lx-hero-lead">A checklist for taking a ZudoJS app to production: config, secrets, logs, metrics, health checks, shutdown, rate limits, caching and database performance.</p>
         <ul class="lx-hero-meta">
           <li><strong>55 min</strong> to read and try</li>
           <li><strong>You need:</strong> The Task API project and the ZudoJS core, data and quality lessons</li>
@@ -99,11 +99,22 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Check configuration at startup with a schema, so bad settings fail fast without ever printing a secret</li>
+          <li>Write structured JSON logs with a request id, at a level a machine can filter</li>
+          <li>Tell a liveness check from a readiness check, and measure traffic, errors and latency percentiles</li>
+          <li>Shut down gracefully on SIGTERM: refuse new requests, finish the ones in flight, then close resources</li>
+          <li>Rate-limit public endpoints and cache hot reads with tags and a TTL</li>
+          <li>Index the columns you query often, and size a connection pool from real limits</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="checklist">The production checklist</h2>
 <p>On your computer, a crash means you restart <code>npm run dev</code>. In <strong>production</strong>, the place where real users use your app, a crash means lost orders, and nobody may notice until a customer complains. Production engineering is the set of habits that keep an app running, and tell you quickly when it is not.</p>
-<p>This lesson is built around one checklist. Each row links to a section with a small example that proves the point. Copy the list into your project's README and tick it off before your first deployment in <a href="/learn/deployment">the next lesson</a>.</p>
+<p>This lesson is built around one checklist. Each row links to a section with a small example that proves the point. Copy the list into your project's README and tick it off before your first deployment, in <a href="/learn/deployment">Deploying a ZudoJS app</a> later in this course.</p>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>✓</th><th>Item</th><th>Done when</th></tr></thead>
 <tbody>
@@ -246,7 +257,7 @@ console.log(config.PORT, config.NODE_ENV, `JWT_SECRET: ${config.JWT_SECRET.lengt
 <h3>Where secrets live</h3>
 <ul>
 <li><strong>On your computer:</strong> a <code>.env</code> file, never committed, with throwaway values.</li>
-<li><strong>On a server:</strong> environment variables set by the host: a systemd <code>EnvironmentFile</code> readable only by the app's user, Docker secrets, or your cloud's secret manager. The next lesson shows the first two.</li>
+<li><strong>On a server:</strong> environment variables set by the host: a systemd <code>EnvironmentFile</code> readable only by the app's user, Docker secrets, or your cloud's secret manager. <a href="/learn/deployment">Deploying a ZudoJS app</a> shows the first two.</li>
 <li><strong>Rotate</strong> a secret (replace it with a new one) whenever someone who knew it leaves, and at once if it may have leaked. Code that reads it from the environment needs no change for that.</li>
 </ul>
 </section>
@@ -525,6 +536,9 @@ server: stopped</pre></div>
 <li><strong>Outgoing:</strong> every <code>HttpClient</code> gets a <code>timeout</code>, and <code>retry</code> only for safe methods, as in <a href="/learn/zudo-microservices">the microservices lesson</a>.</li>
 <li><strong>Database:</strong> set a statement timeout (<code>SET statement_timeout = '5s'</code> in PostgreSQL) so one bad query cannot hold a connection for minutes.</li>
 </ul>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Should a timed-out call be retried?</h3><p>Your <code>HttpClient</code> calls the payments service to charge a customer's card. The call times out after 5 seconds: no response reached you, but you cannot tell whether the payments service never received the request, received it and is still working, or received it, charged the card, and its response was what got lost.</p>
+<p>Is it safe to retry this call automatically? What would make it safe?</p><details class="lx-solution"><summary>Show the reasoning</summary><p>No, not as it stands: retrying a plain "charge this card" call risks charging the customer twice, because the timeout tells you nothing about whether the first attempt already succeeded. That is why retries are only safe for methods that are <strong>idempotent</strong>, safe to run twice with the same effect as once, such as a <code>GET</code> or a <code>PUT</code> that sets a value.</p>
+<p>To make a charge safely retryable, the client must attach an <strong>idempotency key</strong>, a request id generated once per attempt-set and sent with every retry, so the payments service can recognise a repeat and return the first result instead of charging again. Without that key on both sides, the only safe move after a timeout is to check the payment's actual status before trying again, not to blindly resend it.</p></details></div>
 </section>
 
 <section>
@@ -823,7 +837,7 @@ web pool size: 12</pre></div>
 <li>On <code>SIGTERM</code>, stop taking requests, finish the ones in flight, then close resources.</li>
 <li>Put timeouts on every edge, rate-limit public endpoints, cache hot reads with tags and TTLs, index what you query, and keep connection pools small.</li>
 </ul>
-<p>Your app is ready for production. Next, you put it there: a build, a server, Docker, a database, HTTPS and backups.</p>
+<p>Your app is ready for production, but readiness is not the same as safety. Before you deploy it, run it through <a href="/learn/zudo-production-security">A production security review</a>, the same kind of checklist you just built here, aimed at authentication, injection and the data this app can leak.</p>
 </section>
       </div>
 

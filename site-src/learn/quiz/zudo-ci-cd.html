@@ -1,0 +1,705 @@
+<question id="zcd-order" type="choice">
+<q>Why does the pipeline run the type check and lint before the integration tests?</q>
+<option>Integration tests need the linter's output</option>
+<option correct>They are fast and catch common mistakes, so a broken change fails in seconds instead of after starting a database</option>
+<option>GitHub Actions requires that order</option>
+<option>Linting changes the code the tests run</option>
+<explain><p>Put cheap, likely failures first. There is no point spending minutes on a database and migrations for a change that does not compile.</p></explain>
+</question>
+
+<question id="zcd-exit-codes" type="choice">
+<q>How does a CI system decide that a step such as <code>npm run lint</code> failed?</q>
+<option>It searches the output for the word "error"</option>
+<option correct>The command exits with a non-zero exit code</option>
+<option>The step takes longer than a minute</option>
+<option>It compares the output with the previous run</option>
+<explain><p>Exit code 0 means success; anything else is failure. Every tool in the pipeline follows that contract, which is why a script that swallows errors (or prints them and exits 0) breaks the pipeline silently.</p></explain>
+</question>
+
+<question id="zcd-tests-typecheck" type="choice">
+<q>In the generated project, a test passes <code>{ title: "…" }</code> where the type requires <code>{ name: string }</code>, yet <code>npm run typecheck</code> and <code>npm test</code> both pass. Why?</q>
+<option>TypeScript allows extra properties in tests</option>
+<option correct><code>tsconfig.json</code> only includes <code>src/</code>, and Vitest strips types without checking them</option>
+<option>Vitest runs a different TypeScript version</option>
+<option>The test is skipped</option>
+<explain><p>Nothing type-checks the test files. A second configuration that includes <code>tests/</code>, run as <code>typecheck:tests</code>, closes that gap.</p></explain>
+</question>
+
+<question id="zcd-lint-vs-tsc" type="choice">
+<q>Which of these would a linter such as Biome report, while <code>tsc</code> with the generated settings accepts it?</q>
+<option>Calling a function with the wrong number of arguments</option>
+<option correct><code>if (input.name == "")</code> and an unused local variable</option>
+<option>Importing a file that does not exist</option>
+<option>Assigning a string to a number variable</option>
+<explain><p>The other three are type errors. A loose <code>==</code> and an unused variable are valid TypeScript but likely mistakes; that is the linter's job.</p></explain>
+</question>
+
+<question id="zcd-npx-name" type="choice">
+<q>Why is <code>npx biome lint</code> risky in a project that has not installed <code>@biomejs/biome</code>?</q>
+<option>npx is slower than npm</option>
+<option correct>npx downloads and runs whatever package is named <code>biome</code> on npm, which is a different package</option>
+<option>Biome cannot run through npx</option>
+<option>It changes the lockfile</option>
+<explain><p>npx resolves a bare name on the registry when it is not installed locally. Install tools as dev dependencies so the lockfile decides exactly which code runs.</p></explain>
+</question>
+
+<question id="zcd-npm-ci" type="choice">
+<q>Why does the pipeline use <code>npm ci</code> rather than <code>npm install</code>?</q>
+<option><code>npm ci</code> skips the tests</option>
+<option correct>It installs exactly what <code>package-lock.json</code> lists, from a clean <code>node_modules</code>, and fails if the lockfile and <code>package.json</code> disagree</option>
+<option>It updates every dependency to the latest version</option>
+<option>It does not run install scripts</option>
+<explain><p>CI must be reproducible: the same commit installs the same versions every time. <code>npm install</code> may resolve newer versions and rewrite the lockfile.</p></explain>
+</question>
+
+<question id="zcd-clean-clone" type="choice">
+<q>The integration tests pass on a developer's laptop and fail on a clean clone with <code>PAYMENTS_URL is not set</code>. What is the real problem?</q>
+<option>The CI machine is broken</option>
+<option>The test is flaky</option>
+<option correct>The setting existed only in one developer's <code>.env</code>; it was never added to <code>.env.example</code> or to the CI and server environments</option>
+<option>Prisma needs <code>PAYMENTS_URL</code></option>
+<explain><p>A clean clone has none of your local state. That is exactly why CI starts from nothing: it finds settings, files and packages that only exist on one machine.</p></explain>
+</question>
+
+<question id="zcd-skipif" type="choice">
+<q>The integration test file uses <code>describe.skipIf(!process.env.DATABASE_URL)</code>. What is the trade-off?</q>
+<option>The tests become faster in CI</option>
+<option correct>Running it without a database is not an error, but if CI forgot to set <code>DATABASE_URL</code> the tests would silently skip, so CI must always set it</option>
+<option>The tests run twice</option>
+<option>Vitest cannot skip a whole file</option>
+<explain><p>Skipping is convenient locally and dangerous in CI. Check the test counts in the CI log, or make the CI job fail when the variable is missing.</p></explain>
+</question>
+
+<question id="zcd-audit-triage" type="choice">
+<q><code>npm audit</code> reports high-severity advisories in <code>mysql2</code> and <code>deepmerge-ts</code>, pulled in by the Prisma CLI, and suggests <code>npm audit fix --force</code>, which downgrades Prisma a major version. What is the best first move?</q>
+<option>Run <code>npm audit fix --force</code> and deploy</option>
+<option>Remove <code>npm audit</code> from the pipeline</option>
+<option correct>Check whether patched versions exist and force them with <code>overrides</code>, then run the full pipeline; accept a finding only with a reason and an expiry date</option>
+<option>Ignore it, because the app does not use MySQL</option>
+<explain><p>Triage: is it reachable, how bad, what is the cheapest safe fix? Patched versions existed, so overrides removed the findings without a breaking downgrade. A documented, expiring exception is the fallback.</p></explain>
+</question>
+
+<question id="zcd-leaked-secret" type="choice">
+<q>gitleaks finds a GitHub token committed three weeks ago. What must happen first?</q>
+<option>Delete the file in a new commit</option>
+<option>Rewrite the Git history to remove the commit</option>
+<option correct>Revoke the token and issue a new one, because anyone who fetched the repository may have it</option>
+<option>Add the file to <code>.gitignore</code></option>
+<explain><p>Once pushed, a secret must be treated as known. Rotating it makes the leaked copy useless; cleaning the history comes after, if at all.</p></explain>
+</question>
+
+<question id="zcd-permissions" type="choice">
+<q>What does <code>permissions: contents: read</code> at the top of the workflow achieve?</q>
+<option>It hides the repository from other users</option>
+<option correct>The automatic <code>GITHUB_TOKEN</code> of every job can only read the repository unless a job asks for more</option>
+<option>It prevents pull requests</option>
+<option>It encrypts the logs</option>
+<explain><p>Least privilege: if a step or a dependency is compromised, the token it can steal cannot push code or publish packages. Only the <code>build</code> job adds <code>packages: write</code>.</p></explain>
+</question>
+
+<question id="zcd-concurrency-deploy" type="choice">
+<q>The deploy jobs use <code>concurrency: { group: deploy-production, cancel-in-progress: false }</code>. What happens when two merges reach production deploy at the same time?</q>
+<option>Both deploy in parallel</option>
+<option>The newer one cancels the older one halfway through</option>
+<option correct>They run one after the other, so two deploys never interleave on one environment</option>
+<option>Both are cancelled</option>
+<explain><p>Cancelling a deploy halfway could leave a migration applied without its app. Queueing keeps each deploy whole.</p></explain>
+</question>
+
+<question id="zcd-injection" type="choice">
+<q>actionlint warns about <code>run: echo "deploying ${{ github.event.head_commit.message }}"</code>. Why?</q>
+<option>Commit messages can be too long for echo</option>
+<option correct>The expression is pasted into the script before the shell runs it, so a crafted message becomes shell code</option>
+<option>Expressions are not allowed in <code>run</code></option>
+<option>echo is not available on the runner</option>
+<explain><p>That is script injection. Put the value in <code>env:</code> and use <code>"$MESSAGE"</code>: the shell then treats it as data.</p></explain>
+</question>
+
+<question id="zcd-fork-secrets" type="choice">
+<q>A pull request from a fork runs your workflow. Which statement is true?</q>
+<option>It gets all repository secrets, like any other run</option>
+<option correct>GitHub does not pass repository or environment secrets to it, and the deploy jobs do not run because they require a push to <code>main</code></option>
+<option>It can push images to your registry</option>
+<option>It runs on your production server</option>
+<explain><p>Code from a fork is untrusted. The checks still run, but nothing that needs secrets or deploys does.</p></explain>
+</question>
+
+<question id="zcd-env-secrets" type="choice">
+<q>Both deploy jobs refer to <code>secrets.DEPLOY_SSH_KEY</code>. How do they get different keys?</q>
+<option>By using different secret names in each job</option>
+<option correct>Each job runs in a different environment (<code>staging</code> or <code>production</code>), and each environment has its own value for the secret</option>
+<option>The key is chosen by the branch name</option>
+<option>They get the same key</option>
+<explain><p>Environment secrets override repository secrets of the same name for jobs in that environment, and production can require an approval before its secrets are ever used.</p></explain>
+</question>
+
+<question id="zcd-ci-holds" type="choice">
+<q>Which secret should the CI system <em>not</em> hold in this design?</q>
+<option>The SSH key to reach the server</option>
+<option>The token to push images</option>
+<option correct>The database password and the payment provider settings</option>
+<option>None: CI should hold every secret</option>
+<explain><p>Application secrets live in a file on each server, readable only by the deploy user. CI only needs to reach the server and name the release, so a compromised CI leaks less.</p></explain>
+</question>
+
+<question id="zcd-masking" type="choice">
+<q>GitHub masks secret values in logs. Which line still leaks?</q>
+<option><code>echo "$DEPLOY_KEY"</code></option>
+<option correct><code>echo "$DEPLOY_KEY" | base64</code></option>
+<option><code>echo "key is set: ${DEPLOY_KEY:+yes}"</code></option>
+<option><code>echo "deploying $GITHUB_SHA"</code></option>
+<explain><p>Masking replaces the exact value. An encoding or a part of the secret is a different string and is printed in full.</p></explain>
+</question>
+
+<question id="zcd-migrate-image" type="choice">
+<q>Why does the pipeline build a separate <code>migrate</code> image from the same Dockerfile?</q>
+<option>Because migrations must run as root</option>
+<option correct>The production image drops dev dependencies, including the Prisma CLI, so it cannot run <code>prisma migrate deploy</code></option>
+<option>Because migrations need a different Node.js version</option>
+<option>To make the app image slower to build</option>
+<explain><p>The generated runtime stage keeps only production dependencies. A stage built from the same commit carries the CLI and the migration files, and runs only when asked.</p></explain>
+</question>
+
+<question id="zcd-set-e" type="choice">
+<q>What would happen without <code>set -euo pipefail</code> at the top of <code>deploy.sh</code> if the migration step failed?</q>
+<option>The script would stop</option>
+<option correct>The script would carry on and start the new app against an unmigrated database</option>
+<option>Docker would roll back automatically</option>
+<option>Nothing different</option>
+<explain><p>By default bash ignores failing commands and runs the next line. <code>-e</code> stops at the first failure, <code>-u</code> treats unset variables as errors, and <code>pipefail</code> makes a failure inside a pipe count.</p></explain>
+</question>
+
+<question id="zcd-rollback-schema" type="choice">
+<q>A release added a column with a default. The next release is bad and you start the previous image again. What happens to the database?</q>
+<option>The migration is undone automatically</option>
+<option>The old image refuses to start</option>
+<option correct>Nothing: the column stays, and the old code works because it never mentions it</option>
+<option>The data in the column is deleted</option>
+<option>The old image applies its own migrations again, dropping the column</option>
+<explain><p>Code rolls back, the database only moves forward. That is safe as long as every migration keeps the previous release working: add, don't rename or drop, until you are sure.</p></explain>
+</question>
+
+<question id="zcd-edit-migration" type="choice">
+<q>A migration that already ran in production has a wrong default. What should you do?</q>
+<option>Edit the migration file, since it is only SQL</option>
+<option>Delete it and generate it again</option>
+<option correct>Add a new migration that changes the default</option>
+<option>Change the default by hand in production</option>
+<explain><p>Applied migrations are history. Prisma stores a checksum and refuses a changed file, and an edited file would make new databases differ from production.</p></explain>
+</question>
+
+<question id="zcd-health" type="choice">
+<q>Why should the deploy wait for <code>/health</code> (a readiness check that includes the database) rather than for "the container started"?</q>
+<option>Containers never fail to start</option>
+<option correct>A process can start and still be unable to serve, for example because a required setting is missing or the database is unreachable</option>
+<option>Health checks are faster</option>
+<option>Docker cannot report container status</option>
+<explain><p>The bad release in the lesson started a container that crashed on a missing <code>PAYMENTS_URL</code>. Only a check of what users need caught it and triggered the rollback.</p></explain>
+</question>
+
+<question id="zcd-out-pipeline" type="output">
+<q>What does this print?</q>
+<code file="stages.js">
+const stages = [["install", 0], ["type check", 0], ["unit tests", 1], ["build", 0], ["deploy", 0]];
+let failed;
+for (const [name, exitCode] of stages) {
+  if (failed) { console.log("skip", name); continue; }
+  if (exitCode === 0) console.log("pass", name);
+  else { failed = name; console.log("FAIL", name); }
+}
+console.log(failed ? `deployed: no` : `deployed: yes`);
+</code>
+<option correct>pass install
+pass type check
+FAIL unit tests
+skip build
+skip deploy
+deployed: no</option>
+<option>pass install
+pass type check
+FAIL unit tests
+pass build
+pass deploy
+deployed: yes</option>
+<option>pass install
+pass type check
+FAIL unit tests
+deployed: no</option>
+<option>FAIL unit tests
+deployed: no</option>
+<explain><p>After the first failure every later stage is skipped, and deploy is the last stage, so nothing reaches users.</p></explain>
+</question>
+
+<question id="zcd-out-waves" type="output">
+<q>What does this print?</q>
+<code file="waves.js">
+const jobs = { verify: [], security: [], integration: ["verify"], build: ["integration", "security"], deploy: ["build"] };
+const done = new Set();
+while (done.size < Object.keys(jobs).length) {
+  const ready = Object.keys(jobs).filter((j) => !done.has(j) && jobs[j].every((n) => done.has(n)));
+  ready.forEach((j) => done.add(j));
+  console.log(ready.join(" + "));
+}
+</code>
+<option correct>verify + security
+integration
+build
+deploy</option>
+<option>verify
+security
+integration
+build
+deploy</option>
+<option>verify + security + integration
+build
+deploy</option>
+<option>verify + integration
+security
+build
+deploy</option>
+<explain><p>Jobs whose <code>needs</code> are all done run together. <code>verify</code> and <code>security</code> need nothing, so they run in parallel; <code>build</code> waits for both branches.</p></explain>
+</question>
+
+<question id="zcd-out-needs-typo" type="output">
+<q>What does this print?</q>
+<code file="needs.js">
+const jobs = { test: [], deploy: ["tests"] };
+const problems = [];
+for (const [job, needs] of Object.entries(jobs)) {
+  for (const need of needs) if (!(need in jobs)) problems.push(`${job} needs ${need}`);
+}
+console.log(problems.length, problems[0]);
+</code>
+<option correct>1 deploy needs tests</option>
+<option>0 undefined</option>
+<option>1 deploy needs test</option>
+<option>2 deploy needs tests</option>
+<explain><p><code>"tests"</code> is not a job name; the job is <code>test</code>. actionlint reports the same thing as <code>[job-needs]</code> before you push.</p></explain>
+</question>
+
+<question id="zcd-out-mask" type="output">
+<q>What does this print?</q>
+<code file="mask.js">
+const secrets = ["s3cr3t-9"];
+const mask = (line) => secrets.reduce((text, s) => text.split(s).join("***"), line);
+console.log(mask("key=s3cr3t-9"));
+console.log(mask("KEY=" + "s3cr3t-9".toUpperCase()));
+console.log(mask("parts: s3cr3t / -9"));
+</code>
+<option correct>key=***
+KEY=S3CR3T-9
+parts: s3cr3t / -9</option>
+<option>key=***
+KEY=***
+parts: ***</option>
+<option>key=***
+KEY=***
+parts: s3cr3t / -9</option>
+<option>key=s3cr3t-9
+KEY=S3CR3T-9
+parts: s3cr3t / -9</option>
+<explain><p>Masking matches the exact string. Upper-casing, splitting or encoding a secret produces something the mask does not recognise, so never print derived values.</p></explain>
+</question>
+
+<question id="zcd-out-tags" type="output">
+<q>What does this print?</q>
+<code file="tags.js">
+function imageTags(repo, sha, ref) {
+  const image = `ghcr.io/${repo.toLowerCase()}`;
+  const tags = [`${image}:${sha.slice(0, 7)}`];
+  const version = ref.match(/^refs\/tags\/(v\d+\.\d+\.\d+)$/)?.[1];
+  if (version) tags.push(`${image}:${version}`);
+  return tags.join(" ");
+}
+console.log(imageTags("AcmeTasks/Task-API", "f93800b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7", "refs/heads/main"));
+console.log(imageTags("AcmeTasks/Task-API", "f93800b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7", "refs/tags/v2.0.1"));
+</code>
+<option correct>ghcr.io/acmetasks/task-api:f93800b
+ghcr.io/acmetasks/task-api:f93800b ghcr.io/acmetasks/task-api:v2.0.1</option>
+<option>ghcr.io/AcmeTasks/Task-API:f93800b
+ghcr.io/AcmeTasks/Task-API:f93800b ghcr.io/AcmeTasks/Task-API:v2.0.1</option>
+<option>ghcr.io/acmetasks/task-api:f93800b
+ghcr.io/acmetasks/task-api:v2.0.1</option>
+<option>ghcr.io/acmetasks/task-api:latest
+ghcr.io/acmetasks/task-api:v2.0.1</option>
+<explain><p>Registry names must be lower case. Every build gets the commit tag; a version tag is added only for a Git tag, as an extra name for the same image.</p></explain>
+</question>
+
+<question id="zcd-out-env" type="output">
+<q>What does this print?</q>
+<code file="env-example.js">
+const required = ["DATABASE_URL", "PAYMENTS_URL", "JWT_ACCESS_SECRET"];
+const envExample = "NODE_ENV=development\nDATABASE_URL=postgresql://localhost:5432/task-api\n# JWT_ACCESS_SECRET=\nPORT=3000";
+const documented = new Set(envExample.split("\n").filter((l) => /^[A-Z_]+=/.test(l)).map((l) => l.split("=")[0]));
+console.log(required.filter((name) => !documented.has(name)));
+</code>
+<option correct>[ 'PAYMENTS_URL', 'JWT_ACCESS_SECRET' ]</option>
+<option>[ 'PAYMENTS_URL' ]</option>
+<option>[]</option>
+<option>[ 'NODE_ENV', 'PORT' ]</option>
+<explain><p>The commented-out line starts with <code>#</code>, so it does not count as documenting the setting. A check like this fails the build before a clean environment fails to start.</p></explain>
+</question>
+
+<question id="zcd-out-gate" type="output">
+<q>What does this print?</q>
+<code file="gate.js">
+const findings = [
+  { name: "mysql2", severity: "high" },
+  { name: "brace-expansion", severity: "low" },
+  { name: "deepmerge-ts", severity: "high" },
+];
+const exceptions = [
+  { name: "mysql2", expires: "2026-10-15" },
+  { name: "deepmerge-ts", expires: "2026-09-01" },
+];
+const today = "2026-09-25";
+const failing = findings.filter((f) => {
+  if (f.severity !== "high" && f.severity !== "critical") return false;
+  const e = exceptions.find((x) => x.name === f.name);
+  return !(e && e.expires >= today);
+});
+console.log(failing.map((f) => f.name));
+</code>
+<option correct>[ 'deepmerge-ts' ]</option>
+<option>[ 'mysql2', 'deepmerge-ts' ]</option>
+<option>[]</option>
+<option>[ 'brace-expansion', 'deepmerge-ts' ]</option>
+<explain><p>The low finding is below the gate. <code>mysql2</code> has a valid exception; the one for <code>deepmerge-ts</code> expired, so it fails. Dates in <code>YYYY-MM-DD</code> form compare correctly as strings.</p></explain>
+</question>
+
+<question id="zcd-out-rollback" type="output">
+<q>What does this print?</q>
+<code file="rollback.js">
+const history = [
+  { tag: "a1", schema: 1, healthy: true },
+  { tag: "b2", schema: 2, healthy: true },
+  { tag: "c3", schema: 2, healthy: false },
+  { tag: "d4", schema: 3, healthy: true },
+];
+function target(current, liveSchema) {
+  const earlier = history.slice(0, history.findIndex((r) => r.tag === current)).reverse();
+  return earlier.find((r) => r.healthy && r.schema >= liveSchema)?.tag ?? "fix forward";
+}
+console.log(target("d4", 2), target("d4", 3), target("c3", 1));
+</code>
+<option correct>b2 fix forward b2</option>
+<option>c3 fix forward b2</option>
+<option>b2 b2 a1</option>
+<option>a1 fix forward a1</option>
+<explain><p>Looking back from <code>d4</code>: <code>c3</code> was never healthy, <code>b2</code> works with schema 2. With schema 3 live, no earlier release fits. From <code>c3</code>, the nearest earlier healthy release is <code>b2</code>, which also handles schema 1.</p></explain>
+</question>
+
+<question id="zcd-out-migration-order" type="output">
+<q>Prisma names migrations with a timestamp prefix. What does this print?</q>
+<code file="order.js">
+const applied = ["20260925020538_add_tasks"];
+const inGit = ["20260925023009_add_task_done", "20260925020538_add_tasks", "20261002091500_add_owner"];
+const pending = inGit.filter((m) => !applied.includes(m)).sort();
+console.log(pending.join(" -> "));
+</code>
+<option correct>20260925023009_add_task_done -> 20261002091500_add_owner</option>
+<option>20261002091500_add_owner -> 20260925023009_add_task_done</option>
+<option>20260925020538_add_tasks -> 20260925023009_add_task_done -> 20261002091500_add_owner</option>
+<option>20260925023009_add_task_done</option>
+<explain><p>Applied migrations are skipped; the rest run in name order, which the timestamp prefix makes chronological. That is why the same command is safe to run on every deploy.</p></explain>
+</question>
+
+<question id="zcd-out-health" type="output">
+<q>What does this print?</q>
+<code file="health.js">
+const answers = [0, 503, 503, 200];
+let call = 0;
+const probe = async () => answers[call++] ?? 200;
+
+async function waitUntilHealthy(attempts) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const status = await probe();
+    if (status === 200) return `healthy after ${attempt}`;
+  }
+  return "not healthy: roll back";
+}
+console.log(await waitUntilHealthy(3));
+console.log(await waitUntilHealthy(3));
+</code>
+<option correct>not healthy: roll back
+healthy after 1</option>
+<option>healthy after 4
+healthy after 1</option>
+<option>not healthy: roll back
+not healthy: roll back</option>
+<option>healthy after 3
+healthy after 1</option>
+<explain><p>The first wait uses up three answers (no answer, 503, 503) and gives up. The second call starts where the probe left off and gets 200 at once. A limit on attempts is what turns "never healthy" into a rollback instead of a stuck deploy.</p></explain>
+</question>
+
+<question id="zcd-code-failfast" type="code" file="run-stages.js">
+<q><p>Write <code>runStages(stages)</code>. Each stage is <code>{ name, run }</code> where <code>run()</code> returns an exit code. Run them in order, stop at the first non-zero code, and return <code>{ passed, failed, skipped }</code>: the names that passed, the name that failed (or <code>null</code>), and the names never run.</p></q>
+<starter>
+function runStages(stages) {
+  // your code here
+}
+
+const ran = [];
+const stage = (name, code) => ({ name, run: () => (ran.push(name), code) });
+console.log(JSON.stringify(runStages([stage("install", 0), stage("lint", 1), stage("test", 0), stage("deploy", 0)])));
+console.log(JSON.stringify(runStages([stage("install", 0), stage("test", 0)])));
+console.log(ran.join(","));
+</starter>
+<solution>
+function runStages(stages) {
+  const passed = [];
+  for (let i = 0; i < stages.length; i++) {
+    const code = stages[i].run();
+    if (code !== 0) {
+      return { passed, failed: stages[i].name, skipped: stages.slice(i + 1).map((s) => s.name) };
+    }
+    passed.push(stages[i].name);
+  }
+  return { passed, failed: null, skipped: [] };
+}
+
+const ran = [];
+const stage = (name, code) => ({ name, run: () => (ran.push(name), code) });
+console.log(JSON.stringify(runStages([stage("install", 0), stage("lint", 1), stage("test", 0), stage("deploy", 0)])));
+console.log(JSON.stringify(runStages([stage("install", 0), stage("test", 0)])));
+console.log(ran.join(","));
+</solution>
+<expected>
+{"passed":["install"],"failed":"lint","skipped":["test","deploy"]}
+{"passed":["install","test"],"failed":null,"skipped":[]}
+install,lint,install,test
+</expected>
+<explain><p>The last line proves the skipped stages never ran: stopping early is not just a report, it prevents the side effects of later stages, deploy above all.</p></explain>
+</question>
+
+<question id="zcd-code-env" type="code" file="missing-settings.js">
+<q><p>Write <code>missingSettings(envText, required)</code>: parse lines of the form <code>NAME=value</code> (ignore comments and blank lines) and return the required names that are missing or have an empty value.</p></q>
+<starter>
+function missingSettings(envText, required) {
+  // your code here
+}
+
+const serverEnv = "IMAGE_REPO=ghcr.io/acmetasks/task-api\nPOSTGRES_PASSWORD=\n# PAYMENTS_URL=https://payments.example.com\nAPP_PORT=3000\n";
+console.log(missingSettings(serverEnv, ["IMAGE_REPO", "POSTGRES_PASSWORD", "PAYMENTS_URL", "APP_PORT"]));
+</starter>
+<solution>
+function missingSettings(envText, required) {
+  const values = new Map();
+  for (const line of envText.split("\n")) {
+    const match = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (match) values.set(match[1], match[2].trim());
+  }
+  return required.filter((name) => !values.get(name));
+}
+
+const serverEnv = "IMAGE_REPO=ghcr.io/acmetasks/task-api\nPOSTGRES_PASSWORD=\n# PAYMENTS_URL=https://payments.example.com\nAPP_PORT=3000\n";
+console.log(missingSettings(serverEnv, ["IMAGE_REPO", "POSTGRES_PASSWORD", "PAYMENTS_URL", "APP_PORT"]));
+</solution>
+<expected>
+[ 'POSTGRES_PASSWORD', 'PAYMENTS_URL' ]
+</expected>
+<explain><p>An empty value is as bad as a missing one, and a commented-out line is missing. Running such a check before a deploy turns a failed release and a rollback into a clear message that nothing was changed.</p></explain>
+</question>
+
+<question id="zcd-code-gate" type="code" file="audit-gate-code.js">
+<q><p>Write <code>auditGate(vulnerabilities, exceptions, today)</code>. <code>vulnerabilities</code> maps package names to <code>{ severity }</code>. Return the sorted names with severity <code>high</code> or <code>critical</code> that have no exception whose <code>expires</code> date (<code>YYYY-MM-DD</code>) is today or later.</p></q>
+<starter>
+function auditGate(vulnerabilities, exceptions, today) {
+  // your code here
+}
+
+const report = {
+  "semver-lite": { severity: "critical" },
+  mysql2: { severity: "high" },
+  "brace-expansion": { severity: "low" },
+  "deepmerge-ts": { severity: "high" },
+};
+const exceptions = [
+  { packageName: "mysql2", expires: "2026-10-15" },
+  { packageName: "deepmerge-ts", expires: "2026-09-24" },
+];
+console.log(auditGate(report, exceptions, "2026-09-25"));
+console.log(auditGate(report, exceptions, "2026-09-24"));
+</starter>
+<solution>
+function auditGate(vulnerabilities, exceptions, today) {
+  return Object.entries(vulnerabilities)
+    .filter(([, v]) => v.severity === "high" || v.severity === "critical")
+    .filter(([name]) => !exceptions.some((e) => e.packageName === name && e.expires >= today))
+    .map(([name]) => name)
+    .sort();
+}
+
+const report = {
+  "semver-lite": { severity: "critical" },
+  mysql2: { severity: "high" },
+  "brace-expansion": { severity: "low" },
+  "deepmerge-ts": { severity: "high" },
+};
+const exceptions = [
+  { packageName: "mysql2", expires: "2026-10-15" },
+  { packageName: "deepmerge-ts", expires: "2026-09-24" },
+];
+console.log(auditGate(report, exceptions, "2026-09-25"));
+console.log(auditGate(report, exceptions, "2026-09-24"));
+</solution>
+<expected>
+[ 'deepmerge-ts', 'semver-lite' ]
+[ 'semver-lite' ]
+</expected>
+<explain><p>An exception still counts on its expiry day and fails the day after. Sorting makes the gate's output stable, so two runs on the same report print the same list.</p></explain>
+</question>
+
+<question id="zcd-code-compat" type="code" file="compat.js">
+<q><p>Write <code>breaksPreviousRelease(sql, columnsUsedByPrevious)</code> for simple migrations. Return <code>true</code> if the SQL renames or drops a column the previous release uses, or adds a <code>NOT NULL</code> column without a <code>DEFAULT</code>. Match case-insensitively.</p></q>
+<starter>
+function breaksPreviousRelease(sql, columnsUsedByPrevious) {
+  // your code here
+}
+
+const used = ["id", "name", "createdAt"];
+console.log(breaksPreviousRelease('ALTER TABLE tasks ADD COLUMN "done" BOOLEAN NOT NULL DEFAULT false', used));
+console.log(breaksPreviousRelease('ALTER TABLE tasks ADD COLUMN "ownerId" TEXT NOT NULL', used));
+console.log(breaksPreviousRelease("ALTER TABLE tasks RENAME COLUMN name TO title", used));
+console.log(breaksPreviousRelease('ALTER TABLE tasks DROP COLUMN "legacyNotes"', used));
+</starter>
+<solution>
+function breaksPreviousRelease(sql, columnsUsedByPrevious) {
+  const text = sql.toLowerCase().replaceAll('"', "");
+  const used = columnsUsedByPrevious.map((c) => c.toLowerCase());
+  const touched = text.match(/(?:rename|drop) column (\w+)/);
+  if (touched && used.includes(touched[1])) return true;
+  return /add column \w+ .*not null/.test(text) && !text.includes("default");
+}
+
+const used = ["id", "name", "createdAt"];
+console.log(breaksPreviousRelease('ALTER TABLE tasks ADD COLUMN "done" BOOLEAN NOT NULL DEFAULT false', used));
+console.log(breaksPreviousRelease('ALTER TABLE tasks ADD COLUMN "ownerId" TEXT NOT NULL', used));
+console.log(breaksPreviousRelease("ALTER TABLE tasks RENAME COLUMN name TO title", used));
+console.log(breaksPreviousRelease('ALTER TABLE tasks DROP COLUMN "legacyNotes"', used));
+</solution>
+<expected>
+false
+true
+true
+false
+</expected>
+<explain><p>Dropping a column the previous release no longer uses is the "contract" step and is safe. A text check like this is a quick warning; the reliable test is running the previous release's queries against the migrated schema, as the lesson does with PGlite.</p></explain>
+</question>
+
+<question id="zcd-code-mask" type="code" file="mask-code.js">
+<q><p>Write <code>maskLog(lines, secrets)</code> that replaces every occurrence of each secret with <code>***</code>, but first registers, for every secret, its base64 form (<code>btoa</code>) as a secret too, so the encoded value is hidden as well.</p></q>
+<starter>
+function maskLog(lines, secrets) {
+  // your code here
+}
+
+const secrets = ["tok_live_4f9a"];
+console.log(maskLog(["token=tok_live_4f9a", "basic " + btoa("tok_live_4f9a"), "sha=f93800b"], secrets));
+</starter>
+<solution>
+function maskLog(lines, secrets) {
+  const all = secrets.flatMap((s) => [s, btoa(s)]);
+  return lines.map((line) => all.reduce((text, s) => text.split(s).join("***"), line));
+}
+
+const secrets = ["tok_live_4f9a"];
+console.log(maskLog(["token=tok_live_4f9a", "basic " + btoa("tok_live_4f9a"), "sha=f93800b"], secrets));
+</solution>
+<expected>
+[ 'token=***', 'basic ***', 'sha=f93800b' ]
+</expected>
+<explain><p>GitHub lets a step register extra values to mask (the <code>::add-mask::</code> command) for exactly this reason. It still cannot guess every transformation, so the rule stays: never print secrets or anything derived from them.</p></explain>
+</question>
+
+<question id="zcd-out-cycle" type="output">
+<q>What does this print?</q>
+<code file="cycle.js">
+const jobs = { build: ["test"], test: ["deploy"], deploy: ["build"], lint: [] };
+const done = new Set();
+const waves = [];
+while (done.size < Object.keys(jobs).length) {
+  const ready = Object.keys(jobs).filter((j) => !done.has(j) && jobs[j].every((n) => done.has(n)));
+  if (ready.length === 0) { waves.push("stuck: " + Object.keys(jobs).filter((j) => !done.has(j)).join(",")); break; }
+  ready.forEach((j) => done.add(j));
+  waves.push(ready.join("+"));
+}
+console.log(waves);
+</code>
+<option correct>[ 'lint', 'stuck: build,test,deploy' ]</option>
+<option>[ 'lint', 'build', 'test', 'deploy' ]</option>
+<option>[ 'stuck: build,test,deploy,lint' ]</option>
+<option>[ 'lint+build+test+deploy' ]</option>
+<explain><p><code>build</code> needs <code>test</code>, which needs <code>deploy</code>, which needs <code>build</code>: a cycle, so none of them can ever start. GitHub rejects such a workflow, and actionlint reports it before you push.</p></explain>
+</question>
+
+<question id="zcd-out-checksum" type="output">
+<q>A tiny checksum stands in for Prisma's SHA-256 of each applied migration. What does this print?</q>
+<code file="checksum.js">
+const checksum = (text) => [...text].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 1000003, 7);
+const applied = { "001_add_tasks": checksum("CREATE TABLE tasks (id TEXT)"), "002_add_done": checksum("ADD done DEFAULT false") };
+const inGit = { "001_add_tasks": "CREATE TABLE tasks (id TEXT)", "002_add_done": "ADD done DEFAULT true", "003_add_owner": "ADD owner" };
+for (const [name, sql] of Object.entries(inGit)) {
+  const state = !(name in applied) ? "pending" : applied[name] === checksum(sql) ? "ok" : "EDITED";
+  console.log(name, state);
+}
+</code>
+<option correct>001_add_tasks ok
+002_add_done EDITED
+003_add_owner pending</option>
+<option>001_add_tasks ok
+002_add_done ok
+003_add_owner pending</option>
+<option>001_add_tasks ok
+002_add_done pending
+003_add_owner pending</option>
+<option>001_add_tasks EDITED
+002_add_done EDITED
+003_add_owner pending</option>
+<explain><p>Changing one word of an applied migration changes its checksum, so the tool can refuse to continue instead of letting new databases and production drift apart. New files are simply pending.</p></explain>
+</question>
+
+<question id="zcd-code-rollback" type="code" file="rollback-code.js">
+<q><p>Write <code>rollbackTarget(history, current, liveSchema)</code>. <code>history</code> is in deploy order, each <code>{ tag, worksWithSchemaUpTo, healthy }</code>. Return the tag of the most recent release <em>before</em> <code>current</code> that was healthy and works with <code>liveSchema</code>, or <code>"fix forward"</code> if there is none.</p></q>
+<starter>
+function rollbackTarget(history, current, liveSchema) {
+  // your code here
+}
+
+const history = [
+  { tag: "7c01e2a", worksWithSchemaUpTo: 1, healthy: true },
+  { tag: "ddc4ac4", worksWithSchemaUpTo: 3, healthy: true },
+  { tag: "ad3887d", worksWithSchemaUpTo: 3, healthy: false },
+  { tag: "f93800b", worksWithSchemaUpTo: 3, healthy: true },
+];
+console.log(rollbackTarget(history, "f93800b", 3));
+console.log(rollbackTarget(history, "ddc4ac4", 2));
+console.log(rollbackTarget(history, "f93800b", 4));
+</starter>
+<solution>
+function rollbackTarget(history, current, liveSchema) {
+  const index = history.findIndex((release) => release.tag === current);
+  for (let i = index - 1; i >= 0; i--) {
+    const release = history[i];
+    if (release.healthy && release.worksWithSchemaUpTo >= liveSchema) return release.tag;
+  }
+  return "fix forward";
+}
+
+const history = [
+  { tag: "7c01e2a", worksWithSchemaUpTo: 1, healthy: true },
+  { tag: "ddc4ac4", worksWithSchemaUpTo: 3, healthy: true },
+  { tag: "ad3887d", worksWithSchemaUpTo: 3, healthy: false },
+  { tag: "f93800b", worksWithSchemaUpTo: 3, healthy: true },
+];
+console.log(rollbackTarget(history, "f93800b", 3));
+console.log(rollbackTarget(history, "ddc4ac4", 2));
+console.log(rollbackTarget(history, "f93800b", 4));
+</solution>
+<expected>
+ddc4ac4
+fix forward
+fix forward
+</expected>
+<explain><p>From <code>ddc4ac4</code> with schema 2 live, the only earlier release handles schema 1 at most, so rolling back would break it. Knowing that before an incident is what the schema bookkeeping is for.</p></explain>
+</question>
