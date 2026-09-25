@@ -1,10 +1,11 @@
 ---
 title: Commands and queries (CQRS)
-description: Split the Task API's operations into commands that change data and queries that only read it. Command and query buses, handlers, middleware, execution context, results, and when CQRS is worth it, with @zudojs/cqrs.
+description: Split the Task API into commands that change data and queries that only read it: buses, handlers, middleware, execution context, results with @zudojs/cqrs.
 minutes: 40
 youNeed: The events and messaging lessons
 youBuild: The Task API's task operations as commands and queries, with the user taken from a trusted context
 keywords: zudojs cqrs, command query responsibility segregation, command bus, query bus, command handler, query handler, execution context, cqrs middleware, CommandOf, QueryOf
+objectives: Split an operation into a command that changes data or a query that only reads it | Register exactly one handler per command or query type, as a function or a class | Carry who is asking in an execution context instead of trusting the request body | Wrap every command and query with audit, timing and error middleware | Choose a CommandResult over a thrown error when a caller needs to inspect a failure | Decide when CQRS is worth the extra bus and when a plain service class is simpler
 ---
 <section>
 <h2 id="idea">One rule: change or read, never both</h2>
@@ -283,6 +284,12 @@ timed so far: 2
 <section>
 <h2 id="results">What a command returns</h2>
 <p>You have seen the answer: <code>execute</code> returns whatever the handler returns, and throws whatever it throws. Keep command results small, usually the id of what was created. If you want every command to return the same explicit shape, with a status and a time, the package has an optional <strong>result type</strong>:</p>
+<reason title="A title is already taken. Should CreateTask throw, or return a failed CommandResult?">
+<p>"Title already used" is not a bug and not an authorization problem: it is an ordinary, expected outcome that the caller needs to react to, maybe by suggesting a different title. Compare that with the <code>NotFoundError</code> you saw for a task that does not exist, or belongs to someone else. Should both of these be reported the same way? What changes for the code that calls <code>execute</code> in each case?</p>
+<answer>
+<p>Throwing suits failures the caller mostly just propagates upward: wrong input, no permission, nothing found &mdash; the HTTP layer already knows how to turn a <code>ValidationError</code> or a <code>NotFoundError</code> from <a href="/learn/zudo-errors">the errors lesson</a> into the right status code, so the calling code does not need a <code>try</code>/<code>catch</code> at every call site. A <code>CommandResult</code> suits a failure the caller must actively branch on as a normal case &mdash; "the title was taken, so show the user a suggestion" is application logic, not error handling, and forcing it through a thrown exception makes ordinary control flow look like an exceptional one. Most of this course throws, because most Task API failures are exactly the propagate-upward kind; reach for <code>createFailedCommandResult</code> only when a caller genuinely needs to inspect a failure and decide what to do next, rather than just report it.</p>
+</answer>
+</reason>
 <example file="results.ts">
 import {
   CommandFailedError,
@@ -404,7 +411,7 @@ all: [ 'Buy milk (done)', 'Write report (open)' ]
 <li>The app is small, or mostly simple create-read-update-delete. A service class with methods, like the <code>TaskService</code> you already have, is clearer.</li>
 <li>You would only be adding a bus between a route and a single function call. Indirection costs reading time.</li>
 </ul>
-<p>You may also read about CQRS with <em>separate databases</em> for reads and writes, kept in sync by events. That is an advanced version for large systems. The simple split you learned here, commands versus queries in one database, gives most of the benefit.</p>
+<p>You may also read about CQRS with <em>separate databases</em> for reads and writes, kept in sync by events. That is an advanced version for large systems. The simple split you learned here, commands versus queries in one database, gives most of the benefit. <a href="/learn/zudo-cqrs-system">A CQRS system</a> builds that advanced version end to end: a transactional outbox, a projected read model, and one trace across both sides.</p>
 </section>
 
 <section>
@@ -500,4 +507,5 @@ try {
 <li>Middleware adds audit, timing and error handling to every command in one place. Call <code>next</code> once.</li>
 <li>Use CQRS when operations are many and reads and writes grow apart. For a small app, a service class is simpler.</li>
 </ul>
+<p>Next, <a href="/learn/zudo-queue">Background jobs</a> moves the slow, unreliable parts of a command &mdash; the ones that should not make the caller wait, or that must survive a crash &mdash; onto a queue.</p>
 </section>

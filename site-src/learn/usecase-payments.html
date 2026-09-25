@@ -732,7 +732,22 @@ console.log("charges at PayGate:", [...oja.paygate.charges.values()].map((c) => 
 console.log(oja.texts);
 await oja.stop();
 </example>
-<output></output>
+<output>
+pay for the rice       201 succeeded ₦12500
+same request again     201 succeeded ₦12500 (replayed)
+same key, other card   422 IDEMPOTENCY_KEY_REUSED
+new key, paid order    409 ERR_CONFLICT
+no key                 400 ERR_VALIDATION_FAILED
+someone else's order   404 ERR_RESOURCE_NOT_FOUND
+declined card          402 declined ₦2800
+flaky gateway          201 succeeded ₦2800
+charges at PayGate: [ 'pay_1 succeeded', 'pay_2 declined', 'pay_3 succeeded' ]
+[
+  'customer-1: Oja Market: we received ₦12,500.00 for order 1. Thank you!',
+  'customer-1: Oja Market: your card was declined for order 2. No money was taken.',
+  'customer-1: Oja Market: we received ₦2,800.00 for order 2. Thank you!'
+]
+</output>
 <ul>
 <li>The repeated request was replayed: same body, <code>Idempotent-Replayed</code>, no second charge.</li>
 <li>The same key with another card is 422, a new key for the paid order is 409, a request without a key is 400, and Bola paying Ada's order is 404.</li>
@@ -777,7 +792,16 @@ console.log("charges:", [...oja.paygate.charges.values()].map((c) => c.reference
 console.log(oja.texts.length, "texts:", oja.texts.map((text) => text.match(/₦[\d,.]+/)?.[0]));
 await oja.stop();
 </example>
-<output></output>
+<output>
+lost answer: 201 succeeded | PayGate attempts: 2 charges: 1
+no answer:   202 unknown
+reconciled: 1 payment(s) -> succeeded
+[error] Request failed: relation "outbox" does not exist
+db failure:  500 INTERNAL | payment 3 is processing
+app retries: 201 succeeded true
+charges: pay_1, pay_2, pay_3
+3 texts: [ '₦500.00', '₦800.00', '₦1,200.00' ]
+</output>
 <ul>
 <li><strong>Lost answer</strong>: PayGate saw two attempts with one key, created one charge, and replayed it on the second attempt. The customer saw a normal 201.</li>
 <li><strong>No answer</strong>: after three attempts the payment is <code>unknown</code>, answered with 202, not "failed". The reconciliation job found the charge at PayGate and settled it as succeeded. Had the service called it failed, the customer would have paid again (incident 2).</li>
@@ -791,7 +815,7 @@ await oja.stop();
 <file name="vitest.config.ts" project="pay">
 import { defineConfig } from "vitest/config";
 
-export default defineConfig({ test: { include: ["tests/**/*.test.ts"], testTimeout: 20_000, hookTimeout: 30_000 } });
+export default defineConfig({ test: { include: ["tests/**/*.test.ts"], testTimeout: 30_000, hookTimeout: 50_000 } });
 </file>
 <file name="vitest-run.ts" project="pay">
 import { startVitest } from "vitest/node";
@@ -871,7 +895,12 @@ import { runTests } from "./vitest-run.js";
 
 await runTests("tests/double.test.ts");
 </example>
-<output></output>
+<output>
+✓ double submission > replays a repeated request instead of charging again
+✓ double submission > lets exactly one of two simultaneous requests charge, whatever their keys
+✓ double submission > refuses a key reused for another payment, and a request without a key
+✓ double submission > charges the order's total, never an amount from the client, and only the owner's order
+</output>
 <p>The concurrency test accepts two correct outcomes for the losing request: 409 if it arrived while the winner was still running, or the replay if it arrived after. What it does not accept is two fresh 201s, or two charges. A test that demanded one exact interleaving would fail at random, and a flaky test teaches people to ignore red.</p>
 <file name="tests/failures.test.ts" project="pay">
 import { randomUUID } from "node:crypto";
@@ -947,7 +976,13 @@ import { runTests } from "./vitest-run.js";
 
 await runTests("tests/failures.test.ts");
 </example>
-<output></output>
+<output>
+✓ failures > retries a lost answer with the same key and charges once
+✓ failures > never calls a timed-out payment failed, and settles it by asking the gateway
+✓ failures > recovers from a database failure after the charge without charging twice
+✓ failures > delivers every notification once, even though the SMS provider failed
+✓ failures > declines a payment the gateway never received, once it is old enough
+</output>
 <p>The notification test runs against an SMS provider that fails twice: the queue retried, and every succeeded payment has exactly one delivered receipt, with no outbox row left unpublished. The last test covers the reconciler's other branch: a payment row whose charge never reached PayGate (a crash between the two steps) is declined once it is old enough, so the customer can pay again with a new key.</p>
 </section>
 
@@ -1011,7 +1046,18 @@ console.log("wrong secret:", await verify(body, await sign(body, now, randomByte
 console.log("replayed old:", await verify(body, await sign(body, now - 3600), now));
 console.log("no header:   ", await verify(body, undefined, now));
 </example>
-<output></output>
+<output>
+genuine:      {
+  ok: true,
+  duplicate: false,
+  event: { id: 'evt_1', type: 'charge.succeeded', reference: 'pay_7' }
+}
+again:        { ok: true, duplicate: true }
+edited body:  { ok: false, reason: 'bad signature' }
+wrong secret: { ok: false, reason: 'bad signature' }
+replayed old: { ok: false, reason: 'too old' }
+no header:    { ok: false, reason: 'malformed signature' }
+</output>
 <p>The HMAC is computed over the <em>raw</em> body, before any JSON parsing, because re-serializing parsed JSON can change the bytes. <code>timingSafeEqualString</code> compares without leaking how many characters matched. <code>hmacSha256</code> itself refuses keys shorter than 16 bytes, so an empty or missing secret cannot produce signatures anyone could forge. A verified webhook then calls <code>settle</code>, which is already idempotent; the <code>seen</code> set would be a table in production.</p>
 </solution>
 </exercise>
@@ -1033,7 +1079,10 @@ await oja.paygate.stop(); // PayGate goes down
 console.log("PayGate down:", await ready());
 await oja.stop();
 </example>
-<output></output>
+<output>
+PayGate up:   { status: 200, gateways: { paygate: 'healthy' } }
+PayGate down: { status: 503, gateways: { paygate: 'unhealthy' } }
+</output>
 <p><code>healthAll</code> runs every adapter's <code>health()</code> with a timeout, and a check that throws or times out counts as unhealthy, so a hanging gateway cannot hang the readiness probe. Keep liveness (is the process alive?) separate: restarting a healthy process because PayGate is down would not help.</p>
 </solution>
 </exercise>

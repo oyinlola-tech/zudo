@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>The application runtime and lifecycle — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-runtime.md" title="Markdown version">
-  <meta name="description" content="Learn how the ZudoJS runtime starts the parts of your application in dependency order, rolls back when startup fails, reports readiness, and shuts everything down gracefully.">
+  <meta name="description" content="See how @zudojs/runtime starts your app's modules in dependency order, rolls back a failed start, reports readiness honestly and shuts down gracefully.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-runtime">
@@ -22,7 +22,7 @@
   <meta name="twitter:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"ZudoJS","item":"https://zudojs.oyinlola.site/"},{"@type":"ListItem","position":2,"name":"Learn","item":"https://zudojs.oyinlola.site/learn"},{"@type":"ListItem","position":3,"name":"The application runtime and lifecycle","item":"https://zudojs.oyinlola.site/learn/zudo-runtime"}]}</script>
   <!-- seo:end -->
-  <meta name="keywords" content="zudojs runtime, createRuntime, module lifecycle, onInitialize, onReady, onShutdown, onDestroy, dependency order, rollback, RuntimeStartError, graceful shutdown, SIGTERM, readiness check, health, zudojs lifecycle, dependsOn, BaseModule">
+  <meta name="keywords" content="zudojs runtime, createRuntime, module lifecycle, onInitialize, onReady, onShutdown, onDestroy, dependency order, rollback, RuntimeStartError, graceful shutdown, SIGTERM, readiness check, health, runtime state, BaseModule">
   <meta name="author" content="Oluwayemi Oyinlola Michael">
 
   <link rel="icon" type="image/svg+xml" href="/assets/zudo-favicon.svg">
@@ -105,10 +105,10 @@
         <div class="lx-hero-tag">LEVEL 12 · LESSON 7 OF 19</div>
         <p class="lx-hero-part">Core, runtime and lifecycle <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>The application runtime and lifecycle</h1>
-        <p class="lx-hero-lead">Learn how the ZudoJS runtime starts the parts of your application in dependency order, rolls back when startup fails, reports readiness, and shuts everything down gracefully.</p>
+        <p class="lx-hero-lead">See how @zudojs/runtime starts your app's modules in dependency order, rolls back a failed start, reports readiness honestly and shuts down gracefully.</p>
         <ul class="lx-hero-meta">
           <li><strong>45 min</strong> to read and try</li>
-          <li><strong>You need:</strong> The task-api project from the previous lesson</li>
+          <li><strong>You need:</strong> "The core: applications, modules and context", and the task-api project from "Create the Task API project"</li>
           <li><strong>You build:</strong> A Task API runtime with a store module and a tasks module that start in order, roll back on failure and stop cleanly</li>
         </ul>
         <div class="lx-hero-actions">
@@ -117,6 +117,16 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Predict the order in which the runtime runs each module's four hooks, on the way up and on the way down</li>
+          <li>Explain what the runtime refuses before any hook runs, and what a rollback undoes</li>
+          <li>Register readiness checks and answer a health probe that never reports a stopping app as ready</li>
+          <li>Explain why the generated app handles signals in server.ts instead of in the runtime</li>
+          <li>Replace the generated placeholder module with modules of your own that share one store</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="why">Why an application needs a runtime</h2>
@@ -127,12 +137,12 @@
 <li>When the program stops, the order is reversed: stop taking requests first, close the database last.</li>
 </ul>
 <p>Doing this by hand works for two parts and becomes fragile at ten. The <strong>runtime</strong> (<code>@zudojs/runtime</code>) does it for you. You describe each part and what it depends on, and the runtime works out the order, starts everything, notices failures and shuts down cleanly.</p>
-<p>You already have one. In <a href="/learn/zudo-create-project">Create the Task API project</a>, the CLI generated <code>src/app.ts</code>, which builds a runtime with <code>createRuntime</code>, and <code>src/server.ts</code>, which calls <code>runtime.start()</code>. This lesson explains what happens inside those two calls. Every package used here is already in the project's <code>package.json</code>, so there is nothing to install.</p>
+<p>You already have one. In <a href="/learn/zudo-project-anatomy">Anatomy of a ZudoJS project</a> you saw the generated <code>src/app.ts</code> build a runtime with <code>createRuntime</code>, and <code>src/server.ts</code> call <code>runtime.start()</code>. <a href="/learn/zudo-core">The core lesson</a> ran modules with the core's own <code>createApplication</code>; this lesson explains what <code>@zudojs/runtime</code>, the runtime your project really uses, does inside those two calls. Every package used here is already in the project's <code>package.json</code>, so there is nothing to install.</p>
 </section>
 
 <section>
 <h2 id="modules">Modules and their four hooks</h2>
-<p>The runtime manages <strong>modules</strong>. A module is an object with an <code>id</code>, a <code>name</code>, an optional list of <code>dependencies</code> (the ids of other modules), and up to four <strong>hooks</strong>. A hook is a function the runtime calls at a fixed moment:</p>
+<p>The runtime manages <strong>modules</strong>, the same module contract from <code>@zudojs/core</code> that you met in the core lesson. A module is an object with an <code>id</code>, a <code>name</code>, an optional list of <code>dependencies</code> (the ids of other modules), and up to four <strong>hooks</strong>. A hook is a function the runtime calls at a fixed moment:</p>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Hook</th><th>When the runtime calls it</th><th>Typical work</th></tr></thead>
 <tbody>
@@ -544,15 +554,71 @@ ready: false health: degraded
 shutdown   store
 destroy    store</pre></div>
 </figure>
-<p>When the store lost its connection, the app kept running but reported itself <strong>degraded</strong>: still alive, not fully working. The generated <code>src/app.ts</code> registers one check, <code>modules</code>, and the generated <code>/health</code> route answers 503 when the runtime is not running. At the <a href="#task-api">end of this lesson</a>, <code>/health</code> reports every readiness check.</p>
+<p>When the store lost its connection, the app kept running but reported itself <strong>degraded</strong>: still alive, not fully working.</p>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Is a stopping app ready?</h3><p>A deploy sends <code>SIGTERM</code>. The runtime starts to stop, and the store module needs a few seconds to finish its work. Meanwhile the load balancer asks <code>/health</code> again, and the store's readiness check still returns <code>true</code>. Before running the next example, decide: should the answer be "ready"? What does a wrong "ready" cost, and what does a wrong "not ready" cost? Which facts must a readiness answer combine?</p><details class="lx-solution"><summary>Show the reasoning</summary><ul>
+<li>No. A stopping app is about to close its connections. Every request the load balancer sends it now may fail halfway.</li>
+<li>A wrong "ready" costs failed user requests during every deploy. A wrong "not ready" for a moment costs almost nothing: the load balancer uses the other instances.</li>
+<li>So readiness must combine two facts: the runtime is <code>running</code>, <em>and</em> every check passes. A check only knows about its own part; it cannot know that the whole app is shutting down.</li>
+</ul></details></div>
+<p>Here is a probe that arrives during <code>stop()</code>, with the check still passing:</p>
+<figure class="lx-example" data-index="6" data-file="readiness-stop.ts" data-project="rt">
+<figcaption class="lx-bar"><span class="lx-file">readiness-stop.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> buildRuntime<span class="t-pn">,</span> traceModule <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./trace.js"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> store <span class="t-op">=</span> <span class="t-pn">{</span>
+  <span class="t-op">...</span><span class="t-fn">traceModule</span><span class="t-pn">(</span><span class="t-str">"store"</span><span class="t-pn">)</span><span class="t-pn">,</span>
+  onShutdown<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+    console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"shutdown   store (finishing its work)"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">await</span> <span class="t-kw">new</span> <span class="t-ty">Promise</span><span class="t-pn">(</span><span class="t-pn">(</span>resolve<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">setTimeout</span><span class="t-pn">(</span>resolve<span class="t-pn">,</span> <span class="t-num">50</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> runtime <span class="t-op">=</span> <span class="t-fn">buildRuntime</span><span class="t-pn">(</span><span class="t-pn">[</span>store<span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
+runtime<span class="t-pn">.</span><span class="t-fn">registerReadinessCheck</span><span class="t-pn">(</span><span class="t-str">"store"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-cn">true</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">await</span> runtime<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> stopping <span class="t-op">=</span> runtime<span class="t-pn">.</span><span class="t-fn">stop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> runtime<span class="t-pn">.</span><span class="t-fn">runReadinessChecks</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-cmt">// a /health probe arrives during shutdown</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"state:"</span><span class="t-pn">,</span> runtime<span class="t-pn">.</span><span class="t-prop">state</span><span class="t-pn">,</span> <span class="t-str">"| runtime.ready:"</span><span class="t-pn">,</span> runtime<span class="t-pn">.</span><span class="t-prop">ready</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"safe answer:"</span><span class="t-pn">,</span> runtime<span class="t-pn">.</span><span class="t-prop">state</span> <span class="t-op">===</span> <span class="t-str">"running"</span> <span class="t-op">&amp;&amp;</span> runtime<span class="t-pn">.</span><span class="t-prop">ready</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> stopping<span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"state:"</span><span class="t-pn">,</span> runtime<span class="t-pn">.</span><span class="t-prop">state</span><span class="t-pn">,</span> <span class="t-str">"| runtime.ready:"</span><span class="t-pn">,</span> runtime<span class="t-pn">.</span><span class="t-prop">ready</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { buildRuntime, traceModule } from "./trace.js";
+
+const store = {
+  ...traceModule("store"),
+  onShutdown: async () => {
+    console.log("shutdown   store (finishing its work)");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  },
+};
+const runtime = buildRuntime([store]);
+runtime.registerReadinessCheck("store", () => true);
+
+await runtime.start();
+const stopping = runtime.stop();
+await runtime.runReadinessChecks(); // a /health probe arrives during shutdown
+console.log("state:", runtime.state, "| runtime.ready:", runtime.ready);
+console.log("safe answer:", runtime.state === "running" && runtime.ready);
+await stopping;
+console.log("state:", runtime.state, "| runtime.ready:", runtime.ready);</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx readiness-stop.ts</code></div><pre class="lx-no-copy">initialize store
+ready      store
+shutdown   store (finishing its work)
+state: stopping | runtime.ready: true
+safe answer: false
+destroy    store
+state: stopped | runtime.ready: true</pre></div>
+</figure>
+<p>Look at <code>runtime.ready</code>. In the published <code>@zudojs/runtime</code>, running the checks while the runtime stops sets <code>ready</code> back to <code>true</code>, and it stays <code>true</code> after the runtime has stopped. So never answer a probe from <code>runtime.ready</code> alone: combine it with <code>runtime.state === "running"</code>, as the "safe answer" line does. The generated project is protected twice: <code>src/app.ts</code> registers a check called <code>modules</code> that returns <code>runtime.state === "running"</code>, and the <code>health</code> function in <code>src/server.ts</code> checks <code>runtime.state</code> itself. At the <a href="#task-api">end of this lesson</a>, <code>/health</code> reports every readiness check and keeps that state check.</p>
 </section>
 
 <section>
 <h2 id="signals">Signals and graceful shutdown</h2>
 <p>When a hosting platform wants your app to stop, for example to deploy a new version, it sends the process a <strong>signal</strong> called <code>SIGTERM</code>. Pressing <kbd>Ctrl</kbd> + <kbd>C</kbd> in a terminal sends <code>SIGINT</code>. By default, Node.js ends the process immediately. Any request being answered is cut off, and any data not yet saved is lost.</p>
 <p>A <strong>graceful shutdown</strong> does better: stop accepting new work, finish the work in progress, close connections, then exit. With <code>handleSignals: true</code> (the default), the runtime listens for both signals and runs <code>stop()</code> for you. This example sends <code>SIGTERM</code> to its own process to show it:</p>
-<figure class="lx-example" data-index="6" data-file="signal.ts">
-<figcaption class="lx-bar"><span class="lx-file">signal.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="7" data-file="signal.ts">
+<figcaption class="lx-bar"><span class="lx-file">signal.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createContainer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Module</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/core"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createEventBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/events"</span><span class="t-pn">;</span>
@@ -649,12 +715,12 @@ process exits with code 0, state: stopped</pre></div>
 <tr><td><code>applicationVersion</code></td><td><code>"0.1.0"</code></td><td>Your app's version.</td></tr>
 <tr><td><code>handleSignals</code></td><td><code>true</code></td><td>Stop gracefully on <code>SIGTERM</code> and <code>SIGINT</code>.</td></tr>
 <tr><td><code>startupTimeout</code> / <code>shutdownTimeout</code></td><td>60000 / 30000</td><td>Longest time, in milliseconds, that starting or stopping may take.</td></tr>
-<tr><td><code>disposeContainerOnStop</code></td><td><code>false</code></td><td>You created the container, so by default you own it and <code>stop()</code> leaves it alone. Set <code>true</code> to let <code>stop()</code> also clean up (dispose) the container after every module has stopped. The next lesson is about the container.</td></tr>
+<tr><td><code>disposeContainerOnStop</code></td><td><code>false</code></td><td>You created the container, so by default you own it and <code>stop()</code> leaves it alone. Set <code>true</code> to let <code>stop()</code> also clean up (dispose) the container after every module has stopped. <a href="/learn/zudo-container">Dependency injection with @zudojs/container</a> covers the container.</td></tr>
 </tbody>
 </table></div>
 <p>Everything about the running application is available as <code>runtime.context</code>. And each hook receives a <strong>module context</strong> (<code>ModuleContext</code>) with the module's own information and the runtime's <code>logger</code>. Modules are usually classes that extend <code>BaseModule</code> from <code>@zudojs/core</code>, like the generated <code>AppModule</code>. The <code>options</code> you give <code>BaseModule</code> come back in <code>context.options</code>:</p>
-<figure class="lx-example" data-index="7" data-file="context.ts">
-<figcaption class="lx-bar"><span class="lx-file">context.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="8" data-file="context.ts">
+<figcaption class="lx-bar"><span class="lx-file">context.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createContainer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">BaseModule</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/core"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">ModuleContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/core"</span><span class="t-pn">;</span>
@@ -728,68 +794,12 @@ await runtime.stop();</script>
 task-api 0.1.0 development rt_c8a25a1c1f0e4d7ab4a6d1a9e8a0c3b2</pre></div>
 </figure>
 <p>The <code>runtimeId</code> is new on every run. It lets you tell apart two copies of the same app in logs.</p>
-<div class="callout callout-tip"><p class="lx-callout-label">TIP</p><code>@zudojs/core</code> also has <code>createApplication</code>, which builds the container, logger and runtime for you in one call. The CLI uses <code>@zudojs/runtime</code> directly instead, so you can see and change every piece in <code>src/app.ts</code>.</div>
+<div class="callout callout-tip"><p class="lx-callout-label">TIP</p><code>createApplication</code> from <a href="/learn/zudo-core#application">the core lesson</a> builds the container, logger and runtime for you in one call. The CLI uses <code>@zudojs/runtime</code> directly instead, so you can see and change every piece in <code>src/app.ts</code>.</div>
 </section>
 
 <section>
 <h2 id="components">Smaller parts: @zudojs/lifecycle</h2>
-<p>The runtime manages the big pieces of your app. Sometimes one module owns several smaller parts, such as a connection pool, a cache and a mail sender. <code>@zudojs/lifecycle</code> applies the same idea one level down, to plain objects called <strong>components</strong>. Each component has optional <code>initialize</code>, <code>start</code>, <code>ready</code>, <code>stop</code> and <code>dispose</code> methods. You declare its dependencies with <code>dependsOn</code>, and you can mark a component that the app can live without as <code>critical: false</code>:</p>
-<figure class="lx-example" data-index="8" data-file="components.ts">
-<figcaption class="lx-bar"><span class="lx-file">components.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createLifecycleManager <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/lifecycle"</span><span class="t-pn">;</span>
-
-<span class="t-kw">function</span> <span class="t-fn">component</span><span class="t-pn">(</span>name<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">,</span> failOnStart <span class="t-op">=</span> <span class="t-cn">false</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-  <span class="t-kw">return</span> <span class="t-pn">{</span>
-    name<span class="t-pn">,</span>
-    start<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-      console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`start <span class="t-op">${</span><span class="t-prop">name</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
-      <span class="t-kw">if</span> <span class="t-pn">(</span>failOnStart<span class="t-pn">)</span> <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">Error</span><span class="t-pn">(</span><span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">name</span><span class="t-op">}</span> is unreachable`</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-pn">}</span><span class="t-pn">,</span>
-    stop<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`stop  <span class="t-op">${</span><span class="t-prop">name</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  <span class="t-pn">}</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
-
-<span class="t-kw">const</span> manager <span class="t-op">=</span> <span class="t-fn">createLifecycleManager</span><span class="t-pn">(</span><span class="t-pn">{</span> handleSignals<span class="t-op">:</span> <span class="t-cn">false</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-manager<span class="t-pn">.</span><span class="t-fn">register</span><span class="t-pn">(</span><span class="t-fn">component</span><span class="t-pn">(</span><span class="t-str">"pool"</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-str">"pool"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-manager<span class="t-pn">.</span><span class="t-fn">register</span><span class="t-pn">(</span><span class="t-fn">component</span><span class="t-pn">(</span><span class="t-str">"cache"</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-str">"cache"</span><span class="t-pn">,</span> dependsOn<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"pool"</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-manager<span class="t-pn">.</span><span class="t-fn">register</span><span class="t-pn">(</span><span class="t-fn">component</span><span class="t-pn">(</span><span class="t-str">"mailer"</span><span class="t-pn">,</span> <span class="t-cn">true</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-str">"mailer"</span><span class="t-pn">,</span> critical<span class="t-op">:</span> <span class="t-cn">false</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-
-<span class="t-kw">await</span> manager<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> <span class="t-pn">[</span>id<span class="t-pn">,</span> status<span class="t-pn">]</span> <span class="t-kw">of</span> manager<span class="t-pn">.</span><span class="t-fn">getStatus</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>id<span class="t-pn">,</span> status<span class="t-pn">.</span><span class="t-prop">state</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">await</span> manager<span class="t-pn">.</span><span class="t-fn">shutdown</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-</code></pre>
-<script type="text/plain" class="lx-src">import { createLifecycleManager } from "@zudojs/lifecycle";
-
-function component(name: string, failOnStart = false) {
-  return {
-    name,
-    start: async () => {
-      console.log(`start ${name}`);
-      if (failOnStart) throw new Error(`${name} is unreachable`);
-    },
-    stop: async () => console.log(`stop  ${name}`),
-  };
-}
-
-const manager = createLifecycleManager({ handleSignals: false });
-manager.register(component("pool"), { id: "pool" });
-manager.register(component("cache"), { id: "cache", dependsOn: ["pool"] });
-manager.register(component("mailer", true), { id: "mailer", critical: false });
-
-await manager.start();
-for (const [id, status] of manager.getStatus()) console.log(id, status.state);
-await manager.shutdown();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx components.ts</code></div><pre class="lx-no-copy">start pool
-start mailer
-start cache
-pool ready
-cache ready
-mailer failed
-stop  cache
-stop  mailer
-stop  pool</pre></div>
-</figure>
-<p>The mailer failed, but because it is not critical, startup carried on and the mailer is simply marked <code>failed</code>. Had the pool failed, <code>start()</code> would have rolled back and rejected, just like the runtime. Notice that <code>pool</code> and <code>mailer</code> started together: components that do not depend on each other run in parallel.</p>
+<p>The runtime manages the big pieces of your app. When one module owns several smaller parts, such as a connection pool, a cache and a mail sender, <code>@zudojs/lifecycle</code> applies the same ideas one level down, to plain objects called <strong>components</strong>, and adds what small parts need most: retries for slow dependencies, time limits, optional parts and priorities. It is not among the generated project's dependencies. The next lesson, <a href="/learn/zudo-lifecycle">Components with @zudojs/lifecycle</a>, covers it in depth.</p>
 </section>
 
 <section>
@@ -950,7 +960,7 @@ export class TasksModule extends BaseModule {
   }
 }</script>
 </figure>
-<p>The two new modules replace the placeholder. Delete <code>src/modules/app.module.ts</code> and <code>src/services/app.service.ts</code>, empty <code>src/services/index.ts</code> (the next lesson puts the task service in that folder), and make <code>src/modules/index.ts</code> export the new modules instead:</p>
+<p>The two new modules replace the placeholder. Delete <code>src/modules/app.module.ts</code> and <code>src/services/app.service.ts</code>, empty <code>src/services/index.ts</code> (the container lesson puts the task service in that folder), and make <code>src/modules/index.ts</code> export the new modules instead:</p>
 <figure class="lx-example" data-index="12" data-file="src/modules/index.ts" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/modules/index.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">export</span> <span class="t-pn">{</span> <span class="t-ty">StoreModule</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./store.module.js"</span><span class="t-pn">;</span>
@@ -1109,7 +1119,8 @@ export function createApp(options: AppOptions): Runtime {
       <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> <span class="t-pn">[</span>name<span class="t-pn">,</span> check<span class="t-pn">]</span> <span class="t-kw">of</span> runtime<span class="t-pn">.</span><span class="t-prop">readiness</span><span class="t-pn">.</span><span class="t-prop">checks</span><span class="t-pn">)</span> <span class="t-pn">{</span>
         checks<span class="t-pn">[</span>name<span class="t-pn">]</span> <span class="t-op">=</span> check<span class="t-pn">.</span><span class="t-prop">ready</span> <span class="t-op">?</span> <span class="t-str">"up"</span> <span class="t-op">:</span> <span class="t-str">"down"</span><span class="t-pn">;</span>
       <span class="t-pn">}</span>
-      <span class="t-kw">const</span> ready <span class="t-op">=</span> runtime<span class="t-pn">.</span><span class="t-prop">ready</span> <span class="t-op">&amp;&amp;</span> <span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">values</span><span class="t-pn">(</span>checks<span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">every</span><span class="t-pn">(</span><span class="t-pn">(</span>check<span class="t-pn">)</span> <span class="t-op">=&gt;</span> check <span class="t-op">===</span> <span class="t-str">"up"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+      <span class="t-kw">const</span> ready <span class="t-op">=</span>
+        runtime<span class="t-pn">.</span><span class="t-prop">state</span> <span class="t-op">===</span> <span class="t-str">"running"</span> <span class="t-op">&amp;&amp;</span> runtime<span class="t-pn">.</span><span class="t-prop">ready</span> <span class="t-op">&amp;&amp;</span> <span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">values</span><span class="t-pn">(</span>checks<span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">every</span><span class="t-pn">(</span><span class="t-pn">(</span>check<span class="t-pn">)</span> <span class="t-op">=&gt;</span> check <span class="t-op">===</span> <span class="t-str">"up"</span><span class="t-pn">)</span><span class="t-pn">;</span>
       <span class="t-kw">return</span> <span class="t-pn">{</span> ready<span class="t-pn">,</span> checks <span class="t-pn">}</span><span class="t-pn">;</span>
     <span class="t-pn">}</span><span class="t-pn">,</span>
   <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
@@ -1125,13 +1136,14 @@ registerRoutes(
       for (const [name, check] of runtime.readiness.checks) {
         checks[name] = check.ready ? "up" : "down";
       }
-      const ready = runtime.ready && Object.values(checks).every((check) => check === "up");
+      const ready =
+        runtime.state === "running" && runtime.ready && Object.values(checks).every((check) => check === "up");
       return { ready, checks };
     },
   }),
 );</script>
 </figure>
-<p><code>runtime.ready</code> is <code>false</code> as soon as one check fails, and the <code>modules</code> check already covers "the runtime is running". So <code>/health</code> answers 503 while the app starts or stops, and also if the store ever loses its connection. Check the types, then start the server:</p>
+<p><code>runtime.ready</code> is <code>false</code> as soon as one check fails, and the explicit <code>runtime.state === "running"</code> stays, for the reason shown in <a href="#readiness">Readiness and health</a>. So <code>/health</code> answers 503 while the app starts or stops, and also if the store ever loses its connection. Check the types, then start the server:</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
 <pre class="lx-shell-body" data-copy="npx tsc --noEmit
 npm run dev"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npx tsc --noEmit</span>
@@ -1282,10 +1294,10 @@ initialize - Schema is out of date</pre></div>
 <li><code>runtime.state</code> moves from <code>created</code> to <code>running</code> to <code>stopped</code>, or to <code>failed</code>. Every change is also an event on the event bus.</li>
 <li>Cycles and missing dependencies are refused before any hook runs.</li>
 <li>A failed start rolls back what already ran and rejects with <code>RuntimeStartError</code>, with the original error as <code>cause</code>.</li>
-<li>Readiness checks decide <code>runtime.ready</code> and <code>runtime.health</code>.</li>
+<li>Readiness checks decide <code>runtime.ready</code> and <code>runtime.health</code>. A probe must also require <code>runtime.state === "running"</code>: running the checks during <code>stop()</code> sets <code>ready</code> back to <code>true</code>.</li>
 <li>Graceful shutdown turns <code>SIGTERM</code> into an orderly stop. In the Task API, <code>server.ts</code> stops the HTTP server first, then the runtime.</li>
 </ul>
-<p>The modules in this lesson passed the <code>TaskStore</code> to each other through their constructors. With two modules that is fine. The next lesson introduces the <strong>dependency container</strong>, which builds and shares objects like it for you.</p>
+<p>The modules in this lesson passed the <code>TaskStore</code> to each other through their constructors. With two modules that is fine; <a href="/learn/zudo-container">Dependency injection with @zudojs/container</a> lets a container build and share objects like it. First, the smaller parts inside a module: next, <a href="/learn/zudo-lifecycle">Components with @zudojs/lifecycle</a>.</p>
 </section>
       </div>
 

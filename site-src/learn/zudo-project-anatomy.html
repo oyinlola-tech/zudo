@@ -1,6 +1,6 @@
 ---
 title: Anatomy of a ZudoJS project
-description: Trace a generated ZudoJS project from src/server.ts through config, runtime and composition root to a controller, service and repository, running the real generated files.
+description: Trace a generated ZudoJS project from src/server.ts through config, runtime and composition root to the controller, service and repository, running its real files.
 minutes: 55
 youNeed: "The ZudoJS CLI in depth"
 youBuild: A startup trace, a layer-by-layer request trace and a wiring smoke test that run the real files zudojs create generated
@@ -166,7 +166,7 @@ console.log(`Listening on http://${config.host}:${server.address?.port ?? config
 <answer>
 <ul>
 <li>Configuration first, because everything else depends on it, and because a wrong setting should stop the program <em>before</em> it opens anything. <code>loadConfig</code> throws a <code>ConfigurationError</code> for <code>"80a"</code>; the top-level <code>await</code> turns that into a crash with a clear message, and nothing is half-started.</li>
-<li>The runtime first, because it connects the integrations (a database, Redis) that request handlers use. Started the other way round, the first requests could reach a handler whose database is not connected yet. The same idea as the <code>dependencies</code> of modules in <a href="/learn/zudo-runtime">the runtime lesson</a>, one level up.</li>
+<li>The runtime first, because it connects the integrations (a database, Redis) that request handlers use. Started the other way round, the first requests could reach a handler whose database is not connected yet. It is the same idea as the <code>dependencies</code> between modules, which <a href="/learn/zudo-runtime">the runtime lesson</a> covers soon, one level up.</li>
 <li>No. Registering routes only builds a lookup table in memory. Nothing can call them until <code>server.start()</code> opens the port, which happens last.</li>
 <li>Shutdown is startup reversed. First let integrations close long-lived connections (WebSockets), then stop taking requests and finish the ones in progress, and only then close what those requests were using. Closing the database first would fail the requests still running.</li>
 <li>The <code>stopping</code> flag makes the second signal print a line and do nothing else, so the shutdown in progress is not started twice.</li>
@@ -297,7 +297,7 @@ ConfigurationError: RATE_LIMIT_MAX must be a non-negative integer, got "-1".
 
 <section>
 <h2 id="startup">Startup: src/app.ts, modules and integrations</h2>
-<p><code>createApp</code> builds the runtime you studied in <a href="/learn/zudo-runtime">The application runtime and lifecycle</a>. It is short:</p>
+<p><code>createApp</code> builds the <strong>runtime</strong>, the part of ZudoJS that starts and stops the app's modules in order. <a href="/learn/zudo-runtime">The application runtime and lifecycle</a>, two lessons from now, studies it in depth. The file is short:</p>
 <file name="src/app.ts" project="anatomy" browser="no">
 import type { Server } from "node:http";
 
@@ -545,7 +545,7 @@ state: running | ready: true
 2026-09-24T19:55:46.046Z [INFO] [task-api] Runtime stopped. runtimeId=rt_d0cb87c3ed7d4eaaae498f44479b6324
 state: stopped
 </output>
-<p>Read the log lines as the runtime lesson taught you: <code>integrations</code> initializes first, then <code>app</code>; they stop in reverse. The first line comes from a different logger, <code>app-service</code>, which <code>AppService</code> creates for itself. Every time, the timestamps and the <code>runtimeId</code> are new.</p>
+<p>Read the log lines in order: <code>integrations</code> initializes first, then <code>app</code>; they stop in reverse. The first line comes from a different logger, <code>app-service</code>, which <code>AppService</code> creates for itself. Every time, the timestamps and the <code>runtimeId</code> are new.</p>
 <p>Two things in <code>createApp</code> are easy to misread:</p>
 <ul>
 <li><strong>The container is empty.</strong> <code>createContainer()</code> makes a <code>@zudojs/container</code> container and hands it to the runtime, but nothing registers anything in it. The objects your requests use are built somewhere else: in <code>src/container.ts</code>, next.</li>
@@ -1307,6 +1307,7 @@ generated wiring     /health 200 | /api/v1/examples 200
 lost routes marker   /health 200 | /api/v1/examples 404
 </output>
 <p>The second line plays the broken case: a <code>registerRoutes</code> that lost its example registration. In your project the smoke test lives in <code>tests/</code> as a Vitest test, and you add each new resource's path to <code>expected</code>. It costs a few milliseconds and catches the one failure the generated tests cannot.</p>
+<note>The smoke test calls <code>createDependencies()</code> with no arguments, which the generated file allows. In <a href="/learn/zudo-http#task-api">Routes, requests and responses</a>, <code>createDependencies</code> starts to require the runtime's container, and that lesson shows the one-line change to this test.</note>
 </section>
 
 <section>
@@ -1457,5 +1458,5 @@ await client.close();
 <li>A request goes pipeline → router → controller (HTTP and validation) → service (rules) → repository (storage). Validation fails in the controller with 400; rule errors travel up as exceptions and <code>dispatch</code> turns exposed 4xx errors into responses; anything else becomes a silent 500 unless you log it.</li>
 <li>The generated tests check a resource on its own router. A smoke test through <code>registerRoutes</code> and <code>createDependencies</code> checks the wiring.</li>
 </ul>
-<p>Next, <a href="/learn/zudo-core">@zudojs/core</a> looks under the runtime: the module contract <code>BaseModule</code> comes from there, and so does the execution context that lets every log line of a request share one id.</p>
+<p>Next, <a href="/learn/zudo-core">The core: applications, modules and context</a> looks under the runtime with <code>@zudojs/core</code>: the module contract <code>BaseModule</code> comes from there, and so does the execution context that lets every log line of a request share one id.</p>
 </section>

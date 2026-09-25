@@ -1,10 +1,11 @@
 ---
 title: Plugins
-description: Let other code extend the Task API without editing it. Write plugins, declare dependencies, run their lifecycle, give each one a scoped context, roll back failed starts, read diagnostics and publish a plugin to npm with @zudojs/plugins.
+description: Extend the Task API through a fixed interface without editing it: plugin lifecycle, dependencies, scoped context, rollback and diagnostics with @zudojs/plugins.
 minutes: 45
 youNeed: The Task API project and the runtime lesson
 youBuild: A Task API with an audit-log plugin and a reminder plugin, plus a plugin package ready for npm
 keywords: zudojs plugins, plugin system, plugin manager, plugin lifecycle, plugin dependencies, semver range, plugin context, disposables, rollback, diagnostics, capabilities, peerDependencies, publish plugin
+objectives: Write a plugin as metadata plus lifecycle hooks and register it with a PluginManager | Declare required and optional dependencies with version ranges | Use a plugin's scoped context to clean up timers and subscriptions on shutdown | Read diagnostics after a failed start rolls itself back | Wire plugins to the host's event bus without exposing host metadata to them | Package and publish a plugin to npm with @zudojs/plugins as a peer dependency
 ---
 <section>
 <h2 id="why">Why plugins</h2>
@@ -55,7 +56,7 @@ running: true
 stop: finish work in progress
 dispose: release everything
 </output>
-<p><code>manager.start</code> runs <code>install</code>, <code>initialize</code> and <code>start</code>. <code>manager.stop</code> runs <code>stop</code> and <code>dispose</code>. Each phase finishes for <em>all</em> plugins before the next phase begins. <code>createPluginContext</code> describes the host (here <code>task-api</code>), and optionally the services it offers to plugins: a <code>logger</code>, <code>config</code>, a <code>container</code> and <code>events</code>. Inside a hook, <code>context.plugin</code> is the plugin's own metadata.</p>
+<p><code>manager.start</code> runs <code>install</code>, <code>initialize</code> and <code>start</code>. <code>manager.stop</code> runs <code>stop</code> and <code>dispose</code>. Each phase finishes for <em>all</em> plugins before the next phase begins. <code>createPluginContext</code>'s first argument is metadata, and its second is the services you offer plugins: a <code>logger</code>, <code>config</code>, a <code>container</code> and <code>events</code>. Only those services reach plugins. The manager builds its own context per plugin and substitutes each plugin's own metadata for <code>context.plugin</code>, so the <code>{ name: "task-api", version: "0.1.0" }</code> above only satisfies the function's required first argument &mdash; no plugin ever sees it. A plugin has no way to learn the host's name or version through the context.</p>
 </section>
 
 <section>
@@ -121,7 +122,7 @@ await manager.start(createPluginContext({ name: "task-api" }));
 <output>
 start slack
 </output>
-<warn title="optional: true DOES NOT MAKE A DEPENDENCY OPTIONAL">The dependency type also has an <code>optional</code> field, so TypeScript accepts <code>dependencies: [{ name: "notifications", optional: true }]</code>. The manager ignores that field: a missing <code>notifications</code> still throws <code>PluginDependencyError</code>. Use <code>optionalDependencies</code>.</warn>
+<warn title="optional: true also works, but say it with optionalDependencies">The dependency type also has an <code>optional</code> field, so <code>dependencies: [{ name: "notifications", optional: true }]</code> behaves exactly like listing it under <code>optionalDependencies</code>: a missing <code>notifications</code> does not throw, and a present one still starts before the plugin that names it. Prefer <code>optionalDependencies</code> anyway &mdash; it says which dependencies your plugin can live without at a glance, instead of making every reader check each entry's flags.</warn>
 </section>
 
 <section>
@@ -180,6 +181,12 @@ host exits cleanly
 <section>
 <h2 id="rollback">Failed starts, rollback and diagnostics</h2>
 <p>What if the Slack plugin cannot reach Slack while the Task API starts? Half-started plugins are dangerous: some timers run, some connections are open, and nothing will ever stop them. So when any hook of <code>manager.start</code> throws, the manager <strong>rolls back</strong>: it stops and disposes every plugin it had already brought up, then throws the error to you:</p>
+<reason title="Slack's start hook throws. What should happen to audit-log, which already started?">
+<p>audit-log started first because slack depends on it. Slack's <code>start</code> then throws. Three options: (1) leave audit-log running and only fail slack, (2) crash the whole Task API process, (3) stop and dispose every plugin that got as far as running, then report the error. Which would you pick, and why?</p>
+<answer>
+<p>Option 3 is what the manager does. Leaving audit-log running (1) is the dangerous choice: the Task API never finished starting, so nothing is watching audit-log's timers or connections, yet they keep running and leaking until the process exits. Crashing the whole process (2) is safe but heavy-handed for a problem in one optional feature, and it throws away audit-log's clean shutdown along with slack's failure. Rolling back (3) gets the safety of (2) — nothing keeps running unsupervised — without needing to kill the process: every plugin that actually finished starting gets a real <code>stop</code> and <code>dispose</code>, in reverse order, exactly as if you had called <code>manager.stop</code> yourself, and only then does the original error reach your code. Slack itself never reached a running state, so it only needs <code>dispose</code>, which is why the output below shows audit-log fully stopped while slack goes straight to disposed.</p>
+</answer>
+</reason>
 <example file="rollback.ts" browser="no">
 import { createPluginContext, PluginManager } from "@zudojs/plugins";
 
@@ -455,4 +462,5 @@ tasks completed per user { ada: 2, linus: 1 }
 <li>Plugins are trusted code. Capabilities catch mistakes but are not a sandbox.</li>
 <li>Publish plugins as factory functions, with <code>@zudojs/plugins</code> as a peer dependency.</li>
 </ul>
+<p>Plugins are trusted code you choose to load. Next, <a href="/learn/zudo-adapters">adapters</a> put an external provider, such as a payment gateway, behind a contract your business logic depends on instead of the provider's own SDK.</p>
 </section>

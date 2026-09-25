@@ -1,10 +1,11 @@
 ---
 title: Databases with @zudojs/database
-description: Connect the Task API to PostgreSQL through @zudojs/database, with migrations, seeds, a repository, a query builder, pagination, transactions and health checks, all running against real PostgreSQL.
+description: Connect the Task API to real PostgreSQL with @zudojs/database: migrations, seeds, a repository, a query builder, pagination, transactions and health checks.
 minutes: 50
 youNeed: The SQL lessons and the ZudoJS core part
 youBuild: A PostgreSQL task store with migrations, seeds, a soft-deleting repository and signed pagination
 keywords: zudojs database, prisma, repository pattern, BaseRepository, migrations, seeds, query builder, pagination, keyset pagination, cursor, soft delete, withTransaction, health check, connection pool, pglite, driver adapter
+objectives: Connect @zudojs/database to real PostgreSQL through a PrismaClientLike adapter | Apply and roll back numbered migrations and named seeds under a lock | Query safely with an allow-listed raw SQL helper and with BaseRepository | Add soft delete, offset and signed cursor pagination to a repository | Wrap several writes in one transaction with withTransaction | Report real connection-pool health on /health instead of a hardcoded 200
 ---
 <section>
 <h2 id="what">What @zudojs/database does</h2>
@@ -746,6 +747,13 @@ Pack bags saved? false
 committed, high priority tasks: 1
 </output>
 <p>The second insert failed, so the first one was rolled back too: "Pack bags" was never saved. The second transaction committed both updates together. Use the <code>tx</code>-bound repository for every query inside the callback. A query through the ordinary <code>tasks</code> repository would run outside the transaction.</p>
+<reason title="Inside the callback, you call tasks.update(...) instead of repo.update(...). What breaks?">
+<p><code>tasks</code> is the repository bound to the default connection; <code>repo</code> is the copy <code>withTransaction(tx)</code> bound to this transaction's connection. Both point at the same rows in the same database. If a handler mixes them up under load, what can go wrong, and would it show up in a quick manual test?</p>
+<answer>
+<p>The stray <code>tasks.update(...)</code> runs and commits immediately on its own connection, outside the transaction's isolation and outside its rollback. If the transaction later throws and rolls back, that write survives anyway — the "all-or-nothing" guarantee silently has an exception. Worse, it can see rows the transaction has locked but not yet committed, or fail to see rows the transaction inserted but not yet committed, depending on timing and isolation level, so the two connections can disagree about what exists for a few milliseconds.</p>
+<p>A quick manual test rarely catches this, because on a quiet database the stray write still lands correctly most of the time — the bug only shows under concurrent load or when the transaction actually rolls back. That is why <code>@zudojs/database</code> makes <code>withTransaction(tx)</code> return a new object rather than mutating <code>tasks</code> in place: it forces the transaction-bound repository to have its own name in the callback, so using the wrong one is a variable-naming mistake you can catch in review, not a runtime race you can only catch under load.</p>
+</answer>
+</reason>
 <h3>Your own errors inside a transaction</h3>
 <p>Often the reason to stop a transaction is your own rule, not the database: "project 7 does not exist", "this task is already done". Throw the matching error from <a href="/learn/zudo-errors">the errors lesson</a>. The transaction still rolls back, and the error reaches your caller unchanged, with its own status code:</p>
 <example file="transaction-errors.ts" project="db" browser="no">
@@ -962,5 +970,5 @@ await client.disconnect();
 <li><code>withTransaction</code> makes several writes all-or-nothing; bind repositories with <code>withTransaction(tx)</code>. Your own errors thrown inside roll it back and keep their status code.</li>
 <li><code>checkDatabaseHealth</code> makes <code>/health</code> honest. Pools live in the driver adapter.</li>
 </ul>
-<p>Next, <a href="/learn/zudo-storage">storage abstractions</a> show a second, driver-independent way to store data, including files.</p>
+<p>Next, <a href="/learn/zudo-data-architecture">Data architecture with ZudoJS</a> designs this data layer properly: entities versus DTOs, a query service for screen-shaped reads, N+1 queries, keyset pagination and indexes you measure instead of guess.</p>
 </section>

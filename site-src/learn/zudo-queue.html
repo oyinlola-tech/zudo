@@ -1,10 +1,11 @@
 ---
 title: Background jobs
-description: Move slow and unreliable work out of the request and into a job queue. Queues, jobs, processors, workers, concurrency, retries with exponential backoff, delayed jobs, dead letters and graceful shutdown with @zudojs/queue.
+description: Move slow, unreliable work out of the request into a job queue: jobs, processors, workers, concurrency, retries with backoff, dead letters with @zudojs/queue.
 minutes: 45
 youNeed: The messaging lesson
 youBuild: A reminder-email job for the Task API that retries on failure and never disappears silently
 keywords: zudojs queue, background jobs, job queue, worker, concurrency, retry, exponential backoff, jitter, delayed job, dead letter queue, graceful shutdown, idempotent
+objectives: Move slow or unreliable work off the request with a queue, a job and a processor | Size concurrency for what the jobs call, and retry failures with exponential backoff and jitter | Delay, schedule and prioritize jobs, and route permanently failing ones to the dead-letter queue | Write an idempotent processor that survives being run more than once | Bound a hanging job with a timeout and shut a worker down gracefully
 ---
 <section>
 <h2 id="why">Why background jobs</h2>
@@ -106,7 +107,13 @@ await run(3);
 concurrency 1: 6 jobs done, at most 1 at once
 concurrency 3: 6 jobs done, at most 3 at once
 </output>
-<p>Instead of guessing how long to wait, the loop asks <code>getStats()</code> every 20 ms until all 6 jobs have succeeded. Why not set the concurrency to 1,000? Every running job uses memory and connections, and the service at the other end has limits too. A mail provider may allow 10 connections, a database pool 20. Pick a number that the slowest thing your jobs touch can handle.</p>
+<p>Instead of guessing how long to wait, the loop asks <code>getStats()</code> every 20 ms until all 6 jobs have succeeded.</p>
+<reason title="Concurrency 3 finished the same 6 jobs as concurrency 1. Why not set it to 1,000 and finish even faster?">
+<p>Nothing in the queue itself stops you from setting a huge number. What actually limits how many of these jobs can usefully run at once? Think about what a "send reminder" processor does while it runs, and what it's talking to on the other end.</p>
+<answer>
+<p>Every running job holds resources open for as long as it runs: memory in your own process, and often a connection to whatever it calls. The limit is rarely your side; it is the other end's. A mail provider might cap you at 10 simultaneous connections and start rejecting the 11th. A database pool might have 20 connections total, shared with everything else the app does. Set concurrency to 1,000 against a provider that allows 10, and 990 of those jobs fail immediately with connection errors, get retried, and hammer the same limit again &mdash; you have turned a queue meant to smooth out load into a source of load. Pick a number the slowest thing your jobs touch can actually handle, not the biggest number your own process could technically run.</p>
+</answer>
+</reason>
 </section>
 
 <section>
@@ -519,4 +526,5 @@ end send-reminder
 <li>Jobs that fail every attempt go to the dead-letter queue. Watch it.</li>
 <li>Processors honour <code>context.signal</code> for timeouts. A worker's <code>stop()</code> lets running jobs finish before the process exits.</li>
 </ul>
+<p>A queue runs each job once, when something asks it to. Next, <a href="/learn/zudo-scheduler">Scheduled tasks</a> covers work that must run on its own, on the clock: every night, every hour, with nobody sending a job.</p>
 </section>

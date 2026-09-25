@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Storage abstractions — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-storage.md" title="Markdown version">
-  <meta name="description" content="Use @zudojs/storage's driver-independent contracts for databases, files, serialization, locks, connection pools and start-up and shutdown, with a PostgreSQL adapter and local file storage for the Task API.">
+  <meta name="description" content="Use @zudojs/storage's driver-independent contracts for files, serialization, locks and pools, with local file storage and a health report for the Task API.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-storage">
@@ -97,10 +97,10 @@
         <div class="lx-hero-tag">LEVEL 13 · LESSON 3 OF 12</div>
         <p class="lx-hero-part">Data <span class="lx-tier lx-tier-advanced" title="Advanced: Learn it when your application needs it.">Advanced</span></p>
         <h1>Storage abstractions</h1>
-        <p class="lx-hero-lead">Use @zudojs/storage's driver-independent contracts for databases, files, serialization, locks, connection pools and start-up and shutdown, with a PostgreSQL adapter and local file storage for the Task API.</p>
+        <p class="lx-hero-lead">Use @zudojs/storage's driver-independent contracts for files, serialization, locks and pools, with local file storage and a health report for the Task API.</p>
         <ul class="lx-hero-meta">
           <li><strong>45 min</strong> to read and try</li>
-          <li><strong>You need:</strong> The Databases with @zudojs/database lesson</li>
+          <li><strong>You need:</strong> Databases with @zudojs/database, and Data architecture with ZudoJS</li>
           <li><strong>You build:</strong> Task attachments on disk, a column-safe task repository, fenced locks and a storage health report</li>
         </ul>
         <div class="lx-hero-actions">
@@ -109,6 +109,17 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Write a Database adapter against @zudojs/storage's driver-independent contract</li>
+          <li>Guard a repository's writes with a column allow-list to stop mass assignment</li>
+          <li>Store and retrieve files with LocalObjectStorage without a path-traversal hole</li>
+          <li>Acquire locks with a ttl and use a fencing token to reject a stale holder's write</li>
+          <li>Build a general-purpose ConnectionPool from a factory function and limits</li>
+          <li>Register components with StorageLifecycleManager for ordered start-up, health and shutdown</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="why">Contracts, not drivers</h2>
@@ -919,12 +930,14 @@ stale fence 1, current is 2
 title: Buy oat milk</pre></div>
 </figure>
 <p>The slow worker's write was refused, and the fast worker's change survived.</p>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>The lock already stops two holders at once. Why check the fence too?</h3><p>A worker calls <code>acquire</code>, gets the lock, then pauses (a slow disk, a garbage collection pause, a container that gets descheduled) for longer than the <code>ttl</code>. The lock manager cannot tell "the holder crashed" from "the holder is just slow" — it only sees a timer run out. What should happen when the paused worker wakes up and writes, having no idea its lock expired?</p><details class="lx-solution"><summary>Show the reasoning</summary><p>The lock's job is to stop two <em>concurrent</em> holders; the <code>ttl</code> exists only so a crashed holder cannot lock the resource forever. Those two goals conflict the moment a holder is alive but slower than its own <code>ttl</code>: the lock manager, trying to make progress for everyone else, has already handed the lock to someone new. The paused worker still believes it holds the lock — it never got an error, it just kept running — so without a second check it will write anyway, and its stale write can land after the new holder's fresh one.</p>
+<p>The fence number is that second check, and it lives with the <em>data</em>, not the lock. Each acquire gets a strictly increasing number, and the store refuses any write carrying a number lower than the highest it has already seen. That means correctness no longer depends on getting the <code>ttl</code> right: even a lock manager that occasionally hands out two "valid" holders at once cannot cause a lost update, because the second check is on the resource itself, not on trusting whoever currently thinks it holds the lock.</p></details></div>
 <div class="callout callout-warning"><p class="lx-callout-label">IN MEMORY MEANS ONE PROCESS</p>An <code>InMemoryLockManager</code> only knows about locks in its own process. As soon as you run two copies of your server, each has its own locks and they protect nothing. For several servers, use a lock the servers share: PostgreSQL advisory locks through <code>createLockManager</code> from <a href="/learn/zudo-database">@zudojs/database</a>, or a <code>LockManager</code> you write over Redis.</div>
 </section>
 
 <section>
 <h2 id="pool">Connection pools</h2>
-<p>You met pools at the end of the last lesson: a few database connections, opened once, lent out one at a time. <code>ConnectionPool</code> is a general-purpose pool. You give it a <strong>factory</strong>, a function that opens one connection, and limits. To see it lend and take back, this example gives each "connection" a name and runs its queries on one shared PGlite:</p>
+<p>You met pools at the end of <a href="/learn/zudo-database#health">the database lesson</a>: a few database connections, opened once, lent out one at a time. <code>ConnectionPool</code> is a general-purpose pool. You give it a <strong>factory</strong>, a function that opens one connection, and limits. To see it lend and take back, this example gives each "connection" a name and runs its queries on one shared PGlite:</p>
 <figure class="lx-example" data-index="11" data-file="pool.ts" data-project="st">
 <figcaption class="lx-bar"><span class="lx-file">pool.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConnectionPool</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/storage"</span><span class="t-pn">;</span>
@@ -1142,7 +1155,7 @@ files shut down
 database shut down
 phase: shutdown</pre></div>
 </figure>
-<p>The report is unhealthy as a whole because one component is, and it names which. That is what your <code>/health</code> route should turn into a 503, as in the last lesson, while your logs get the details.</p>
+<p>The report is unhealthy as a whole because one component is, and it names which. That is what your <code>/health</code> route should turn into a 503, as in <a href="/learn/zudo-database#health">the database lesson</a>, while your logs get the details.</p>
 <p>Notice that shutdown ran in the <strong>reverse</strong> order of start-up: files first, then the database. <code>drain</code> and <code>shutdown</code> visit components one at a time, last registered first. So register a component after the ones it uses: it starts after them and stops before them, while they still work. A component that fails to stop does not keep the others from stopping.</p>
 </section>
 

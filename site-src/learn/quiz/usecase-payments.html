@@ -1,0 +1,681 @@
+<question id="upay-key-scope" type="choice">
+<q>Why is the idempotency key stored with <code>UNIQUE (user_id, idempotency_key)</code> rather than unique on the key alone?</q>
+<option>To save space in the index</option>
+<option correct>Keys belong to one user: another user who sends the same key must not receive, or block, someone else's payment</option>
+<option>Because keys are not random enough to be unique</option>
+<option>Because PostgreSQL cannot index text alone</option>
+<explain><p>A key is chosen by the client. Scoping it per user means a guessed or colliding key never exposes another customer's stored result.</p></explain>
+</question>
+
+<question id="upay-fingerprint" type="choice">
+<q>The same <code>Idempotency-Key</code> arrives with a different card token. What does Oja answer, and why?</q>
+<option>201 with the stored payment, because the key matches</option>
+<option>A new charge, because the request is different</option>
+<option correct>422: a key belongs to one request; reusing it for another one is a client bug, and replaying the old result would lie about the new request</option>
+<option>409, because the order is busy</option>
+<explain><p>The stored SHA-256 fingerprint of the request is compared with the new one. Silently replaying would tell the client its new card was charged when it was not.</p></explain>
+</question>
+
+<question id="upay-partial-index" type="choice">
+<q>What does <code>CREATE UNIQUE INDEX one_live_payment_per_order ON payments (order_id) WHERE status &lt;&gt; 'declined'</code> guarantee?</q>
+<option>An order has only one payment row ever</option>
+<option correct>An order has at most one payment that is processing, unknown or succeeded; declined attempts do not count, so the customer can try another card</option>
+<option>Declined payments are deleted</option>
+<option>Two users cannot pay the same amount</option>
+<explain><p>A partial unique index only covers rows that match its <code>WHERE</code>. It stops two keys (two devices, an app bug) from charging one order twice, while still allowing retries after a decline.</p></explain>
+</question>
+
+<question id="upay-amount" type="choice">
+<q>A client sends <code>{"orderId": 7, "card": "tok_ok", "amountKobo": 100}</code>. What amount is charged?</q>
+<option>100 kobo</option>
+<option correct>The order's <code>total_kobo</code>, loaded from the database; the schema strips <code>amountKobo</code></option>
+<option>The request is rejected with 400</option>
+<option>The smaller of the two</option>
+<explain><p>Prices and totals are facts the server owns. The schema only knows <code>orderId</code> and <code>card</code>, and the service copies the order's total into the payment row.</p></explain>
+</question>
+
+<question id="upay-timeout-state" type="choice">
+<q>PayGate never answers the charge request, even after retries. Why does Oja record the payment as <code>unknown</code> instead of <code>declined</code>?</q>
+<option>Because declined payments need a reason</option>
+<option correct>The card may have been charged; calling it failed invites the customer to pay again and be charged twice</option>
+<option>Because the HTTP client throws</option>
+<option>Because <code>unknown</code> is faster to write</option>
+<explain><p>No answer is not a "no". The reconciliation job, or a client retry, asks the gateway later and settles the payment with the real outcome.</p></explain>
+</question>
+
+<question id="upay-202" type="choice">
+<q>Which status does <code>POST /v1/payments</code> return for a payment that is <code>unknown</code>?</q>
+<option>500, because something failed</option>
+<option>201, to keep the client happy</option>
+<option correct>202 Accepted: the request was taken, the outcome is not known yet, and the client should check again later</option>
+<option>402, because it may have failed</option>
+<explain><p>202 is honest: accepted, not finished. The client shows "payment pending" and polls <code>GET /v1/payments/:id</code>, or retries with the same key, which checks with the gateway.</p></explain>
+</question>
+
+<question id="upay-post-retry" type="choice">
+<q>The <code>HttpClient</code> retries only GET, HEAD and OPTIONS by default. Why is it safe for the PayGate adapter to retry POST?</q>
+<option>Because PayGate is fast</option>
+<option>Because the retries have jitter</option>
+<option correct>Every charge carries an Idempotency-Key that PayGate honours, so a repeated POST returns the first result instead of charging again</option>
+<option>Because the POST body is small</option>
+<explain><p>Retrying a non-idempotent request is how double charges happen. The key turns the POST into an idempotent operation at the gateway; without it the retry option would be a bug.</p></explain>
+</question>
+
+<question id="upay-derived-key" type="choice">
+<q>The adapter's key is <code>oja-pay-&lt;payment id&gt;</code>, not the client's key and not a new random value per attempt. Why?</q>
+<option>Because the gateway rejects UUIDs</option>
+<option correct>Every attempt to charge that one payment, including a retry hours later by reconciliation or a client retry, must reach the gateway with the same key</option>
+<option>So the key is shorter</option>
+<option>To hide the client's key from logs</option>
+<explain><p>A new key per attempt would let each attempt charge. Deriving it from our own payment id ties the key to the thing that must be charged once.</p></explain>
+</question>
+
+<question id="upay-outside-tx" type="choice">
+<q>Why does the service call the gateway <em>between</em> two transactions instead of inside one?</q>
+<option>Because @zudojs/database forbids network calls</option>
+<option correct>A transaction open during a slow network call holds locks for as long as the gateway takes, and a rollback cannot undo a charge anyway</option>
+<option>So the charge is faster</option>
+<option>Because PGlite has one connection</option>
+<explain><p>Transaction 1 records the intent ("processing"), the call happens, transaction 2 records the outcome. If we crash in between, the "processing" row tells reconciliation what to look up.</p></explain>
+</question>
+
+<question id="upay-settle-idempotent" type="choice">
+<q><code>settle</code> runs <code>UPDATE payments SET status = $2 … WHERE id = $1 AND status IN ('processing', 'unknown')</code>. What happens when the reconciler settles a payment a client retry has already settled?</q>
+<option>The status is overwritten and a second event is written</option>
+<option>It throws a conflict</option>
+<option correct>The UPDATE matches no row, so nothing changes and no second outbox event is written</option>
+<option>The order is marked paid twice</option>
+<explain><p>Making the state change conditional on the current state makes it idempotent. Several paths may report an outcome; only the first one counts.</p></explain>
+</question>
+
+<question id="upay-outbox-why" type="choice">
+<q>Why is <code>payment.succeeded</code> written to an outbox table in the same transaction as the status, instead of being published directly?</q>
+<option>Because the event bus is slow</option>
+<option correct>The event then exists if and only if the status change committed: no event for a rolled-back change, and no lost event if we crash right after committing</option>
+<option>Because events must be stored forever</option>
+<option>To avoid JSON serialization</option>
+<explain><p>Publishing before the commit can announce something that is then rolled back; publishing after it can be lost in a crash. The outbox row commits atomically with the change, and a relay publishes it.</p></explain>
+</question>
+
+<question id="upay-at-least-once" type="choice">
+<q>The relay publishes an event and then marks the row published. What happens if it crashes between the two steps?</q>
+<option>The event is lost</option>
+<option correct>The event is published again on the next sweep; delivery is at least once, so consumers must be idempotent</option>
+<option>The database rolls back the publish</option>
+<option>The queue refuses to start</option>
+<explain><p>There is no way to make "publish" and "mark" one atomic step across two systems. At-least-once delivery plus idempotent consumers is the standard answer.</p></explain>
+</question>
+
+<question id="upay-three-layers" type="choice">
+<q>Which layer stops a duplicate SMS when the worker sent it and then crashed <em>before</em> writing the <code>notifications</code> row?</q>
+<option>The queue's deduplicationKey</option>
+<option>The notifications table</option>
+<option correct>The key passed to the SMS provider, which lets the provider drop a message it has already delivered</option>
+<option>The outbox</option>
+<explain><p>The queue and the table only know what was recorded. Between sending and recording, only the receiving side can recognise the repeat, which is why the key travels with the message.</p></explain>
+</question>
+
+<question id="upay-reconcile-giveup" type="choice">
+<q>Reconciliation finds a payment still <code>processing</code> after the cut-off, and PayGate has no charge with its reference. What does it do?</q>
+<option>Charges the card now</option>
+<option>Leaves it forever</option>
+<option correct>Marks it declined ("never reached the gateway"), so the order is free for a new payment attempt</option>
+<option>Deletes the payment row</option>
+<explain><p>This is the crash between transaction 1 and the charge. Old enough and unknown to the gateway means the charge never happened. Reconciliation never charges; it only settles.</p></explain>
+</question>
+
+<question id="upay-lookup-not-charge" type="choice">
+<q>A client retries with the same key while its payment is still <code>unknown</code>. What does the service do?</q>
+<option>Charges again with a new key</option>
+<option>Returns 409 until reconciliation runs</option>
+<option correct>Looks the charge up at the gateway by reference, settles it if found, and returns the current state</option>
+<option>Returns 500</option>
+<explain><p>The retry is an occasion to learn the outcome, never to charge again. That is how the "database failed after the charge" demo recovered with one charge.</p></explain>
+</question>
+
+<question id="upay-decline-402" type="choice">
+<q>PayGate answers 402 card_declined. How does the adapter treat it?</q>
+<option>As unknown, and retries</option>
+<option correct>As a final answer: declined. It is not retried, because the same card will be declined again</option>
+<option>As a configuration error</option>
+<option>As succeeded with amount 0</option>
+<explain><p>Retries are for failures that may pass (5xx, timeouts). A decline is the gateway's decision about this card.</p></explain>
+</question>
+
+<question id="upay-401-throw" type="choice">
+<q>PayGate answers 401 bad_key. Why does the adapter throw instead of returning an outcome?</q>
+<option>Because 401 means the customer must log in</option>
+<option correct>A wrong API key is our configuration bug: no customer action helps, and it must become a logged 500 that alerts someone</option>
+<option>Because the card is invalid</option>
+<option>Because 401 cannot be caught</option>
+<explain><p>Mapping it to "declined" would tell customers their cards are bad while every payment fails because of us.</p></explain>
+</question>
+
+<question id="upay-concurrent-test" type="choice">
+<q>Two simultaneous requests with the same key: the test accepts 409 or a replay for the loser, but exactly one fresh 201 and one charge. Why not require exactly 201 and 409?</q>
+<option>Because the test framework is slow</option>
+<option correct>Which one happens depends on timing: the loser gets 409 while the winner runs, or the replay if it arrives after. Demanding one interleaving makes the test flaky</option>
+<option>Because 409 is never returned</option>
+<option>Because replays are not idempotent</option>
+<explain><p>Test the invariant (one charge, no second fresh success), not the schedule. Flaky tests teach people to ignore failures.</p></explain>
+</question>
+
+<question id="upay-events-typecheck" type="choice">
+<q>What does the type argument in <code>bus.on&lt;Event&lt;PaymentEvent&gt;&gt;("payment.succeeded", …)</code> guarantee at runtime?</q>
+<option>That the payload is validated against PaymentEvent</option>
+<option correct>Nothing: it is a promise to the compiler; @zudojs/events does not check that published payloads match</option>
+<option>That only the outbox may publish the event</option>
+<option>That the handler runs once</option>
+<explain><p>The lesson accepts it because only <code>settle</code> writes these events. When other code can publish, validate the payload with a schema in the handler.</p></explain>
+</question>
+
+<question id="upay-card-token" type="choice">
+<q>Why does Oja's API accept a card <em>token</em> (<code>tok_…</code>) and never a card number?</q>
+<option>Tokens are shorter</option>
+<option correct>The customer enters the card in the gateway's own form; Oja's servers never see card numbers, which keeps them out of most PCI DSS requirements and out of any leak</option>
+<option>Card numbers cannot be sent as JSON</option>
+<option>Tokens are free</option>
+<explain><p>Data you never hold cannot leak from your logs, database or backups.</p></explain>
+</question>
+
+<question id="upay-webhook-raw" type="choice">
+<q>Why must a webhook signature be checked over the <em>raw</em> request body, not over <code>JSON.stringify(JSON.parse(body))</code>?</q>
+<option>Because JSON.parse is slow</option>
+<option correct>Re-serializing can change the bytes (spacing, key order, number formats), and the HMAC was computed over the exact bytes sent</option>
+<option>Because the body is binary</option>
+<option>It makes no difference</option>
+<explain><p>A signature covers bytes. Verify first on the raw text, parse afterwards.</p></explain>
+</question>
+
+<question id="upay-webhook-ts" type="choice">
+<q>The webhook header contains a timestamp that is part of the signed text, and the verifier rejects anything older than five minutes. What attack does that stop?</q>
+<option>A forged signature</option>
+<option correct>Replaying a genuine, captured webhook later</option>
+<option>A timing attack on the comparison</option>
+<option>SQL injection</option>
+<explain><p>An old but genuine message still has a valid signature. Signing the timestamp and checking its age, plus remembering event ids, stops replays.</p></explain>
+</question>
+
+<question id="upay-queue-secrets" type="choice">
+<q>What should a notification job contain?</q>
+<option>The full order with the customer's card token, so the worker needs no database</option>
+<option correct>Ids and the amount: small, non-secret data; the worker loads anything else it needs</option>
+<option>The SMS provider's API key</option>
+<option>The rendered SMS text only</option>
+<explain><p>Queues are stored, logged and shown in dashboards. Secrets in jobs leak there.</p></explain>
+</question>
+
+<question id="upay-out-status-map" type="output">
+<q>What does this print?</q>
+<code file="status.js">
+const STATUS = { succeeded: 201, declined: 402, processing: 202, unknown: 202 };
+const outcomes = ["succeeded", "unknown", "declined", "processing"];
+console.log(outcomes.map((s) => `${s}:${STATUS[s]}`).join(" "));
+</code>
+<option correct>succeeded:201 unknown:202 declined:402 processing:202</option>
+<option>succeeded:201 unknown:500 declined:402 processing:202</option>
+<option>succeeded:200 unknown:202 declined:400 processing:202</option>
+<option>succeeded:201 unknown:202 declined:402 processing:undefined</option>
+<explain><p>Unknown and processing are both "accepted, not settled": 202. A decline is 402 Payment Required, a final answer.</p></explain>
+</question>
+
+<question id="upay-out-fingerprint" type="output">
+<q>What does this print? (It needs Node.js.)</q>
+<code file="fingerprint.ts" browser="no">
+import { sha256 } from "@zudojs/crypto";
+
+const a = await sha256(JSON.stringify({ orderId: 7, card: "tok_ok" }));
+const b = await sha256(JSON.stringify({ orderId: 7, card: "tok_ok" }));
+const c = await sha256(JSON.stringify({ card: "tok_ok", orderId: 7 }));
+console.log(a.length, a === b, a === c);
+</code>
+<option correct>64 true false</option>
+<option>64 true true</option>
+<option>32 true false</option>
+<option>64 false false</option>
+<explain><p>SHA-256 in hex is 64 characters and deterministic. Key order changes the JSON text, so it changes the hash. Oja builds the object itself from the parsed schema, always in the same order; for client-built objects, canonicalize first, as in the idempotency lesson.</p></explain>
+</question>
+
+<question id="upay-out-settle" type="output">
+<q>A conditional settle over plain objects. What does this print?</q>
+<code file="settle.js">
+const payment = { id: 1, status: "unknown" };
+const events = [];
+
+function settle(outcome) {
+  if (payment.status !== "processing" && payment.status !== "unknown") return false;
+  payment.status = outcome;
+  if (outcome !== "unknown") events.push(`payment.${outcome}`);
+  return true;
+}
+
+console.log(settle("unknown"), settle("succeeded"), settle("declined"), settle("succeeded"));
+console.log(payment.status, events);
+</code>
+<option correct>true true false false
+succeeded [ 'payment.succeeded' ]</option>
+<option>true true true true
+succeeded [ 'payment.succeeded', 'payment.declined', 'payment.succeeded' ]</option>
+<option>true true false false
+declined [ 'payment.succeeded' ]</option>
+<option>false true false false
+succeeded [ 'payment.succeeded' ]</option>
+<explain><p>Unknown may still be settled, so the first two calls change it. After succeeded, every later outcome is ignored and no second event is written.</p></explain>
+</question>
+
+<question id="upay-out-gateway-idem" type="output">
+<q>A gateway that honours idempotency keys. What does this print?</q>
+<code file="gateway.js">
+const charges = new Map();
+function charge(key, amount) {
+  if (!charges.has(key)) charges.set(key, { id: `ch_${charges.size + 1}`, amount });
+  return charges.get(key).id;
+}
+
+console.log(charge("oja-pay-1", 5000), charge("oja-pay-1", 5000), charge("oja-pay-2", 5000), charge("oja-pay-1", 9999));
+console.log(charges.size, charges.get("oja-pay-1").amount);
+</code>
+<option correct>ch_1 ch_1 ch_2 ch_1
+2 5000</option>
+<option>ch_1 ch_2 ch_3 ch_4
+4 9999</option>
+<option>ch_1 ch_1 ch_2 ch_3
+3 5000</option>
+<option>ch_1 ch_1 ch_2 ch_1
+2 9999</option>
+<explain><p>The same key always returns the first charge, even with another amount; a real gateway would reject the mismatch. Two keys, two charges.</p></explain>
+</question>
+
+<question id="upay-out-retry-client" type="output">
+<q>What does this print? (It needs Node.js: it starts a real server.)</q>
+<code file="retry.ts" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter, HttpClient } from "@zudojs/http";
+
+let calls = 0;
+const router = createRouter();
+router.post("/v1/charges", () => (++calls < 3 ? createResponseContext({ status: 503 }).json({ error: "busy" }) : { id: "ch_1" }));
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+
+const base = `http://127.0.0.1:${server.address?.port}`;
+const safe = new HttpClient({ baseUrl: base, retry: { retries: 2, retryDelay: 10 } });
+try {
+  await safe.request("/v1/charges", { method: "POST", body: {} });
+} catch (error) {
+  console.log("default:", (error as { status?: number }).status, "calls:", calls);
+}
+calls = 0;
+const retrying = new HttpClient({ baseUrl: base, retry: { retries: 2, retryDelay: 10, retryMethods: ["POST"] } });
+const { data } = await retrying.request("/v1/charges", { method: "POST", body: {} });
+console.log("POST retried:", data, "calls:", calls);
+await server.stop();
+</code>
+<option correct>default: 503 calls: 1
+POST retried: { id: 'ch_1' } calls: 3</option>
+<option>default: 503 calls: 3
+POST retried: { id: 'ch_1' } calls: 3</option>
+<option>POST retried: { id: 'ch_1' } calls: 3</option>
+<option>default: 503 calls: 1
+POST retried: { id: 'ch_1' } calls: 1</option>
+<explain><p>By default POST is not in <code>retryMethods</code>, so the first 503 is final. Adding POST retried twice and succeeded on the third call. Do that only when the request carries an idempotency key.</p></explain>
+</question>
+
+<question id="upay-out-dedupe" type="output">
+<q>What does this print?</q>
+<code file="dedupe.ts">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const queue = createInMemoryQueue<{ paymentId: number }>(createQueueName("notifications"), { autoProcess: false });
+const results: string[] = [];
+for (const paymentId of [1, 1, 2]) {
+  try {
+    await queue.add("notify", { paymentId }, { deduplicationKey: `receipt:${paymentId}` });
+    results.push(`queued ${paymentId}`);
+  } catch (error) {
+    results.push(`${(error as Error).name} ${paymentId}`);
+  }
+}
+console.log(results);
+await queue.close();
+</code>
+<option correct>[ 'queued 1', 'JobDuplicateError 1', 'queued 2' ]</option>
+<option>[ 'queued 1', 'queued 1', 'queued 2' ]</option>
+<option>[ 'queued 1', 'JobDuplicateError 1', 'JobDuplicateError 2' ]</option>
+<option>[ 'queued 1', 'Error 1', 'queued 2' ]</option>
+<explain><p>A second job with the same deduplication key is refused with <code>JobDuplicateError</code> while the first exists. The handler catches it: the receipt is already queued.</p></explain>
+</question>
+
+<question id="upay-out-hmac" type="output">
+<q>What does this print? (It needs Node.js.)</q>
+<code file="hmac.ts" browser="no">
+import { hmacSha256, timingSafeEqualString, utf8Encode } from "@zudojs/crypto";
+
+const key = utf8Encode("a-webhook-secret-of-32-characters");
+const body = '{"id":"evt_1","type":"charge.succeeded"}';
+const signature = await hmacSha256(`1790000000.${body}`, key);
+console.log(signature.length, timingSafeEqualString(signature, await hmacSha256(`1790000000.${body}`, key)));
+console.log(timingSafeEqualString(signature, await hmacSha256(`1790000001.${body}`, key)));
+try {
+  await hmacSha256(body, utf8Encode("short"));
+} catch (error) {
+  console.log((error as Error).name);
+}
+</code>
+<option correct>64 true
+false
+RangeError</option>
+<option>64 true
+true
+RangeError</option>
+<option>32 true
+false
+RangeError</option>
+<option>64 true
+false
+64</option>
+<explain><p>A hex HMAC-SHA256 has 64 characters. Changing the timestamp changes the signature, which is why it is part of the signed text. Keys under 16 bytes are refused, so an empty secret cannot sign anything.</p></explain>
+</question>
+
+<question id="upay-out-outbox" type="output">
+<q>An outbox relay that stops at the first failure. What does this print?</q>
+<code file="relay.js">
+const outbox = [
+  { id: 1, type: "payment.succeeded", published: false },
+  { id: 2, type: "payment.declined", published: false },
+  { id: 3, type: "payment.succeeded", published: false },
+];
+let busUp = true;
+const delivered = [];
+function publish(row) {
+  if (row.id === 2 && !busUp) return false;
+  delivered.push(row.id);
+  return true;
+}
+function drain() {
+  for (const row of outbox.filter((r) => !r.published)) {
+    if (!publish(row)) return;
+    row.published = true;
+  }
+}
+
+busUp = false;
+drain();
+busUp = true;
+drain();
+console.log(delivered, outbox.every((r) => r.published));
+</code>
+<option correct>[ 1, 2, 3 ] true</option>
+<option>[ 1, 3, 2 ] true</option>
+<option>[ 1, 1, 2, 3 ] true</option>
+<option>[ 1 ] false</option>
+<explain><p>The first drain delivered row 1 and stopped at row 2, keeping the order. The second drain continued with rows 2 and 3. Row 1 was marked, so it was not sent again.</p></explain>
+</question>
+
+<question id="upay-out-backoff" type="output">
+<q>What does this print?</q>
+<code file="backoff.ts">
+import { calculateRetryDelay, createExponentialBackoff } from "@zudojs/queue";
+
+const backoff = createExponentialBackoff(20, { jitter: "none" });
+console.log([1, 2, 3, 4].map((attempt) => calculateRetryDelay(attempt, backoff)));
+</code>
+<option correct>[ 20, 40, 80, 160 ]</option>
+<option>[ 20, 20, 20, 20 ]</option>
+<option>[ 0, 20, 40, 80 ]</option>
+<option>[ 20, 400, 8000, 160000 ]</option>
+<explain><p>Exponential backoff doubles the wait after each failure. In production, keep jitter on so many failed jobs do not retry in lockstep.</p></explain>
+</question>
+
+<question id="upay-code-keystore" type="code" file="payment-keys.js">
+<q>Write <code>createPayments()</code> with <code>pay(userId, key, request, charge)</code>. <code>request</code> is <code>{ orderId, card }</code>; <code>charge()</code> returns an outcome object. A new <code>(userId, key)</code> calls <code>charge</code>, stores and returns <code>{ ...outcome, replayed: false }</code>. The same user and key with the same request returns the stored outcome with <code>replayed: true</code>; with a different request it returns <code>{ status: 422 }</code>. Keys are per user. Print the results below as JSON.</q>
+<starter>
+function createPayments() {
+  // your code
+}
+
+let charges = 0;
+const charge = () => ({ status: 201, chargeId: `ch_${++charges}` });
+const payments = createPayments();
+</starter>
+<solution>
+function createPayments() {
+  const stored = new Map();
+  return {
+    pay(userId, key, request, charge) {
+      const id = `${userId}:${key}`;
+      const fingerprint = `${request.orderId}|${request.card}`;
+      const entry = stored.get(id);
+      if (entry && entry.fingerprint !== fingerprint) return { status: 422 };
+      if (entry) return { ...entry.outcome, replayed: true };
+      const outcome = charge();
+      stored.set(id, { fingerprint, outcome });
+      return { ...outcome, replayed: false };
+    },
+  };
+}
+
+let charges = 0;
+const charge = () => ({ status: 201, chargeId: `ch_${++charges}` });
+const payments = createPayments();
+console.log(JSON.stringify(payments.pay(1, "k1", { orderId: 7, card: "tok_ok" }, charge)));
+console.log(JSON.stringify(payments.pay(1, "k1", { orderId: 7, card: "tok_ok" }, charge)));
+console.log(JSON.stringify(payments.pay(1, "k1", { orderId: 7, card: "tok_other" }, charge)));
+console.log(JSON.stringify(payments.pay(2, "k1", { orderId: 8, card: "tok_ok" }, charge)));
+console.log("charges:", charges);
+</solution>
+<expected>
+{"status":201,"chargeId":"ch_1","replayed":false}
+{"status":201,"chargeId":"ch_1","replayed":true}
+{"status":422}
+{"status":201,"chargeId":"ch_2","replayed":false}
+charges: 2
+</expected>
+<explain><p>The replay returns the stored outcome without calling <code>charge</code>. The fingerprint catches key reuse, and the per-user scope lets user 2 use the same key independently.</p></explain>
+</question>
+
+<question id="upay-code-outcome" type="code" file="outcome.js">
+<q>Write <code>toOutcome(result)</code> for a gateway call. <code>result</code> is <code>{ status }</code> for an HTTP answer or <code>{ error: "timeout" | "network" }</code>. Map 201 to <code>succeeded</code>, 402 to <code>declined</code>, 5xx and both errors to <code>unknown</code>, and throw <code>new Error("gateway configuration")</code> for any other status. Print the outcome (or the error message) for each result below.</q>
+<starter>
+function toOutcome(result) {
+  // your code
+}
+
+const results = [{ status: 201 }, { status: 402 }, { status: 503 }, { error: "timeout" }, { error: "network" }, { status: 401 }];
+</starter>
+<solution>
+function toOutcome(result) {
+  if (result.error) return "unknown";
+  if (result.status === 201) return "succeeded";
+  if (result.status === 402) return "declined";
+  if (result.status >= 500) return "unknown";
+  throw new Error("gateway configuration");
+}
+
+const results = [{ status: 201 }, { status: 402 }, { status: 503 }, { error: "timeout" }, { error: "network" }, { status: 401 }];
+for (const result of results) {
+  try {
+    console.log(JSON.stringify(result), "->", toOutcome(result));
+  } catch (error) {
+    console.log(JSON.stringify(result), "->", error.message);
+  }
+}
+</solution>
+<expected>
+{"status":201} -> succeeded
+{"status":402} -> declined
+{"status":503} -> unknown
+{"error":"timeout"} -> unknown
+{"error":"network"} -> unknown
+{"status":401} -> gateway configuration
+</expected>
+<explain><p>Only a real answer is final. Everything that leaves the outcome open is unknown and goes to reconciliation. Our own misconfiguration is an error that must alert someone, not a decline.</p></explain>
+</question>
+
+<question id="upay-code-reconcile" type="code" file="reconcile.js">
+<q>Write <code>reconcile(payments, gatewayCharges, now, cutoffMs)</code>. For every payment with status <code>processing</code> or <code>unknown</code> created before <code>now - cutoffMs</code>: if the gateway has a charge for <code>pay_&lt;id&gt;</code>, set the status to that charge's status; otherwise set it to <code>declined</code>. Never charge. Return the number of payments changed and print the statuses.</q>
+<starter>
+const payments = [
+  { id: 1, status: "unknown", createdAt: 0 },
+  { id: 2, status: "processing", createdAt: 0 },
+  { id: 3, status: "succeeded", createdAt: 0 },
+  { id: 4, status: "unknown", createdAt: 950 },
+];
+const gatewayCharges = new Map([["pay_1", "succeeded"], ["pay_4", "succeeded"]]);
+
+function reconcile(payments, gatewayCharges, now, cutoffMs) {
+  // your code
+}
+</starter>
+<solution>
+const payments = [
+  { id: 1, status: "unknown", createdAt: 0 },
+  { id: 2, status: "processing", createdAt: 0 },
+  { id: 3, status: "succeeded", createdAt: 0 },
+  { id: 4, status: "unknown", createdAt: 950 },
+];
+const gatewayCharges = new Map([["pay_1", "succeeded"], ["pay_4", "succeeded"]]);
+
+function reconcile(payments, gatewayCharges, now, cutoffMs) {
+  let changed = 0;
+  for (const payment of payments) {
+    if (payment.status !== "processing" && payment.status !== "unknown") continue;
+    if (payment.createdAt >= now - cutoffMs) continue;
+    payment.status = gatewayCharges.get(`pay_${payment.id}`) ?? "declined";
+    changed++;
+  }
+  return changed;
+}
+
+console.log(reconcile(payments, gatewayCharges, 1000, 120));
+console.log(payments.map((p) => `${p.id}:${p.status}`).join(" "));
+</solution>
+<expected>
+2
+1:succeeded 2:declined 3:succeeded 4:unknown
+</expected>
+<explain><p>Payment 1 was charged: succeeded. Payment 2 never reached the gateway: declined, so the order can be paid again. Payment 4 is too recent; its charge may still be in flight, so it waits for the next run.</p></explain>
+</question>
+
+<question id="upay-code-worker" type="code" file="worker.js">
+<q>Write an idempotent notification worker <code>handle(job)</code> for jobs <code>{ paymentId, kind }</code>. It skips a job whose <code>paymentId:kind</code> is in <code>sent</code>; otherwise it calls <code>sms(text, key)</code> with key <code>kind-paymentId</code> and then adds the entry to <code>sent</code>. The SMS provider below throws on its first call. Run the jobs, retrying a failed job once, and print the delivered keys and <code>sent</code>.</q>
+<starter>
+const sent = new Set();
+const delivered = [];
+let calls = 0;
+function sms(text, key) {
+  if (++calls === 1) throw new Error("provider down");
+  if (!delivered.includes(key)) delivered.push(key);
+}
+
+function handle(job) {
+  // your code
+}
+
+const jobs = [{ paymentId: 1, kind: "receipt" }, { paymentId: 1, kind: "receipt" }, { paymentId: 2, kind: "declined" }];
+</starter>
+<solution>
+const sent = new Set();
+const delivered = [];
+let calls = 0;
+function sms(text, key) {
+  if (++calls === 1) throw new Error("provider down");
+  if (!delivered.includes(key)) delivered.push(key);
+}
+
+function handle(job) {
+  const id = `${job.paymentId}:${job.kind}`;
+  if (sent.has(id)) return;
+  sms(`Oja Market: ${job.kind} for payment ${job.paymentId}`, `${job.kind}-${job.paymentId}`);
+  sent.add(id);
+}
+
+const jobs = [{ paymentId: 1, kind: "receipt" }, { paymentId: 1, kind: "receipt" }, { paymentId: 2, kind: "declined" }];
+for (const job of jobs) {
+  try {
+    handle(job);
+  } catch {
+    handle(job);
+  }
+}
+console.log(delivered, [...sent]);
+</solution>
+<expected>
+[ 'receipt-1', 'declined-2' ] [ '1:receipt', '2:declined' ]
+</expected>
+<explain><p>The first attempt failed and was retried; the duplicate job for payment 1 was skipped because it is recorded as sent. The provider-side key would also cover a crash between sending and recording.</p></explain>
+</question>
+
+<question id="upay-code-one-live" type="code" file="one-live.js">
+<q>Write <code>startPayment(payments, orderId)</code> that enforces "one live payment per order": if the order already has a payment whose status is not <code>declined</code>, return <code>{ status: 409 }</code>; otherwise push <code>{ id, orderId, status: "processing" }</code> with the next id and return it. Print the results below.</q>
+<starter>
+const payments = [];
+
+function startPayment(payments, orderId) {
+  // your code
+}
+</starter>
+<solution>
+const payments = [];
+
+function startPayment(payments, orderId) {
+  if (payments.some((p) => p.orderId === orderId && p.status !== "declined")) return { status: 409 };
+  const payment = { id: payments.length + 1, orderId, status: "processing" };
+  payments.push(payment);
+  return payment;
+}
+
+const first = startPayment(payments, 7);
+console.log(JSON.stringify(startPayment(payments, 7)));
+first.status = "declined";
+console.log(JSON.stringify(startPayment(payments, 7)));
+console.log(JSON.stringify(startPayment(payments, 8)));
+console.log(JSON.stringify(startPayment(payments, 7)));
+</solution>
+<expected>
+{"status":409}
+{"id":2,"orderId":7,"status":"processing"}
+{"id":3,"orderId":8,"status":"processing"}
+{"status":409}
+</expected>
+<explain><p>After a decline the order is free again; while a payment is live, another attempt is refused. In PostgreSQL the partial unique index enforces this even when two requests race, which a check in code cannot.</p></explain>
+</question>
+
+<question id="upay-code-schema" type="code" file="new-payment.ts">
+<q>With <code>@zudojs/schema</code>, write <code>NewPayment</code>: <code>orderId</code> a positive integer and <code>card</code> a string matching <code>/^tok_[a-z0-9_]{2,60}$/</code>. Print <code>safeParse</code> results for the three bodies: the data, or the paths of the issues.</q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+const bodies = [
+  { orderId: 7, card: "tok_ok", amountKobo: 100 },
+  { orderId: 7, card: "4242424242424242" },
+  { orderId: -1, card: "tok_ok" },
+];
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+const NewPayment = schema.object({
+  orderId: schema.number().int().min(1),
+  card: schema.string().regex(/^tok_[a-z0-9_]{2,60}$/),
+});
+
+const bodies = [
+  { orderId: 7, card: "tok_ok", amountKobo: 100 },
+  { orderId: 7, card: "4242424242424242" },
+  { orderId: -1, card: "tok_ok" },
+];
+for (const body of bodies) {
+  const result = NewPayment.safeParse(body);
+  console.log(result.success ? result.data : result.issues.map((issue) => issue.path.join(".")));
+}
+</solution>
+<expected>
+{ orderId: 7, card: 'tok_ok' }
+[ 'card' ]
+[ 'orderId' ]
+</expected>
+<explain><p>The client's amount is stripped, a raw card number is refused (it should never reach the server), and the order id must be a real id. The amount is then read from the order.</p></explain>
+</question>

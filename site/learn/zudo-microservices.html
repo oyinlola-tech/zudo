@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Microservices — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-microservices.md" title="Markdown version">
-  <meta name="description" content="Why some teams split one application into many services, why you should not start that way, and how services find and call each other, stay consistent without distributed transactions, survive failures and stay observable.">
+  <meta name="description" content="Why teams split into microservices, why not to start there, and how services discover, call each other, stay consistent, survive failures and stay observable.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-microservices">
@@ -88,7 +88,7 @@
         <div class="lx-hero-tag">LEVEL 15 · LESSON 3 OF 5</div>
         <p class="lx-hero-part">Architecture modes <span class="lx-tier lx-tier-advanced" title="Advanced: Learn it when your application needs it.">Advanced</span></p>
         <h1>Microservices</h1>
-        <p class="lx-hero-lead">Why some teams split one application into many services, why you should not start that way, and how services find and call each other, stay consistent without distributed transactions, survive failures and stay observable.</p>
+        <p class="lx-hero-lead">Why teams split into microservices, why not to start there, and how services discover, call each other, stay consistent, survive failures and stay observable.</p>
         <ul class="lx-hero-meta">
           <li><strong>55 min</strong> to read and try</li>
           <li><strong>You need:</strong> From monolith to modular monolith, and the lessons on HTTP, queues and observability</li>
@@ -100,6 +100,17 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Decide when splitting into services pays for the network problems it creates</li>
+          <li>Give services a discovery mechanism and call each other over HTTP with a timeout</li>
+          <li>Add retries with backoff and a circuit breaker around a flaky dependency</li>
+          <li>Make a request idempotent with an idempotency key so a retried call cannot double-charge</li>
+          <li>Replace a cross-service transaction with an outbox and a saga</li>
+          <li>Propagate a correlation id and traceparent across service calls for a shared trace</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="why">Why microservices exist</h2>
@@ -602,7 +613,7 @@ retried: 2 succeeded: 1</pre></div>
 
 <section>
 <h2 id="consistency">Consistency without distributed transactions</h2>
-<p>In the monolith, "save the order and reduce the stock" was one database transaction. With two services and two databases there is no such thing. There is a protocol called <strong>two-phase commit (2PC)</strong> that tries to lock both databases and commit them together, but it is slow, needs every service up at the same time, and most modern databases and brokers do not support it across systems. Avoid it. Two patterns replace it.</p>
+<p>In <a href="/learn/zudo-monolith#checkout">the monolith</a>, "save the order and reduce the stock" was one database transaction. With two services and two databases there is no such thing. There is a protocol called <strong>two-phase commit (2PC)</strong> that tries to lock both databases and commit them together, but it is slow, needs every service up at the same time, and most modern databases and brokers do not support it across systems. Avoid it. Two patterns replace it.</p>
 <h3>The outbox pattern</h3>
 <p>A classic bug: the orders service saves the order, then publishes <code>order.placed</code> to the broker, and crashes between the two. The order exists but nobody hears about it. Or the other way round: the event goes out, then the database write fails.</p>
 <p>The <strong>outbox</strong> fixes it with one table. The service writes the event into an <code>outbox</code> table <em>in the same transaction</em> as the order. Either both rows are saved or neither. A separate loop, the <strong>relay</strong>, then reads unpublished rows, publishes them, and marks them as published. This example uses PGlite, the real PostgreSQL you used in <a href="/learn/zudo-database">the database lesson</a>:</p>
@@ -768,6 +779,7 @@ undone: create pending order
 order confirmed: false</pre></div>
 </figure>
 <p>This style, where one service tells the others what to do, is an <strong>orchestrated</strong> saga. In a <strong>choreographed</strong> saga there is no conductor: each service reacts to the previous service's event (<code>order.created</code> → inventory reserves → <code>stock.reserved</code> → payments charges …). Orchestration is easier to follow when you are starting. In a real saga every step is an HTTP call or a message with a timeout, retries and an idempotency key, and the saga's progress is saved in a table so it can continue after a crash.</p>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>Checkout spans three services: outbox, or saga?</h3><p>ShopFlow's checkout now touches orders, inventory and payments, each with its own database. Reserving stock is a single write inside the inventory service, but charging the card and confirming the order are separate steps that can fail independently. Would you reach for the outbox pattern here, the saga pattern, or both?</p><details class="lx-solution"><summary>Show the reasoning</summary><p>The outbox is not a competitor to the saga; it is how each saga step tells the rest of the system what it did. "Reserve stock" is one service's own write, so it fits the outbox alone: save the reservation and publish <code>stock.reserved</code> in one transaction. But "reserve, then charge, then confirm" is a sequence across three services with a rule about what to do when step two fails after step one succeeded — that is what only a saga expresses, because a single transaction cannot span three databases. So checkout needs a saga to sequence the steps and compensate on failure, and each step that changes its own service's data uses an outbox internally so its own "did it happen" question never depends on the broker being up at that exact moment.</p></details></div>
 </section>
 
 <section>
@@ -923,7 +935,7 @@ order 7 already handled, skipping</pre></div>
 <li>No distributed transactions: the outbox publishes events reliably, and a saga undoes finished steps with compensations.</li>
 <li>Pass a correlation id and a <code>traceparent</code> header on every call so one request can be followed through every service.</li>
 </ul>
-<p>Next, you take everything you built to production: configuration, secrets, logs, metrics, health checks and graceful shutdown.</p>
+<p>Next, in <a href="/learn/zudo-event-driven">Event-driven systems</a>, you take the outbox pattern from this lesson further: consumers that survive retries, duplicates, crashes, dead letters and a change to the event's own shape.</p>
 </section>
       </div>
 

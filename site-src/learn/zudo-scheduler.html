@@ -1,10 +1,11 @@
 ---
 title: Scheduled tasks
-description: Run work on the clock, not on a request. Intervals, one-off runs and cron expressions, time zones, retries and failed runs, overlapping runs, restarts, and running a schedule on one instance only, with @zudojs/scheduler.
+description: Run work on the clock, not a request: intervals, cron expressions, time zones, retries, overlapping runs and running on one instance with @zudojs/scheduler.
 minutes: 40
 youNeed: The background jobs lesson
 youBuild: A weekday 09:00 digest and a nightly cleanup for the Task API, safe to run with several servers
 keywords: zudojs scheduler, cron, cron expression, scheduled task, recurring job, every, time zone, UTC, overlap, misfire, daylight saving, distributed lock
+objectives: Define a job and schedule it to run once, repeatedly or on a cron expression | Write and verify cron expressions, and run them in UTC to avoid daylight-saving gaps | Retry a failing run, bound it with a timeout, and read its history from getExecutions | Choose an overlap policy for a run that outlasts its own interval | Make a duplicate run harmless when several instances share one schedule
 ---
 <section>
 <h2 id="why">Work that the clock starts</h2>
@@ -470,7 +471,12 @@ worker: sending the digest
 worker: digest already sent today, skipping
 </output>
 <p>Both "servers" fired and queued a job, but only one digest went out. The day comes from <code>ctx.scheduledAt</code>, the time the run was due, so tomorrow's run is a new day. In the real Task API, <code>sentDays</code> is a database table with a unique <code>day</code> column: the database then refuses the second insert even when two workers on two machines try at the same moment.</p>
-<p>Why not use the queue's <code>deduplicationKey</code>? It only refuses a second job while the first one is still in the queue. Once the first digest job has finished, a job with the same key is accepted again. The idempotent processor protects you no matter when the duplicate arrives.</p>
+<reason title="Both servers already queue the digest job with the same deduplicationKey. Isn't that enough on its own, without an idempotent processor too?">
+<p>Look again at how <code>deduplicationKey</code> works on the queue: it refuses a second job with the same key while a job with that key still exists in the queue. Server A's job runs and finishes in, say, 200 ms. Server B's own scheduler fires a little later &mdash; clocks and timers on two machines are never perfectly in step. Does the key still protect you at that point?</p>
+<answer>
+<p>No: once server A's job has completed, it is no longer "in the queue" for deduplication purposes, so server B's job with the identical key is accepted as if it were the first one of the day, and the digest goes out twice. The key only protects against duplicates that arrive close together in time, while the original is still pending; it says nothing about a duplicate that arrives after the original already finished. The idempotent processor's check (<code>sentDays.has(job.data.day)</code>, backed by a unique database column in the real app) protects you regardless of when the duplicate shows up: seconds later, or the next time the process restarts and re-reads a stored schedule. Use the deduplication key as a cheap first filter, but keep the idempotency check as the guarantee you actually rely on.</p>
+</answer>
+</reason>
 <p>The production checklist for scheduled work:</p>
 <ul>
 <li>Run it on one instance, or make duplicates harmless with a lock or a deduplication key.</li>
@@ -528,4 +534,5 @@ for (const expression of expressions) {
 <li>Nothing is stored: define recurring schedules in code, and store user-created ones in the database.</li>
 <li>Several instances each run the schedule. Run it on one, or make duplicates harmless with a lock or a queue deduplication key.</li>
 </ul>
+<p>Next, <a href="/learn/zudo-serialization">Serialization</a> covers what happens to a job's or a schedule's data once it has to cross a boundary as text: what plain JSON loses, and how to get it back.</p>
 </section>
