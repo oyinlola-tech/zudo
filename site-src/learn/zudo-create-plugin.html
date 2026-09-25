@@ -275,7 +275,7 @@ export function createMemoryTransport(options: { readonly failFor?: string } = {
   return { transport, outbox };
 }
 </file>
-<p>Now run the whole life of the plugin: start, three payments (the last one bounces), a health check, and shutdown. The host also listens to the manager's own lifecycle events, published on the same bus:</p>
+<p>Now run the whole life of the plugin: start, two payments (the second bounces), a health check, a third payment, and a shutdown while its receipt is still being sent. The host also listens to the manager's own lifecycle events, published on the same bus:</p>
 <example file="run.ts" project="plugin" browser="no">
 import { PluginManager } from "@zudojs/plugins";
 import { createHost, createMemoryTransport } from "./src/host/host.js";
@@ -331,9 +331,9 @@ smtp: connection closed
 <p>Follow the order in the output:</p>
 <ul>
 <li>Receipts was registered first, but the mailer started first: it is a dependency. The lifecycle event <code>plugin:started</code> arrives as <code>plugin.started</code>, because the event bus normalizes <code>:</code> to <code>.</code> (you traced that in <a href="/learn/zudo-internals#trace-events">Reading ZudoJS internals</a>). A host can subscribe to <code>plugin.*</code> to see every lifecycle event.</li>
-<li>Publishing the three payments returned before any mail was sent: receipts never slow the payment path.</li>
+<li>"two payments published" appears before the bounce warning: publishing returned before any mail was sent, so receipts never slow the payment path.</li>
 <li>The manager says both plugins are healthy, because both are <code>started</code>. The plugin knows better: its last receipt bounced. A health endpoint should report both views.</li>
-<li>On shutdown, receipts stopped before the mailer, and the SMTP connection closed last, when the mailer was disposed.</li>
+<li>The third receipt was still being sent when <code>stop</code> began. <code>stop</code> waited for it (<code>drained=1</code>), so it reached the outbox. Then receipts was disposed before the mailer, and the SMTP connection closed last.</li>
 </ul>
 </section>
 
@@ -552,7 +552,7 @@ plugin: @mycompany/zudo-plugin-fx-rates | status: 500 | cause: rates API returne
 
 <section>
 <h2 id="timeouts">A plugin that never answers</h2>
-<p>A failing plugin is the easy case. Worse is a plugin whose <code>start</code> waits for a service that never answers, such as a rates API behind a firewall that drops packets. Without a limit, the whole application waits with it and never starts serving. <code>hookTimeout</code> fails any hook that takes longer, and the failure rolls back like any other:</p>
+<p>A failing plugin is the easy case. Worse is a plugin whose <code>start</code> waits for a service that never answers, such as a rates API behind a firewall that drops packets. Without a limit, the whole application waits with it. <code>hookTimeout</code> is meant to fail any hook that takes longer, and the failure should roll back like any other. Try it the way many hosts start: plugins first, before the HTTP server listens.</p>
 <example file="hang.ts" project="plugin" browser="no">
 import { PluginManager } from "@zudojs/plugins";
 import { createHost, createMemoryTransport } from "./src/host/host.js";
@@ -570,10 +570,9 @@ manager.register({
 try {
   await manager.start(context);
 } catch (error) {
-  const timeout = error as Error & { getMetadata(key: string): unknown };
-  console.log(timeout.name, "-", timeout.message, "| phase:", timeout.getMetadata("phase"));
+  console.log("caught:", (error as Error).name);
 }
-console.log(manager.diagnostics().plugins.map((p) => `${p.plugin.name.slice(23)}: ${p.health.status}`).join(", "));
+console.log("this line never runs");
 </example>
 <output>
 smtp: connected
@@ -581,8 +580,41 @@ Warning: Detected unsettled top-level await at /home/you/project/hang.ts:15
   await manager.start(context);
   ^
 </output>
-<p>Choose the timeout from the slowest honest start-up of your plugins (a database migration may need a minute; a mailer needs seconds), and remember it bounds <code>stop</code> too, which is what limits the receipts plugin's drain on shutdown.</p>
-<warn title="UNDER PLAIN NODE A HANGING HOOK CAN END THE PROCESS INSTEAD">The manager's timeout timer is <code>unref()</code>ed, so it does not keep Node running by itself. Under <code>tsx</code>, as here, something else keeps the process alive and the timeout fires. Run the same compiled code with plain <code>node</code> before anything else holds the event loop open (no server listening yet), and Node exits with code 13 and "Detected unsettled top-level await" instead of throwing <code>PluginTimeoutError</code>, without any rollback. Start plugins while something keeps the process alive (for example after <code>server.listen</code>, or with your own timer during start-up), and test your start-up the way production runs it.</warn>
+<p>No <code>PluginTimeoutError</code>, no rollback, no "connection closed": Node simply exited (with exit code 13) while <code>start</code> was still waiting. The reason is in the manager's <code>dist</code> code: the timeout timer is created with <code>timer.unref()</code>, which tells Node "do not stay alive just for this timer". The hanging promise holds nothing either, so Node saw no more work and quit. In a server that is already listening, the open socket keeps the process alive and the timeout fires. During start-up, before anything listens, nothing does.</p>
+<p>So the host keeps the process alive itself while plugins start. One interval, cleared in <code>finally</code>, is enough:</p>
+<example file="hang-guarded.ts" project="plugin" browser="no">
+import { PluginManager } from "@zudojs/plugins";
+import { createHost, createMemoryTransport } from "./src/host/host.js";
+import { createMailerPlugin } from "./src/mailer/mailer.plugin.js";
+
+const { context } = createHost();
+const manager = new PluginManager({ hookTimeout: 200 });
+manager.register(createMailerPlugin(createMemoryTransport().transport));
+manager.register({
+  metadata: { name: "@mycompany/zudo-plugin-fx-rates", version: "1.0.0" },
+  dependencies: [{ name: "@mycompany/zudo-plugin-mailer" }],
+  start: () => new Promise<void>(() => {}),
+});
+
+const keepAlive = setInterval(() => {}, 60_000);
+try {
+  await manager.start(context);
+} catch (error) {
+  const timeout = error as Error & { getMetadata(key: string): unknown };
+  console.log(timeout.name, "-", timeout.message, "| phase:", timeout.getMetadata("phase"));
+} finally {
+  clearInterval(keepAlive);
+}
+console.log(manager.diagnostics().plugins.map((p) => `${p.plugin.name.slice(23)}: ${p.health.status}`).join(", "));
+</example>
+<output>
+smtp: connected
+smtp: connection closed
+PluginTimeoutError - Plugin "@mycompany/zudo-plugin-fx-rates" timed out after 200ms. | phase: starting
+mailer: degraded, fx-rates: unhealthy
+</output>
+<p>Now the timeout fires, the mailer is stopped and its connection closed, and the diagnostics blame the right plugin. Put the guard in the host's <code>startPlugins</code> helper from the previous section, so every start-up has it. Choose the timeout from the slowest honest start-up of your plugins (a database migration may need a minute; a mailer needs seconds), and remember it bounds <code>stop</code> too, which is what limits the receipts plugin's drain on shutdown.</p>
+<warn title="TEST START-UP THE WAY PRODUCTION RUNS IT">This failure only appears when nothing else holds the event loop, which is exactly the situation in a fresh process at start-up, and rarely the situation in a test runner or a development server. A start-up test that runs your real entry file in a child process, with a plugin that hangs, is the only reliable way to know that your timeout works.</warn>
 </section>
 
 <section>

@@ -1,0 +1,763 @@
+<question id="zpf-first-step" type="choice">
+<q>The task list got slow. The team suggests Redis, more servers, a bigger database and a rewrite. What should happen first?</q>
+<option>Add Redis, because caching helps almost every read</option>
+<option>Add servers, because it is the fastest change to deploy</option>
+<option correct>Measure where the time goes (load test, event-loop delay, profile), then change one thing and measure again</option>
+<option>Rewrite the slowest file</option>
+<explain><p>Each guess costs days and may miss the cause entirely. A measurement tells you whether the time is CPU, I/O or queueing, and which function or query is responsible.</p></explain>
+</question>
+
+<question id="zpf-health-slow" type="choice">
+<q>During busy hours the task list is slow, and so is <code>/health</code>, which does no work. What does that suggest?</q>
+<option>The database is overloaded</option>
+<option correct>Something is keeping the event loop busy, so every request waits for its turn on the CPU</option>
+<option>The network is slow</option>
+<option>The health check has a bug</option>
+<explain><p>All routes share one event loop. A route that does nothing only slows down when the loop itself is busy, which points at CPU work in the process, not at a dependency.</p></explain>
+</question>
+
+<question id="zpf-pool-waiting" type="choice">
+<q>Only <code>POST /tasks</code> is slow. Event-loop delay is 2 ms, database CPU is 10%, and 30 requests are waiting for a pool connection. What kind of slowness is this?</q>
+<option>CPU-bound in the app</option>
+<option>A slow query</option>
+<option correct>Queueing: something holds connections too long, for example a transaction left open during another call</option>
+<option>Too little memory</option>
+<explain><p>Both the loop and the database are nearly idle, yet requests wait. They are queueing for a limited resource. Find out how long each connection is held before touching the pool size.</p></explain>
+</question>
+
+<question id="zpf-status-counts" type="choice">
+<q>A load test of the generated project reports <code>300 2xx responses, 1700 non 2xx responses</code>. What should you conclude?</q>
+<option>The app crashes under load</option>
+<option correct>Most requests were refused with 429 by the rate limiter, so the latency numbers describe the limiter, not the route</option>
+<option>The database ran out of connections</option>
+<option>autocannon is misconfigured and the numbers can be ignored</option>
+<explain><p>The generated project limits each client to 300 requests per minute, and a load tester is one client. Read the status counts before any latency number, and use a load-test configuration with a higher limit.</p></explain>
+</question>
+
+<question id="zpf-same-process" type="choice">
+<q>Why run the load generator in a separate process from the server when you want real numbers?</q>
+<option>Because <code>fetch</code> does not work inside a server process</option>
+<option correct>The client's own work also runs on the event loop, so it slows the server it is measuring</option>
+<option>Because separate processes share memory</option>
+<option>Because Node.js allows only one HTTP connection per process</option>
+<explain><p>In one process, the client's parsing and bookkeeping compete with the server for the same loop. That is acceptable for comparing two routes, not for absolute numbers.</p></explain>
+</question>
+
+<question id="zpf-self-time" type="choice">
+<q>In a CPU profile, what is a function's <strong>self time</strong>?</q>
+<option>The time from its first call to its last call</option>
+<option correct>The time spent in the function's own code, not counting the functions it calls</option>
+<option>The time it spent waiting for I/O</option>
+<option>The time since the process started</option>
+<explain><p>Total time includes callees; self time does not. The functions with the most self time are where the CPU actually is, which makes them the place to look first.</p></explain>
+</question>
+
+<question id="zpf-json-caller" type="choice">
+<q>The profile's top entry is <code>json http.js:4</code>, the project's helper that builds JSON responses, not <code>JSON.stringify</code> itself. Why?</q>
+<option>The helper has a bug that makes it slow</option>
+<option correct><code>JSON.stringify</code> is a built-in, and its time is counted in the JavaScript function that called it</option>
+<option>The profiler cannot measure built-ins at all, so that time is lost</option>
+<option>Because the file is compiled from TypeScript</option>
+<explain><p>Native built-ins usually do not appear as separate entries, so their cost shows up in the caller. The helper is where 10,000 tasks were turned into text on every request.</p></explain>
+</question>
+
+<question id="zpf-profile-again" type="choice">
+<q>After paginating the list, the rate limiter's <code>check</code> tops the profile of the load test, which used <code>RATE_LIMIT_MAX=1000000</code> from one client. With the production limit of 300 it drops to about 3%. What is the right conclusion?</q>
+<option>Remove the rate limiter, it is too slow</option>
+<option correct>The hot spot came from the test setup; load tests should use production-like settings and many client addresses</option>
+<option>Rate limiting always costs a fifth of the CPU</option>
+<option>The pagination fix made the limiter slower</option>
+<explain><p>A sliding-log limiter costs time proportional to the requests one client made in the window. In production each client stays under 300; the test made one client send everything under a limit of a million.</p></explain>
+</question>
+
+<question id="zpf-mean" type="choice">
+<q>Nine requests take about 15 ms and one takes 900 ms. Which number best shows what the slowest users feel?</q>
+<option>The mean</option>
+<option>The median (p50)</option>
+<option correct>A high percentile such as p95 or p99</option>
+<option>The minimum</option>
+<explain><p>The mean (about 100 ms here) describes nobody, and the median hides the slow tail completely. High percentiles show the tail that alerts should watch.</p></explain>
+</question>
+
+<question id="zpf-nplus1-dev" type="choice">
+<q>Why does an N+1 query pattern often look harmless in development?</q>
+<option>Development databases do not support joins</option>
+<option correct>With little data and a local database each query is very fast, so 51 queries still feel instant; in production each one pays a network round trip and a pool checkout</option>
+<option>ORMs remove N+1 queries automatically in development</option>
+<option>N+1 only happens with PostgreSQL</option>
+<explain><p>The problem is the number of round trips, which grows with the page. Count queries per request in development and tests instead of judging by feel.</p></explain>
+</question>
+
+<question id="zpf-rows-removed" type="choice">
+<q><code>EXPLAIN ANALYZE</code> shows <code>Index Scan using tasks_pkey … (actual rows=50)</code> with <code>Filter: (owner_id = 'u-42')</code> and <code>Rows Removed by Filter: 24492</code>. What does it tell you?</q>
+<option>The query is optimal: it returned only 50 rows</option>
+<option correct>It read about 24,500 rows to return 50; an index on <code>(owner_id, id)</code> would let it read only the rows it returns</option>
+<option>The primary key is corrupted</option>
+<option>The table needs <code>VACUUM</code></option>
+<explain><p>Compare rows read with rows returned. The filter threw away tens of thousands of other users' rows. A composite index that matches the filter and the order makes the work proportional to the page.</p></explain>
+</question>
+
+<question id="zpf-offset" type="choice">
+<q>Page 801 with <code>LIMIT 50 OFFSET 40000</code> shows <code>actual rows=40050</code> on the index scan. What is the better query for deep pages?</q>
+<option>A larger <code>LIMIT</code></option>
+<option>An <code>OFFSET</code> with a different <code>ORDER BY</code></option>
+<option correct>A keyset cursor: <code>WHERE id &gt; $lastId ORDER BY id LIMIT 50</code></option>
+<option>Fetching all rows and slicing in JavaScript</option>
+<explain><p><code>OFFSET</code> makes the database produce and discard every earlier row. A keyset query starts right after the last row the client saw, so every page reads 50 rows.</p></explain>
+</question>
+
+<question id="zpf-bigger-pool" type="choice">
+<q>With a pool of 40, nobody waits in the pool, but the slowest query now takes 200 ms instead of 20 ms and the total time did not improve. What happened?</q>
+<option>The pool has a bug</option>
+<option correct>The queue moved from the pool into the database, whose 4 cores now split time among 40 queries</option>
+<option>The network got slower</option>
+<option>Bigger pools always make individual queries faster</option>
+<explain><p>Past the database's capacity, more connections only make each query slower. The pool's waiting count looks healthy while the real queue hides in the database, where it also slows other services.</p></explain>
+</question>
+
+<question id="zpf-littles-law" type="choice">
+<q>Little's law says the board route needs about 102 busy connections at 400 requests a second, because it makes 51 queries per request. What is the right response?</q>
+<option>Raise the pool to 110 connections per process</option>
+<option>Raise PostgreSQL's <code>max_connections</code> to 1,000</option>
+<option correct>Fix the N+1 query so the route makes 1 or 2 queries, which needs about 2 connections</option>
+<option>Add a second database</option>
+<option>Nothing, 102 is fine</option>
+<explain><p>Pool trouble is often a query problem in disguise. Fewer round trips per request shrink the number of connections needed directly.</p></explain>
+</question>
+
+<question id="zpf-hot-key" type="choice">
+<q>Why is one very popular key a problem in a shared cache such as a Redis cluster, when it is harmless in a single process?</q>
+<option>Redis cannot store popular keys</option>
+<option correct>Every request from every app server goes to the one node that owns the key, so that node saturates, and all servers miss together when it expires</option>
+<option>Popular keys are evicted first</option>
+<option>It is not a problem in a shared cache either</option>
+<explain><p>A key lives on one node. Concentrated traffic overloads that node while others idle, and a synchronized expiry makes every server reload at once.</p></explain>
+</question>
+
+<question id="zpf-local-cache" type="choice">
+<q>A local in-process cache with a 1-second TTL sits in front of the shared cache for the launch-week board. For which data would that layer be a bad idea?</q>
+<option>A board's list of task titles</option>
+<option>Feature flag values that change a few times a day</option>
+<option correct>A customer's wallet balance used to approve a ₦50,000 transfer</option>
+<option>The list of task categories</option>
+<explain><p>The local layer can serve a value up to one second old in each process. For a balance that decides a payment, stale is wrong; read it from the source inside the transaction.</p></explain>
+</question>
+
+<question id="zpf-jitter" type="choice">
+<q>Why add jitter to the TTL of cache entries that are written at the same time?</q>
+<option>To make entries live forever</option>
+<option correct>So they do not all expire in the same moment and cause a burst of reloads</option>
+<option>To make keys shorter</option>
+<option>To encrypt the values</option>
+<explain><p>Entries written together would otherwise expire together, sending a wave of misses to the database. A small, per-key offset spreads the reloads out.</p></explain>
+</question>
+
+<question id="zpf-concurrency" type="choice">
+<q>A mail provider allows 5 connections and each email takes 40 ms. You raise the worker's concurrency from 5 to 20. What happens?</q>
+<option>Throughput quadruples</option>
+<option correct>Throughput stays at about 125 emails a second; the extra jobs wait at the provider, holding memory and connections</option>
+<option>Throughput drops to zero</option>
+<option>The provider allows more connections automatically</option>
+<explain><p>By Little's law, 5 connections ÷ 0.04 s = 125 per second, whatever the concurrency. Set concurrency at the knee, where the downstream limit is reached.</p></explain>
+</question>
+
+<question id="zpf-queue-age" type="choice">
+<q>Which queue metric tells you most directly that workers are falling behind?</q>
+<option>The number of workers</option>
+<option>The total number of jobs ever processed</option>
+<option correct>The age of the oldest waiting job</option>
+<option>The job payload size</option>
+<explain><p>A deep queue that drains quickly is fine. An old job means work is waiting longer than it should, whatever the depth.</p></explain>
+</question>
+
+<question id="zpf-unbounded" type="choice">
+<q>A service keeps <code>recentQuotes.set(requestId, quote)</code> in a module-level <code>Map</code> and never deletes. What will you see in production?</q>
+<option>Nothing, the garbage collector frees it</option>
+<option correct>Heap growth with traffic, longer garbage collection pauses, and eventually an out-of-memory restart</option>
+<option>Faster responses, because of caching</option>
+<option>A TypeScript error</option>
+<explain><p>The map keeps every quote reachable, keyed by something unbounded. Every in-memory structure needs a bound, such as a cache's <code>maxEntries</code>.</p></explain>
+</question>
+
+<question id="zpf-budgets" type="choice">
+<q>Why assert "one query per page" and "a page is at most 8 KB" instead of "responds within 50 ms" in unit tests?</q>
+<option>Counts are easier to type</option>
+<option correct>Counts and sizes are exact and do not depend on how fast the CI machine is, and they catch the causes of slowness</option>
+<option>Milliseconds cannot be measured in tests</option>
+<option>50 ms is too strict for any API</option>
+<explain><p>Time-based assertions flake on a busy machine and pass on a fast one. A new query per item or a missing limit changes the count every time.</p></explain>
+</question>
+
+<question id="zpf-middleware" type="choice">
+<q>A middleware parses every response body and writes it into a log line. What is its cost, compared to one that logs status, size and duration?</q>
+<option>The same, because logging is asynchronous</option>
+<option correct>Proportional to the body size on every request; for large bodies it can cost more than the handler</option>
+<option>Zero, because the body is already a string</option>
+<option>Lower, because it avoids a second log line</option>
+<explain><p>Parsing and serializing the body again multiplies the work of producing it. Log facts about the response, not the response.</p></explain>
+</question>
+
+<question id="zpf-server-timing" type="choice">
+<q><code>createTimingMiddleware()</code> adds a <code>Server-Timing</code> header. What is the concern on a public API?</q>
+<option>It breaks CORS</option>
+<option correct>Timings help an outsider tell cached from uncached answers, and similar timing differences</option>
+<option>It doubles the response size</option>
+<option>Browsers reject it</option>
+<explain><p>Timing information can leak facts, such as whether a record was already cached. Send it to internal clients, or sample it.</p></explain>
+</question>
+
+<question id="zpf-resolution" type="choice">
+<q>An idle process with <code>monitorEventLoopDelay({ resolution: 20 })</code> reports a p50 of about 20 ms. Why?</q>
+<option>The process is not idle</option>
+<option correct>The histogram records the time between samples, which includes the 20 ms interval itself; subtract it to get the delay</option>
+<option>Node adds 20 ms to every timer</option>
+<option>The unit is microseconds</option>
+<explain><p>The value is the time from one sample to the next. An idle loop at a 20 ms resolution reports about 20 ms; only the part above the resolution is lateness.</p></explain>
+</question>
+
+<question id="zpf-out-percentiles" type="output">
+<q>What does this print?</q>
+<code file="percentiles.js">
+const ms = [12, 15, 11, 14, 13, 16, 12, 900, 15, 14];
+const sorted = [...ms].sort((a, b) => a - b);
+const mean = ms.reduce((a, b) => a + b, 0) / ms.length;
+const nearestRank = (p) => sorted[Math.ceil((p / 100) * sorted.length) - 1];
+console.log("mean", mean, "p50", nearestRank(50), "p95", nearestRank(95));
+</code>
+<option correct>mean 102.2 p50 14 p95 900</option>
+<option>mean 14 p50 14 p95 16</option>
+<option>mean 102.2 p50 13.5 p95 16</option>
+<option>mean 102.2 p50 14 p95 16</option>
+<explain><p>One 900 ms request pulls the mean to 102.2, which describes no request. The nearest-rank p95 of 10 values is the 10th value, the slow one; the median is the 5th, 14.</p></explain>
+</question>
+
+<question id="zpf-out-littles" type="output">
+<q>What does this print?</q>
+<code file="littles.js">
+const busy = (perSecond, secondsEach) => Math.ceil(perSecond * secondsEach);
+
+console.log(busy(400, 0.005), busy(400 * 51, 0.005), busy(125, 0.04), busy(50, 2));
+</code>
+<option correct>2 102 5 100</option>
+<option>2 51 5 100</option>
+<option>2 102 125 100</option>
+<option>1 102 5 25</option>
+<explain><p>Busy slots = arrival rate × time each. 400 × 0.005 = 2; 51 queries per request multiplies the rate; 125 emails a second at 40 ms keep 5 connections busy; 50 jobs a second that take 2 s each need 100 slots.</p></explain>
+</question>
+
+<question id="zpf-out-lag" type="output">
+<q>A lag monitor samples every 10 ms. What does this print?</q>
+<code file="late.js">
+const SAMPLE_MS = 10;
+const late = (ns) => Math.max(0, Math.round(ns / 1e6) - SAMPLE_MS);
+
+console.log(late(10_300_000), late(9_200_000), late(479_000_000));
+</code>
+<option correct>0 0 469</option>
+<option>10 9 479</option>
+<option>0 -1 469</option>
+<option>0.3 0 469</option>
+<explain><p>The recorded values include the 10 ms sampling interval. 10.3 ms rounds to 10, minus 10 is 0; 9.2 rounds to 9, and <code>Math.max</code> keeps it at 0; 479 ms means the loop was 469 ms late.</p></explain>
+</question>
+
+<question id="zpf-out-nplus1" type="output">
+<q>What does this print?</q>
+<code file="count.js">
+let queries = 0;
+const users = new Map([["u-1", "Ada"], ["u-2", "Linus"]]);
+const db = {
+  async tasks() { queries++; return [{ id: 1, assignee: "u-1" }, { id: 2, assignee: "u-2" }, { id: 3, assignee: "u-1" }]; },
+  async user(id) { queries++; return users.get(id); },
+  async usersByIds(ids) { queries++; return ids.map((id) => [id, users.get(id)]); },
+};
+
+const tasks = await db.tasks();
+await Promise.all(tasks.map((t) => db.user(t.assignee)));
+console.log("one by one:", queries);
+
+queries = 0;
+const again = await db.tasks();
+const names = new Map(await db.usersByIds([...new Set(again.map((t) => t.assignee))]));
+console.log("batched:", queries, names.get("u-1"));
+</code>
+<option correct>one by one: 4
+batched: 2 Ada</option>
+<option>one by one: 3
+batched: 2 Ada</option>
+<option>one by one: 4
+batched: 3 Ada</option>
+<option>one by one: 2
+batched: 2 undefined</option>
+<explain><p>One query for the list plus one per task is 1 + 3 = 4. The batched version makes one list query and one query for the deduplicated ids, however many tasks there are.</p></explain>
+</question>
+
+<question id="zpf-out-keyset" type="output">
+<q>What does this print?</q>
+<code file="keyset.js">
+const tasks = Array.from({ length: 7 }, (_, i) => ({ id: i + 1 }));
+
+function page(after, limit) {
+  const items = tasks.filter((t) => t.id > after).slice(0, limit);
+  return { ids: items.map((t) => t.id), next: items.length === limit ? items.at(-1).id : undefined };
+}
+
+let cursor = 0;
+do {
+  const p = page(cursor, 3);
+  console.log(p.ids.join(","), p.next);
+  cursor = p.next;
+} while (cursor !== undefined);
+</code>
+<option correct>1,2,3 3
+4,5,6 6
+7 undefined</option>
+<option>1,2,3 3
+4,5,6 6
+7 7</option>
+<option>1,2,3 4
+5,6,7 undefined</option>
+<option>1,2,3 3
+3,4,5 5
+5,6,7 undefined</option>
+<explain><p>Each page starts after the last id of the previous page. A short page means there is nothing more, so <code>next</code> is <code>undefined</code> and the loop stops.</p></explain>
+</question>
+
+<question id="zpf-out-bytes" type="output">
+<q>What does this print?</q>
+<code file="bytes.js">
+const tasks = Array.from({ length: 1000 }, (_, i) => ({ id: i, title: "Buy milk" }));
+const bytes = (value) => new TextEncoder().encode(JSON.stringify(value)).length;
+const pageOf = (n) => ({ items: tasks.slice(0, n), next: n - 1 });
+console.log(bytes(tasks) > 20 * bytes(pageOf(50)), bytes(pageOf(0)));
+</code>
+<option correct>false 21</option>
+<option>true 21</option>
+<option>false 2</option>
+<option>true 12</option>
+<explain><p>Each task is about 28 bytes, so 1,000 tasks is about 27 KB and a page of 50 about 1.4 KB: 19 times, not more than 20. The empty page is <code>{"items":[],"next":-1}</code>, 21 bytes. Serialization cost and size grow with the number of items, which is why a hard page limit matters.</p></explain>
+</question>
+
+<question id="zpf-out-hotkeys" type="output">
+<q>What does this print?</q>
+<code file="hot.js">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+const keys = ["board.launch", "task.1", "board.launch", "board.launch", "task.2", "board.launch"];
+for (const key of keys) await cache.getOrSet(key, async () => ({ key }));
+console.log(cache.getHotKeys(1)[0].hits, cache.getStats().hitRate);
+</code>
+<option correct>3 0.5</option>
+<option>4 0.5</option>
+<option>3 0.6666666666666666</option>
+<option>4 0.6666666666666666</option>
+<explain><p>The first read of each key is a miss that loads and stores it; hot-key tracking counts hits. <code>board.launch</code> was read four times: one miss, then 3 hits. Six reads, three hits: a hit rate of 0.5.</p></explain>
+</question>
+
+<question id="zpf-out-coalesce" type="output">
+<q>What does this print?</q>
+<code file="coalesce.js">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+let loads = 0;
+const load = async () => {
+  loads++;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  return { tasks: 12 };
+};
+const results = await Promise.all(Array.from({ length: 50 }, () => cache.getOrSet("board.launch", load)));
+const later = await cache.getOrSet("board.launch", load);
+console.log(loads, results.length, later.cached);
+</code>
+<option correct>1 50 true</option>
+<option>50 50 true</option>
+<option>1 50 false</option>
+<option>2 50 true</option>
+<explain><p>Concurrent misses for the same key wait for the one load in flight instead of starting their own, so the database is asked once. The request after that finds the stored value.</p></explain>
+</question>
+
+<question id="zpf-out-bounded" type="output">
+<q>What does this print?</q>
+<code file="bounded.js">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter({ maxEntries: 100 }) });
+const plain = new Map();
+for (let i = 0; i < 5000; i++) {
+  plain.set(`req-${i}`, i);
+  await cache.set(`req-${i}`, i);
+}
+console.log(plain.size, await cache.size());
+</code>
+<option correct>5000 100</option>
+<option>5000 5000</option>
+<option>100 100</option>
+<option>5000 0</option>
+<explain><p>The map grows with every request; the cache evicts to stay at <code>maxEntries</code>. Keyed by request id, the map is a slow leak.</p></explain>
+</question>
+
+<question id="zpf-out-jitter" type="output">
+<q>This TTL jitter uses a simple sum of character codes as its hash. What does it print?</q>
+<code file="jitter.js">
+function jitteredTtl(key, baseMs) {
+  let hash = 0;
+  for (const char of key) hash = (hash + char.charCodeAt(0)) % 100;
+  return baseMs + hash * (baseMs / 1000);
+}
+
+console.log(jitteredTtl("ab", 60_000), jitteredTtl("ba", 60_000), jitteredTtl("ab", 60_000) === jitteredTtl("ab", 60_000));
+</code>
+<option correct>65700 65700 true</option>
+<option>65700 65760 true</option>
+<option>60000 60000 true</option>
+<option>65700 65700 false</option>
+<explain><p>97 + 98 = 195, and 195 % 100 = 95, so both keys get 60,000 + 95 × 60 = 65,700 ms. The same key always gets the same TTL, which is good, but a sum ignores the order of the characters, so keys made of the same letters collide. The lesson's FNV-1a hash mixes the order in, spreading such keys apart.</p></explain>
+</question>
+
+<question id="zpf-out-pool" type="output">
+<q>Eight queries arrive at once at a pool of 3 connections. What does this print?</q>
+<code file="pool.js">
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let free = 3;
+let mostWaiting = 0;
+let waitedCount = 0;
+const waiting = [];
+
+async function query() {
+  if (free > 0) free--;
+  else {
+    waitedCount++;
+    await new Promise((resolve) => { waiting.push(resolve); mostWaiting = Math.max(mostWaiting, waiting.length); });
+  }
+  await sleep(10);
+  const next = waiting.shift();
+  if (next) next();
+  else free++;
+}
+
+await Promise.all(Array.from({ length: 8 }, query));
+console.log(mostWaiting, waitedCount, free);
+</code>
+<option correct>5 5 3</option>
+<option>8 5 3</option>
+<option>5 8 0</option>
+<option>5 5 0</option>
+<explain><p>Three queries take the free connections; the other five wait, all at the same moment. Each finished query hands its connection to the next waiter, and when nobody waits the connection goes back, so all 3 are free at the end.</p></explain>
+</question>
+
+<question id="zpf-out-queue" type="output">
+<q>What does this print?</q>
+<code file="queue.js">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const queue = createInMemoryQueue(createQueueName("reminders"), { concurrency: 4 });
+let running = 0;
+let mostAtOnce = 0;
+queue.process("remind", async () => {
+  running++;
+  mostAtOnce = Math.max(mostAtOnce, running);
+  await wait(20);
+  running--;
+});
+for (let n = 1; n <= 10; n++) await queue.add("remind", { n });
+while ((await queue.getStats()).succeeded < 10) await wait(10);
+console.log(mostAtOnce, (await queue.getStats()).succeeded);
+await queue.close();
+</code>
+<option correct>4 10</option>
+<option>10 10</option>
+<option>1 10</option>
+<option>4 4</option>
+<explain><p>Concurrency caps how many jobs run at the same time; all ten still finish. Throughput then depends on how long each job takes and what it waits for.</p></explain>
+</question>
+
+<question id="zpf-out-sliding" type="output">
+<q>A sliding-log limiter copies a client's timestamp list on every check. What does this print?</q>
+<code file="sliding.js">
+function copiesFor(max, checks) {
+  let list = [];
+  let copied = 0;
+  for (let i = 0; i < checks; i++) {
+    copied += list.length;
+    list = list.slice();
+    if (list.length < max) list.push(i);
+  }
+  return copied;
+}
+
+console.log(copiesFor(3, 6), copiesFor(1000, 6));
+</code>
+<option correct>12 15</option>
+<option>18 15</option>
+<option>12 12</option>
+<option>6 6</option>
+<explain><p>With a max of 3, the list stops at 3 entries: 0+1+2+3+3+3 = 12 copies. With a high max it keeps growing: 0+1+2+3+4+5 = 15, and in general about n²/2 for n checks. That is why a huge limit made the limiter a hot spot.</p></explain>
+</question>
+
+<question id="zpf-code-percentile" type="code" file="percentile.js">
+<q><p>Write <code>percentile(values, p)</code> using the nearest-rank method: sort a copy ascending and return the value at position <code>ceil(p / 100 × n)</code>, counting from 1. Return <code>undefined</code> for an empty list. Do not change the input array.</p></q>
+<starter>
+function percentile(values, p) {
+  // your code here
+}
+
+const latencies = [120, 15, 14, 13, 900, 16, 12, 18, 14, 15];
+console.log(percentile(latencies, 50), percentile(latencies, 90), percentile(latencies, 99), percentile([], 50));
+console.log(latencies[0]);
+</starter>
+<solution>
+function percentile(values, p) {
+  if (values.length === 0) return undefined;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.max(1, Math.ceil((p / 100) * sorted.length));
+  return sorted[rank - 1];
+}
+
+const latencies = [120, 15, 14, 13, 900, 16, 12, 18, 14, 15];
+console.log(percentile(latencies, 50), percentile(latencies, 90), percentile(latencies, 99), percentile([], 50));
+console.log(latencies[0]);
+</solution>
+<expected>
+15 120 900 undefined
+120
+</expected>
+<explain><p>Sort with a numeric comparator (the default sort compares strings, putting 120 before 14), and sort a copy so the caller's data stays in order. Real monitoring systems estimate percentiles from histograms, but the idea is the same.</p></explain>
+</question>
+
+<question id="zpf-code-littles" type="code" file="size-pool.js">
+<q><p>Write <code>poolSize({ requestsPerSecond, queriesPerRequest, queryMs, processes })</code> that returns the connections needed <em>per process</em> by Little's law, rounded up, plus 50% headroom (also rounded up), with a minimum of 2.</p></q>
+<starter>
+function poolSize({ requestsPerSecond, queriesPerRequest, queryMs, processes }) {
+  // your code here
+}
+
+console.log(poolSize({ requestsPerSecond: 400, queriesPerRequest: 2, queryMs: 5, processes: 4 }));
+console.log(poolSize({ requestsPerSecond: 400, queriesPerRequest: 51, queryMs: 5, processes: 4 }));
+console.log(poolSize({ requestsPerSecond: 10, queriesPerRequest: 1, queryMs: 3, processes: 2 }));
+</starter>
+<solution>
+function poolSize({ requestsPerSecond, queriesPerRequest, queryMs, processes }) {
+  const busyTotal = requestsPerSecond * queriesPerRequest * (queryMs / 1000);
+  const perProcess = Math.ceil(busyTotal / processes);
+  return Math.max(2, Math.ceil(perProcess * 1.5));
+}
+
+console.log(poolSize({ requestsPerSecond: 400, queriesPerRequest: 2, queryMs: 5, processes: 4 }));
+console.log(poolSize({ requestsPerSecond: 400, queriesPerRequest: 51, queryMs: 5, processes: 4 }));
+console.log(poolSize({ requestsPerSecond: 10, queriesPerRequest: 1, queryMs: 3, processes: 2 }));
+</solution>
+<expected>
+2
+39
+2
+</expected>
+<explain><p>400 × 2 × 0.005 = 4 busy connections over 4 processes is 1 each, 2 with headroom. The N+1 version needs 102 in total, about 26 per process and 39 with headroom: across 4 processes that is more than PostgreSQL's default 100. The number tells you to fix the queries first.</p></explain>
+</question>
+
+<question id="zpf-code-counting" type="code" file="counting-db.js">
+<q><p>Write <code>withQueryCount(db)</code>. It returns <code>{ db, count }</code>: a wrapped object whose <code>query(sql, params)</code> calls the original and increments a counter, and a function <code>count()</code> that returns how many queries were made. Use it to show that <code>loadBoard</code> makes 4 queries.</p></q>
+<starter>
+const realDb = {
+  async query(sql, params) {
+    if (sql.startsWith("SELECT id, assignee")) return [{ id: 1, assignee: "u-1" }, { id: 2, assignee: "u-2" }, { id: 3, assignee: "u-3" }];
+    return [{ name: `User ${params[0]}` }];
+  },
+};
+
+function withQueryCount(db) {
+  // your code here
+}
+
+async function loadBoard(db) {
+  const tasks = await db.query("SELECT id, assignee FROM tasks", []);
+  return Promise.all(tasks.map(async (t) => ({ ...t, name: (await db.query("SELECT name FROM users WHERE id = $1", [t.assignee]))[0].name })));
+}
+
+const counted = withQueryCount(realDb);
+const board = await loadBoard(counted.db);
+console.log(board.length, counted.count());
+</starter>
+<solution>
+const realDb = {
+  async query(sql, params) {
+    if (sql.startsWith("SELECT id, assignee")) return [{ id: 1, assignee: "u-1" }, { id: 2, assignee: "u-2" }, { id: 3, assignee: "u-3" }];
+    return [{ name: `User ${params[0]}` }];
+  },
+};
+
+function withQueryCount(db) {
+  let queries = 0;
+  return {
+    db: {
+      query(sql, params) {
+        queries += 1;
+        return db.query(sql, params);
+      },
+    },
+    count: () => queries,
+  };
+}
+
+async function loadBoard(db) {
+  const tasks = await db.query("SELECT id, assignee FROM tasks", []);
+  return Promise.all(tasks.map(async (t) => ({ ...t, name: (await db.query("SELECT name FROM users WHERE id = $1", [t.assignee]))[0].name })));
+}
+
+const counted = withQueryCount(realDb);
+const board = await loadBoard(counted.db);
+console.log(board.length, counted.count());
+</solution>
+<expected>
+3 4
+</expected>
+<explain><p>Wrapping the one function every query goes through gives a count without changing any repository code. In a test, assert the count; in development, log it per request.</p></explain>
+</question>
+
+<question id="zpf-code-keyset" type="code" file="keyset-page.js">
+<q><p>Write <code>listPage(tasks, { limit = 50, after })</code> for tasks sorted by <code>id</code>. Refuse a <code>limit</code> that is not a whole number from 1 to 100 by returning <code>{ error: "limit must be 1-100" }</code>. Otherwise return <code>{ items, next }</code>, where <code>next</code> is the last id when the page is full, and <code>undefined</code> otherwise.</p></q>
+<starter>
+function listPage(tasks, { limit = 50, after } = {}) {
+  // your code here
+}
+
+const tasks = Array.from({ length: 5 }, (_, i) => ({ id: i + 1, title: `Task ${i + 1}` }));
+console.log(JSON.stringify(listPage(tasks, { limit: 2 })));
+console.log(JSON.stringify(listPage(tasks, { limit: 2, after: 4 })));
+console.log(JSON.stringify(listPage(tasks, { limit: 1000 })));
+</starter>
+<solution>
+function listPage(tasks, { limit = 50, after } = {}) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) return { error: "limit must be 1-100" };
+  const items = tasks.filter((task) => after === undefined || task.id > after).slice(0, limit);
+  return { items, next: items.length === limit ? items.at(-1).id : undefined };
+}
+
+const tasks = Array.from({ length: 5 }, (_, i) => ({ id: i + 1, title: `Task ${i + 1}` }));
+console.log(JSON.stringify(listPage(tasks, { limit: 2 })));
+console.log(JSON.stringify(listPage(tasks, { limit: 2, after: 4 })));
+console.log(JSON.stringify(listPage(tasks, { limit: 1000 })));
+</solution>
+<expected>
+{"items":[{"id":1,"title":"Task 1"},{"id":2,"title":"Task 2"}],"next":2}
+{"items":[{"id":5,"title":"Task 5"}]}
+{"error":"limit must be 1-100"}
+</expected>
+<explain><p><code>JSON.stringify</code> leaves out a property whose value is <code>undefined</code>, so the last page has no <code>next</code>. The hard maximum is what keeps one request from asking for everything again.</p></explain>
+</question>
+
+<question id="zpf-code-topkeys" type="code" file="top-keys-code.js">
+<q><p>Write <code>hotKeys(log, n)</code> that returns the <code>n</code> most frequent keys as <code>"key count"</code> strings, most frequent first, ties in alphabetical order.</p></q>
+<starter>
+function hotKeys(log, n) {
+  // your code here
+}
+
+const log = ["board.launch", "task.7", "board.launch", "task.2", "task.7", "board.launch", "task.2", "board.q4"];
+console.log(hotKeys(log, 3));
+</starter>
+<solution>
+function hotKeys(log, n) {
+  const counts = new Map();
+  for (const key of log) counts.set(key, (counts.get(key) ?? 0) + 1);
+  return [...counts]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, n)
+    .map(([key, count]) => `${key} ${count}`);
+}
+
+const log = ["board.launch", "task.7", "board.launch", "task.2", "task.7", "board.launch", "task.2", "board.q4"];
+console.log(hotKeys(log, 3));
+</solution>
+<expected>
+[ 'board.launch 3', 'task.2 2', 'task.7 2' ]
+</expected>
+<explain><p>Count with a <code>Map</code>, then sort by count and break ties by name so the output is stable. A key with a large share of all reads is a candidate for a local cache layer.</p></explain>
+</question>
+
+<question id="zpf-code-budget" type="code" file="budget.js">
+<q><p>Write <code>checkBudget(name, measured, budget)</code> that prints one line per budget key, <code>PASS</code> or <code>FAIL</code>, in the form <code>PASS  GET /tasks queries 2 &lt;= 2</code>, and returns <code>true</code> only if every measured value is within its budget.</p></q>
+<starter>
+function checkBudget(name, measured, budget) {
+  // your code here
+}
+
+const ok1 = checkBudget("GET /tasks", { queries: 2, bytes: 7157 }, { queries: 2, bytes: 8192 });
+const ok2 = checkBudget("GET /board", { queries: 51, bytes: 5200 }, { queries: 2, bytes: 8192 });
+console.log(ok1, ok2);
+</starter>
+<solution>
+function checkBudget(name, measured, budget) {
+  let ok = true;
+  for (const [key, limit] of Object.entries(budget)) {
+    const value = measured[key];
+    const pass = value <= limit;
+    if (!pass) ok = false;
+    console.log(`${pass ? "PASS" : "FAIL"}  ${name} ${key} ${value} <= ${limit}`);
+  }
+  return ok;
+}
+
+const ok1 = checkBudget("GET /tasks", { queries: 2, bytes: 7157 }, { queries: 2, bytes: 8192 });
+const ok2 = checkBudget("GET /board", { queries: 51, bytes: 5200 }, { queries: 2, bytes: 8192 });
+console.log(ok1, ok2);
+</solution>
+<expected>
+PASS  GET /tasks queries 2 <= 2
+PASS  GET /tasks bytes 7157 <= 8192
+FAIL  GET /board queries 51 <= 2
+PASS  GET /board bytes 5200 <= 8192
+true false
+</expected>
+<explain><p>Report every budget, not just the first failure, so one run shows everything that regressed. Budgets on counts and bytes are exact, so they never flake on a slow machine.</p></explain>
+</question>
+
+<question id="zpf-code-lru" type="code" file="lru.js">
+<q><p>Write <code>createBoundedMap(max)</code> with <code>get(key)</code>, <code>set(key, value)</code> and <code>size()</code>. When a <code>set</code> would exceed <code>max</code>, remove the least recently used key; a <code>get</code> counts as a use.</p></q>
+<starter>
+function createBoundedMap(max) {
+  // your code here
+}
+
+const quotes = createBoundedMap(3);
+quotes.set("rice", 950_000);
+quotes.set("beans", 420_000);
+quotes.set("oil", 610_000);
+quotes.get("rice");
+quotes.set("salt", 90_000);
+console.log(quotes.size(), quotes.get("beans"), quotes.get("rice"), quotes.get("salt"));
+</starter>
+<solution>
+function createBoundedMap(max) {
+  const entries = new Map();
+  return {
+    get(key) {
+      if (!entries.has(key)) return undefined;
+      const value = entries.get(key);
+      entries.delete(key);
+      entries.set(key, value);
+      return value;
+    },
+    set(key, value) {
+      entries.delete(key);
+      entries.set(key, value);
+      if (entries.size > max) entries.delete(entries.keys().next().value);
+    },
+    size: () => entries.size,
+  };
+}
+
+const quotes = createBoundedMap(3);
+quotes.set("rice", 950_000);
+quotes.set("beans", 420_000);
+quotes.set("oil", 610_000);
+quotes.get("rice");
+quotes.set("salt", 90_000);
+console.log(quotes.size(), quotes.get("beans"), quotes.get("rice"), quotes.get("salt"));
+</solution>
+<expected>
+3 undefined 950000 90000
+</expected>
+<explain><p>A <code>Map</code> iterates in insertion order, so re-inserting a key on every use keeps the least recently used key first. Reading <code>rice</code> saved it; <code>beans</code> was the oldest and was evicted. The memory used is now bounded by <code>max</code>, whatever the traffic.</p></explain>
+</question>

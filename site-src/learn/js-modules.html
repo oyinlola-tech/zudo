@@ -4,7 +4,8 @@ description: Split a program into files with ES modules, understand the older Co
 minutes: 40
 youNeed: Asynchronous JavaScript, and the lessons before it
 youBuild: A task feature split into modules with a clear public entry point, and a circular dependency found and fixed
-keywords: javascript modules, es modules, import export, named export, default export, import alias, import * as, commonjs, require, module.exports, cjs, circular dependency, barrel file, index.js, project structure
+keywords: javascript modules, es modules, import export, named export, default export, import alias, import * as, commonjs, require, module.exports, cjs, require esm, circular dependency, barrel file, index.js, project structure
+objectives: Split a program into ES modules with import and export | Choose named exports over default exports, and rename imports with as and import * as | Explain that a module runs once and its state is shared by every importer | Read CommonJS require and module.exports, and know how the two systems load each other in Node.js 24 | Give a feature one public entry point and find and break a circular dependency
 ---
 <section>
 <h2 id="why">Why modules exist</h2>
@@ -20,7 +21,7 @@ keywords: javascript modules, es modules, import export, named export, default e
 
 <section>
 <h2 id="esm">ES modules: import and export</h2>
-<p>Make a new folder for this lesson, run <code>npm init -y</code> and <code>npm pkg set type=module</code> in it as in <a href="/learn/setup">Your first program</a>, then create two files. The first one holds the tasks:</p>
+<p>Make a new folder for this lesson, run <code>npm init -y</code> and <code>npm pkg set type=module</code> in it as in <a href="/learn/setup#package-json">Set up your computer</a>, then create two files. The first one holds the tasks:</p>
 <example file="tasks.js" project="store">
 const tasks = [
   { id: 1, title: "Buy milk", done: false },
@@ -70,7 +71,7 @@ $ node main.js
 <li>A package import has no <code>./</code>: <code>import { schema } from "@zudojs/schema"</code>. Node.js finds it in the <code>node_modules</code> folder that <code>npm install</code> fills. <a href="/learn/npm-packages">npm and packages</a> covers that.</li>
 <li><code>import</code> lines go at the top of the file. They run before any other code in the file.</li>
 </ul>
-<warn>If you see <code>SyntaxError: Cannot use import statement outside a module</code>, your <code>package.json</code> is missing <code>"type": "module"</code>. Run <code>npm pkg set type=module</code>.</warn>
+<warn>If you see <code>SyntaxError: Cannot use import statement outside a module</code>, your <code>package.json</code> says <code>"type": "commonjs"</code>, which is what <code>npm init -y</code> writes. Run <code>npm pkg set type=module</code>. (If <code>package.json</code> has no <code>"type"</code> at all, Node.js 24 notices the <code>import</code>, runs the file as an ES module anyway, and prints a warning asking you to add <code>"type": "module"</code>.)</warn>
 </section>
 
 <section>
@@ -177,13 +178,13 @@ console.log(taskId(), userId(), taskId());
 counter.js is running
 task-1 user-2 task-3
 </output>
-<p><code>counter.js</code> printed its message once, and the two modules share one <code>count</code>. This is useful (one database connection for the whole app, created in one module) and a trap (state you thought was private to <code>tasks.js</code> is shared). If each part needs its own counter, export a function that <em>creates</em> one, like <code>makeCounter</code> in <a href="/learn/js-scope">Scope</a>.</p>
+<p><code>counter.js</code> printed its message once, and the two modules share one <code>count</code>. This is useful (one database connection for the whole app, created in one module) and a trap (state you thought was private to <code>tasks.js</code> is shared). If each part needs its own counter, export a function that <em>creates</em> one, like <code>makeCounter</code> in <a href="/learn/js-scope#closures">Scope and how code runs</a>.</p>
 </section>
 
 <section>
 <h2 id="commonjs">CommonJS: require and module.exports</h2>
 <p>Before ES modules existed, Node.js had its own system, <strong>CommonJS</strong>. Many older packages and tutorials still use it, so you need to read it. A CommonJS file assigns what it shares to <code>module.exports</code>, and another file loads it with <code>require</code>.</p>
-<p>In a project with <code>"type": "module"</code>, a file must end in <code>.cjs</code> to be treated as CommonJS. (In a project without <code>"type": "module"</code>, every <code>.js</code> file is CommonJS.) Here is the task store again:</p>
+<p>In a project with <code>"type": "module"</code>, a file must end in <code>.cjs</code> to be treated as CommonJS. (In a project with <code>"type": "commonjs"</code> it is the other way round: every <code>.js</code> file is CommonJS, and a file must end in <code>.mjs</code> to be an ES module.) Here is the task store again:</p>
 <example file="tasks.cjs" project="cjs" browser="no">
 const tasks = [];
 
@@ -228,7 +229,7 @@ function object
 <li><code>const { addTask } = require(...)</code> is just destructuring the returned object.</li>
 <li>These examples are "Node.js only": the browser terminal only understands ES modules.</li>
 </ul>
-<p>An ES module can import a CommonJS file. Its <code>module.exports</code> object arrives as the default export, and Node.js also detects simple named exports. The reverse, <code>require</code> in an ES module, does not exist:</p>
+<p>The two systems can load each other, within limits. An ES module can import a CommonJS file: its <code>module.exports</code> object arrives as the default export, and Node.js also detects simple named exports. Inside an ES module, <code>require</code> itself is not defined:</p>
 <example file="app.js" project="cjs" browser="no">
 import tasks from "./tasks.cjs";
 import { addTask } from "./tasks.cjs";
@@ -241,12 +242,45 @@ console.log(typeof require);
 [ { id: 1, title: 'Plan week', done: false } ]
 undefined
 </output>
+<p>The other direction works too. Since Node.js 22.12, and so in Node.js 24, a CommonJS file can <code>require()</code> an ES module, as long as that module does not use top-level <code>await</code>. The result is the module's namespace object, with every named export as a property and the default export under <code>default</code>. This is what lets older CommonJS code use newer packages that only ship ES modules:</p>
+<file name="prices.js" project="cjs">
+export const VAT_PERCENT = 7.5;
+
+export function withVat(kobo) {
+  return Math.round(kobo * (1 + VAT_PERCENT / 100));
+}
+</file>
+<example file="report.cjs" project="cjs" browser="no">
+const prices = require("./prices.js");
+
+console.log(prices.VAT_PERCENT, prices.withVat(1000000));
+console.log(Object.keys(prices));
+</example>
+<output>
+7.5 1075000
+[ 'VAT_PERCENT', 'withVat' ]
+</output>
+<p>If the ES module does use top-level <code>await</code>, <code>require</code> throws an error with the code <code>ERR_REQUIRE_ASYNC_MODULE</code>, because <code>require</code> must finish synchronously. <a href="/learn/js-module-systems#interop">Module systems in depth</a> covers every interop rule, including how older Node.js versions behave.</p>
 <p>For new code, always write ES modules. Use this knowledge to read older code and to understand why some packages are imported with a default import.</p>
 </section>
 
 <section>
 <h2 id="boundaries">Module boundaries: a public entry point</h2>
-<p>As a feature grows, it becomes several files: one that stores data, one with the rules, maybe one with helpers. Other parts of the app should not reach into all of them. Give the feature's folder one <strong>entry point</strong>, usually <code>index.js</code>, that re-exports only the public functions. <code>export { name } from "./file.js"</code> re-exports without importing into the current file:</p>
+<p>As a feature grows, it becomes several files: one that stores data, one with the rules, maybe one with helpers. Other parts of the app should not reach into all of them.</p>
+<reason title="Before you split: what should the rest of the app see?">
+<p>The tasks feature has a store (<code>insert</code>, <code>all</code>) and a service with the rules (<code>createTask</code> trims and validates the title, <code>listTasks</code>). Before you decide what to export, think:</p>
+<ul>
+<li>If other features could import <code>insert</code> directly, which rule could they skip?</li>
+<li>Next year the store moves from an array to a database. Which files should have to change?</li>
+<li>Where would a reader look to find out what the tasks feature offers?</li>
+</ul>
+<answer>
+<p><strong>Skipped rules:</strong> <code>insert</code> stores whatever it is given, so a direct call would save a task with an empty or untrimmed title. Only <code>createTask</code> may be public.</p>
+<p><strong>Changes:</strong> only the files inside <code>tasks/</code>. If the rest of the app imports only the service functions, swapping the store behind them is invisible to every other file.</p>
+<p><strong>One place to look:</strong> a single entry file that re-exports the public functions is the feature's table of contents, and the only door into it.</p>
+</answer>
+</reason>
+<p>Give the feature's folder one <strong>entry point</strong>, usually <code>index.js</code>, that re-exports only the public functions. <code>export { name } from "./file.js"</code> re-exports without importing into the current file:</p>
 <example file="tasks/store.js" project="feature" browser="no">
 const rows = [];
 
@@ -336,7 +370,7 @@ Node.js v24.19.0
 <ol>
 <li><code>main.js</code> imports <code>tasks.js</code>. Before running <code>tasks.js</code>, Node.js must run what <em>it</em> imports: <code>logger.js</code>.</li>
 <li><code>logger.js</code> imports <code>tasks.js</code>, which is already being loaded, so Node.js does not start it again. It runs <code>logger.js</code> first.</li>
-<li><code>logger.js</code> reads <code>DEFAULT_PRIORITY</code> on line 3, but the line in <code>tasks.js</code> that creates it has not run yet. That is the temporal dead zone from <a href="/learn/js-scope">Scope</a>, across two files.</li>
+<li><code>logger.js</code> reads <code>DEFAULT_PRIORITY</code> on line 3, but the line in <code>tasks.js</code> that creates it has not run yet. That is the temporal dead zone from <a href="/learn/js-scope#hoisting">Scope and how code runs</a>, across two files.</li>
 </ol>
 <p>This error message, "Cannot access ... before initialization" pointing at an <em>imported</em> name, is the typical sign of a circular import. CommonJS is worse: if you rewrite the same three files with <code>require</code>, nothing crashes. <code>require</code> returns the half-finished exports object, the value is quietly <code>undefined</code>, and you only get a warning:</p>
 <shell title="Terminal on your computer">
@@ -377,7 +411,7 @@ createTask("Buy milk");
 <output>
 [tasks, default priority 3] created: Buy milk
 </output>
-<p>Now <code>main.js</code> → <code>tasks.js</code> → <code>logger.js</code> → <code>constants.js</code>, and <code>tasks.js</code> → <code>constants.js</code>. No arrow points back. Other ways to break a cycle: pass the value in as an argument instead of importing it, or merge two modules that cannot live without each other.</p>
+<p>Now <code>main.js</code> → <code>tasks.js</code> → <code>logger.js</code> → <code>constants.js</code>, and <code>tasks.js</code> → <code>constants.js</code>. No arrow points back. Other ways to break a cycle: pass the value in as an argument instead of importing it, or merge two modules that cannot live without each other. <a href="/learn/js-module-systems#circular">Module systems in depth</a> explains exactly how each system loads a cycle.</p>
 </section>
 
 <section>
@@ -486,9 +520,9 @@ console.log(LIMIT, paginate(items, 3));
 <li>Prefer named exports. A default export can be imported under any name, which makes code harder to search.</li>
 <li><code>import { a as b }</code> renames an import, and <code>import * as ns</code> gathers all exports into one object.</li>
 <li>A module runs once, and every importer shares its state.</li>
-<li>CommonJS uses <code>require</code> and <code>module.exports</code> (<code>.cjs</code> files in an ES module project). Read it, but write ES modules.</li>
+<li>CommonJS uses <code>require</code> and <code>module.exports</code> (<code>.cjs</code> files in an ES module project). An ES module can import CommonJS, and in Node.js 24 CommonJS can <code>require()</code> an ES module without top-level <code>await</code>. Read CommonJS, but write ES modules.</li>
 <li>Give each feature one public entry point, and keep its internals private.</li>
 <li>A circular import shows up as "Cannot access ... before initialization" (ESM) or a silent <code>undefined</code> (CommonJS). Break it by moving the shared part into a third module.</li>
 </ul>
-<p>That completes the JavaScript part. Next, you will leave the browser behind and look at Node.js itself: the runtime that runs your JavaScript on a server.</p>
+<p>That completes JavaScript fundamentals. The next course, Algorithms and data structures, puts the language to work on problems where speed matters. It starts with <a href="/learn/dsa-complexity">Big O and complexity</a>: how to measure how code slows down as data grows.</p>
 </section>

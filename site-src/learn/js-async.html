@@ -1,10 +1,11 @@
 ---
 title: Asynchronous JavaScript
-description: Learn why a backend waits without blocking, how callbacks, promises and async/await work, how errors travel through asynchronous code, and how to run work in sequence or in parallel.
+description: See why a backend waits without blocking, use callbacks, promises and async/await, handle errors in async code, and run work in sequence or in parallel.
 minutes: 50
 youNeed: Handling errors, and the lessons before it
 youBuild: A concurrent data loader that fetches several sources at once, with time limits and partial results
 keywords: javascript async await, synchronous asynchronous, blocking non-blocking, callback, callback hell, error-first callback, promise states, then catch finally, unhandled rejection, Promise.all, Promise.allSettled, Promise.race, Promise.any, sequential parallel, timeout, setTimeout, event loop
+objectives: Explain why a single-threaded backend must not block, and tell blocking from non-blocking code | Read error-first callbacks and explain the problems promises solve | Create and chain promises, and describe their three states | Write async functions with await and handle their errors with try and catch | Run independent work in parallel with Promise.all or allSettled, and put a time limit on slow work
 ---
 <section>
 <h2 id="why">Why a backend waits</h2>
@@ -48,7 +49,7 @@ console.log("busy loop finished");
 busy loop finished
 timer ran after at least 200 ms
 </output>
-<p>The timer asked to run after 0 ms, but it had to wait until the loop let go of the thread. On a server, a blocking loop like this freezes <em>every</em> request, not just one. <a href="/learn/node-runtime">The Node.js runtime lesson</a> shows the <strong>event loop</strong> that decides what runs next.</p>
+<p>The timer asked to run after 0 ms, but it had to wait until the loop let go of the thread. On a server, a blocking loop like this freezes <em>every</em> request, not just one. The part of JavaScript that decides what runs next, when the thread is free, is the <strong>event loop</strong>; <a href="/learn/js-event-loop">The event loop</a>, in the Advanced JavaScript course, explains its queues and ordering rules.</p>
 <p>Waiting for the outside world should be <strong>non-blocking</strong>: start the work, give the thread back, and get told when it is done. Node.js offers both styles for many tasks. Reading a file is a good example:</p>
 <example file="read-file.js" browser="no">
 import { readFile, readFileSync, writeFileSync } from "node:fs";
@@ -139,7 +140,7 @@ promise.then((task) => {
 true
 Found: Buy milk
 </output>
-<p><code>findTask</code> returns straight away with a promise. <code>.then(...)</code> registers what to do once the promise has its value.</p>
+<p><code>findTask</code> returns straight away with a promise. <code>.then(...)</code> registers what to do once the promise has its value. This lesson covers what you need to read and write everyday promise code; <a href="/learn/js-promises">Promises in depth</a> covers the exact guarantees, thenables and turning callback APIs into promises.</p>
 <h3>The three states of a promise</h3>
 <p>A promise is always in one of three states:</p>
 <ul>
@@ -236,7 +237,7 @@ Looking up task 2...
 undefined
 </output>
 <p>An <code>async</code> function always returns a promise, even when it returns a plain value. That is why the database helper is <code>async</code>: anything that talks to the outside world is. <code>await</code> is just a nicer way to write <code>.then</code>: underneath, it is the same promises.</p>
-<tip>In an ES module, which is what your project is since <a href="/learn/setup">Your first program</a>, you can also use <code>await</code> at the top level of a file, outside any function. The next examples do that.</tip>
+<tip>In an ES module, which is what your project is since <a href="/learn/setup#package-json">Set up your computer</a>, you can also use <code>await</code> at the top level of a file, outside any function. The next examples do that.</tip>
 </section>
 
 <section>
@@ -365,9 +366,10 @@ parallel is faster: true
 <ul>
 <li><code>Promise.all</code>: all values, or the <em>first</em> error. Use it when you need every result.</li>
 <li><code>Promise.allSettled</code>: never fails. Gives a report for each promise, <code>fulfilled</code> with a <code>value</code> or <code>rejected</code> with a <code>reason</code>. Use it when partial results are useful.</li>
-<li><code>Promise.race</code>: settles like whichever promise settles <em>first</em>, success or failure. Useful for time limits.</li>
+<li><code>Promise.race</code>: settles like whichever promise settles <em>first</em>, success or failure. The build below uses it for a time limit.</li>
 <li><code>Promise.any</code>: the first <em>success</em>. Fails only if all fail, with an <code>AggregateError</code>.</li>
 </ul>
+<p>The difference between the first two matters most in everyday code:</p>
 <example file="combinators.js">
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const succeed = (value, ms) => wait(ms).then(() => value);
@@ -381,25 +383,12 @@ try {
 
 const results = await Promise.allSettled([succeed("tasks", 20), fail("users down", 10)]);
 console.log("allSettled:", results.map((r) => r.status === "fulfilled" ? r.value : r.reason.message));
-
-console.log("race:", await Promise.race([succeed("fast", 10), succeed("slow", 50)]));
-
-console.log("any:", await Promise.any([fail("mirror 1 down", 10), succeed("mirror 2", 30)]));
-
-try {
-  await Promise.any([fail("a down", 10), fail("b down", 20)]);
-} catch (error) {
-  console.log(`any: ${error.name}: ${error.message}`, error.errors.map((e) => e.message));
-}
 </example>
 <output>
 all: users down
 allSettled: [ 'tasks', 'users down' ]
-race: fast
-any: mirror 2
-any: AggregateError: All promises were rejected [ 'a down', 'b down' ]
 </output>
-<p>Notice the first case: one failure made <code>Promise.all</code> fail, and the successful <code>tasks</code> value was lost. <code>allSettled</code> kept both results. <code>any</code> skipped the broken mirror, and when every source failed, its <code>AggregateError</code> listed all the reasons in <code>error.errors</code>.</p>
+<p>One failure made <code>Promise.all</code> fail, and the successful <code>tasks</code> value was lost. <code>allSettled</code> kept both results. <a href="/learn/js-promise-combinators">Combining promises</a>, in the Advanced JavaScript course, takes all four apart with timelines, adds <code>Promise.withResolvers</code>, and shows when each one is the right shape.</p>
 </section>
 
 <section>
@@ -410,6 +399,21 @@ any: AggregateError: All promises were rejected [ 'a down', 'b down' ]
 <li>If tasks or notifications fail, show the rest and report what is missing.</li>
 <li>No service may take longer than 150 ms. A slow service counts as failed.</li>
 </ul>
+<reason title="Before you build: what if one service is slow or down?">
+<p>Before writing the loader, think through the failure cases, because in production they happen every day:</p>
+<ul>
+<li>If you <code>await</code> the three services one after another, how long does the page take when each needs 50, 80 and 500 ms?</li>
+<li>If you use <code>Promise.all</code> and the notifications service fails, what does the user see?</li>
+<li>If a service never answers at all, what happens to the request?</li>
+<li>Which failure must still fail the whole request?</li>
+</ul>
+<answer>
+<p><strong>One after another</strong> takes the sum: 630 ms. The three calls do not depend on each other, so start them together and the page takes as long as the slowest one.</p>
+<p><strong><code>Promise.all</code></strong> rejects as soon as one promise rejects, so a broken notifications service would take the whole dashboard down with it, although tasks and the user loaded fine. For optional parts, <code>allSettled</code> keeps what succeeded.</p>
+<p><strong>A service that never answers</strong> keeps the request waiting forever, and <code>allSettled</code> waits for it too. Everything that leaves your process needs a time limit, after which you treat it as failed.</p>
+<p><strong>Required parts</strong> still fail the request: without the user there is no dashboard to show. So the loader checks the user's result first and throws if it failed.</p>
+</answer>
+</reason>
 <p>The time limit uses <code>Promise.race</code> between the real work and a timer that rejects. <code>finally</code> clears the timer, so it does not keep the program waiting once the work has finished:</p>
 <example file="loader.js">
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -457,7 +461,7 @@ console.log("finished within 200 ms:", Date.now() - started < 200);
 finished within 200 ms: true
 </output>
 <p>All three requests started together. The user and the tasks arrived in time. The notifications service would have taken 500 ms, so the time limit cut it off at 150 ms and it went into <code>missing</code>. The page still loaded in about 150 ms instead of 630 ms (50 + 80 + 500, one after another), and a slow service could not hold it hostage.</p>
-<p>This is the everyday work of a backend: start independent work in parallel, put a time limit on everything that leaves your process, and decide what is required and what is optional.</p>
+<p>This is the everyday work of a backend: start independent work in parallel, put a time limit on everything that leaves your process, and decide what is required and what is optional. The time limit here only stops <em>waiting</em>; the slow work itself keeps running in the background. <a href="/learn/js-concurrency">Concurrency and cancellation</a> shows how to really cancel it with <code>AbortController</code> and <code>AbortSignal.timeout</code>.</p>
 </section>
 
 <section>
@@ -580,4 +584,5 @@ batch done: [ 5, 6 ]
 <li><code>async</code> functions return promises, and <code>await</code> pauses until one settles. A rejection becomes a thrown error at <code>await</code>. Forgetting <code>await</code> leads to unhandled rejections, which crash Node.js.</li>
 <li>Run independent work in parallel. <code>all</code> needs every result, <code>allSettled</code> reports each one, <code>race</code> takes the first to settle (good for time limits), and <code>any</code> takes the first success.</li>
 </ul>
+<p>Next, <a href="/learn/js-modules">Modules</a>: split a program into files with <code>import</code> and <code>export</code>.</p>
 </section>
