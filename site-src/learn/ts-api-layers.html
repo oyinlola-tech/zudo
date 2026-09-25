@@ -157,7 +157,7 @@ export interface UserChanges {
 }
 </example>
 <h3>Failures as data</h3>
-<p>Parsers, services and repositories all need to say "this went wrong" without knowing HTTP. In <a href="/learn/bookstore-data">BookStore: validation and PostgreSQL</a> you used one error class per case. Here every expected failure is one member of a <strong>discriminated union</strong> (<a href="/learn/ts-unions">Unions</a>), carried by a single error class. The <code>kind</code> tells them apart, and each kind has exactly the data it needs:</p>
+<p>Parsers, services and repositories all need to say "this went wrong" without knowing HTTP. In <a href="/learn/bookstore-data">BookStore API: validation and PostgreSQL</a> you used one error class per case. Here every expected failure is one member of a <strong>discriminated union</strong> (<a href="/learn/ts-unions">Union types in depth</a>), carried by a single error class. The <code>kind</code> tells them apart, and each kind has exactly the data it needs:</p>
 <example file="src/shared/errors.ts" project="api" browser="no">
 export type Failure =
   | { readonly kind: "validation"; readonly issues: readonly string[] }
@@ -596,7 +596,7 @@ export class BookService {
 
 <section>
 <h2 id="repositories">Repositories: rows in, entities out</h2>
-<p>The infrastructure layer. The database module is the one from the data lesson, with a <code>users</code> table and timestamps added. The <code>CHECK</code> on <code>role</code> means the database itself refuses a role that does not exist:</p>
+<p>The infrastructure layer. The database module is the one from the data lesson, with the <code>users</code> table from the authentication lesson (now with a role and a display name) and creation times added. The <code>CHECK</code> on <code>role</code> means the database itself refuses a role that does not exist:</p>
 <example file="src/infra/database.ts" project="api" browser="no">
 import { PGlite } from "@electric-sql/pglite";
 
@@ -774,7 +774,7 @@ export class PgBookRepository implements BookRepository {
   }
 }
 </example>
-<p>Last, the crypto adapters. <code>ScryptHasher</code> is the password hashing from <a href="/learn/bookstore-auth#passwords">BookStore: authentication</a> behind the <code>PasswordHasher</code> port. <code>HmacTokens</code> is a cut-down version of that lesson's signed tokens: to keep this lesson short it has no expiry time, which your real project must keep.</p>
+<p>Last, the crypto adapters. <code>ScryptHasher</code> is the password hashing from <a href="/learn/bookstore-auth#passwords">BookStore API: authentication and tests</a> behind the <code>PasswordHasher</code> port. <code>HmacTokens</code> is a cut-down version of that lesson's signed tokens: to keep this lesson short it has no expiry time, which your real project must keep.</p>
 <example file="src/infra/security.ts" project="api" browser="no">
 import { createHmac, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 
@@ -1021,7 +1021,7 @@ controller-mistake.ts:6:25 - error TS2322: Type 'User' is not assignable to type
 
 Found 1 error in controller-mistake.ts:6
 </output>
-<p>Be honest about what saved you here: it was the <code>Date</code>. TypeScript's types are <strong>structural</strong>: an object with <em>extra</em> fields fits a type with fewer (<a href="/learn/ts-objects">Objects and interfaces</a>). If <code>createdAt</code> were a string in both types, <code>body: user</code> would compile and leak the hash. The return type catches some mistakes; the explicit mapper is what actually keeps the hash in.</p>
+<p>Be honest about what saved you here: it was the <code>Date</code>. TypeScript's types are <strong>structural</strong>: an object with <em>extra</em> fields fits a type with fewer (<a href="/learn/ts-objects">Interfaces, unions and literal types</a>). If <code>createdAt</code> were a string in both types, <code>body: user</code> would compile and leak the hash. The return type catches some mistakes; the explicit mapper is what actually keeps the hash in.</p>
 </section>
 
 <section>
@@ -1121,7 +1121,7 @@ await db.close();
 401 {"error":{"code":"unauthenticated","message":"Log in and send your token"}}
 200 {"id":2,"email":"ada@example.com","role":"admin","displayName":"Ada O.","createdAt":"2026-09-24T10:00:00.000Z"}
 </output>
-<p>Line by line: Ada registered and got no hash back. Eve's attempt to register as admin was refused as a bad request. Ada renamed herself; her attempt to become admin got 403; so did her attempt to edit the admin. With no token, 401. The admin could change Ada's role. Methods are wrapped in arrow functions (<code>(request) =&gt; app.users.register(request)</code>) because a method passed on its own loses its <code>this</code> (<a href="/learn/js-this">this</a>).</p>
+<p>Line by line: Ada registered and got no hash back. Eve's attempt to register as admin was refused as a bad request. Ada renamed herself; her attempt to become admin got 403; so did her attempt to edit the admin. With no token, 401. The admin could change Ada's role. Methods are wrapped in arrow functions (<code>(request) =&gt; app.users.register(request)</code>) because a method passed on its own loses its <code>this</code> (<a href="/learn/js-this">this in depth</a>).</p>
 <p>And the books: creation rights, a foreign-key error turned into a 400, and paging through three books two at a time:</p>
 <example file="try-books.ts" project="api" browser="no">
 import { randomBytes } from "node:crypto";
@@ -1179,7 +1179,7 @@ await db.close();
 
 <section>
 <h2 id="http">On the network</h2>
-<p>The controllers take an <code>ApiRequest</code> and return an <code>ApiResponse</code>, so any HTTP server can drive them. The router from <a href="/learn/bookstore-http#router">BookStore: HTTP and routing</a> works; here is a compact adapter so this lesson runs on its own. The route table is typed, so a handler that returns something other than a promised <code>ApiResponse</code> does not compile:</p>
+<p>The controllers take an <code>ApiRequest</code> and return an <code>ApiResponse</code>, so any HTTP server can drive them. The router from <a href="/learn/bookstore-http#router">BookStore API: HTTP and routing</a> works; here is a compact adapter so this lesson runs on its own. The route table is typed, so a handler that returns something other than a promised <code>ApiResponse</code> does not compile:</p>
 <example file="src/http/server.ts" project="api" browser="no">
 import { createServer } from "node:http";
 import type { Server } from "node:http";
@@ -1389,10 +1389,10 @@ describe("BookService", () => {
 <li><strong>Validation before authorization.</strong> The controller parses the body before the service checks permissions, so a customer who sends a broken book gets 400 with the list of issues, not 403. That tells a stranger a little about your rules. If that matters, check the permission in the controller first as well; keep the check in the service anyway, because the service has other callers.</li>
 <li><strong>403 or 404 for someone else's record?</strong> A 403 on <code>/users/1</code> confirms that user 1 exists. For private resources, answer 404 to anyone who may not see it, so ids cannot be probed. The first exercise does this.</li>
 <li><strong>Casts at the edges.</strong> <code>JSON.parse(…) as T</code>, <code>rows as User[]</code> and a quick <code>as Principal</code> each turn off the checks this lesson built. Every <code>as</code> at a boundary should have a guard or a parser instead.</li>
-<li><strong>Drift between the parser and the DTO.</strong> The allowed-keys list in <code>parseUpdateBook</code> and the fields of <code>UpdateBookDTO</code> are written twice and can disagree. Schema libraries fix that by deriving the type from the schema: <a href="/learn/ts-validation">Validating data with schemas</a>.</li>
-<li><strong>Offset pages and changing data.</strong> Cursor paging by id stays correct while books are added. Sorting by price or title needs a cursor that holds the sort key and the id, so ties are broken; <a href="/learn/api-pagination-versioning">Pagination and versioning</a> builds that.</li>
+<li><strong>Drift between the parser and the DTO.</strong> The allowed-keys list in <code>parseUpdateBook</code> and the fields of <code>UpdateBookDTO</code> are written twice and can disagree. Schema libraries fix that by deriving the type from the schema: <a href="/learn/ts-validation">Runtime validation</a>.</li>
+<li><strong>Offset pages and changing data.</strong> Cursor paging by id stays correct while books are added. Sorting by price or title needs a cursor that holds the sort key and the id, so ties are broken; <a href="/learn/api-pagination-versioning">Pagination and versioning in depth</a> builds that.</li>
 </ul>
-<p>In production, keep the error mapping and the permission table in one place each, log the <code>Principal</code> with every request (never the token), and review every new response field as a publishing decision. <a href="/learn/backend-architecture">Backend architecture</a> later separates the domain rules from the application layer further, and <a href="/learn/zudo-permissions">ZudoJS permissions</a> replaces the hand-written <code>GRANTS</code> table with a full policy engine.</p>
+<p>In production, keep the error mapping and the permission table in one place each, log the <code>Principal</code> with every request (never the token), and review every new response field as a publishing decision. <a href="/learn/backend-architecture">Backend architecture</a> later separates the domain rules from the application layer further, and <a href="/learn/zudo-permissions">Permissions</a>, in the ZudoJS course, replaces the hand-written <code>GRANTS</code> table with a full policy engine.</p>
 </section>
 
 <section>

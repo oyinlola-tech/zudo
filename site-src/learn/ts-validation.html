@@ -1,8 +1,8 @@
 ---
 title: Runtime validation
-description: See why a type annotation on parsed JSON checks nothing, then validate data at runtime by hand, with a schema you build, with Zod, Valibot and JSON Schema, and infer types from schemas.
+description: See why an annotation on parsed JSON checks nothing, then validate data at runtime with a schema you build, Zod, Valibot and JSON Schema, and infer types.
 minutes: 60
-youNeed: Types meet the runtime, Generics and tsconfig in depth
+youNeed: TypeScript and JavaScript together, Generics and tsconfig in depth
 youBuild: A validated order endpoint, a 60-line schema library with type inference, and the same contract in Zod, Valibot and JSON Schema
 keywords: runtime validation, typescript validation, JSON.parse any, zod, valibot, json schema, ajv, schema type inference, z.infer, InferOutput, safeParse, validation errors, coercion, mass assignment, parse dont validate
 objectives: Explain why an annotation such as const body: User = JSON.parse(text) validates nothing | Write a validator by hand, and see why hand-written validators drift from their types | Build a small schema library whose types are inferred from the schema | Validate the same contract with Zod, Valibot and JSON Schema, and read their issues | Choose between them for a backend, a browser bundle or a cross-language API | Handle coercion, unknown keys, refinements and size limits safely, and test a validator
@@ -39,8 +39,8 @@ try {
 TypeError: input.email.toLowerCase is not a function
 </output>
 <p>Three requests, three different outcomes, and only the first is correct. The second client made itself an <code>admin</code>, because <code>...input</code> copied a field that the type does not even mention. The third crashed with a <code>TypeError</code>, on a line TypeScript promised was safe.</p>
-<p>The reason is the one from <a href="/learn/ts-runtime#gap">Types meet the runtime</a>: <code>JSON.parse</code> returns <code>any</code>, and <code>const body: NewUser = …</code> is not a check. It is a <em>claim</em>, and the compiler accepts claims about <code>any</code> without question. When the code runs, the types are gone (<a href="/learn/ts-compiler#erasure">type erasure</a>); only JavaScript is left, and JavaScript does whatever the data says.</p>
-<p>So data from outside (request bodies, query strings, environment variables, files, other services' responses, even your own database after a migration) must be checked <strong>at runtime</strong>, by code that looks at the actual value. That is <strong>runtime validation</strong>. This lesson starts where <a href="/learn/ts-runtime#validator">ts-runtime's hand-written validator</a> stopped: why hand-written validators do not scale, how a schema can produce both the check and the type, and how Zod, Valibot and JSON Schema do it in practice.</p>
+<p>The reason is the one from <a href="/learn/ts-runtime#gap">TypeScript and JavaScript together</a>: <code>JSON.parse</code> returns <code>any</code>, and <code>const body: NewUser = …</code> is not a check. It is a <em>claim</em>, and the compiler accepts claims about <code>any</code> without question. When the code runs, the types are gone (<a href="/learn/ts-compiler#erasure">type erasure</a>); only JavaScript is left, and JavaScript does whatever the data says.</p>
+<p>So data from outside (request bodies, query strings, environment variables, files, other services' responses, even your own database after a migration) must be checked <strong>at runtime</strong>, by code that looks at the actual value. That is <strong>runtime validation</strong>. This lesson starts where the <a href="/learn/ts-runtime#validator">hand-written validator</a> of the previous lesson stopped: why hand-written validators do not scale, how a schema can produce both the check and the type, and how Zod, Valibot and JSON Schema do it in practice.</p>
 </section>
 
 <section>
@@ -71,14 +71,14 @@ TypeError: input.email.toLowerCase is not a function
 <p><strong>Values:</strong> an e-mail without <code>@</code>; an empty <code>items</code> list; quantity 0, −3, 2.5 or 1e9; a SKU with spaces or 10,000 characters; a priority of <code>"urgent"</code>; strings with leading or trailing spaces.</p>
 <p><strong>Extras:</strong> fields the server sets itself: <code>id</code>, <code>status: "paid"</code>, <code>totalKobo: 1</code>, <code>role</code>. Copying them in is <strong>mass assignment</strong>, the bug from the signup handler. Also <code>__proto__</code> keys, very deep nesting, or a 50 MB body meant to exhaust memory.</p>
 <p><strong>Cross-field:</strong> the same SKU twice; a delivery date before the order date; more items than are in stock (that one needs the database, so it is a business rule, not validation).</p>
-<p><strong>Response:</strong> every problem at once, each with a path (<code>items[0].quantity</code>) and a message, and a 400 or 422 status (<a href="/learn/rest-design">REST design</a>). One problem at a time makes clients guess and retry.</p>
+<p><strong>Response:</strong> every problem at once, each with a path (<code>items[0].quantity</code>) and a message, and a 400 or 422 status (<a href="/learn/rest-design">Designing a REST API</a>, in the backend course, covers how to choose). One problem at a time makes clients guess and retry.</p>
 </answer>
 </reason>
 </section>
 
 <section>
 <h2 id="by-hand">Validating by hand, and how it drifts</h2>
-<p>A hand-written validator takes <code>unknown</code>, checks every field, and builds a new object from the checked fields only (<a href="/learn/ts-runtime#validator">ts-runtime</a> built one for tasks). It works. Its weakness is that the type and the checks are two separate pieces of code that must be kept in step by hand:</p>
+<p>A hand-written validator takes <code>unknown</code>, checks every field, and builds a new object from the checked fields only (<a href="/learn/ts-runtime#validator">TypeScript and JavaScript together</a> built one for tasks). It works. Its weakness is that the type and the checks are two separate pieces of code that must be kept in step by hand:</p>
 <example file="drift.ts">
 type Customer = {
   email: string;
@@ -493,7 +493,7 @@ if (!bad.success) console.log(v.summarize(bad.issues));
 
 <section>
 <h2 id="json-schema">JSON Schema</h2>
-<p>Zod and Valibot schemas are TypeScript code. <strong>JSON Schema</strong> is a different kind of thing: a standard for writing a schema as a <em>JSON document</em>. Because it is just data, any language can read it. A Python service, a Go client, an API gateway and a documentation site can all use the same file, and OpenAPI (<a href="/learn/zudo-openapi">OpenAPI with ZudoJS</a>) describes request and response bodies with it. The order contract as JSON Schema:</p>
+<p>Zod and Valibot schemas are TypeScript code. <strong>JSON Schema</strong> is a different kind of thing: a standard for writing a schema as a <em>JSON document</em>. Because it is just data, any language can read it. A Python service, a Go client, an API gateway and a documentation site can all use the same file, and OpenAPI (<a href="/learn/zudo-openapi">OpenAPI documents</a>) describes request and response bodies with it. The order contract as JSON Schema:</p>
 <file name="new-order.schema.json" project="ajv">
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -520,8 +520,8 @@ if (!bad.success) console.log(v.summarize(bad.issues));
   "additionalProperties": false
 }
 </file>
-<p>A JSON Schema does nothing by itself; a <strong>validator</strong> reads it and checks values against it. The standard one for JavaScript is <strong>Ajv</strong>, which compiles a schema into a fast JavaScript function. It is not installed in this course's browser terminal, so here is a run on a computer (<code>npm install ajv ajv-formats</code>; e-mail and other formats live in the second package):</p>
-<file name="validate-order.js" project="ajv">
+<p>A JSON Schema does nothing by itself; a <strong>validator</strong> reads it and checks values against it. The standard one for JavaScript is <strong>Ajv</strong>, which compiles a schema into a fast JavaScript function. It is not part of this course's browser terminal, so this example runs in Node.js only. In your own project, install it with <code>npm install ajv ajv-formats</code> (e-mail and other formats live in the second package):</p>
+<example file="validate-order.js" project="ajv" browser="no">
 import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
@@ -539,9 +539,8 @@ console.log(validate(bad));
 for (const error of validate.errors) {
   console.log(`${error.instancePath || "(root)"} ${error.message}`);
 }
-</file>
-<shell title="Terminal (a real run: Node.js 24, Ajv 8.20)">
-$ node validate-order.js
+</example>
+<output>
 true {
   customerEmail: 'ada@example.com',
   items: [ { sku: 'RICE-5', quantity: 2 } ],
@@ -553,7 +552,7 @@ false
 /items/0/sku must match pattern "^[A-Z]+-\d+$"
 /items/0/quantity must be >= 1
 /priority must be equal to one of the allowed values
-</shell>
+</output>
 <p>Three differences from the TypeScript libraries show up at once:</p>
 <ul>
 <li><strong>No type inference.</strong> <code>validate(good)</code> returns a boolean; nothing turns the JSON document into a TypeScript type. You write the type separately (and it can drift), use a type guard (<code>ajv.compile&lt;NewOrder&gt;(schema)</code> gives you <code>value is NewOrder</code>), or generate types with a tool such as <code>json-schema-to-ts</code> or TypeBox.</li>

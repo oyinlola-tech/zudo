@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>"BookStore API: authentication and tests" — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/bookstore-auth.md" title="Markdown version">
-  <meta name="description" content="Add users to the BookStore. Hash passwords with scrypt, issue signed log-in tokens with a secret from the environment, protect the order routes, test it all with node:test, and then look honestly at what this hand-built backend now gets wrong.">
+  <meta name="description" content="Add users to the BookStore: scrypt password hashes, signed log-in tokens, protected order routes and node:test tests, then an honest review of what still hurts.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/learn/bookstore-auth">
@@ -102,10 +102,10 @@
         <div class="lx-hero-tag">LEVEL 7 · LESSON 10 OF 15</div>
         <p class="lx-hero-part">TypeScript on the server <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>"BookStore API: authentication and tests"</h1>
-        <p class="lx-hero-lead">Add users to the BookStore. Hash passwords with scrypt, issue signed log-in tokens with a secret from the environment, protect the order routes, test it all with node:test, and then look honestly at what this hand-built backend now gets wrong.</p>
+        <p class="lx-hero-lead">Add users to the BookStore: scrypt password hashes, signed log-in tokens, protected order routes and node:test tests, then an honest review of what still hurts.</p>
         <ul class="lx-hero-meta">
           <li><strong>50 min</strong> to read and try</li>
-          <li><strong>You need:</strong> "BookStore API: validation and PostgreSQL", and "Testing fundamentals"</li>
+          <li><strong>You need:</strong> "BookStore API: validation and PostgreSQL", Testing fundamentals, and Cryptography with node:crypto</li>
           <li><strong>You build:</strong> A BookStore API where users register, log in, and see only their own orders, with a node:test suite</li>
         </ul>
         <div class="lx-hero-actions">
@@ -114,6 +114,17 @@
         </div>
       </header>
 
+      <section class="lx-goals" aria-label="What you will be able to do">
+        <p class="lx-goals-label">BY THE END OF THIS LESSON YOU CAN</p>
+        <ul>
+          <li>Refuse to start without a strong signing secret from the environment</li>
+          <li>Store passwords as salted scrypt hashes and verify them in constant time</li>
+          <li>Issue and check HMAC-signed, expiring log-in tokens, and explain why a token can be read but not changed</li>
+          <li>Protect routes so the user id comes only from a verified token</li>
+          <li>Keep a log-in route from revealing which e-mails have accounts</li>
+          <li>Test tokens and the whole API with node:test, and list the structural problems a hand-built backend has</li>
+        </ul>
+      </section>
       <div class="lx-body">
 <section>
 <h2 id="plan">Who is asking?</h2>
@@ -123,7 +134,7 @@
 <li><strong>Log in</strong>: <code>POST /sessions</code> checks the password and hands back a signed <strong>token</strong>, a string that proves "this is user 7" until it expires.</li>
 <li><strong>Prove it</strong>: every request to a protected route sends the token in the <code>Authorization</code> header. The server checks the signature and knows the user.</li>
 </ol>
-<p>Everything in this lesson uses <code>node:crypto</code>, which is built into Node.js. You install nothing.</p>
+<p>Everything in this lesson uses <code>node:crypto</code>, which is built into Node.js, so you install nothing. You met its tools one by one in <a href="/learn/node-crypto">Cryptography with node:crypto</a>; here they protect a real API.</p>
 </section>
 
 <section>
@@ -142,7 +153,7 @@
 <span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">loadConfig</span><span class="t-pn">(</span>env<span class="t-op">:</span> <span class="t-ty">Env</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Config</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> raw <span class="t-op">=</span> env<span class="t-pn">[</span><span class="t-str">"PORT"</span><span class="t-pn">]</span> <span class="t-op">??</span> <span class="t-str">"3000"</span><span class="t-pn">;</span>
   <span class="t-kw">const</span> port <span class="t-op">=</span> <span class="t-ty">Number</span><span class="t-pn">(</span>raw<span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span><span class="t-ty">Number</span><span class="t-pn">.</span><span class="t-fn">isInteger</span><span class="t-pn">(</span>port<span class="t-pn">)</span> <span class="t-op">||</span> port <span class="t-op">&lt;</span> <span class="t-num">0</span> <span class="t-op">||</span> port <span class="t-op">&gt;</span> <span class="t-num">65535</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!/^</span>\d<span class="t-pn">{</span><span class="t-num">1</span><span class="t-pn">,</span><span class="t-num">5</span><span class="t-pn">}</span>$<span class="t-op">/</span><span class="t-pn">.</span><span class="t-fn">test</span><span class="t-pn">(</span>raw<span class="t-pn">)</span> <span class="t-op">||</span> port <span class="t-op">&gt;</span> <span class="t-num">65535</span><span class="t-pn">)</span> <span class="t-pn">{</span>
     <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">Error</span><span class="t-pn">(</span><span class="t-tpl">`PORT must be a whole number from 0 to 65535, got "<span class="t-op">${</span><span class="t-prop">raw</span><span class="t-op">}</span>"`</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
   <span class="t-kw">const</span> tokenSecret <span class="t-op">=</span> env<span class="t-pn">[</span><span class="t-str">"TOKEN_SECRET"</span><span class="t-pn">]</span><span class="t-pn">;</span>
@@ -163,7 +174,7 @@ type Env = Readonly<Record<string, string | undefined>>;
 export function loadConfig(env: Env): Config {
   const raw = env["PORT"] ?? "3000";
   const port = Number(raw);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  if (!/^\d{1,5}$/.test(raw) || port > 65535) {
     throw new Error(`PORT must be a whole number from 0 to 65535, got "${raw}"`);
   }
   const tokenSecret = env["TOKEN_SECRET"];
@@ -241,8 +252,7 @@ Started with a secret of 64 characters</pre></div>
 
 <section>
 <h2 id="passwords">Storing passwords safely</h2>
-<p>If your database leaks, the attacker must not learn the passwords. So you store a <strong>hash</strong>: the output of a one-way function. You can check a password against the hash, but you cannot turn the hash back into the password.</p>
-<p>A fast hash like SHA-256 is the wrong tool: an attacker can try billions of guesses per second. Password hashes are <strong>slow on purpose</strong>. Node.js has one built in, <strong>scrypt</strong>. Each password also gets its own random <strong>salt</strong>, so two users with the same password get different hashes:</p>
+<p>If your database leaks, the attacker must not learn the passwords. So you store a <strong>hash</strong>: the output of a one-way function. You can check a password against the hash, but you cannot turn the hash back into the password. As <a href="/learn/node-crypto#passwords">Cryptography with node:crypto</a> showed, it must be a password hash that is <strong>slow on purpose</strong>, such as <strong>scrypt</strong>, never a fast hash like SHA-256, and each password gets its own random <strong>salt</strong>, so two users with the same password get different hashes. Here is that code as a BookStore module:</p>
 <figure class="lx-example" data-index="2" data-file="src/auth/password.ts" data-project="auth">
 <figcaption class="lx-bar"><span class="lx-file">src/auth/password.ts</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> randomBytes<span class="t-pn">,</span> scrypt<span class="t-pn">,</span> timingSafeEqual <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:crypto"</span><span class="t-pn">;</span>
@@ -296,7 +306,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
 <ul>
 <li><code>scrypt</code> takes a callback, so <code>derive</code> wraps it in a <code>Promise</code> (<a href="/learn/js-async">Asynchronous JavaScript</a>) to use it with <code>await</code>.</li>
 <li>The stored string holds everything needed to check later: the method name, the salt and the key, separated by <code>$</code>.</li>
-<li><code>timingSafeEqual</code> compares two buffers in a time that does not depend on where they first differ. A normal <code>===</code> stops at the first different byte, and an attacker can measure that difference to guess a value piece by piece.</li>
+<li><code>timingSafeEqual</code> compares two buffers in a time that does not depend on where they first differ. A normal <code>===</code> stops at the first different byte, and an attacker can measure that difference to guess a value piece by piece (<a href="/learn/node-crypto#timing">Cryptography with node:crypto</a>).</li>
 </ul>
 <figure class="lx-example" data-index="3" data-file="try-password.ts" data-project="auth">
 <figcaption class="lx-bar"><span class="lx-file">try-password.ts</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -585,6 +595,15 @@ export class UserRepository {
   }
 }</script>
 </figure>
+<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>What can a log-in route give away?</h3><p>An attacker has a list of a million e-mail addresses and wants to know which ones have BookStore accounts, so they can target those people. Before reading the routes, think about what the log-in and registration routes could reveal:</p>
+<ul>
+<li>Log-in answers "No such user" for an unknown e-mail and "Wrong password" for a known one.</li>
+<li>Both answers are the same, but for an unknown e-mail the server skips scrypt and answers in 2 ms instead of 80 ms.</li>
+<li>Registration answers 409 "That e-mail is already registered".</li>
+<li>Nothing limits how many log-in attempts one client makes.</li>
+</ul><details class="lx-solution"><summary>Show the reasoning</summary><p>Different messages reveal which e-mails exist, so both cases get the <strong>same</strong> message and status. A difference in <em>time</em> reveals the same thing: the attacker only has to measure. So the route runs one scrypt on both paths, as the code below does.</p>
+<p>Registration is harder: the new user must learn that the address is taken. Large sites answer every registration with "check your e-mail" and send the explanation to the address itself, so only its owner learns whether it had an account. The BookStore keeps the simple 409 and lists it as a known weakness in the review at the end of this lesson.</p>
+<p>Without a limit, an attacker can try a million passwords against one account. Every public log-in route needs a <strong>rate limit</strong>; that is on the review list too.</p></details></div>
 <p>The two user routes. Log-in answers with the <strong>same</strong> message whether the e-mail is unknown or the password is wrong, so it does not tell a stranger which e-mails have accounts:</p>
 <figure class="lx-example" data-index="9" data-file="src/routes/users.ts" data-project="wiring">
 <figcaption class="lx-bar"><span class="lx-file">src/routes/users.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -790,7 +809,7 @@ curl http://localhost:3000/orders -H &quot;authorization: Bearer $TOKEN&quot;"><
 <span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>curl http://localhost:3000/orders -H "authorization: Bearer $TOKEN"</span>
 <span class="lx-res">[{"id":1,"bookId":1,"quantity":1,"totalCents":1299}]</span></pre></figure>
 <p>Paste your own token after <code>TOKEN=</code>; it will differ from this one, because your secret and your clock differ.</p>
-<div class="callout callout-warning"><p class="lx-callout-label">NOT READY FOR THE INTERNET YET</p>Nothing stops a script from trying a million passwords against <code>/sessions</code>. A public log-in route needs a <strong>rate limit</strong>: only a few attempts per minute per client. It is on the list below, and you will add one with <code>@zudojs/security</code> later in the course.</div>
+<div class="callout callout-warning"><p class="lx-callout-label">NOT READY FOR THE INTERNET YET</p>Nothing stops a script from trying a million passwords against <code>/sessions</code>. A public log-in route needs a <strong>rate limit</strong>: only a few attempts per minute per client. It is on the list below. <a href="/learn/api-rate-limiting">Rate limiting</a> builds one, and ZudoJS provides one in <code>@zudojs/security</code>.</div>
 </section>
 
 <section>
@@ -874,7 +893,6 @@ test("an expired token is refused", () => {
 <pre class="lx-code"><code><span class="t-kw">import</span> assert <span class="t-kw">from</span> <span class="t-str">"node:assert/strict"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> randomBytes <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:crypto"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> once <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:events"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">AddressInfo</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:net"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> after<span class="t-pn">,</span> before<span class="t-pn">,</span> test <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:test"</span><span class="t-pn">;</span>
 
 <span class="t-kw">import</span> <span class="t-pn">{</span> createApp <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"../src/app.js"</span><span class="t-pn">;</span>
@@ -888,7 +906,9 @@ test("an expired token is refused", () => {
 <span class="t-fn">before</span><span class="t-pn">(</span><span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
   server<span class="t-pn">.</span><span class="t-fn">listen</span><span class="t-pn">(</span><span class="t-num">0</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-kw">await</span> <span class="t-fn">once</span><span class="t-pn">(</span>server<span class="t-pn">,</span> <span class="t-str">"listening"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  base <span class="t-op">=</span> <span class="t-tpl">`http://localhost:<span class="t-op">${</span><span class="t-prop">(server.address() as AddressInfo).port</span><span class="t-op">}</span>`</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> address <span class="t-op">=</span> server<span class="t-pn">.</span><span class="t-fn">address</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span>address <span class="t-op">===</span> <span class="t-cn">null</span> <span class="t-op">||</span> <span class="t-kw">typeof</span> address <span class="t-op">===</span> <span class="t-str">"string"</span><span class="t-pn">)</span> <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">Error</span><span class="t-pn">(</span><span class="t-str">"expected a TCP address"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  base <span class="t-op">=</span> <span class="t-tpl">`http://localhost:<span class="t-op">${</span><span class="t-prop">address.port</span><span class="t-op">}</span>`</span><span class="t-pn">;</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-fn">after</span><span class="t-pn">(</span><span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
@@ -919,7 +939,6 @@ test("an expired token is refused", () => {
 <script type="text/plain" class="lx-src">import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
 
 import { createApp } from "../src/app.js";
@@ -933,7 +952,9 @@ let base = "";
 before(async () => {
   server.listen(0);
   await once(server, "listening");
-  base = `http://localhost:${(server.address() as AddressInfo).port}`;
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("expected a TCP address");
+  base = `http://localhost:${address.port}`;
 });
 
 after(async () => {
@@ -1001,7 +1022,7 @@ test("a new user logs in and has no orders yet", async () => {
 <tr><td><strong>No logging or errors standard</strong></td><td>Logging is <code>console.log</code> and <code>console.error</code>. Your error codes (<code>not_found</code>, <code>invalid_id</code>) are your own invention, different from the next project's.</td></tr>
 </tbody>
 </table></div>
-<p>None of these is a bug you can fix with one clever line. They are <strong>structural</strong>: they come from having no common shape for the code. The next part of the course names that shape (<a href="/learn/backend-architecture">Backend architecture</a>), and then shows how a framework takes over these jobs (<a href="/learn/frameworks">What a framework does</a>).</p>
+<p>None of these is a bug you can fix with one clever line. They are <strong>structural</strong>: they come from having no common shape for the code. The next lesson, <a href="/learn/ts-api-layers">Type-safe API layers</a>, gives the BookStore that shape: controllers, services and repositories with typed boundaries, one place that wires them together, one typed error format, and services you can test without a database. That removes much of the wiring and testing pain, but not the missing lifecycle, configuration, security layers and logging. Those are the jobs a framework takes over: <a href="/learn/backend-architecture">Backend architecture</a> and <a href="/learn/frameworks">What a framework does</a>, in the Software design and architecture course, show how, and ZudoJS does them for real.</p>
 </section>
 
 <section>
@@ -1089,6 +1110,7 @@ after 6 minutes: undefined</pre></div>
 <li><code>node:test</code> tests pure functions easily, and a whole API with some effort.</li>
 <li>The hand-built BookStore now shows its structural problems: boilerplate, manual wiring, no lifecycle, scattered configuration, missing security layers and testing friction.</li>
 </ul>
+<p>Next: <a href="/learn/ts-api-layers">Type-safe API layers</a>, where the BookStore is refactored into typed layers with DTOs, mappers, services, repositories and role checks.</p>
 </section>
       </div>
 

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Runtime validation — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/ts-validation.md" title="Markdown version">
-  <meta name="description" content="See why a type annotation on parsed JSON checks nothing, then validate data at runtime by hand, with a schema you build, with Zod, Valibot and JSON Schema, and infer types from schemas.">
+  <meta name="description" content="See why an annotation on parsed JSON checks nothing, then validate data at runtime with a schema you build, Zod, Valibot and JSON Schema, and infer types.">
   <!-- seo:start -->
   <!-- seo:end -->
   <meta name="keywords" content="runtime validation, typescript validation, JSON.parse any, zod, valibot, json schema, ajv, schema type inference, z.infer, InferOutput, safeParse, validation errors, coercion, mass assignment, parse dont validate">
@@ -97,10 +97,10 @@
         <div class="lx-hero-tag">LEVEL 5 · LESSON 21 OF 23</div>
         <p class="lx-hero-part">Types meet the runtime <span class="lx-tier lx-tier-foundation" title="Foundation: Must understand before moving on.">Foundation</span></p>
         <h1>Runtime validation</h1>
-        <p class="lx-hero-lead">See why a type annotation on parsed JSON checks nothing, then validate data at runtime by hand, with a schema you build, with Zod, Valibot and JSON Schema, and infer types from schemas.</p>
+        <p class="lx-hero-lead">See why an annotation on parsed JSON checks nothing, then validate data at runtime with a schema you build, Zod, Valibot and JSON Schema, and infer types.</p>
         <ul class="lx-hero-meta">
           <li><strong>60 min</strong> to read and try</li>
-          <li><strong>You need:</strong> Types meet the runtime, Generics and tsconfig in depth</li>
+          <li><strong>You need:</strong> TypeScript and JavaScript together, Generics and tsconfig in depth</li>
           <li><strong>You build:</strong> A validated order endpoint, a 60-line schema library with type inference, and the same contract in Zod, Valibot and JSON Schema</li>
         </ul>
         <div class="lx-hero-actions">
@@ -174,8 +174,8 @@ try {
 TypeError: input.email.toLowerCase is not a function</pre></div>
 </figure>
 <p>Three requests, three different outcomes, and only the first is correct. The second client made itself an <code>admin</code>, because <code>...input</code> copied a field that the type does not even mention. The third crashed with a <code>TypeError</code>, on a line TypeScript promised was safe.</p>
-<p>The reason is the one from <a href="/learn/ts-runtime#gap">Types meet the runtime</a>: <code>JSON.parse</code> returns <code>any</code>, and <code>const body: NewUser = …</code> is not a check. It is a <em>claim</em>, and the compiler accepts claims about <code>any</code> without question. When the code runs, the types are gone (<a href="/learn/ts-compiler#erasure">type erasure</a>); only JavaScript is left, and JavaScript does whatever the data says.</p>
-<p>So data from outside (request bodies, query strings, environment variables, files, other services' responses, even your own database after a migration) must be checked <strong>at runtime</strong>, by code that looks at the actual value. That is <strong>runtime validation</strong>. This lesson starts where <a href="/learn/ts-runtime#validator">ts-runtime's hand-written validator</a> stopped: why hand-written validators do not scale, how a schema can produce both the check and the type, and how Zod, Valibot and JSON Schema do it in practice.</p>
+<p>The reason is the one from <a href="/learn/ts-runtime#gap">TypeScript and JavaScript together</a>: <code>JSON.parse</code> returns <code>any</code>, and <code>const body: NewUser = …</code> is not a check. It is a <em>claim</em>, and the compiler accepts claims about <code>any</code> without question. When the code runs, the types are gone (<a href="/learn/ts-compiler#erasure">type erasure</a>); only JavaScript is left, and JavaScript does whatever the data says.</p>
+<p>So data from outside (request bodies, query strings, environment variables, files, other services' responses, even your own database after a migration) must be checked <strong>at runtime</strong>, by code that looks at the actual value. That is <strong>runtime validation</strong>. This lesson starts where the <a href="/learn/ts-runtime#validator">hand-written validator</a> of the previous lesson stopped: why hand-written validators do not scale, how a schema can produce both the check and the type, and how Zod, Valibot and JSON Schema do it in practice.</p>
 </section>
 
 <section>
@@ -203,12 +203,12 @@ TypeError: input.email.toLowerCase is not a function</pre></div>
 <p><strong>Values:</strong> an e-mail without <code>@</code>; an empty <code>items</code> list; quantity 0, −3, 2.5 or 1e9; a SKU with spaces or 10,000 characters; a priority of <code>"urgent"</code>; strings with leading or trailing spaces.</p>
 <p><strong>Extras:</strong> fields the server sets itself: <code>id</code>, <code>status: "paid"</code>, <code>totalKobo: 1</code>, <code>role</code>. Copying them in is <strong>mass assignment</strong>, the bug from the signup handler. Also <code>__proto__</code> keys, very deep nesting, or a 50 MB body meant to exhaust memory.</p>
 <p><strong>Cross-field:</strong> the same SKU twice; a delivery date before the order date; more items than are in stock (that one needs the database, so it is a business rule, not validation).</p>
-<p><strong>Response:</strong> every problem at once, each with a path (<code>items[0].quantity</code>) and a message, and a 400 or 422 status (<a href="/learn/rest-design">REST design</a>). One problem at a time makes clients guess and retry.</p></details></div>
+<p><strong>Response:</strong> every problem at once, each with a path (<code>items[0].quantity</code>) and a message, and a 400 or 422 status (<a href="/learn/rest-design">Designing a REST API</a>, in the backend course, covers how to choose). One problem at a time makes clients guess and retry.</p></details></div>
 </section>
 
 <section>
 <h2 id="by-hand">Validating by hand, and how it drifts</h2>
-<p>A hand-written validator takes <code>unknown</code>, checks every field, and builds a new object from the checked fields only (<a href="/learn/ts-runtime#validator">ts-runtime</a> built one for tasks). It works. Its weakness is that the type and the checks are two separate pieces of code that must be kept in step by hand:</p>
+<p>A hand-written validator takes <code>unknown</code>, checks every field, and builds a new object from the checked fields only (<a href="/learn/ts-runtime#validator">TypeScript and JavaScript together</a> built one for tasks). It works. Its weakness is that the type and the checks are two separate pieces of code that must be kept in step by hand:</p>
 <figure class="lx-example" data-index="1" data-file="drift.ts">
 <figcaption class="lx-bar"><span class="lx-file">drift.ts</span><button type="button" class="lx-edit" data-index="1" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="1"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">type</span> <span class="t-ty">Customer</span> <span class="t-op">=</span> <span class="t-pn">{</span>
@@ -868,7 +868,7 @@ if (!bad.success) console.log(v.summarize(bad.issues));</script>
 
 <section>
 <h2 id="json-schema">JSON Schema</h2>
-<p>Zod and Valibot schemas are TypeScript code. <strong>JSON Schema</strong> is a different kind of thing: a standard for writing a schema as a <em>JSON document</em>. Because it is just data, any language can read it. A Python service, a Go client, an API gateway and a documentation site can all use the same file, and OpenAPI (<a href="/learn/zudo-openapi">OpenAPI with ZudoJS</a>) describes request and response bodies with it. The order contract as JSON Schema:</p>
+<p>Zod and Valibot schemas are TypeScript code. <strong>JSON Schema</strong> is a different kind of thing: a standard for writing a schema as a <em>JSON document</em>. Because it is just data, any language can read it. A Python service, a Go client, an API gateway and a documentation site can all use the same file, and OpenAPI (<a href="/learn/zudo-openapi">OpenAPI documents</a>) describes request and response bodies with it. The order contract as JSON Schema:</p>
 <figure class="lx-example" data-index="12" data-file="new-order.schema.json" data-project="ajv">
 <figcaption class="lx-bar"><span class="lx-file">new-order.schema.json</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code>{
@@ -921,9 +921,9 @@ if (!bad.success) console.log(v.summarize(bad.issues));</script>
   "additionalProperties": false
 }</script>
 </figure>
-<p>A JSON Schema does nothing by itself; a <strong>validator</strong> reads it and checks values against it. The standard one for JavaScript is <strong>Ajv</strong>, which compiles a schema into a fast JavaScript function. It is not installed in this course's browser terminal, so here is a run on a computer (<code>npm install ajv ajv-formats</code>; e-mail and other formats live in the second package):</p>
+<p>A JSON Schema does nothing by itself; a <strong>validator</strong> reads it and checks values against it. The standard one for JavaScript is <strong>Ajv</strong>, which compiles a schema into a fast JavaScript function. It is not part of this course's browser terminal, so this example runs in Node.js only. In your own project, install it with <code>npm install ajv ajv-formats</code> (e-mail and other formats live in the second package):</p>
 <figure class="lx-example" data-index="13" data-file="validate-order.js" data-project="ajv">
-<figcaption class="lx-bar"><span class="lx-file">validate-order.js</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<figcaption class="lx-bar"><span class="lx-file">validate-order.js</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> readFileSync <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:fs"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">Ajv2020</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"ajv/dist/2020.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> addFormats <span class="t-kw">from</span> <span class="t-str">"ajv-formats"</span><span class="t-pn">;</span>
@@ -959,20 +959,18 @@ console.log(validate(bad));
 for (const error of validate.errors) {
   console.log(`${error.instancePath || "(root)"} ${error.message}`);
 }</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>node validate-order.js</code></div><pre class="lx-no-copy">true {
+  customerEmail: 'ada@example.com',
+  items: [ { sku: 'RICE-5', quantity: 2 } ],
+  priority: 'normal'
+}
+false
+(root) must NOT have additional properties
+/customerEmail must match format "email"
+/items/0/sku must match pattern "^[A-Z]+-\d+$"
+/items/0/quantity must be &gt;= 1
+/priority must be equal to one of the allowed values</pre></div>
 </figure>
-<figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal (a real run: Node.js 24, Ajv 8.20)</span></figcaption>
-<pre class="lx-shell-body" data-copy="node validate-order.js"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>node validate-order.js</span>
-<span class="lx-res">true {</span>
-<span class="lx-res">  customerEmail: 'ada@example.com',</span>
-<span class="lx-res">  items: [ { sku: 'RICE-5', quantity: 2 } ],</span>
-<span class="lx-res">  priority: 'normal'</span>
-<span class="lx-res">}</span>
-<span class="lx-res">false</span>
-<span class="lx-res">(root) must NOT have additional properties</span>
-<span class="lx-res">/customerEmail must match format "email"</span>
-<span class="lx-res">/items/0/sku must match pattern "^[A-Z]+-\d+$"</span>
-<span class="lx-res">/items/0/quantity must be &gt;= 1</span>
-<span class="lx-res">/priority must be equal to one of the allowed values</span></pre></figure>
 <p>Three differences from the TypeScript libraries show up at once:</p>
 <ul>
 <li><strong>No type inference.</strong> <code>validate(good)</code> returns a boolean; nothing turns the JSON document into a TypeScript type. You write the type separately (and it can drift), use a type guard (<code>ajv.compile&lt;NewOrder&gt;(schema)</code> gives you <code>value is NewOrder</code>), or generate types with a tool such as <code>json-schema-to-ts</code> or TypeBox.</li>

@@ -1016,34 +1016,30 @@ import { startSabi, type Reply } from "./sabi.js";
 
 const sabi = await startSabi();
 const show = (label: string, r: Reply) => console.log(`${label} -> ${r.status}`, r.body?.error?.code ?? JSON.stringify(r.body ?? ""));
+const passwordOf = (email: string) => `${email} long passphrase`;
+const register = async (email: string) =>
+  (await sabi.call("POST", "/v1/users", { email, name: email.split("@")[0], password: passwordOf(email) })).body.id as string;
+const logIn = async (email: string) =>
+  (await sabi.call("POST", "/v1/sessions", { email, password: passwordOf(email) })).body.accessToken as string;
 
-async function signUp(email: string): Promise<{ id: string; token: string }> {
-  const password = `${email} long passphrase`;
-  const { body } = await sabi.call("POST", "/v1/users", { email, name: email.split("@")[0], password });
-  const login = await sabi.call("POST", "/v1/sessions", { email, password });
-  return { id: body.id, token: login.body.accessToken };
-}
-const login = async (email: string) =>
-  (await sabi.call("POST", "/v1/sessions", { email, password: `${email} long passphrase` })).body.accessToken as string;
+const graceId = await register("grace@sabi.example");
+await sabi.db.executeRawUnsafe("INSERT INTO user_roles (user_id, role) VALUES ($1, 'admin')", [Number(graceId)]); // seed script
+const admin = await logIn("grace@sabi.example");
+const tundeId = await register("tunde@example.com");
+const student = await logIn("tunde@example.com");
 
-const grace = await signUp("grace@sabi.example");
-await sabi.db.executeRawUnsafe("INSERT INTO user_roles (user_id, role) VALUES ($1, 'admin')", [Number(grace.id)]); // seed script
-const admin = await login("grace@sabi.example");
-const tunde = await signUp("tunde@example.com");
-const ada = await signUp("ada@example.com");
+show("student creates a course", await sabi.call("POST", "/v1/courses", { title: "Algebra 1" }, student));
+show("student makes himself tutor", await sabi.call("PUT", `/v1/users/${tundeId}/roles`, { roles: ["tutor"] }, student));
+show("admin makes Tunde a tutor", await sabi.call("PUT", `/v1/users/${tundeId}/roles`, { roles: ["student", "tutor"] }, admin));
+show("Tunde's old token", await sabi.call("GET", "/v1/courses", undefined, student));
 
-show("student creates a course", await sabi.call("POST", "/v1/courses", { title: "Algebra 1" }, tunde.token));
-show("student makes himself tutor", await sabi.call("PUT", `/v1/users/${tunde.id}/roles`, { roles: ["tutor"] }, tunde.token));
-show("admin makes Tunde a tutor", await sabi.call("PUT", `/v1/users/${tunde.id}/roles`, { roles: ["student", "tutor"] }, admin));
-show("Tunde's old token", await sabi.call("GET", "/v1/courses", undefined, tunde.token));
-
-const tutor = await login("tunde@example.com");
+const tutor = await logIn("tunde@example.com");
 show("tutor creates a course", await sabi.call("POST", "/v1/courses", { title: "Algebra 1" }, tutor));
 show("admin creates a course", await sabi.call("POST", "/v1/courses", { title: "Chemistry" }, admin));
 show("tutor renames his course", await sabi.call("PATCH", "/v1/courses/1", { title: "Algebra for beginners" }, tutor));
 show("tutor renames Grace's course", await sabi.call("PATCH", "/v1/courses/2", { title: "Tunde's now" }, tutor));
-show("student reads courses", await sabi.call("GET", "/v1/courses", undefined, ada.token));
-show("admin changes own roles", await sabi.call("PUT", `/v1/users/${grace.id}/roles`, { roles: ["student"] }, admin));
+show("tutor reads courses", await sabi.call("GET", "/v1/courses", undefined, tutor));
+show("admin changes own roles", await sabi.call("PUT", `/v1/users/${graceId}/roles`, { roles: ["student"] }, admin));
 await sabi.stop();
 </example>
 <output>
@@ -1055,10 +1051,10 @@ tutor creates a course -> 201 {"id":1,"title":"Algebra 1","tutorId":2}
 admin creates a course -> 201 {"id":2,"title":"Chemistry","tutorId":1}
 tutor renames his course -> 200 {"id":1,"title":"Algebra for beginners","tutorId":2}
 tutor renames Grace's course -> 403 ERR_FORBIDDEN
-student reads courses -> 200 [{"id":1,"title":"Algebra for beginners","tutorId":2},{"id":2,"title":"Chemistry","tutorId":1}]
+tutor reads courses -> 200 [{"id":1,"title":"Algebra for beginners","tutorId":2},{"id":2,"title":"Chemistry","tutorId":1}]
 admin changes own roles -> 400 BAD_REQUEST
 </output>
-<p>Tunde's token from before the promotion stopped working the moment his roles changed (the fix for incident 1): he logs in again and his new token says <code>tutor</code>. As a tutor he edits his own course but not Grace's, and Grace cannot change her own roles.</p>
+<p>Tunde's token from before the promotion stopped working the moment his roles changed (the fix for incident 1): he logs in again and his new token says <code>tutor</code>. As a tutor he edits his own course but not Grace's, reads the course list he inherited from the student role, and Grace cannot change her own roles.</p>
 </section>
 
 <section>
@@ -1128,7 +1124,7 @@ same callback twice -> 400 OAUTH_STATE_MISMATCH
 
 <section>
 <h2 id="tests">The test suite</h2>
-<p>The tests use the Vitest runner and config from <a href="/learn/usecase-rest-api#tests">the REST API use case</a>. Password hashing is slow on purpose, so the rules are spread over three files, each with one platform for all its tests; every test uses its own e-mail addresses so the tests do not affect each other. The session and recovery tests raise the login rate limit, because they log in more than ten times a minute from one address; the limiter keeps its default everywhere else.</p>
+<p>The tests use the Vitest runner and config from <a href="/learn/usecase-rest-api#tests">the REST API use case</a>. Password hashing is slow on purpose, so the rules are spread over three files, each starting one platform for all its tests; every test uses its own e-mail addresses so the tests do not affect each other. The files raise the login rate limit, because they log in more than ten times a minute from one address; the limiter keeps its default everywhere else. Shared helpers live in a harness:</p>
 <file name="vitest.config.ts" project="sabi">
 import { defineConfig } from "vitest/config";
 
@@ -1151,62 +1147,75 @@ export async function runTests(...files: string[]): Promise<void> {
   await vitest.close();
 }
 </file>
+<file name="tests/harness.ts" project="sabi">
+import { startSabi } from "../sabi.js";
+
+export type Sabi = Awaited<ReturnType<typeof startSabi>>;
+
+export const passwordOf = (email: string) => `${email} long passphrase`;
+
+export async function logIn(sabi: Sabi, email: string, password = passwordOf(email)) {
+  const reply = await sabi.call("POST", "/v1/sessions", { email, password });
+  return { status: reply.status, headers: reply.headers, access: reply.body.accessToken as string, refresh: reply.body.refreshToken as string };
+}
+
+export async function signUp(sabi: Sabi, email: string) {
+  const joined = await sabi.call("POST", "/v1/users", { email, name: "Test", password: passwordOf(email), roles: ["admin"] });
+  return { id: joined.body.id as string, roles: joined.body.roles as string[], ...(await logIn(sabi, email)) };
+}
+
+export const meStatus = async (sabi: Sabi, token: string) => (await sabi.call("GET", "/v1/me", undefined, token)).status;
+
+/** Plays the browser through Kora: start, sign in at the fake Kora as `person`, return to the callback. */
+export async function signInWithKora(sabi: Sabi, person: string, cookieOverride?: string) {
+  const start = await sabi.call("GET", "/v1/oauth/kora");
+  const cookie = cookieOverride ?? (start.headers.get("set-cookie") ?? "").split(";")[0]!;
+  const authorize = new URL(start.headers.get("location")!);
+  authorize.searchParams.set("as", person);
+  const atKora = await fetch(authorize.toString().replace("https://id.kora.example", sabi.kora.base), { redirect: "manual" });
+  const back = new URL(atKora.headers.get("location")!);
+  return sabi.call("GET", back.pathname + back.search, undefined, undefined, { cookie });
+}
+</file>
+<p>Sessions: registration, refresh rotation, logout, idle expiry and "sign out everywhere":</p>
 <file name="tests/sessions.test.ts" project="sabi">
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startSabi } from "../sabi.js";
+import { logIn, meStatus, passwordOf, type Sabi, signUp } from "./harness.js";
 
-let sabi: Awaited<ReturnType<typeof startSabi>>;
+let sabi: Sabi;
 beforeAll(async () => {
   sabi = await startSabi({ log: () => {}, loginsPerMinute: 1000 });
 });
 afterAll(() => sabi.stop());
 
-const passwordOf = (email: string) => `${email} long passphrase`;
-async function signUp(email: string) {
-  const joined = await sabi.call("POST", "/v1/users", { email, name: "Test", password: passwordOf(email), roles: ["admin"] });
-  return { id: joined.body.id as string, roles: joined.body.roles as string[], ...(await logIn(email)) };
-}
-async function logIn(email: string, password = passwordOf(email)) {
-  const reply = await sabi.call("POST", "/v1/sessions", { email, password });
-  return { status: reply.status, headers: reply.headers, access: reply.body.accessToken as string, refresh: reply.body.refreshToken as string };
-}
-const status = async (token: string) => (await sabi.call("GET", "/v1/me", undefined, token)).status;
-
 describe("Sabi sessions", () => {
   it("registers students only, and once per e-mail", async () => {
-    const user = await signUp("reg@example.com");
+    const user = await signUp(sabi, "reg@example.com");
     expect(user.roles).toEqual(["student"]);
     expect((await sabi.call("POST", "/v1/users", { email: "REG@example.com", name: "Again", password: passwordOf("x") })).status).toBe(409);
   });
 
   it("accepts a refresh token once, and ends every session when it is replayed", async () => {
-    const laptop = await signUp("refresh@example.com");
-    const phone = await logIn("refresh@example.com");
+    const laptop = await signUp(sabi, "refresh@example.com");
+    const phone = await logIn(sabi, "refresh@example.com");
     expect((await sabi.call("POST", "/v1/sessions/refresh", { refreshToken: laptop.refresh })).status).toBe(200);
     expect((await sabi.call("POST", "/v1/sessions/refresh", { refreshToken: laptop.refresh })).status).toBe(401);
-    expect(await status(phone.access)).toBe(401);
+    expect(await meStatus(sabi, phone.access)).toBe(401);
   });
 
   it("kills tokens at logout, idle expiry and 'sign out everywhere'", async () => {
-    const a = await signUp("logout@example.com");
-    const b = await logIn("logout@example.com");
-    const c = await logIn("logout@example.com");
+    const a = await signUp(sabi, "logout@example.com");
+    const b = await logIn(sabi, "logout@example.com");
+    const c = await logIn(sabi, "logout@example.com");
     expect((await sabi.call("DELETE", "/v1/sessions/current", undefined, a.access)).status).toBe(204);
-    expect([await status(a.access), await status(b.access)]).toEqual([401, 200]);
+    expect([await meStatus(sabi, a.access), await meStatus(sabi, b.access)]).toEqual([401, 200]);
     await sabi.db.executeRawUnsafe(
       "UPDATE sessions SET expires_at = now() - interval '1 second' WHERE id = (SELECT id FROM sessions ORDER BY created_at DESC LIMIT 1)",
     );
-    expect(await status(c.access)).toBe(401);
+    expect(await meStatus(sabi, c.access)).toBe(401);
     expect((await sabi.call("DELETE", "/v1/sessions", undefined, b.access)).status).toBe(204);
-    expect(await status(b.access)).toBe(401);
-  });
-
-  it("locks an account after five wrong passwords and says when to come back", async () => {
-    await signUp("locked@example.com");
-    for (let i = 0; i < 5; i++) expect((await logIn("locked@example.com", "wrong")).status).toBe(401);
-    const locked = await logIn("locked@example.com");
-    expect(locked.status).toBe(423);
-    expect(locked.headers.get("retry-after")).toBe("900");
+    expect(await meStatus(sabi, b.access)).toBe(401);
   });
 });
 </file>
@@ -1219,33 +1228,31 @@ await runTests("tests/sessions.test.ts");
 ✓ Sabi sessions > registers students only, and once per e-mail
 ✓ Sabi sessions > accepts a refresh token once, and ends every session when it is replayed
 ✓ Sabi sessions > kills tokens at logout, idle expiry and 'sign out everywhere'
-✓ Sabi sessions > locks an account after five wrong passwords and says when to come back
 </output>
+<p>Recovery: the lockout, tried on an e-mail that has no account (it locks the same way, so it reveals nothing), and the whole reset flow:</p>
 <file name="tests/recovery.test.ts" project="sabi">
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startSabi } from "../sabi.js";
+import { logIn, meStatus, type Sabi, signUp } from "./harness.js";
 
-let sabi: Awaited<ReturnType<typeof startSabi>>;
+let sabi: Sabi;
 beforeAll(async () => {
   sabi = await startSabi({ log: () => {}, loginsPerMinute: 1000 });
 });
 afterAll(() => sabi.stop());
 
-const passwordOf = (email: string) => `${email} long passphrase`;
-async function signUp(email: string) {
-  const joined = await sabi.call("POST", "/v1/users", { email, name: "Test", password: passwordOf(email), roles: ["admin"] });
-  return { id: joined.body.id as string, roles: joined.body.roles as string[], ...(await logIn(email)) };
-}
-async function logIn(email: string, password = passwordOf(email)) {
-  const reply = await sabi.call("POST", "/v1/sessions", { email, password });
-  return { status: reply.status, headers: reply.headers, access: reply.body.accessToken as string, refresh: reply.body.refreshToken as string };
-}
-const status = async (token: string) => (await sabi.call("GET", "/v1/me", undefined, token)).status;
 const resetLink = (to: string) => sabi.outbox.findLast((mail) => mail.to === to)!.text.match(/token=(\S+)/)![1]!;
 
-describe("Sabi recovery and roles", () => {
+describe("Sabi recovery", () => {
+  it("locks an e-mail after five wrong passwords, known or not, and says when to come back", async () => {
+    for (let i = 0; i < 5; i++) expect((await logIn(sabi, "nobody@example.com", "guess " + i)).status).toBe(401);
+    const locked = await logIn(sabi, "nobody@example.com", "any password");
+    expect(locked.status).toBe(423);
+    expect(locked.headers.get("retry-after")).toBe("900");
+  });
+
   it("resets a password with a single-use link and ends old sessions", async () => {
-    const before = await signUp("reset@example.com");
+    const before = await signUp(sabi, "reset@example.com");
     expect((await sabi.call("POST", "/v1/password-resets", { email: "reset@example.com" })).status).toBe(202);
     expect((await sabi.call("POST", "/v1/password-resets", { email: "ghost@example.com" })).status).toBe(202);
     expect(sabi.outbox.filter((mail) => mail.to === "ghost@example.com")).toEqual([]);
@@ -1253,26 +1260,10 @@ describe("Sabi recovery and roles", () => {
     const confirm = () => sabi.call("POST", "/v1/password-resets/confirm", { token, password: "a brand new passphrase" });
     expect((await confirm()).status).toBe(204);
     expect((await confirm()).status).toBe(422);
-    expect(await status(before.access)).toBe(401);
-    expect((await logIn("reset@example.com", "a brand new passphrase")).status).toBe(201);
+    expect(await meStatus(sabi, before.access)).toBe(401);
+    expect((await logIn(sabi, "reset@example.com", "a brand new passphrase")).status).toBe(201);
     const stored = await sabi.db.queryRawUnsafe<{ token_hash: string }[]>("SELECT token_hash FROM password_resets");
     expect(stored.map((row) => row.token_hash)).not.toContain(token);
-  });
-
-  it("lets only admins assign roles, and ends the changed user's sessions", async () => {
-    const admin = await signUp("admin@sabi.example");
-    await sabi.db.executeRawUnsafe("INSERT INTO user_roles (user_id, role) VALUES ($1, 'admin')", [Number(admin.id)]);
-    const adminToken = (await logIn("admin@sabi.example")).access;
-    const tunde = await signUp("tunde@example.com");
-    expect((await sabi.call("POST", "/v1/courses", { title: "Algebra" }, tunde.access)).status).toBe(403);
-    expect((await sabi.call("PUT", `/v1/users/${tunde.id}/roles`, { roles: ["admin"] }, tunde.access)).status).toBe(403);
-    expect((await sabi.call("PUT", `/v1/users/${tunde.id}/roles`, { roles: ["tutor"] }, adminToken)).status).toBe(200);
-    expect(await status(tunde.access)).toBe(401);
-    const tutor = (await logIn("tunde@example.com")).access;
-    const own = await sabi.call("POST", "/v1/courses", { title: "Algebra" }, tutor);
-    const other = await sabi.call("POST", "/v1/courses", { title: "Chemistry" }, adminToken);
-    expect((await sabi.call("PATCH", `/v1/courses/${own.body.id}`, { title: "Algebra 2" }, tutor)).status).toBe(200);
-    expect((await sabi.call("PATCH", `/v1/courses/${other.body.id}`, { title: "Mine" }, tutor)).status).toBe(403);
   });
 });
 </file>
@@ -1282,63 +1273,72 @@ import { runTests } from "./vitest-run.js";
 await runTests("tests/recovery.test.ts");
 </example>
 <output>
-✓ Sabi recovery and roles > resets a password with a single-use link and ends old sessions
-✓ Sabi recovery and roles > lets only admins assign roles, and ends the changed user's sessions
+✓ Sabi recovery > locks an e-mail after five wrong passwords, known or not, and says when to come back
+✓ Sabi recovery > resets a password with a single-use link and ends old sessions
 </output>
-<file name="tests/kora.test.ts" project="sabi">
+<p>Access: role assignment and every Kora linking rule:</p>
+<file name="tests/access.test.ts" project="sabi">
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startSabi } from "../sabi.js";
+import { logIn, meStatus, type Sabi, signInWithKora, signUp } from "./harness.js";
 
-let sabi: Awaited<ReturnType<typeof startSabi>>;
+let sabi: Sabi;
 beforeAll(async () => {
-  sabi = await startSabi({ log: () => {} });
+  sabi = await startSabi({ log: () => {}, loginsPerMinute: 1000 });
 });
 afterAll(() => sabi.stop());
 
-async function signInWithKora(person: string, cookieOverride?: string) {
-  const start = await sabi.call("GET", "/v1/oauth/kora");
-  const cookie = cookieOverride ?? (start.headers.get("set-cookie") ?? "").split(";")[0]!;
-  const authorize = new URL(start.headers.get("location")!);
-  authorize.searchParams.set("as", person);
-  const atKora = await fetch(authorize.toString().replace("https://id.kora.example", sabi.kora.base), { redirect: "manual" });
-  const back = new URL(atKora.headers.get("location")!);
-  return sabi.call("GET", back.pathname + back.search, undefined, undefined, { cookie });
-}
+describe("Sabi roles and Kora", () => {
+  it("lets only admins assign roles, and ends the changed user's sessions", async () => {
+    const admin = await signUp(sabi, "admin@sabi.example");
+    await sabi.db.executeRawUnsafe("INSERT INTO user_roles (user_id, role) VALUES ($1, 'admin')", [Number(admin.id)]);
+    const adminToken = (await logIn(sabi, "admin@sabi.example")).access;
+    const tunde = await signUp(sabi, "tunde@example.com");
+    expect((await sabi.call("POST", "/v1/courses", { title: "Algebra" }, tunde.access)).status).toBe(403);
+    expect((await sabi.call("PUT", `/v1/users/${tunde.id}/roles`, { roles: ["admin"] }, tunde.access)).status).toBe(403);
+    expect((await sabi.call("PUT", `/v1/users/${tunde.id}/roles`, { roles: ["tutor"] }, adminToken)).status).toBe(200);
+    expect(await meStatus(sabi, tunde.access)).toBe(401);
+    const tutor = (await logIn(sabi, "tunde@example.com")).access;
+    const own = await sabi.call("POST", "/v1/courses", { title: "Algebra" }, tutor);
+    const other = await sabi.call("POST", "/v1/courses", { title: "Chemistry" }, adminToken);
+    expect((await sabi.call("PATCH", `/v1/courses/${own.body.id}`, { title: "Algebra 2" }, tutor)).status).toBe(200);
+    expect((await sabi.call("PATCH", `/v1/courses/${other.body.id}`, { title: "Mine" }, tutor)).status).toBe(403);
+  });
 
-describe("Sign in with Kora", () => {
   it("creates one account per Kora identity and signs it in again later", async () => {
-    const first = await signInWithKora("bola");
-    const again = await signInWithKora("bola");
+    const first = await signInWithKora(sabi, "bola");
+    const again = await signInWithKora(sabi, "bola");
     const me = await sabi.call("GET", "/v1/me", undefined, again.body.accessToken);
     expect([first.status, again.status, me.body.email]).toEqual([200, 200, "bola@example.com"]);
-    expect(await sabi.db.queryRawUnsafe("SELECT count(*)::int AS n FROM users")).toEqual([{ n: 1 }]);
+    expect(await sabi.db.queryRawUnsafe("SELECT count(*)::int AS n FROM users WHERE email = 'bola@example.com'")).toEqual([{ n: 1 }]);
   });
 
   it("evicts whoever registered the e-mail first without verifying it", async () => {
     const squatter = { email: "ada@example.com", password: "registered before Ada" };
     await sabi.call("POST", "/v1/users", { ...squatter, name: "Not Ada" });
     const session = (await sabi.call("POST", "/v1/sessions", squatter)).body.accessToken;
-    expect((await signInWithKora("ada")).status).toBe(200);
+    expect((await signInWithKora(sabi, "ada")).status).toBe(200);
     expect((await sabi.call("GET", "/v1/me", undefined, session)).status).toBe(401);
     expect((await sabi.call("POST", "/v1/sessions", squatter)).status).toBe(401);
   });
 
   it("refuses an unverified e-mail, a missing login cookie and a forged one", async () => {
-    expect((await signInWithKora("eve")).body.error.code).toBe("EMAIL_NOT_VERIFIED");
-    expect((await signInWithKora("ada", "")).status).toBe(400);
-    expect((await signInWithKora("ada", "kora_login=made-up")).status).toBe(400);
+    expect((await signInWithKora(sabi, "eve")).body.error.code).toBe("EMAIL_NOT_VERIFIED");
+    expect((await signInWithKora(sabi, "ada", "")).status).toBe(400);
+    expect((await signInWithKora(sabi, "ada", "kora_login=made-up")).status).toBe(400);
   });
 });
 </file>
-<example file="run-kora-tests.ts" project="sabi" browser="no">
+<example file="run-access-tests.ts" project="sabi" browser="no">
 import { runTests } from "./vitest-run.js";
 
-await runTests("tests/kora.test.ts");
+await runTests("tests/access.test.ts");
 </example>
 <output>
-✓ Sign in with Kora > creates one account per Kora identity and signs it in again later
-✓ Sign in with Kora > evicts whoever registered the e-mail first without verifying it
-✓ Sign in with Kora > refuses an unverified e-mail, a missing login cookie and a forged one
+✓ Sabi roles and Kora > lets only admins assign roles, and ends the changed user's sessions
+✓ Sabi roles and Kora > creates one account per Kora identity and signs it in again later
+✓ Sabi roles and Kora > evicts whoever registered the e-mail first without verifying it
+✓ Sabi roles and Kora > refuses an unverified e-mail, a missing login cookie and a forged one
 </output>
 <p>The idle-expiry test moves one session's <code>expires_at</code> into the past instead of waiting 30 minutes: the store's query decides expiry, so that is exactly the state a real idle session reaches. The lockout test also checks the <code>Retry-After</code> header, which only arrives because the error handler copies error headers. Remove that loop from <code>errors.ts</code> and watch the test fail.</p>
 </section>

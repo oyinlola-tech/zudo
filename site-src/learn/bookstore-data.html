@@ -1,10 +1,11 @@
 ---
 title: "BookStore API: validation and PostgreSQL"
-description: Check every request body by hand with type guards, move the BookStore data into PostgreSQL with PGlite, write repositories with parameterized SQL, and map typed errors to 400, 404 and 409.
+description: Check BookStore request bodies with type guards, move the data into PostgreSQL, write repositories with parameterized SQL, and map errors to 400, 404 and 409.
 minutes: 50
-youNeed: "BookStore API: HTTP and routing", and the SQL lessons
+youNeed: "BookStore API: HTTP and routing", SQL with PostgreSQL, and Joins, grouping and transactions
 youBuild: A BookStore API that stores authors, books and orders in PostgreSQL and answers bad input with clear errors
 keywords: typescript validation type guards, pglite, postgresql node, foreign keys, repository pattern, parameterized sql, sql injection, error mapping 400 404 409, pg driver, docker postgres, DATABASE_URL
+objectives: Model expected failures as typed errors that know nothing about HTTP, and map them to 400, 404 and 409 in one place | Parse unknown request bodies into typed objects that keep only known fields and report every problem at once | Store the BookStore in PostgreSQL with tables that protect themselves with foreign keys, UNIQUE and CHECK | Write repositories that own all the SQL, use placeholders, and turn database error codes into typed errors | Sell the last copy safely with one conditional SQL statement | Swap PGlite for a PostgreSQL server behind a small Queryable interface
 ---
 <section>
 <h2 id="plan">What changes in this lesson</h2>
@@ -56,7 +57,7 @@ export class ConflictError extends AppError {
   }
 }
 </example>
-<p><code>new.target</code> is the class that was actually created with <code>new</code>, so <code>new.target.name</code> gives every subclass its own <code>name</code>, such as <code>"NotFoundError"</code>, without repeating it. You built error classes like these in <a href="/learn/js-errors">Handling errors</a>.</p>
+<p><code>new.target</code> is the class that was actually created with <code>new</code>, so <code>new.target.name</code> gives every subclass its own <code>name</code>, such as <code>"NotFoundError"</code>, without repeating it. You built error classes like these in <a href="/learn/js-errors">Handling errors</a> and <a href="/learn/ts-errors">Typed error handling</a>.</p>
 <p>Now <code>src/http/errors.ts</code> maps each type to its status code. Replace the old <code>toErrorResponse</code> with this one:</p>
 <example file="src/http/errors.ts" project="data" browser="no">
 import { AppError, ConflictError, NotFoundError, ValidationError } from "../errors.js";
@@ -105,7 +106,7 @@ export function toErrorResponse(error: unknown): { status: number; body: unknown
 
 <section>
 <h2 id="validation">Check every body by hand</h2>
-<p>A request body is <code>unknown</code>. Before you use it, you prove what it is with <strong>type guards</strong> (<a href="/learn/ts-runtime">TypeScript and JavaScript together</a>). Three small helpers do most of the work:</p>
+<p>A request body is <code>unknown</code>. Before you use it, you prove what it is with <strong>type guards</strong> (<a href="/learn/ts-runtime">TypeScript and JavaScript together</a>). In a real project you would describe each body with a schema library, as in <a href="/learn/ts-validation">Runtime validation</a>. Here you write the checks by hand, once, to see exactly what such a library does for you. Three small helpers do most of the work:</p>
 <example file="src/validation/rules.ts" project="data">
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -278,37 +279,15 @@ export function isPgError(error: unknown): error is Error & { code: string } {
 <ul>
 <li><strong><code>Queryable</code></strong> is the one thing the rest of the code needs from a database: "run this SQL with these parameters and give me rows". PGlite fits that interface, and so will a real PostgreSQL connection later in this lesson.</li>
 <li><strong>The tables protect themselves.</strong> <code>REFERENCES authors (id)</code> is a <strong>foreign key</strong>: PostgreSQL refuses a book whose author does not exist. <code>UNIQUE</code> refuses a second author with the same name, and <code>CHECK (stock >= 0)</code> refuses negative stock. Even a bug in your TypeScript cannot break those rules.</li>
-<li><strong><code>MIGRATIONS</code></strong> are the steps that build the database. <code>IF NOT EXISTS</code> makes them safe to run on every start. Real projects use a migration tool that remembers which steps already ran; ZudoJS has one, and you will meet it later.</li>
+<li><strong><code>serial</code></strong> is PostgreSQL's older shorthand for an integer the database numbers by itself. It works like the <code>generated always as identity</code> column from <a href="/learn/databases#tables">How databases work</a>, which is the modern, standard form; you will see both in real projects.</li>
+<li><strong><code>MIGRATIONS</code></strong> are the steps that build the database. <code>IF NOT EXISTS</code> makes them safe to run on every start. That is simpler than the numbered migrations from <a href="/learn/databases#migrations">How databases work</a>, and only safe while every step is a <code>CREATE … IF NOT EXISTS</code> or an <code>ADD COLUMN IF NOT EXISTS</code>. Real projects use a migration tool that remembers which steps already ran; ZudoJS has one, and you will meet it later.</li>
 <li><strong><code>isPgError</code></strong> is a type guard for the errors PostgreSQL throws. Each has a <code>code</code>: <code>23505</code> means "unique rule broken", <code>23503</code> means "foreign key broken".</li>
 </ul>
 </section>
 
 <section>
 <h2 id="injection">Parameters, never string building</h2>
-<warn title="THE WRONG WAY, SHOWN ONCE">The first query below builds SQL by pasting user input into a string. Never do this. It is here so you can see the attack work.</warn>
-<example file="try-injection.ts" project="data" browser="no">
-import { openDatabase } from "./src/db.js";
-
-const db = await openDatabase();
-await db.exec(`INSERT INTO authors (name) VALUES ('Chinua Achebe');
-  INSERT INTO books (title, author_id, price_cents, stock) VALUES
-    ('Things Fall Apart', 1, 1299, 3), ('Arrow of God', 1, 1199, 0);`);
-
-const search = "x' OR '1'='1";
-
-const unsafe = await db.query(`SELECT title FROM books WHERE title = '${search}'`);
-console.log("built with a template string:", unsafe.rows);
-
-const safe = await db.query("SELECT title FROM books WHERE title = $1", [search]);
-console.log("with a $1 parameter:", safe.rows);
-await db.close();
-</example>
-<output>
-built with a template string: [ { title: 'Things Fall Apart' }, { title: 'Arrow of God' } ]
-with a $1 parameter: []
-</output>
-<p>The "search" contains a quote. Pasted into the string, it ends the text early and adds <code>OR '1'='1'</code>, which is always true, so the query returned <em>every</em> book. That is <strong>SQL injection</strong>. With other input, the same trick can read the users table or delete data.</p>
-<p>With <code>$1</code>, the SQL and the value travel to PostgreSQL <strong>separately</strong>. The value is only ever data, never SQL, so it matched no title at all. Every query in the BookStore uses <code>$1</code>, <code>$2</code>, … for every outside value, with no exceptions.</p>
+<p>Every query in the BookStore sends outside values as <code>$1</code>, <code>$2</code>, … parameters, with no exceptions. The SQL text and the values travel to PostgreSQL separately, so a value is only ever data, never SQL. <a href="/learn/sql-basics#injection">SQL with PostgreSQL</a> showed what happens without them: one quote in a search box, and the query returned every user's tasks. The repositories below paste only fixed strings that you wrote, such as a list of column names, into the SQL.</p>
 </section>
 
 <section>
@@ -396,7 +375,27 @@ export class BookRepository {
 }
 </example>
 <p><code>${COLUMNS}</code> is pasted into the SQL, but that is safe: it is a fixed string you wrote, never user input.</p>
-<p>Placing an order is the tricky one. Two customers may buy the last copy at the same moment. So taking the stock and writing the order happen in <strong>one</strong> SQL statement, which PostgreSQL runs as a single step. <code>WITH taken AS (…)</code> gives the result of the <code>UPDATE</code> a name, <code>taken</code>, that the <code>INSERT</code> right after it can read from:</p>
+<p>Placing an order is the tricky one.</p>
+<reason title="The last copy">
+<p>One copy of <em>Things Fall Apart</em> is left. Two customers press "Buy" at the same moment, and two requests run <code>place</code> at once. Think through this first version:</p>
+<ol>
+<li><code>SELECT stock FROM books WHERE id = $1</code></li>
+<li>If the stock is enough, <code>UPDATE books SET stock = stock - $2 WHERE id = $1</code></li>
+<li><code>INSERT INTO orders …</code></li>
+</ol>
+<ul>
+<li>What can both requests see in step 1? What happens next?</li>
+<li>The server crashes between step 2 and step 3. What state is the shop in?</li>
+<li>Where should the price of the order come from?</li>
+</ul>
+<answer>
+<p>Both requests can read <code>stock = 1</code> in step 1 before either runs step 2. Both decide there is enough, both subtract, and the stock becomes −1 (or, with the <code>CHECK (stock &gt;= 0)</code>, the second update fails after the customer was told there was a copy). Checking in one statement and changing in another is a <strong>race</strong>: the answer depends on timing.</p>
+<p>A crash between step 2 and step 3 takes a copy out of stock with no order for it. The two writes must succeed or fail together.</p>
+<p>The price must come from the database. If the client could send it, anyone could buy a book for 1 cent.</p>
+<p>The fix for all three: let PostgreSQL check and change the stock and write the order in <strong>one statement</strong>. One statement is atomic, and the <code>UPDATE … WHERE stock &gt;= $2</code> locks the row, so the second buyer waits and then sees the new stock.</p>
+</answer>
+</reason>
+<p>So taking the stock and writing the order happen in <strong>one</strong> SQL statement. <code>WITH taken AS (…)</code> is a <strong>common table expression</strong> (<a href="/learn/sql-advanced#subqueries">Joins, grouping and transactions</a>): it gives the rows returned by the <code>UPDATE</code> a name, <code>taken</code>, that the <code>INSERT</code> right after it can read from:</p>
 <example file="src/repositories/orders.ts" project="data" browser="no">
 import type { Queryable } from "../db.js";
 import { ConflictError, ValidationError } from "../errors.js";
@@ -499,7 +498,7 @@ type Env = Readonly<Record<string, string | undefined>>;
 export function loadConfig(env: Env): Config {
   const raw = env["PORT"] ?? "3000";
   const port = Number(raw);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  if (!/^\d{1,5}$/.test(raw) || port > 65535) {
     throw new Error(`PORT must be a whole number from 0 to 65535, got "${raw}"`);
   }
   return { port, dataDir: env["DATA_DIR"] };
@@ -800,7 +799,8 @@ await db.close();
 <li>Every body is checked by type guards that return a new, typed object with only the known fields, and report every problem at once.</li>
 <li>PGlite is real PostgreSQL inside your process. Foreign keys, <code>UNIQUE</code> and <code>CHECK</code> make the database protect its own data.</li>
 <li>Repositories own the SQL. Every outside value goes in as a <code>$1</code> parameter, which makes SQL injection impossible.</li>
+<li>Stock is taken and the order written in one conditional statement, so two buyers can never both get the last copy.</li>
 <li>Because the code depends on a small <code>Queryable</code> interface, moving to a PostgreSQL server with <code>pg</code> and <code>DATABASE_URL</code> is one new file.</li>
 </ul>
-<p>Anyone can still place an order for anyone. Next, the BookStore gets users, passwords, log-in tokens and tests.</p>
+<p>Anyone can still place an order for anyone. Next: <a href="/learn/bookstore-auth">BookStore API: authentication and tests</a>, where the BookStore gets users, passwords, log-in tokens and tests.</p>
 </section>
