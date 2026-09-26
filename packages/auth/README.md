@@ -55,6 +55,7 @@ const tokenConfig: TokenConfig = {
   issuer: "my-api",
   audience: "my-app",
   clockToleranceSeconds: 5, // optional skew allowance for exp/iat/nbf
+  // clock: myClock, // optional { now(): number } for deterministic expiry tests
 };
 
 const auth = createAuthService({
@@ -194,7 +195,38 @@ With a `revocationStore` configured, `refresh()` claims the presented token's
 Replaying an already-used refresh token throws `TokenRevokedError` **and**
 destroys every session for that user, on the assumption that the chain is
 compromised (RFC 6819 §5.2.2.3). Implement `revokeIfNotRevoked` in any custom
-store — the `isRevoked` + `revoke` fallback is racy.
+store — the `isRevoked` + `revoke` fallback is racy. A store without it is
+reported at construction: `createAuthService()` emits a `SecurityWarning`
+(`process.emitWarning`, code `ZUDO_AUTH_RACY_REVOCATION`), and with
+`requireAtomicRevocation: true` it throws `AuthConfigurationError` instead.
+
+### Custom claims
+
+`AuthUser.claims` (for example `{ plan: "pro", org: "acme" }`) is embedded in
+every token the service mints — `login()`, `refresh()` and
+`createSessionForUser()` — and comes back on `verifyToken()`'s payload. Reserved
+names (`sub`, `iat`, `exp`, `nbf`, `typ`, `jti`, `sid`, `roles`, `iss`, `aud`)
+are dropped, never overridden. The standalone `createTokenPair()` takes the same
+`claims` option. Claims are readable by anyone holding the token, so keep them
+small and non-sensitive.
+
+### Deterministic time in tests
+
+Pass a `{ now(): number }` clock instead of faking global timers:
+
+```ts
+const clock = { now: () => fixedMs };
+const auth = createAuthService({
+  clock,
+  sessionStore: createMemorySessionStore({ clock }),
+  revocationStore: createMemoryTokenRevocationStore({ clock }),
+  loginThrottle: { store: createMemoryLoginAttemptStore({ clock }) },
+  // ...
+});
+```
+
+Token `iat`/`exp`, verification, session expiry, revocation expiry and
+lockout deadlines all read that clock; advance it to test expiry.
 
 ### Access control
 

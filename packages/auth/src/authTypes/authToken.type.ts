@@ -6,6 +6,7 @@
 
 import type { UserId } from "../authTypes/authUser.type.js";
 import type { SessionId, TokenId } from "@zudojs/constants";
+import type { Clock } from "@zudojs/types";
 
 /** JWT token string. */
 export type JwtToken = string;
@@ -76,6 +77,13 @@ export interface TokenConfig {
    * (default: 0, maximum: 300).
    */
   readonly clockToleranceSeconds?: number;
+  /**
+   * Time source for `iat`/`exp` when minting and for expiry when verifying
+   * (default: `Date.now`). Inject a fixed or advanceable clock in tests
+   * instead of faking global timers. `createAuthService({ clock })` sets it
+   * for you.
+   */
+  readonly clock?: Clock;
 }
 
 /**

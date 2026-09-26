@@ -5,6 +5,7 @@
  * @module authProvider/authProvider.throttle
  */
 
+import type { Clock } from "@zudojs/types";
 import type {
   LoginAttemptRecord,
   LoginThrottleConfig,
@@ -68,10 +69,14 @@ const NO_SLOT: LoginThrottleSlot = Object.freeze({ failures: 0 });
  *
  * An attempt that throws for another reason (e.g. the user lookup fails)
  * keeps its reservation, so it counts as a failure.
+ *
+ * @param clock - Time source for lockout deadlines (default: `Date.now`).
  */
 export function createLoginThrottleGate(
   config: LoginThrottleConfig | undefined,
+  clock?: Clock,
 ): LoginThrottleGate {
+  const currentMs = (): number => (clock ? clock.now() : Date.now());
   const maxFailedAttempts =
     config?.maxFailedAttempts ?? DEFAULT_MAX_FAILED_ATTEMPTS;
   const lockoutMs = (config?.lockoutSeconds ?? DEFAULT_LOCKOUT_SECONDS) * 1000;
@@ -90,7 +95,7 @@ export function createLoginThrottleGate(
     async begin(identifier: string): Promise<LoginThrottleSlot> {
       if (!config) return NO_SLOT;
       const key = throttleKey(identifier);
-      const now = Date.now();
+      const now = currentMs();
       const current = await config.store.get(key);
       if (current.lockedUntil !== undefined && current.lockedUntil > now) {
         throw locked(current, now);
@@ -114,7 +119,7 @@ export function createLoginThrottleGate(
     async fail(identifier: string, slot: LoginThrottleSlot): Promise<void> {
       if (!config) return;
       if (slot.failures >= maxFailedAttempts) {
-        await config.store.lock(throttleKey(identifier), Date.now() + lockoutMs);
+        await config.store.lock(throttleKey(identifier), currentMs() + lockoutMs);
       }
     },
 

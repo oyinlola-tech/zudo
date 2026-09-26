@@ -12,8 +12,10 @@ import type {
   JwtToken,
   TokenPair,
   TokenConfig,
+  TokenPayload,
   TokenVerificationResult,
 } from "../authTypes/authToken.type.js";
+import { sanitizeCustomClaims } from "../authUtils/authUtils.claims.js";
 import {
   signToken,
   verifyToken,
@@ -25,61 +27,63 @@ import {
 const DEFAULT_ACCESS_TTL = 900; // 15 minutes
 const DEFAULT_REFRESH_TTL = 604_800; // 7 days
 
+/** Options for {@link createTokenPair}. */
+export interface CreateTokenPairOptions {
+  /** Roles to embed in both tokens. */
+  readonly roles?: readonly string[];
+  /**
+   * Session to bind the pair to (`sid` claim). `createAuthService()` sets
+   * this so that `logout()` invalidates the pair.
+   */
+  readonly sessionId?: SessionId;
+  /**
+   * Custom claims embedded in both tokens, e.g. `{ plan: "pro" }`.
+   * Reserved names (`sub`, `iat`, `exp`, `nbf`, `typ`, `jti`, `sid`,
+   * `roles`, `iss`, `aud`) are dropped, never overridden. Keep them small:
+   * a token over 8 KB is rejected on verification.
+   */
+  readonly claims?: Readonly<Record<string, unknown>>;
+}
+
 /**
  * Create a new token pair (access + refresh).
  *
- * @param options.roles - Roles to embed in both tokens.
- * @param options.sessionId - Session to bind the pair to (`sid` claim).
- *   `createAuthService()` sets this so that `logout()` invalidates the pair.
+ * `iat`/`exp` come from `config.clock` when set (default: `Date.now`).
+ *
  * @throws {AuthConfigurationError} when the signing secrets are missing,
  *   shorter than 32 bytes, or identical to each other.
  */
 export function createTokenPair(
   userId: UserId,
   config: TokenConfig,
-  options?: {
-    readonly roles?: readonly string[];
-    readonly sessionId?: SessionId;
-  },
+  options?: CreateTokenPairOptions,
 ): TokenPair {
   assertTokenSecrets(config);
   const accessTtl = config.accessTtl ?? DEFAULT_ACCESS_TTL;
   const refreshTtl = config.refreshTtl ?? DEFAULT_REFRESH_TTL;
-  const now = Math.floor(Date.now() / 1000);
+  const nowMs = config.clock ? config.clock.now() : Date.now();
+  const now = Math.floor(nowMs / 1000);
+  const custom = sanitizeCustomClaims(options?.claims);
 
-  const accessToken = signToken(
-    {
-      sub: userId,
-      iat: now,
-      exp: now + accessTtl,
-      typ: "access",
-      jti: generateTokenId(),
-      roles: options?.roles,
-      ...(options?.sessionId ? { sid: options.sessionId } : {}),
-      ...(config.issuer ? { iss: config.issuer } : {}),
-      ...(config.audience ? { aud: config.audience } : {}),
-    },
-    config.accessSecret,
-  );
-
-  const refreshToken = signToken(
-    {
-      sub: userId,
-      iat: now,
-      exp: now + refreshTtl,
-      typ: "refresh",
-      jti: generateTokenId(),
-      roles: options?.roles,
-      ...(options?.sessionId ? { sid: options.sessionId } : {}),
-      ...(config.issuer ? { iss: config.issuer } : {}),
-      ...(config.audience ? { aud: config.audience } : {}),
-    },
-    config.refreshSecret,
-  );
+  const payload = (typ: "access" | "refresh", ttl: number): TokenPayload => ({
+    ...custom,
+    sub: userId,
+    iat: now,
+    exp: now + ttl,
+    typ,
+    jti: generateTokenId(),
+    roles: options?.roles,
+    ...(options?.sessionId ? { sid: options.sessionId } : {}),
+    ...(config.issuer ? { iss: config.issuer } : {}),
+    ...(config.audience ? { aud: config.audience } : {}),
+  });
 
   return {
-    accessToken,
-    refreshToken,
+    accessToken: signToken(payload("access", accessTtl), config.accessSecret),
+    refreshToken: signToken(
+      payload("refresh", refreshTtl),
+      config.refreshSecret,
+    ),
     expiresIn: accessTtl,
     tokenType: "Bearer",
   };

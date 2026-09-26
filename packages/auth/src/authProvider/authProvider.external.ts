@@ -92,6 +92,7 @@ export function createExternalSessionStarter(
     const tokens = createTokenPair(user.id, deps.tokenConfig, {
       roles: user.roles,
       sessionId: session.id,
+      claims: user.claims,
     });
 
     return { user, tokens, sessionId: session.id };

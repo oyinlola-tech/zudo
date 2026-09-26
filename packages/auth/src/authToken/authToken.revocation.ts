@@ -8,13 +8,18 @@
  * are shared across instances.
  */
 
+import type { Clock } from "@zudojs/types";
 import type {
   TokenId,
   TokenRevocationStore,
 } from "../authTypes/authToken.type.js";
+import { AuthConfigurationError } from "../authErrors/authError.base.js";
 
 /** Minimum interval between full sweeps of the revocation map. */
 const DEFAULT_PURGE_INTERVAL_MS = 60_000;
+
+/** `code` of the process warning emitted for a non-atomic revocation store. */
+export const RACY_REVOCATION_WARNING_CODE = "ZUDO_AUTH_RACY_REVOCATION";
 
 /**
  * Create an in-memory token revocation store.
@@ -26,20 +31,24 @@ const DEFAULT_PURGE_INTERVAL_MS = 60_000;
  *
  * @param options.purgeIntervalMs - Minimum gap between full sweeps
  *   (default: 60000). Set to 0 to sweep on every access.
+ * @param options.clock - Time source for expiry (default: `Date.now`).
  */
 export function createMemoryTokenRevocationStore(options?: {
   readonly purgeIntervalMs?: number;
+  readonly clock?: Clock;
 }): TokenRevocationStore {
   const revoked = new Map<TokenId, number>();
   const purgeIntervalMs = options?.purgeIntervalMs ?? DEFAULT_PURGE_INTERVAL_MS;
+  const clock = options?.clock;
+  const nowMs = (): number => (clock ? clock.now() : Date.now());
   let lastPurge = 0;
 
   /** Full sweep, rate-limited so a large map cannot be walked per request. */
   function maybePurgeExpired(): void {
-    const nowMs = Date.now();
-    if (nowMs - lastPurge < purgeIntervalMs) return;
-    lastPurge = nowMs;
-    const now = Math.floor(nowMs / 1000);
+    const current = nowMs();
+    if (current - lastPurge < purgeIntervalMs) return;
+    lastPurge = current;
+    const now = Math.floor(current / 1000);
     for (const [id, expiresAt] of revoked) {
       if (expiresAt < now) {
         revoked.delete(id);
@@ -51,7 +60,7 @@ export function createMemoryTokenRevocationStore(options?: {
   function isLive(tokenId: TokenId): boolean {
     const expiresAt = revoked.get(tokenId);
     if (expiresAt === undefined) return false;
-    if (expiresAt < Math.floor(Date.now() / 1000)) {
+    if (expiresAt < Math.floor(nowMs() / 1000)) {
       revoked.delete(tokenId);
       return false;
     }
@@ -81,4 +90,38 @@ export function createMemoryTokenRevocationStore(options?: {
       return true;
     },
   };
+}
+
+/**
+ * Check that a revocation store can claim a refresh token atomically.
+ *
+ * Without `revokeIfNotRevoked`, `createAuthService().refresh()` falls back
+ * to `isRevoked()` then `revoke()`, which leaves a window in which two
+ * concurrent replays of one refresh token both mint a valid pair. That
+ * used to happen silently. Now a `SecurityWarning` with code
+ * {@link RACY_REVOCATION_WARNING_CODE} is emitted through
+ * `process.emitWarning` at construction, or, with `required`, the service
+ * refuses to start.
+ *
+ * @throws {AuthConfigurationError} when `required` and the method is absent.
+ */
+export function assertAtomicRevocationStore(
+  store: TokenRevocationStore,
+  required: boolean,
+): void {
+  if (typeof store.revokeIfNotRevoked === "function") return;
+  const message =
+    "TokenRevocationStore does not implement revokeIfNotRevoked(); " +
+    "refresh() falls back to isRevoked() + revoke(), which is racy: two " +
+    "concurrent replays of one refresh token can both succeed. Implement " +
+    "revokeIfNotRevoked (SET NX in Redis) in any store used in production.";
+  if (required) {
+    throw new AuthConfigurationError(
+      `${message} Set requireAtomicRevocation: false to accept the fallback.`,
+    );
+  }
+  process.emitWarning(message, {
+    type: "SecurityWarning",
+    code: RACY_REVOCATION_WARNING_CODE,
+  });
 }

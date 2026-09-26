@@ -38,7 +38,13 @@ export interface AuthUser {
   readonly name?: string;
   /** Assigned roles */
   readonly roles: readonly string[];
-  /** Custom claims */
+  /**
+   * Custom claims embedded in every token `createAuthService()` mints for
+   * this user (`login()`, `refresh()`, `createSessionForUser()`), e.g.
+   * `{ plan: "pro" }`. Reserved JWT names (`sub`, `exp`, `roles`, `sid`, ...)
+   * are dropped, never overridden; see `RESERVED_JWT_CLAIMS`. Keep them
+   * small and non-sensitive: they are readable by anyone holding the token.
+   */
   readonly claims?: Record<string, unknown>;
   /** Whether the user is active */
   readonly active: boolean;

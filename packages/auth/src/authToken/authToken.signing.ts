@@ -165,7 +165,8 @@ export function verifyToken(
   }
   const payload: TokenPayload = decoded;
 
-  const now = Math.floor(Date.now() / 1000);
+  const nowMs = config.clock ? config.clock.now() : Date.now();
+  const now = Math.floor(nowMs / 1000);
   const skew = config.clockToleranceSeconds ?? 0;
 
   if (payload.exp + skew < now) {

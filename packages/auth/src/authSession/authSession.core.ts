@@ -6,6 +6,7 @@
  * For production, implement SessionStore backed by Redis, database, etc.
  */
 
+import type { Clock } from "@zudojs/types";
 import { randomHex } from "@zudojs/crypto";
 import type {
   AuthSession,
@@ -34,18 +35,23 @@ const DEFAULT_PURGE_INTERVAL_MS = 60_000;
  *
  * @param options.purgeIntervalMs - Minimum gap between full sweeps
  *   (default: 60000). Set to 0 to sweep on every access.
+ * @param options.clock - Time source for creation, activity and expiry
+ *   (default: `Date.now`). Pass the same clock to `createAuthService`.
  */
 export function createMemorySessionStore(storeOptions?: {
   readonly purgeIntervalMs?: number;
+  readonly clock?: Clock;
 }): SessionStore {
   const sessions = new Map<SessionId, AuthSession>();
   const ttls = new Map<SessionId, number>();
   const purgeIntervalMs =
     storeOptions?.purgeIntervalMs ?? DEFAULT_PURGE_INTERVAL_MS;
+  const clock = storeOptions?.clock;
+  const currentMs = (): number => (clock ? clock.now() : Date.now());
   let lastPurge = 0;
 
   function maybePurgeExpired(): void {
-    const nowMs = Date.now();
+    const nowMs = currentMs();
     if (nowMs - lastPurge < purgeIntervalMs) return;
     lastPurge = nowMs;
     for (const [id, session] of sessions) {
@@ -65,7 +71,7 @@ export function createMemorySessionStore(storeOptions?: {
       assertPositiveSeconds(options.absoluteTtlSeconds, "absoluteTtlSeconds");
       maybePurgeExpired();
       const id = await generateSessionId();
-      const now = new Date();
+      const now = new Date(currentMs());
       const ttlMs = (options.ttlSeconds ?? DEFAULT_TTL_SECONDS) * 1000;
       const absoluteExpiresAt =
         options.absoluteTtlSeconds !== undefined
@@ -97,7 +103,7 @@ export function createMemorySessionStore(storeOptions?: {
       maybePurgeExpired();
       const session = sessions.get(sessionId);
       if (!session) return null;
-      if (Date.now() > session.expiresAt.getTime()) {
+      if (currentMs() > session.expiresAt.getTime()) {
         sessions.delete(sessionId);
         ttls.delete(sessionId);
         return null;
@@ -109,7 +115,7 @@ export function createMemorySessionStore(storeOptions?: {
       maybePurgeExpired();
       const session = sessions.get(sessionId);
       if (!session) return;
-      const now = new Date();
+      const now = new Date(currentMs());
       if (now.getTime() > session.expiresAt.getTime()) {
         sessions.delete(sessionId);
         ttls.delete(sessionId);

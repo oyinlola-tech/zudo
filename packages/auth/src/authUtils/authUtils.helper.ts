@@ -83,16 +83,20 @@ export function parseCookies(cookie: unknown): Record<string, string> {
  * I refresh before calling?"), never as an authorization decision.
  *
  * @param token - JWT token string
+ * @param clock - Time source (default: `Date.now`).
  * @returns Whether the token appears expired. Unparseable, oversized, or
  *   malformed input is reported as expired.
  */
-export function isTokenExpired(token: unknown): boolean {
+export function isTokenExpired(
+  token: unknown,
+  clock?: { now(): number },
+): boolean {
   const parts = splitToken(token);
   if (!parts) return true;
   const payload = decodeJsonSegment(parts[1]);
   if (!payload) return true;
   const exp = payload["exp"];
-  const now = Math.floor(Date.now() / 1000);
+  const now = Math.floor((clock ? clock.now() : Date.now()) / 1000);
   return typeof exp !== "number" || !Number.isFinite(exp) || exp < now;
 }
 

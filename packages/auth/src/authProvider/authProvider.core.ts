@@ -18,7 +18,9 @@ import type {
 } from "../authTypes/authToken.type.js";
 import type { SessionStore, SessionId } from "../authTypes/authSession.type.js";
 import type { LoginThrottleConfig } from "../authTypes/authAttempt.type.js";
+import type { Clock } from "@zudojs/types";
 import { createLoginThrottleGate } from "./authProvider.throttle.js";
+import { assertAtomicRevocationStore } from "../authToken/authToken.revocation.js";
 import {
   createExternalSessionStarter,
   type ExternalSessionOptions,
@@ -153,6 +155,23 @@ export interface AuthServiceConfig {
    * string, or your own function to match how you store identifiers.
    */
   readonly normalizeIdentifier?: false | ((identifier: string) => string);
+  /**
+   * Time source for token `iat`/`exp`, token verification and lockout
+   * deadlines (default: `Date.now`). It is copied into `token.clock` unless
+   * that is already set. Pass the same clock to the memory stores
+   * (`createMemorySessionStore({ clock })`, and the revocation and attempt
+   * stores) so expiry tests need no fake timers.
+   */
+  readonly clock?: Clock;
+  /**
+   * Refuse a `revocationStore` that lacks `revokeIfNotRevoked` (default:
+   * `false`). Without that method `refresh()` falls back to `isRevoked()` +
+   * `revoke()`, which is racy; by default construction emits a
+   * `SecurityWarning` (code `ZUDO_AUTH_RACY_REVOCATION`) through
+   * `process.emitWarning`, and with this flag it throws
+   * `AuthConfigurationError` instead.
+   */
+  readonly requireAtomicRevocation?: boolean;
 }
 
 /**
@@ -210,7 +229,6 @@ export interface LoginResult {
  */
 export function createAuthService(config: AuthServiceConfig): AuthService {
   const {
-    token: tokenConfig,
     sessionStore,
     findUser,
     findUserById,
@@ -225,7 +243,11 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
     allowSessionlessTokens,
     externalSessionMethods,
     normalizeIdentifier,
+    clock,
+    requireAtomicRevocation,
   } = config;
+  const tokenConfig: TokenConfig =
+    clock && !config.token.clock ? { ...config.token, clock } : config.token;
 
   // Fail at construction, not at the first login: a bad secret or a NaN
   // lifetime (`Number(process.env.X)` with X unset) otherwise surfaced as
@@ -234,8 +256,11 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
   assertTokenSecrets(tokenConfig);
   assertPositiveSeconds(sessionTtlSeconds, "sessionTtlSeconds");
   assertPositiveSeconds(absoluteSessionTtlSeconds, "absoluteSessionTtlSeconds");
+  if (revocationStore) {
+    assertAtomicRevocationStore(revocationStore, requireAtomicRevocation === true);
+  }
 
-  const throttle = createLoginThrottleGate(loginThrottle);
+  const throttle = createLoginThrottleGate(loginThrottle, tokenConfig.clock);
   const normalize =
     normalizeIdentifier === false
       ? (identifier: string) => identifier
@@ -344,6 +369,7 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
       const tokens = createTokenPair(user.id, tokenConfig, {
         roles: user.roles,
         sessionId: session.id,
+        claims: user.claims,
       });
 
       return { user, tokens, sessionId: session.id };
@@ -416,6 +442,7 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
 
       return createTokenPair(user.id, tokenConfig, {
         roles: user.roles,
+        claims: user.claims,
         ...(sid ? { sessionId: sid } : {}),
       });
     },

@@ -7,6 +7,7 @@
  * `LoginAttemptStore` with Redis for a real deployment.
  */
 
+import type { Clock } from "@zudojs/types";
 import type {
   LoginAttemptRecord,
   LoginAttemptStore,
@@ -41,13 +42,18 @@ const EMPTY: LoginAttemptRecord = { failures: 0, attempts: 0 };
  * @param options.maxEntries - Hard cap on tracked identifiers (default:
  *   100000). At the cap the oldest unlocked entry is evicted; locked
  *   entries are only evicted when every entry is locked.
+ * @param options.clock - Time source for windows, lockouts and eviction
+ *   (default: `Date.now`). Pass the same clock to `createAuthService`.
  */
 export function createMemoryLoginAttemptStore(options?: {
   readonly windowSeconds?: number;
   readonly purgeIntervalMs?: number;
   readonly failureTtlSeconds?: number;
   readonly maxEntries?: number;
+  readonly clock?: Clock;
 }): LoginAttemptStore {
+  const clock = options?.clock;
+  const currentMs = (): number => (clock ? clock.now() : Date.now());
   const windowMs = (options?.windowSeconds ?? DEFAULT_WINDOW_SECONDS) * 1000;
   const purgeIntervalMs = options?.purgeIntervalMs ?? DEFAULT_PURGE_INTERVAL_MS;
   const failureTtlMs =
@@ -103,7 +109,7 @@ export function createMemoryLoginAttemptStore(options?: {
 
   return {
     async get(identifier: string): Promise<LoginAttemptRecord> {
-      const now = Date.now();
+      const now = currentMs();
       if (!entries.has(identifier)) {
         maybePurge(now);
         return EMPTY;
@@ -112,20 +118,20 @@ export function createMemoryLoginAttemptStore(options?: {
     },
 
     async recordAttempt(identifier: string): Promise<LoginAttemptRecord> {
-      const entry = load(identifier, Date.now());
+      const entry = load(identifier, currentMs());
       entry.attempts++;
       return snapshot(entry);
     },
 
     async recordFailure(identifier: string): Promise<LoginAttemptRecord> {
-      const entry = load(identifier, Date.now());
+      const entry = load(identifier, currentMs());
       entry.failures++;
-      entry.lastFailureAt = Date.now();
+      entry.lastFailureAt = currentMs();
       return snapshot(entry);
     },
 
     async lock(identifier: string, until: number): Promise<void> {
-      const entry = load(identifier, Date.now());
+      const entry = load(identifier, currentMs());
       entry.lockedUntil = until;
     },
 
