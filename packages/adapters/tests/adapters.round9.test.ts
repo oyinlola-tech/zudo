@@ -40,11 +40,12 @@ describe("ADAPTERS-R9-01", () => {
 
     await expect(registry.disposeAll()).rejects.toBeInstanceOf(AggregateError);
 
+    // Reverse registration order: the last adapter registered goes first.
     expect(calls).toEqual([
-      "flaky.stop",
-      "flaky.dispose",
       "fine.stop",
       "fine.dispose",
+      "flaky.stop",
+      "flaky.dispose",
     ]);
     expect(registry.size).toBe(0);
   });

@@ -18,12 +18,25 @@
 
 // Core adapter
 export type { Adapter } from "./adapter/index.js";
-export { AdapterRegistry } from "./adapter/index.js";
-export type { AdapterCapabilityName } from "./adapter/index.js";
-export type { AdapterHealthReport } from "./adapter/index.js";
+export {
+  AdapterRegistry,
+  collectAdapterHealth,
+  configureAdapter,
+  withRetry,
+  runAdapterLifecycle,
+  toAdapterLifecycleError,
+} from "./adapter/index.js";
+export type {
+  AdapterCapabilityName,
+  AdapterHealthReport,
+  AdapterLifecycleOperation,
+} from "./adapter/index.js";
 
 // Capabilities
-export type { AdapterCapabilities } from "./capabilities/index.js";
+export type {
+  AdapterCapabilities,
+  KnownAdapterCapabilities,
+} from "./capabilities/index.js";
 
 // Metadata
 export type { AdapterMetadata } from "./metadata/index.js";

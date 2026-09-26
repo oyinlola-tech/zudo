@@ -61,7 +61,22 @@ await registry.disposeAll(); // stop, dispose, and empty the registry
 
 Each of these attempts every adapter and then throws an `AggregateError`
 carrying the failures, rather than stopping at the first one — a half-applied
-transition leaves resources nobody is tracking.
+transition leaves resources nobody is tracking. From `initializeAll()`,
+`startAll()` and `stopAll()` every entry in `errors` is typed and names its
+adapter — `AdapterInitializationError`, `AdapterOperationError` (operation
+`"start"` or `"stop"`), or `AdapterTimeoutError` when the hook exceeded
+`timeout` — with the hook's own error as `cause`. `disposeAll()` and
+`removeAndDispose()` rethrow the hooks' own errors (an `AggregateError` of
+both when `stop()` and `dispose()` both failed).
+
+`initializeAll()` and `startAll()` run in registration order; `stopAll()` and
+`disposeAll()` run in reverse, so an adapter is torn down before the ones
+registered ahead of it that it may depend on. `initializeAll()`,
+`startAll()` and `stopAll()` take the same `AdapterOperationOptions` as
+`healthAll()`: `timeout` bounds each hook, `retry: { attempts, delay }`
+re-runs a failed one, and `signal` stops the pass.
+`runAdapterLifecycle(adapter, "start", options)` runs one hook the same way,
+and `withRetry` is exported for your own operations.
 
 `remove()` and `clear()` only drop references; `removeAndDispose()` and
 `disposeAll()` also release resources.
@@ -77,9 +92,12 @@ registry.supports("postgres", "gracefulShutdown"); // boolean, never throws
 registry.requireCapability("edge", "streaming"); // throws AdapterCapabilityMissingError
 ```
 
-Declared capabilities: `http`, `websocket`, `streaming`, `filesystem`, `tcp`,
-`udp`, `backgroundTasks`, `longRunning`, `edgeRuntime`, `serverless`,
-`gracefulShutdown`, `abortSignal`.
+Well-known capabilities (`KnownAdapterCapabilities`): `http`, `websocket`,
+`streaming`, `filesystem`, `tcp`, `udp`, `backgroundTasks`, `longRunning`,
+`edgeRuntime`, `serverless`, `gracefulShutdown`, `abortSignal`.
+`AdapterCapabilities` is open: an adapter may declare any other name
+(`capabilities: { refunds: true }`) and `findByCapability("refunds")`,
+`supports()` and `requireCapability()` look it up like any other.
 
 ## Health
 
@@ -118,7 +136,9 @@ report.status; // worst of the per-adapter statuses: "healthy" | "degraded" | "u
 report.adapters.db; // AdapterHealth; throwing, timed-out or aborted checks are "unhealthy"
 ```
 
-Adapters without `health()` are left out of `report.adapters`.
+Adapters without `health()` are left out of `report.adapters`; the rest appear
+in registration order, whichever check finished first. `collectAdapterHealth`
+and `configureAdapter` are exported for registries of your own.
 
 `healthAll({ retry: { attempts, delay } })` re-runs a check that reports
 `unhealthy`, up to `attempts` tries in total, pausing `delay` ms between

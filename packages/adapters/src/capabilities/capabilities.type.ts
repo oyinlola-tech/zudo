@@ -9,8 +9,24 @@
  *
  * Not every platform supports every feature. Adapters declare their
  * capabilities so runtime code can adapt behavior accordingly.
+ *
+ * The well-known keys are listed in {@link KnownAdapterCapabilities}; any
+ * other name (`refunds`, `bulkExport`, …) is a business capability an
+ * adapter may declare and `findByCapability` / `supports` /
+ * `requireCapability` can look up. The interface used to be closed, so a
+ * capability outside the list was a compile error and could never be
+ * queried.
  */
-export interface AdapterCapabilities {
+export interface AdapterCapabilities extends KnownAdapterCapabilities {
+  readonly [capability: string]: boolean | undefined;
+}
+
+/**
+ * The capability names this package defines. Kept separate from
+ * {@link AdapterCapabilities} so `AdapterCapabilityName` can still offer
+ * them for completion while accepting any string.
+ */
+export interface KnownAdapterCapabilities {
   /** Supports HTTP request/response handling. */
   readonly http?: boolean;
 

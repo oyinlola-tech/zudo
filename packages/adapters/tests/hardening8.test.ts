@@ -127,8 +127,8 @@ describe("lifecycle", () => {
       "b:initialize",
       "a:start",
       "b:start",
-      "a:stop",
       "b:stop",
+      "a:stop",
     ]);
     // stopAll leaves them registered; only disposeAll clears.
     expect(registry.size).toBe(2);

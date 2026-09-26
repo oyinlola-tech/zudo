@@ -109,16 +109,17 @@ export async function collectAdapterHealth(
   // ordinary object runs the inherited prototype setter, so the entry would
   // vanish from the report and an unhealthy adapter would be invisible.
   const adapters = Object.create(null) as Record<string, AdapterHealth>;
-  await Promise.all(
-    entries
-      .filter(
-        ([, adapter]) =>
-          typeof (adapter as LifecycleAdapter).health === "function",
-      )
-      .map(async ([name, adapter]) => {
-        adapters[name] = await checkOne(adapter as LifecycleAdapter, options);
-      }),
+  const checked = entries.filter(
+    ([, adapter]) => typeof (adapter as LifecycleAdapter).health === "function",
   );
+  // Checks run concurrently but are recorded in registration order, so the
+  // report's key order does not depend on which check finished first.
+  const results = await Promise.all(
+    checked.map(([, adapter]) => checkOne(adapter as LifecycleAdapter, options)),
+  );
+  checked.forEach(([name], index) => {
+    adapters[name] = results[index]!;
+  });
   let status: AdapterHealthStatus = "healthy";
   for (const health of Object.values(adapters)) {
     const rank = RANK[health.status] ?? RANK.unhealthy;

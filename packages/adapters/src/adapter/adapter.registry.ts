@@ -13,7 +13,7 @@
  */
 
 import type { Adapter } from "./adapter.type.js";
-import type { AdapterCapabilities } from "../capabilities/capabilities.type.js";
+import type { KnownAdapterCapabilities } from "../capabilities/capabilities.type.js";
 import {
   AdapterAlreadyRegisteredError,
   AdapterCapabilityMissingError,
@@ -23,10 +23,20 @@ import {
 
 import { collectAdapterHealth, configureAdapter } from "./adapter.health.js";
 import type { AdapterHealthReport } from "./adapter.health.js";
+import {
+  runAdapterLifecycleAll,
+  teardownAdapter,
+} from "./adapterLifecycle/index.js";
 import type { AdapterOperationOptions } from "../lifecycle/lifecycle.type.js";
 
-/** A capability an adapter can declare. */
-export type AdapterCapabilityName = keyof AdapterCapabilities;
+/**
+ * A capability an adapter can declare: one of the well-known names, with
+ * completion, or any other string (a business capability such as
+ * `"refunds"`).
+ */
+export type AdapterCapabilityName =
+  | (keyof KnownAdapterCapabilities & string)
+  | (string & {});
 
 /** Names that are unsafe as a plain-object key, so no adapter may claim them. */
 const RESERVED_NAMES: ReadonlySet<string> = new Set([
@@ -131,7 +141,7 @@ export class AdapterRegistry {
       return false;
     }
     this.adapters.delete(key);
-    await this.teardown(adapter);
+    await teardownAdapter(adapter);
     return true;
   }
 
@@ -201,11 +211,19 @@ export class AdapterRegistry {
    * part of the adapter contract with nothing in the package that ever called
    * them, so an adapter could only be torn down, never brought up.
    *
+   * `options.timeout` bounds each adapter's hook, `options.retry` re-runs a
+   * failed one and `options.signal` stops the whole pass, as for
+   * {@link healthAll}.
+   *
    * @throws {AggregateError} After attempting all adapters, if any failed.
+   * Each entry is an `AdapterInitializationError` (or `AdapterTimeoutError`)
+   * naming its adapter, with the hook's own error as `cause`.
    */
-  async initializeAll(): Promise<void> {
-    await this.forEachAdapter(
-      (adapter) => adapter.initialize?.(),
+  async initializeAll(options: AdapterOperationOptions = {}): Promise<void> {
+    await runAdapterLifecycleAll(
+      [...this.adapters.values()],
+      "initialize",
+      options,
       "One or more adapters failed to initialize.",
     );
   }
@@ -214,22 +232,33 @@ export class AdapterRegistry {
    * Starts every registered adapter, in registration order.
    *
    * @throws {AggregateError} After attempting all adapters, if any failed.
+   * Each entry is an `AdapterOperationError` (or `AdapterTimeoutError`)
+   * naming its adapter, with the hook's own error as `cause`.
    */
-  async startAll(): Promise<void> {
-    await this.forEachAdapter(
-      (adapter) => adapter.start?.(),
+  async startAll(options: AdapterOperationOptions = {}): Promise<void> {
+    await runAdapterLifecycleAll(
+      [...this.adapters.values()],
+      "start",
+      options,
       "One or more adapters failed to start.",
     );
   }
 
   /**
-   * Stops every registered adapter without disposing or unregistering them.
+   * Stops every registered adapter without disposing or unregistering them,
+   * in reverse registration order — the mirror of {@link startAll}, so an
+   * adapter is stopped before anything registered ahead of it that it may
+   * depend on.
    *
    * @throws {AggregateError} After attempting all adapters, if any failed.
+   * Each entry is an `AdapterOperationError` (or `AdapterTimeoutError`)
+   * naming its adapter, with the hook's own error as `cause`.
    */
-  async stopAll(): Promise<void> {
-    await this.forEachAdapter(
-      (adapter) => adapter.stop?.(),
+  async stopAll(options: AdapterOperationOptions = {}): Promise<void> {
+    await runAdapterLifecycleAll(
+      [...this.adapters.values()].reverse(),
+      "stop",
+      options,
       "One or more adapters failed to stop.",
     );
   }
@@ -276,19 +305,23 @@ export class AdapterRegistry {
   }
 
   /**
-   * Clears the registry and releases every adapter's resources
-   * (calls `stop()` then `dispose()` when defined, best-effort).
+   * Clears the registry and releases every adapter's resources (calls
+   * `stop()` then `dispose()` when defined, best-effort), in reverse
+   * registration order like {@link stopAll}.
    *
    * @throws {AggregateError} After attempting all adapters, if any failed.
+   * Each entry is what {@link removeAndDispose} would have thrown for that
+   * adapter: the hook's own error, or an `AggregateError` of both when its
+   * `stop()` and `dispose()` both failed.
    */
   async disposeAll(): Promise<void> {
-    const adapters = [...this.adapters.values()];
+    const adapters = [...this.adapters.values()].reverse();
     this.adapters.clear();
 
     const failures: unknown[] = [];
     for (const adapter of adapters) {
       try {
-        await this.teardown(adapter);
+        await teardownAdapter(adapter);
       } catch (error) {
         failures.push(error);
       }
@@ -299,63 +332,6 @@ export class AdapterRegistry {
         failures,
         "One or more adapters failed to dispose.",
       );
-    }
-  }
-
-  /**
-   * Stops, then disposes, one adapter.
-   *
-   * `dispose()` runs even when `stop()` throws: the adapter has already
-   * left the registry by the time this is called, so skipping disposal
-   * would orphan its connections and timers with nothing left holding a
-   * reference to release them. A `stop()` failure is still reported — on
-   * its own when disposal succeeds, alongside the disposal error when
-   * both fail.
-   */
-  private async teardown(adapter: Adapter): Promise<void> {
-    let stopError: unknown;
-    let stopFailed = false;
-    try {
-      await adapter.stop?.();
-    } catch (error) {
-      stopFailed = true;
-      stopError = error;
-    }
-
-    try {
-      await adapter.dispose?.();
-    } catch (error) {
-      if (stopFailed) {
-        throw new AggregateError(
-          [stopError, error],
-          `Adapter "${adapter.name}" failed to stop and to dispose.`,
-        );
-      }
-      throw error;
-    }
-
-    if (stopFailed) throw stopError;
-  }
-
-  /**
-   * Runs an operation against every adapter, collecting failures rather than
-   * stopping at the first one — a half-applied lifecycle transition leaves
-   * resources in a state nobody tracked.
-   */
-  private async forEachAdapter(
-    operation: (adapter: Adapter) => Promise<void> | void,
-    message: string,
-  ): Promise<void> {
-    const failures: unknown[] = [];
-    for (const adapter of [...this.adapters.values()]) {
-      try {
-        await operation(adapter);
-      } catch (error) {
-        failures.push(error);
-      }
-    }
-    if (failures.length > 0) {
-      throw new AggregateError(failures, message);
     }
   }
 
