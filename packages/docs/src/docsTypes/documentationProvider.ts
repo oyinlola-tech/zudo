@@ -13,7 +13,11 @@ export interface DocumentationProvider {
   getAll(): readonly DocumentationDocument[];
 }
 
-/** Loads content from a documentation source. */
+/**
+ * Loads content from a documentation source. A contract only: no loader
+ * ships with the package; implement it over the file system, a fetch or
+ * a database and pass the result to `parseFrontmatter` / `createDocument`.
+ */
 export interface DocumentationSourceLoader {
   load(source: string): Promise<string>;
 }

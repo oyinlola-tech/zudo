@@ -27,10 +27,21 @@ export interface ValidateAllOptions extends ValidateLinksOptions {
    * appear in it as `NAVIGATION_ORPHAN_DOCUMENT` warnings. Default true.
    */
   readonly reportOrphans?: boolean;
+  /**
+   * Severity of a `NAVIGATION_ORPHAN_DOCUMENT` issue. Defaults to
+   * `"warning"`; pass `"error"` to fail validation when a document is
+   * unreachable from the navigation.
+   */
+  readonly orphanSeverity?: "error" | "warning";
 }
 
 /**
  * Validates all documents and optionally a navigation tree.
+ *
+ * `valid` is false only when an issue has severity `"error"`. Broken
+ * links and orphan documents are warnings by default, so a set with dead
+ * links still validates; set `brokenLinkSeverity` / `orphanSeverity` to
+ * `"error"` to fail on them.
  */
 export function validateAll(
   documents: readonly DocumentationDocument[],
@@ -62,7 +73,7 @@ export function validateAll(
       for (const id of registeredIds) {
         if (!inNavigation.has(id)) {
           allIssues.push({
-            severity: "warning",
+            severity: options.orphanSeverity ?? "warning",
             code: "NAVIGATION_ORPHAN_DOCUMENT",
             message: `Document "${id}" is not reachable from the navigation.`,
             documentId: id,

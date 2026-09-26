@@ -5,19 +5,16 @@
  * produces immutable DocumentationDocument objects.
  */
 
-import { DocumentValidationError } from "@zudojs/errors";
-
 import type {
   DocumentationContent,
   DocumentationDocument,
   DocumentationCategory,
   DocumentationMetadata,
-  DocumentationNode,
   DocumentationStatus,
 } from "../docsTypes/index.js";
 import { deepFreezeClone } from "../utils/utils.freeze.js";
-import { isValidDocumentId } from "../utils/utils.helper.js";
-import { toTagList } from "./documentBuilder.normalize.js";
+import { toTagList, withoutUndefined } from "./documentBuilder.normalize.js";
+import { assertValid, validateDocumentOptions } from "./documentBuilder.validate.js";
 
 /**
  * Options for creating a document via the builder.
@@ -35,6 +32,14 @@ export interface DocumentBuilderOptions {
   readonly deprecated?: boolean;
   readonly deprecatedMessage?: string;
   readonly visibility?: "SERVER" | "CLIENT";
+  /**
+   * When true, the built document is also run through `validateDocument`
+   * and any error issue (unknown `category`, `status`, `visibility`,
+   * content type or structured node) throws a `DocumentValidationError`.
+   * Defaults to false: the builder checks only `id`, `title` and the
+   * presence of `content`, matching earlier releases.
+   */
+  readonly strict?: boolean;
 }
 
 /**
@@ -51,10 +56,16 @@ export type DocumentBuilderExtras = Omit<
  *
  * The returned document is a deep-frozen copy: later mutation of the
  * options object (or of nested `content`, `metadata`, `tags`) does not
- * affect it.
+ * affect it. Optional fields that were not supplied are absent from the
+ * document rather than present as `undefined`.
  *
- * @throws {DocumentValidationError} when `id`, `title` or `content` is missing
- *   or the ID is not a valid dot-separated identifier.
+ * Only `id`, `title` and `content` are checked here; `category`, `status`
+ * and the other enums are checked by `validateDocument`, or at creation
+ * time when `strict: true` is passed.
+ *
+ * @throws {DocumentValidationError} when `id`, `title` or `content` is missing,
+ *   the ID is not a valid dot-separated identifier, or (`strict: true`)
+ *   `validateDocument` reports an error.
  *
  * @example
  * ```ts
@@ -72,7 +83,7 @@ export function createDocument(
 ): DocumentationDocument {
   validateDocumentOptions(options);
 
-  const document: DocumentationDocument = {
+  const document: DocumentationDocument = withoutUndefined({
     id: options.id,
     title: options.title,
     description: options.description,
@@ -85,75 +96,11 @@ export function createDocument(
     deprecated: options.deprecated,
     deprecatedMessage: options.deprecatedMessage,
     visibility: options.visibility,
-  };
+  });
+
+  if (options.strict) {
+    assertValid(document);
+  }
 
   return deepFreezeClone(document);
-}
-
-/**
- * Validates document builder options.
- * Throws on invalid input.
- */
-function validateDocumentOptions(options: DocumentBuilderOptions): void {
-  if (typeof options.id !== "string" || options.id.trim().length === 0) {
-    throw new DocumentValidationError("Document ID is required.");
-  }
-
-  if (!isValidDocumentId(options.id)) {
-    throw new DocumentValidationError(
-      `Document ID "${options.id}" is invalid. Use dot-separated segments of letters, digits, "_" and "-".`,
-      options.id,
-    );
-  }
-
-  if (
-    typeof options.title !== "string" ||
-    options.title.trim().length === 0
-  ) {
-    throw new DocumentValidationError(
-      "Document title is required.",
-      options.id,
-    );
-  }
-
-  if (!options.content || typeof options.content !== "object") {
-    throw new DocumentValidationError(
-      "Document content is required.",
-      options.id,
-    );
-  }
-}
-
-/**
- * Creates a markdown document.
- */
-export function createMarkdownDocument(
-  id: string,
-  title: string,
-  markdown: string,
-  options?: DocumentBuilderExtras,
-): DocumentationDocument {
-  return createDocument({
-    ...options,
-    id,
-    title,
-    content: { type: "markdown", value: markdown },
-  });
-}
-
-/**
- * Creates a structured document from AST nodes.
- */
-export function createStructuredDocument(
-  id: string,
-  title: string,
-  nodes: readonly DocumentationNode[],
-  options?: DocumentBuilderExtras,
-): DocumentationDocument {
-  return createDocument({
-    ...options,
-    id,
-    title,
-    content: { type: "structured", nodes },
-  });
 }

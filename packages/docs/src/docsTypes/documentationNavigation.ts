@@ -18,7 +18,11 @@ export interface DocumentationBreadcrumb {
   readonly documentId?: string;
 }
 
-/** Search document for indexing. */
+/**
+ * Search document for indexing. A contract only: this package ships no
+ * search index; build `SearchDocument`s from a registry (for example with
+ * `stripMarkdown`) and feed them to the search engine of your choice.
+ */
 export interface SearchDocument {
   readonly id: string;
   readonly title: string;
@@ -27,7 +31,10 @@ export interface SearchDocument {
   readonly path: string;
 }
 
-/** Search result returned from a search query. */
+/**
+ * Search result returned from a search query. A contract only; see
+ * `SearchDocument`.
+ */
 export interface SearchResult {
   readonly id: string;
   readonly title: string;

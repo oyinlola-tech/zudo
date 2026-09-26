@@ -4,11 +4,11 @@
  * Document model and builder for creating documentation pages.
  */
 
+export { createDocument } from "./documentBuilder.core.js";
 export {
-  createDocument,
   createMarkdownDocument,
   createStructuredDocument,
-} from "./documentBuilder.core.js";
+} from "./documentBuilder.convenience.js";
 
 export type {
   DocumentBuilderOptions,

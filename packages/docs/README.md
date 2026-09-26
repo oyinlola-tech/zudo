@@ -58,7 +58,10 @@ const index = generateIndex(registry.getAll()); // SERVER-only docs excluded
 - Markdown and JSON generation with escaping for untrusted content: structured text is HTML-escaped and links are limited to http, https, mailto, tel, ftp and ftps (others are written as plain text)
 - Fail-closed `visibility` filtering: only an unset or exactly `"CLIENT"` visibility reaches a client index
 - `stripMarkdown` and link validation run in linear time on untrusted input
-- Document, link and navigation validation with a single `valid` rule (errors only); `javascript:` and other non-allow-listed link schemes are `UNSAFE_LINK` errors
+- Document, link and navigation validation with a single `valid` rule (errors only); `javascript:` and other non-allow-listed link schemes are `UNSAFE_LINK` errors in every link form — inline `[x](…)` (including targets with parentheses or a title), reference definitions `[x]: …`, raw `<a href="…">` and `<scheme:…>` autolinks
+- `BROKEN_LINK` and `NAVIGATION_ORPHAN_DOCUMENT` are warnings by default; pass `{ brokenLinkSeverity: "error", orphanSeverity: "error" }` to `validateAll` (or `brokenLinkSeverity` to `validateLinks`) to fail on dead links or unreachable documents
+- `createDocument({ …, strict: true })` rejects an unknown `category`, `status` or `visibility` at creation instead of leaving it to `validateDocument`; documents never carry explicit `undefined` keys
+- `getAdjacent(id, nav, { scope: "tree" })` walks previous/next across section boundaries in reading order (the default stays within one level)
 - Documentation error classes re-exported from `@zudojs/errors`
 
 ## Use Cases

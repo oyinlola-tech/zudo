@@ -10,6 +10,10 @@ import {
 } from "../utils/utils.helper.js";
 import { isSafeLinkHref } from "../utils/utils.href.js";
 import {
+  extractLinkTargets,
+  stripInlineCode,
+} from "./validatorLinks.extract.js";
+import {
   toValidationResult,
   type ValidationResult,
   type ValidationIssue,
@@ -26,21 +30,13 @@ export interface ValidateLinksOptions {
    * Defaults to {@link DEFAULT_MAX_LINK_SCAN_LENGTH}.
    */
   readonly maxContentLength?: number;
+  /**
+   * Severity of a `BROKEN_LINK` issue (a relative link to an unregistered
+   * document). Defaults to `"warning"`, which never makes a result invalid;
+   * pass `"error"` to fail validation on dead links.
+   */
+  readonly brokenLinkSeverity?: "error" | "warning";
 }
-
-/**
- * Matches `[text](target)` and `![alt](target)` links. Group 1 is the
- * optional image bang, group 2 the target (optionally `<…>` wrapped
- * and followed by a `"title"`).
- *
- * Linear by construction: link text cannot contain `[`/`]` and a target
- * cannot contain `(`/`)`, so each start scans only to the next opener; the
- * target is non-empty, so leading whitespace is never split between two
- * quantifiers; and whitespace is `[ \t]` (the old `\s` ran across lines).
- * The old pattern took ~30 s on a 99 KB run of `[`.
- */
-const LINK_PATTERN =
-  /(!?)\[[^[\]\n]*\]\((?:[ \t]*(<[^<>\n]*>|[^()\s<>]+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?)?[ \t]*\)/g;
 
 /** `scheme:` (mailto:, ftp:, http:) or protocol-relative `//`. */
 const EXTERNAL_PATTERN = /^([a-zA-Z][a-zA-Z0-9+.-]*:|\/\/)/;
@@ -49,13 +45,18 @@ const EXTERNAL_PATTERN = /^([a-zA-Z][a-zA-Z0-9+.-]*:|\/\/)/;
  * Validates internal links in a document's markdown content and in
  * structured `link` nodes.
  *
- * A target whose scheme is not allowed (http, https, mailto, tel, ftp, ftps).(`javascript:`,
- * `data:`, `vbscript:` …) is reported as an `UNSAFE_LINK` error.
- * Skipped (never reported): images, anchors (`#…`), other targets with a
- * URL scheme or `//` prefix, links inside fenced or inline code.
+ * Every markdown link form is scanned: inline `[text](target)` (with
+ * balanced parentheses, `<…>` targets and titles), reference definitions
+ * `[label]: target`, raw HTML `href="…"` attributes and `<scheme:…>`
+ * autolinks. A target whose scheme is not on the allow-list (http, https,
+ * mailto, tel, ftp, ftps) — `javascript:`, `data:`, `vbscript:` … — is
+ * reported as an `UNSAFE_LINK` error.
+ * Skipped (never reported): images, anchors (`#…`), other targets with an
+ * allowed URL scheme or `//` prefix, links inside fenced or inline code.
  * Relative targets (`./x`, `../x`, `/x`) are resolved against the
  * document ID with `resolveDocumentLink`; bare targets are looked up
- * both as-is and resolved.
+ * both as-is and resolved. An unregistered target is a `BROKEN_LINK`
+ * whose severity is `options.brokenLinkSeverity` (default `"warning"`).
  */
 export function validateLinks(
   document: DocumentationDocument,
@@ -64,11 +65,12 @@ export function validateLinks(
 ): ValidationResult {
   const issues: ValidationIssue[] = [];
   const content = document.content;
+  const brokenSeverity = options.brokenLinkSeverity ?? "warning";
 
   if (content.type === "structured") {
     for (const node of content.nodes) {
       if (node.type === "link") {
-        checkTarget(node.href, document, registeredIds, issues);
+        checkTarget(node.href, document, registeredIds, issues, brokenSeverity);
       }
     }
     return toValidationResult(issues);
@@ -92,17 +94,9 @@ export function validateLinks(
 
   const source = stripInlineCode(stripFencedCodeBlocks(content.value));
 
-  for (const match of source.matchAll(LINK_PATTERN)) {
-    const isImage = match[1] === "!";
-    let target = match[2] ?? "";
-
-    if (isImage) continue;
-
-    if (target.startsWith("<") && target.endsWith(">")) {
-      target = target.slice(1, -1);
-    }
-
-    checkTarget(target, document, registeredIds, issues);
+  for (const link of extractLinkTargets(source)) {
+    if (link.isImage) continue;
+    checkTarget(link.target, document, registeredIds, issues, brokenSeverity);
   }
 
   return toValidationResult(issues);
@@ -113,6 +107,7 @@ function checkTarget(
   document: DocumentationDocument,
   registeredIds: ReadonlySet<string>,
   issues: ValidationIssue[],
+  brokenSeverity: "error" | "warning",
 ): void {
   const target = rawTarget.trim();
 
@@ -143,20 +138,9 @@ function checkTarget(
   }
 
   issues.push({
-    severity: "warning",
+    severity: brokenSeverity,
     code: "BROKEN_LINK",
     message: `Document "${document.id}" links to "${rawTarget}" which is not registered.`,
     documentId: document.id,
   });
-}
-
-/**
- * Blanks out inline code spans so links inside them are ignored. The
- * lookarounds anchor each attempt at a whole backtick run, so a long run is
- * not re-scanned from every position inside it.
- */
-function stripInlineCode(markdown: string): string {
-  return markdown.replace(/(?<!`)(`+)(?![`\n])[\s\S]*?(?<!`)\1(?!`)/g, (m) =>
-    " ".repeat(m.length),
-  );
 }

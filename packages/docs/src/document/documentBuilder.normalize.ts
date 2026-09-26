@@ -16,3 +16,17 @@ export function toTagList(
   if (typeof tags === "string") return tags === "" ? [] : [tags];
   return [...tags];
 }
+
+/**
+ * Shallow copy of `value` without the keys whose value is `undefined`, so
+ * an optional field that was not supplied is absent instead of present.
+ */
+export function withoutUndefined<T extends object>(value: T): T {
+  const copy: Record<string, unknown> = {};
+
+  for (const [key, item] of Object.entries(value)) {
+    if (item !== undefined) copy[key] = item;
+  }
+
+  return copy as T;
+}

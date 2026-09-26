@@ -8,6 +8,7 @@ export {
   getBreadcrumbs,
   flattenNavigation,
   findNavigationItem,
-  getSiblings,
-  getAdjacent,
 } from "./navigation.core.js";
+export { getSiblings, getAdjacent } from "./navigation.adjacent.js";
+
+export type { GetAdjacentOptions } from "./navigation.adjacent.js";

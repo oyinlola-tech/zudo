@@ -80,7 +80,11 @@ export interface DocumentationMetadata {
   readonly tags?: readonly string[];
 }
 
-/** A version entry for versioned documentation. */
+/**
+ * A version entry for versioned documentation. A contract only: the
+ * package provides no version switcher; hosts list their versions with
+ * this shape and select a registry per version.
+ */
 export interface DocumentationVersion {
   readonly version: string;
   readonly label?: string;
