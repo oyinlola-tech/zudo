@@ -15,6 +15,7 @@
 
 import type {
   ContainerProvider,
+  InjectedConstructor,
   InjectedFactory,
   ProviderToken,
 } from "../containerProvider/containerProvider.core.js";
@@ -63,13 +64,18 @@ import type {
 } from "./containerCore.type.js";
 import { ContainerScopeContext } from "./containerCore.scope.js";
 
-/** Options accepted by {@link Container.registerClass}. */
-export interface RegisterClassOptions extends CreateRegistrationOptions {
+/**
+ * Options accepted by {@link Container.registerClass}. `Deps` is inferred
+ * from the `inject` tuple and checked against the class's constructor.
+ */
+export interface RegisterClassOptions<
+  Deps extends readonly ProviderToken[] = readonly ProviderToken[],
+> extends CreateRegistrationOptions {
   /**
    * Tokens resolved and passed to the constructor, in order.
    * Omit for zero-argument constructors.
    */
-  readonly inject?: readonly ProviderToken[];
+  readonly inject?: Deps;
 }
 
 export class Container implements ContainerLike {
@@ -118,6 +124,13 @@ export class Container implements ContainerLike {
     return this;
   }
 
+  /**
+   * Registers a provider under a token.
+   *
+   * The default `scope` is **`ContainerScope.TRANSIENT`**: the provider
+   * runs on every `resolve()`. Pass `{ scope: ContainerScope.SINGLETON }`
+   * for anything that must be shared (a pool, a client, a cache).
+   */
   register<T>(
     token: RegistrationToken<T>,
     provider: ContainerProvider<T>,
@@ -127,13 +140,31 @@ export class Container implements ContainerLike {
     return this.#registry.register(token, provider, options);
   }
 
-  registerClass<T>(
+  /**
+   * Registers a class. Its constructor parameters are checked against the
+   * `inject` tokens, in order: `registerClass(API, Api, { inject: [DB] })`
+   * requires `Api`'s constructor to accept a `Db` when `DB` is a
+   * `createToken<Db>()` or class token, and swapping two typed tokens is a
+   * compile error. String/symbol tokens are untyped and check nothing.
+   * Without `inject` the class must be constructible with no arguments.
+   *
+   * Defaults to **`ContainerScope.TRANSIENT`** (a new instance per
+   * resolution) unless `options.scope` says otherwise.
+   */
+  registerClass<
+    T,
+    const Deps extends readonly ProviderToken[] = readonly [],
+  >(
     token: RegistrationToken<T>,
-    ctor: Constructor<T>,
-    options: RegisterClassOptions = {},
+    ctor: InjectedConstructor<T, NoInfer<Deps>>,
+    options: RegisterClassOptions<Deps> = {},
   ): ContainerRegistration<T> {
     const { inject, ...rest } = options;
-    return this.register(token, classProvider(ctor, inject ?? []), rest);
+    return this.register(
+      token,
+      classProvider(ctor as Constructor<T>, inject ?? []),
+      rest,
+    );
   }
 
   /**
@@ -160,6 +191,11 @@ export class Container implements ContainerLike {
    * as `Db` when `DB` is a `createToken<Db>()` or class token, and rejects a
    * factory whose parameters do not match. String/symbol tokens give
    * `unknown`.
+   *
+   * **The default scope is `ContainerScope.TRANSIENT`: the factory runs on
+   * every `resolve()`.** A database pool or HTTP client registered this way
+   * is rebuilt for each consumer unless you pass
+   * `{ scope: ContainerScope.SINGLETON }` as the fourth argument.
    */
   registerFactory<
     T,

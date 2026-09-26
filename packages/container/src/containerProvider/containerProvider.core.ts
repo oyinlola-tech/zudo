@@ -28,6 +28,36 @@ export type InjectedFactory<T, Deps extends readonly ProviderToken[]> = (
   ...dependencies: InjectedDependencies<Deps>
 ) => T;
 
+/**
+ * The constructor parameter list an `inject` list must satisfy. A typed
+ * token (`createToken<Db>()`, a class) contributes its type; an untyped
+ * string/symbol token contributes `any`, because a class declares its own
+ * parameter types and an untyped token carries nothing to check them
+ * against. A non-tuple `readonly ProviderToken[]` (a list built at runtime)
+ * has no positions to check and accepts any constructor.
+ */
+export type InjectedConstructorArgs<Deps extends readonly ProviderToken[]> =
+  number extends Deps["length"]
+    ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      any[]
+    : {
+        -readonly [K in keyof Deps]: Deps[K] extends ProviderToken<infer U>
+          ? unknown extends U
+            ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              any
+            : U
+          : never;
+      };
+
+/**
+ * A class whose constructor parameters are typed from its `inject` list, in
+ * order: `[DB, Clock]` requires `new (db: Db, clock: Clock)`. Swapping two
+ * typed tokens, or omitting the list for a constructor with required
+ * parameters, is a compile error instead of a runtime `undefined`.
+ */
+export type InjectedConstructor<T, Deps extends readonly ProviderToken[]> =
+  new (...args: InjectedConstructorArgs<Deps>) => T;
+
 export interface ClassProvider<T> {
   readonly useClass: Constructor<T>;
   /**
@@ -121,11 +151,22 @@ export function hasInjectedDependencies<T = unknown>(
   );
 }
 
-export function classProvider<T>(
-  useClass: Constructor<T>,
-  inject: readonly ProviderToken[] = [],
+/**
+ * Builds a class provider. The constructor's parameters are checked against
+ * the `inject` tokens, in order (see {@link InjectedConstructor}); with no
+ * list the class must be constructible with no arguments.
+ */
+export function classProvider<
+  T,
+  const Deps extends readonly ProviderToken[] = readonly [],
+>(
+  useClass: InjectedConstructor<T, NoInfer<Deps>>,
+  inject: Deps = [] as unknown as Deps,
 ): ClassProvider<T> {
-  return Object.freeze({ useClass, inject: Object.freeze([...inject]) });
+  return Object.freeze({
+    useClass: useClass as Constructor<T>,
+    inject: Object.freeze([...inject]),
+  });
 }
 /**
  * Builds a factory provider. The factory's parameters are inferred from the
@@ -152,14 +193,21 @@ export function existingProvider<T>(
   return Object.freeze({ useExisting });
 }
 
-export function provideClass<T>(
+/**
+ * Builds a class registration. The constructor's parameters are checked
+ * against the `inject` tokens, in order (see {@link InjectedConstructor}).
+ */
+export function provideClass<
+  T,
+  const Deps extends readonly ProviderToken[] = readonly [],
+>(
   provide: ProviderToken<T>,
-  useClass: Constructor<T>,
-  inject: readonly ProviderToken[] = [],
+  useClass: InjectedConstructor<T, NoInfer<Deps>>,
+  inject: Deps = [] as unknown as Deps,
 ): ClassRegistration<T> {
   return Object.freeze({
     provide,
-    useClass,
+    useClass: useClass as Constructor<T>,
     inject: Object.freeze([...inject]),
   });
 }

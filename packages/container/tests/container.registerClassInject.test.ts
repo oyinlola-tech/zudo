@@ -52,6 +52,9 @@ describe("class registrations without an inject list", () => {
   it("registers, then refuses to build a constructor that needs arguments", () => {
     const container = createContainer();
 
+    // Since round 12 the compiler rejects this too; the runtime guard still
+    // has to hold for JavaScript callers.
+    // @ts-expect-error -- Service needs two constructor arguments
     expect(() => container.registerClass(SERVICE, Service)).not.toThrow();
 
     const error = resolveError(() => container.resolve(SERVICE));
@@ -69,7 +72,9 @@ describe("class registrations without an inject list", () => {
     const viaProvide = createToken<Service>("ViaProvide");
 
     container.register(viaObject, { useClass: Service });
+    // @ts-expect-error -- Service needs two constructor arguments
     container.register(viaHelper, classProvider(Service));
+    // @ts-expect-error -- Service needs two constructor arguments
     container.register(viaProvide, provideClass(viaProvide, Service));
 
     for (const token of [viaObject, viaHelper, viaProvide]) {
@@ -83,6 +88,7 @@ describe("class registrations without an inject list", () => {
     const container = createContainer();
     const CONSUMER = createToken<{ service: Service }>("Consumer");
 
+    // @ts-expect-error -- Service needs two constructor arguments
     container.registerClass(SERVICE, Service);
     container.registerFactory(CONSUMER, (service) => ({ service }), [SERVICE]);
 

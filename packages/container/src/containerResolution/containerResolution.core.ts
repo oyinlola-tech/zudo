@@ -233,7 +233,19 @@ export class ContainerResolver {
           );
         }
       } else {
-        throw new RegistrationNotFoundError(describeToken(token));
+        // Name the consumer as well as the missing token: as a dependency
+        // this error is wrapped by the consumer's DependencyResolutionError,
+        // whose chain used to end at the consumer and never say what was
+        // missing.
+        const name = describeToken(token);
+        const requiredBy = state.path[state.path.length - 1];
+        throw new RegistrationNotFoundError(
+          name,
+          requiredBy === undefined
+            ? undefined
+            : `No registration found for token "${name}" (required by ` +
+                `"${describeToken(requiredBy)}").`,
+        );
       }
     }
 
@@ -399,11 +411,13 @@ export class ContainerResolver {
         error instanceof AsyncProviderError
       )
         throw error;
-      throw new DependencyResolutionError(
-        describeToken(token),
-        error,
-        state.path.map((t) => describeToken(t)),
-      );
+      // A missing dependency is the one failure whose token is not on the
+      // path (it never started resolving), so append it: the chain must end
+      // at the token that was missing, not at the consumer that needed it.
+      const chain = state.path.map((t) => describeToken(t));
+      if (error instanceof RegistrationNotFoundError)
+        chain.push(error.requestedToken);
+      throw new DependencyResolutionError(describeToken(token), error, chain);
     }
   }
 

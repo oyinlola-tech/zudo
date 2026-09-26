@@ -17,8 +17,13 @@ import { describeToken } from "../containerToken/containerToken.type.js";
  * Whether an unregistered token may be auto-registered: a class whose
  * constructor declares no required parameters (`Class.length === 0`).
  *
- * Parameters with a default value do not count, so
- * `constructor(value = 7)` still qualifies.
+ * `Function.length` counts parameters before the first default or rest
+ * parameter, so `constructor(value = 7)`, `constructor(deps: Deps = {})`
+ * and `constructor(...rest)` all qualify and are built with **no
+ * arguments** — their defaults apply and nothing is injected. A class that
+ * expects the container to supply a defaulted parameter must be registered
+ * explicitly with an `inject` list; the container cannot tell "optional"
+ * from "please inject" at runtime.
  */
 export function isAutoRegistrable(token: unknown): boolean {
   return typeof token === "function" && token.length === 0;

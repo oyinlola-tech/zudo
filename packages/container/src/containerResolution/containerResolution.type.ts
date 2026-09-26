@@ -42,7 +42,16 @@ export interface ResolutionOptions {
   readonly cache?: ResolutionCache;
   /** Current dependency resolution path. Normally managed internally. */
   readonly path?: ResolutionPath;
-  /** Whether unregistered class tokens may be resolved. Defaults to true. */
+  /**
+   * Whether unregistered class tokens may be resolved. Defaults to true.
+   *
+   * Only a class whose constructor declares no *required* parameters
+   * (`Class.length === 0`) qualifies, and it is built with no arguments.
+   * Parameters with defaults and rest parameters do not count, so such a
+   * class is auto-registered with its defaults applied and nothing
+   * injected; register it with an `inject` list when the container should
+   * supply those values. Set to `false` to require explicit registration.
+   */
   readonly autoRegisterClasses?: boolean;
   /**
    * Whether auto-resolved class tokens may be added to the registry.

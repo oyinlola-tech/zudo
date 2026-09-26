@@ -47,12 +47,26 @@ container.registerFactory(API, (db) => new Api(db), [DB]); // deps via inject li
 container.registerExisting("db-alias", DB); // alias to another token
 ```
 
+Every `register*` call except `registerValue` defaults to
+**`ContainerScope.TRANSIENT`**: the class or factory runs again on every
+`resolve()`. Pass `{ scope: ContainerScope.SINGLETON }` (the fourth argument
+of `registerFactory`) for a pool, a client or anything else that must be
+shared.
+
 A factory's parameters are typed from its `inject` list, in order: with
 `DB = createToken<Db>("Db")`, `(db) => new Api(db)` receives `db: Db`, and a
 factory whose parameters do not match the tokens is a compile error. Class
 tokens type the same way; plain string and symbol tokens give `unknown`.
 `factoryProvider(factory, inject)` and `provideFactory(token, factory,
 inject)` infer the same way.
+
+`registerClass(token, Class, { inject })`, `classProvider(Class, inject)` and
+`provideClass(token, Class, inject)` check the constructor the same way:
+`inject: [CLOCK, DB]` against `constructor(db: Db, clock: Clock)` is a compile
+error, and so is omitting `inject` for a constructor with required
+parameters. Untyped string/symbol tokens check nothing for classes, a
+non-tuple `ProviderToken[]` built at runtime accepts any constructor, and
+defaulted parameters beyond the list are fine.
 
 ```typescript
 container.registerFactory(
@@ -164,10 +178,11 @@ container.register(API, {
 
 Classes without an `inject` list are constructed with zero arguments, so
 only a constructor that declares no parameters may omit it (parameters with
-a default value do not count). Registering such a class without `inject`
-is allowed, but resolving it throws a `ProviderResolutionError` naming the
-class and the `inject: [...]` fix, instead of building it with `undefined`
-dependencies. There is no reflection/decorator magic — dependencies are
+a default value do not count). In TypeScript, registering such a class
+without `inject` is a compile error; at runtime (JavaScript callers, casts)
+registering is allowed but resolving throws a `ProviderResolutionError`
+naming the class and the `inject: [...]` fix, instead of building it with
+`undefined` dependencies. There is no reflection/decorator magic — dependencies are
 exactly the tokens you list, resolved in order.
 
 ## Duplicate registrations
@@ -212,8 +227,12 @@ const container = createContainer({
   has no inject list, so `resolve(NeedsDep)` for
   `constructor(dep: Dep)` throws `RegistrationNotFoundError` naming the
   class and telling you to register it with an `inject` list, instead of
-  building it with `dep = undefined`. Parameters with defaults do not
-  count.
+  building it with `dep = undefined`. Parameters with defaults and rest
+  parameters do not count: `constructor(deps: Deps = {})` has
+  `length === 0`, so it _is_ auto-registered and built with no arguments —
+  the default applies and nothing is injected. Register such a class with
+  an `inject` list when the container should supply those values; the
+  container cannot tell "optional" from "please inject" at runtime.
 - `detectCircularDependencies` — circular chains throw
   `CircularDependencyError` with the full chain. When disabled,
   `maxResolutionDepth` still stops runaway recursion.
