@@ -2,7 +2,10 @@
  * Logger entry value serialization.
  */
 
-import { LOGGER_UNREADABLE_TOKEN } from "./loggerEntryHelpers.sanitize.js";
+import {
+  LOGGER_UNREADABLE_TOKEN,
+  isLogErrorValue,
+} from "./loggerEntryHelpers.sanitize.js";
 
 /**
  * Serializes an error-like object into a plain object.
@@ -108,7 +111,11 @@ export function serializeLoggerValue(
       return result;
     }
 
+    // An Error already normalized by redaction is plain data; honour
+    // `includeErrorStack` for it exactly as for a live Error.
+    const omitStack = !includeErrorStack && isLogErrorValue(value);
     for (const key of Object.keys(value)) {
+      if (omitStack && key === "stack") continue;
       let item: unknown;
       try {
         item = (value as Record<string, unknown>)[key];

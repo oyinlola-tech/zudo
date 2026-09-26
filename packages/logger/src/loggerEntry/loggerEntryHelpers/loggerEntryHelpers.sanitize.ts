@@ -157,6 +157,64 @@ function defineLogProperty(
 }
 
 /**
+ * Marks a plain object that {@link redactLogValue} produced from an
+ * `Error`, so a serializer can still tell it apart from ordinary metadata
+ * (the text formatter leaves its `stack` out when `includeStackTrace` is
+ * off). The property is a non-enumerable symbol: `JSON.stringify`, spreads
+ * and `Object.keys` never see it.
+ */
+export const LOGGER_ERROR_VALUE: unique symbol = Symbol.for(
+  "zudojs.logger.errorValue",
+);
+
+/** A normalized `Error` as it appears inside entry metadata and context. */
+export interface LogErrorValue {
+  readonly name: string;
+  readonly message: string;
+  readonly stack?: string;
+  readonly cause?: unknown;
+  readonly [key: string]: unknown;
+}
+
+/** True when `value` is an `Error` normalized by {@link redactLogValue}. */
+export function isLogErrorValue(value: unknown): value is LogErrorValue {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Record<symbol, unknown>)[LOGGER_ERROR_VALUE] === true
+  );
+}
+
+/**
+ * Copies an `Error` into a plain object: `name`, `message` and `stack`
+ * first (they are non-enumerable on the error itself, which is why a
+ * stringified error is `{}`), then its own enumerable fields with their
+ * descriptors intact so a getter is still read by the redaction walk, then
+ * `cause`. The walk redacts and descends into all of them.
+ */
+function errorToPlainObject(error: Error): Record<string, unknown> {
+  const plain: Record<string, unknown> = {};
+  defineLogProperty(plain, "name", error.name);
+  defineLogProperty(plain, "message", error.message);
+  if (typeof error.stack === "string") {
+    defineLogProperty(plain, "stack", error.stack);
+  }
+  for (const key of Object.keys(error)) {
+    if (Object.hasOwn(plain, key)) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(error, key);
+    if (descriptor) Object.defineProperty(plain, key, descriptor);
+  }
+  if (
+    !Object.hasOwn(plain, "cause") &&
+    "cause" in error &&
+    error.cause !== undefined
+  ) {
+    defineLogProperty(plain, "cause", error.cause);
+  }
+  return plain;
+}
+
+/**
  * Recursively replaces secret-named fields with a redaction token.
  *
  * Nesting, arrays, `Map`, `Set` and getters are all covered: the walk
@@ -180,12 +238,33 @@ export function redactLogValue(
     return value;
   }
 
-  if (value instanceof Date || value instanceof Error) {
+  if (value instanceof Date) {
     return value;
   }
 
   if (seen.has(value)) {
     return "[Circular]";
+  }
+
+  // An Error keeps name/message/stack non-enumerable, so a transport that
+  // stringified `entry.metadata` saw `{ cause: {} }`. It becomes plain data
+  // here, before the entry is frozen, so every transport sees the same
+  // thing; its own fields are redacted like any other metadata.
+  if (value instanceof Error) {
+    seen.add(value);
+    try {
+      const redacted = redactLogValue(
+        errorToPlainObject(value),
+        isSecret,
+        replacement,
+        seen,
+        onReadError,
+      ) as Record<string, unknown>;
+      Object.defineProperty(redacted, LOGGER_ERROR_VALUE, { value: true });
+      return redacted;
+    } finally {
+      seen.delete(value);
+    }
   }
 
   seen.add(value);

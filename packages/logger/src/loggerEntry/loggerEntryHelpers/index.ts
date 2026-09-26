@@ -24,13 +24,18 @@ export {
 } from "./loggerEntryHelpers.serialize.js";
 
 export {
+  LOGGER_ERROR_VALUE,
   LOGGER_REDACTION_TOKEN,
   LOGGER_UNREADABLE_TOKEN,
   DEFAULT_LOGGER_SECRET_PATTERN,
   escapeLogText,
   hasLogControlCharacters,
   createSecretMatcher,
+  isLogErrorValue,
   redactLogValue,
 } from "./loggerEntryHelpers.sanitize.js";
 
-export type { LoggerRedactionOptions } from "./loggerEntryHelpers.sanitize.js";
+export type {
+  LogErrorValue,
+  LoggerRedactionOptions,
+} from "./loggerEntryHelpers.sanitize.js";

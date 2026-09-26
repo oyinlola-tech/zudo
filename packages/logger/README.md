@@ -28,6 +28,34 @@ logger.error("Connection failed", { error: err.message });
 await logger.flush(); // drain in-flight writes before exit
 ```
 
+## Logging errors
+
+```typescript
+logger.log(LoggerLevel.ERROR, "payment failed", {
+  error: err,
+  metadata: { orderId },
+}); // typed: err is the entry's `error`, stack included
+
+logger.error("payment failed", { err }); // err becomes plain data in metadata
+```
+
+The level methods take `(message, metadata?)`. In JavaScript, or loosely
+typed TypeScript, `logger.error("payment failed", err)` also works at
+runtime — the `Error` is recorded as the entry's `error` — but that call
+does not type-check; the typed way to attach an error is
+`log(level, message, { error, metadata })`. (The signature is kept single
+on purpose: an overload or a widened union broke custom `Logger`
+implementations and structural logger types.)
+
+An `Error` placed _inside_ metadata or context (`{ err }`, `{ cause: err }`,
+nested anywhere) is normalized when the entry is built into
+`{ name, message, stack, ...ownFields, cause }`, with secret-named own
+fields redacted and a self-referential `cause` shown as `"[Circular]"`, so
+a custom transport that stringifies `entry.metadata` sees the error rather
+than `{}`. `isLogErrorValue(value)` tells such an object apart from
+ordinary metadata; the text formatter's `includeStackTrace: false` still
+leaves its `stack` out.
+
 ## Levels
 
 `fatal` (0), `error` (1), `warn` (2), `info` (3), `debug` (4), `trace`
@@ -158,6 +186,12 @@ createLogger({ redact: { enabled: false } }); // same as redact: false
 `redact` takes a boolean or an options object (`enabled`, `keys`, `pattern`,
 `replacement`). `true` or omitting it keeps the default. Child loggers inherit
 the parent's setting.
+
+This is `@zudojs/logger`'s own redaction and it needs no setup.
+`@zudojs/core`'s `ConsoleLogger` is a different logger with a different
+mechanism — a `createLogRedactor()` hook with its own key list — and this
+package has no `createLogRedactor`. If an application uses both, configure
+each; a key added to one is not redacted by the other.
 
 ## Log injection
 
