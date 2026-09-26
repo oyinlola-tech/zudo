@@ -22,6 +22,10 @@
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
     menu: '<svg class="ic-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg><svg class="ic-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
     up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+    theme:
+      '<svg class="ic-system" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true"><rect x="3" y="4" width="18" height="12"/><path d="M8 20h8M12 16v4"/></svg>' +
+      '<svg class="ic-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true"><rect x="8" y="8" width="8" height="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.5 4.5l2 2M17.5 17.5l2 2M4.5 19.5l2-2M17.5 6.5l2-2"/></svg>' +
+      '<svg class="ic-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M14 3a8 8 0 1 0 7 11 7 7 0 0 1-7-11z"/></svg>',
     mark: '<svg class="zh-mark" viewBox="0 0 80 80" aria-hidden="true"><g fill="currentColor"><rect x="6" y="6" width="12" height="12"/><rect x="20" y="6" width="12" height="12"/><rect x="34" y="6" width="12" height="12"/><rect x="48" y="6" width="12" height="12"/><rect x="62" y="6" width="12" height="12"/><rect fill="#C0392B" x="48" y="20" width="12" height="12"/><rect fill="#C0392B" x="34" y="34" width="12" height="12"/><rect fill="#C0392B" x="20" y="48" width="12" height="12"/><rect x="6" y="62" width="12" height="12"/><rect x="20" y="62" width="12" height="12"/><rect x="34" y="62" width="12" height="12"/><rect x="48" y="62" width="12" height="12"/><rect x="62" y="62" width="12" height="12"/></g></svg>',
     word: '<svg class="zh-wordmark" viewBox="0 0 220 44" fill="none" aria-hidden="true"><g stroke="currentColor" stroke-width="12" stroke-linecap="square" stroke-linejoin="miter"><path d="M6 6H34L6 38H34"/><path d="M64 6V38H92V6"/><path d="M122 6H140L150 16V28L140 38H122Z"/><path d="M180 6H208V38H180Z"/></g></svg>',
     giant:
@@ -195,14 +199,15 @@
     { g: 'Learn', t: "The DOM (JavaScript in the browser and on the server 10)", p: '/learn/browser-dom', e: "Read and change a web page from JavaScript: find, create, update and remove elements safely, avoid innerHTML XSS, and build a task list UI rendered from data." },
     { g: 'Learn', t: "Events (JavaScript in the browser and on the server 11)", p: '/learn/browser-events', e: "Make a shopping cart respond to clicks, typing and forms with listeners, bubbling and capturing, preventDefault, delegation, custom events and a debounce." },
     { g: 'Learn', t: "Browser APIs (JavaScript in the browser and on the server 12)", p: '/learn/browser-apis', e: "Use the browser's tools with their failure modes: fetch, localStorage, URL and URLSearchParams, the History API, timers, requestAnimationFrame and Web Workers." },
-    { g: 'Learn', t: "Networking from JavaScript (JavaScript in the browser and on the server 13)", p: '/learn/browser-networking', e: "Connect a page to your Node.js Task API: the request lifecycle, JSON, the same-origin policy, CORS and preflight, HttpOnly session cookies and cancellation." },
-    { g: 'Learn', t: "Real-time and background work (JavaScript in the browser and on the server 14)", p: '/learn/browser-realtime', e: "Push live updates to a page with Server-Sent Events and WebSockets, each with a Node.js server, and move heavy page work to Web Workers with messages." },
-    { g: 'Learn', t: "Git and GitHub (JavaScript in the browser and on the server 15)", p: '/learn/git', e: "Track every change with Git, work on branches and resolve a real merge conflict, keep node_modules and secrets out of the repository, and share work on GitHub." },
-    { g: 'Learn', t: "Professional Git (JavaScript in the browser and on the server 16)", p: '/learn/git-collaboration', e: "Work like a professional team: issues, pull requests, code review, merge versus rebase, rebase conflicts, tags, releases, changelogs and open source." },
-    { g: 'Learn', t: "JavaScript tooling (JavaScript in the browser and on the server 17)", p: '/learn/js-tooling', e: "Learn why each JavaScript tool exists, run Prettier and ESLint for real, see what a bundler does, map a minified stack trace back to source and validate config." },
-    { g: 'Learn', t: "The debugging method (JavaScript in the browser and on the server 18)", p: '/learn/debug-method', e: "Find bugs with a repeatable method: observe, reproduce, isolate, hypothesize, test, fix and verify. Read stack traces, log well and shrink a minimal repro." },
-    { g: 'Learn', t: "Debugging tools (JavaScript in the browser and on the server 19)", p: '/learn/debug-tools', e: "Pause a program at breakpoints, step through it and watch values in Node.js and the browser, read network traffic, and map compiled code back with source maps." },
-    { g: 'Learn', t: "Debugging practice (JavaScript in the browser and on the server 20)", p: '/learn/debug-practice', e: "Find a regression with binary search and git bisect run, dig to root causes with the five whys, and work five complete bug hunts from report to regression test." },
+    { g: 'Learn', t: "Theming a site with CSS variables (JavaScript in the browser and on the server 13)", p: '/learn/browser-theming', e: "Build a light, dark and system theme switch the way this site does it: colour tokens in CSS, one attribute on the root element, a boot script that stops the flash, a preference that survives reloads and follows other tabs, and an event other code can listen to." },
+    { g: 'Learn', t: "Networking from JavaScript (JavaScript in the browser and on the server 14)", p: '/learn/browser-networking', e: "Connect a page to your Node.js Task API: the request lifecycle, JSON, the same-origin policy, CORS and preflight, HttpOnly session cookies and cancellation." },
+    { g: 'Learn', t: "Real-time and background work (JavaScript in the browser and on the server 15)", p: '/learn/browser-realtime', e: "Push live updates to a page with Server-Sent Events and WebSockets, each with a Node.js server, and move heavy page work to Web Workers with messages." },
+    { g: 'Learn', t: "Git and GitHub (JavaScript in the browser and on the server 16)", p: '/learn/git', e: "Track every change with Git, work on branches and resolve a real merge conflict, keep node_modules and secrets out of the repository, and share work on GitHub." },
+    { g: 'Learn', t: "Professional Git (JavaScript in the browser and on the server 17)", p: '/learn/git-collaboration', e: "Work like a professional team: issues, pull requests, code review, merge versus rebase, rebase conflicts, tags, releases, changelogs and open source." },
+    { g: 'Learn', t: "JavaScript tooling (JavaScript in the browser and on the server 18)", p: '/learn/js-tooling', e: "Learn why each JavaScript tool exists, run Prettier and ESLint for real, see what a bundler does, map a minified stack trace back to source and validate config." },
+    { g: 'Learn', t: "The debugging method (JavaScript in the browser and on the server 19)", p: '/learn/debug-method', e: "Find bugs with a repeatable method: observe, reproduce, isolate, hypothesize, test, fix and verify. Read stack traces, log well and shrink a minimal repro." },
+    { g: 'Learn', t: "Debugging tools (JavaScript in the browser and on the server 20)", p: '/learn/debug-tools', e: "Pause a program at breakpoints, step through it and watch values in Node.js and the browser, read network traffic, and map compiled code back with source maps." },
+    { g: 'Learn', t: "Debugging practice (JavaScript in the browser and on the server 21)", p: '/learn/debug-practice', e: "Find a regression with binary search and git bisect run, dig to root causes with the five whys, and work five complete bug hunts from report to regression test." },
     { g: 'Learn', t: "Why TypeScript exists (TypeScript 1)", p: '/learn/ts-setup', e: "See a bug that JavaScript runs without complaint, install TypeScript, write a tsconfig.json, and learn the three ways to run TypeScript on Node.js 24." },
     { g: 'Learn', t: "What the TypeScript compiler does (TypeScript 2)", p: '/learn/ts-compiler', e: "Follow a TypeScript file through tsc: checking, type erasure, transpiling to older JavaScript, emitted files, watch mode and Node's type stripping." },
     { g: 'Learn', t: "Basic types (TypeScript 3)", p: '/learn/ts-types', e: "Type strings, numbers, booleans, arrays, tuples and objects, handle null and undefined under strict mode, and meet any, unknown, void and never." },
@@ -362,7 +367,7 @@
     { g: 'Learn', t: "Use case: a multi-tenant SaaS (Real-world projects and capstone 4)", p: '/learn/usecase-saas', e: "Build InvoiceHub, where many businesses share one app and one database, and prove with tests that one organization can never read another's data." },
     { g: 'Learn', t: "Use case: background processing (Real-world projects and capstone 5)", p: '/learn/usecase-background-jobs', e: "Move invoice e-mails out of the request: a durable job ledger, a queue with retries, scheduled reminders, correlation ids and recovery from crashed workers." },
     { g: 'Learn', t: "Use case: a microservice platform (Real-world projects and capstone 6)", p: '/learn/usecase-microservices', e: "Split Oja Market into six services that call each other over RPC, announce events through an outbox, retry through queues, and share one trace per request." },
-    { g: 'Learn', t: "A whole project through the CLI (Real-world projects and capstone 7)", p: '/learn/zudo-cli-project', e: "Build a hall-booking API from zudojs create to a Docker image, generating each layer with the CLI and fixing the five things the generator gets wrong." },
+    { g: 'Learn', t: "A whole project through the CLI (Real-world projects and capstone 7)", p: '/learn/zudo-cli-project', e: "Build a hall-booking API from zudojs create to a Docker image, generating each layer with the CLI and writing the business rules and tests the generator can't." },
     { g: 'Learn', t: "Capstone: ShopFlow (Real-world projects and capstone 8)", p: '/learn/capstone-shopflow', e: "Plan and build ShopFlow with ZudoJS: a runnable core for accounts, products and a checkout that never oversells, then milestones toward services." },
     { g: 'Learn', t: "Capstone: a production SaaS (Real-world projects and capstone 9)", p: '/learn/capstone-saas', e: "Build FeesDesk, a multi-school fees platform in naira: a tested payment slice that uses most of ZudoJS, then milestones and the graduation checklist." },
     { g: 'Learn', t: "Final production challenge (Real-world projects and capstone 10)", p: '/learn/final-challenge', e: "Someone else's gift-card feature works in the demo and fails everything else. Find its problems, fix them step by step, and prove each fix with a test." },
@@ -474,6 +479,12 @@
       t: "Package rules",
       p: "/docs/rules",
       e: "Development standards every package follows.",
+    },
+    {
+      g: "Reference",
+      t: "Themes",
+      p: "/docs/design-themes",
+      e: "Light, dark and system: the site's colour tokens and how the switch works.",
     },
     {
       g: "Reference",
@@ -618,6 +629,9 @@
       '<button type="button" class="zh-btn zh-search" id="zudoSearchTrigger" aria-label="Search documentation">' +
       ICON.search +
       '<span class="zh-search-label">Search docs</span><kbd>Ctrl K</kbd></button>' +
+      '<button type="button" class="zh-btn zh-btn--icon zh-theme" id="zudoThemeTrigger" aria-label="Theme">' +
+      ICON.theme +
+      "</button>" +
       '<button type="button" class="zh-btn zh-btn--icon zh-term" id="zudoTerminalTrigger" title="Open the playground (Ctrl+`)" aria-label="Open the playground">&gt;_</button>' +
       '<a class="zh-btn zh-btn--icon" href="' +
       GITHUB_URL +
@@ -640,6 +654,9 @@
       '" target="_blank" rel="noopener">' +
       ICON.github +
       " GitHub</a>" +
+      '<button type="button" class="zh-btn zh-theme" aria-label="Theme">' +
+      ICON.theme +
+      '<span class="zh-theme-label">Theme</span></button>' +
       "</div>" +
       "</nav>" +
       "</div>" +
@@ -658,6 +675,31 @@
       .addEventListener("click", function () {
         if (window.ZudoPlayground) window.ZudoPlayground.toggle();
       });
+
+    /* Theme toggle: system → light → dark. The state itself lives in js/theme.js;
+       this only draws the current glyph and forwards clicks. */
+    var THEME_LABEL = { system: "System theme", light: "Light theme", dark: "Dark theme" };
+    var themeButtons = document.querySelectorAll(".zh-theme");
+    function syncTheme() {
+      var api = window.zudoTheme;
+      var pref = api ? api.get() : "system";
+      var order = api ? api.ORDER : ["system", "light", "dark"];
+      var next = order[(order.indexOf(pref) + 1) % order.length];
+      Array.prototype.forEach.call(themeButtons, function (b) {
+        b.setAttribute("data-pref", pref);
+        b.setAttribute("aria-label", THEME_LABEL[pref] + ". Switch to " + THEME_LABEL[next].toLowerCase());
+        b.title = THEME_LABEL[pref] + " — click for " + THEME_LABEL[next].toLowerCase();
+        var label = b.querySelector(".zh-theme-label");
+        if (label) label.textContent = THEME_LABEL[pref];
+      });
+    }
+    Array.prototype.forEach.call(themeButtons, function (b) {
+      b.addEventListener("click", function () {
+        if (window.zudoTheme) window.zudoTheme.cycle();
+      });
+    });
+    if (window.zudoTheme) window.zudoTheme.onChange(syncTheme);
+    syncTheme();
 
     var onScroll = function () {
       header.classList.toggle("is-scrolled", window.scrollY > 8);

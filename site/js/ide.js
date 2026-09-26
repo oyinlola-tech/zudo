@@ -84,7 +84,45 @@
     folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="currentColor"/></svg>',
     trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
     rename: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+    sun: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
+    moon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3a8 8 0 1 0 7 11 7 7 0 0 1-7-11z" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
   };
+
+  /* ---------------- theme ----------------
+     The editor follows the site theme (js/theme.js) unless the learner picks
+     one here; that choice is remembered on its own, so a dark editor on a
+     light page (how many people work) survives a reload. */
+  var THEME_KEY = 'zudo.ide.theme';
+  var THEME_ORDER = ['follow', 'light', 'dark'];
+  var THEME_TITLE = { follow: 'Editor theme: follows the site', light: 'Editor theme: light', dark: 'Editor theme: dark' };
+  function themePref() {
+    try { var v = localStorage.getItem(THEME_KEY); return THEME_ORDER.indexOf(v) === -1 ? 'follow' : v; }
+    catch (e) { return 'follow'; }
+  }
+  function themeResolved() {
+    var pref = themePref();
+    if (pref !== 'follow') return pref;
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  }
+  function applyTheme() {
+    if (!root) return;
+    var resolved = themeResolved();
+    root.setAttribute('data-ide-theme', resolved);
+    var btn = root.querySelector('[data-act="theme"]');
+    if (btn) {
+      btn.innerHTML = resolved === 'dark' ? ICON.moon : ICON.sun;
+      btn.title = THEME_TITLE[themePref()] + ' (click to change)';
+      btn.setAttribute('aria-label', btn.title);
+    }
+    if (editor && monaco) monaco.editor.setTheme(resolved === 'dark' ? 'vs-dark' : 'vs');
+  }
+  function cycleTheme() {
+    var next = THEME_ORDER[(THEME_ORDER.indexOf(themePref()) + 1) % THEME_ORDER.length];
+    try { if (next === 'follow') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, next); } catch (e) { /* not remembered */ }
+    applyTheme();
+    setStatus(THEME_TITLE[next]);
+  }
+  document.addEventListener('zudo:theme', function () { if (themePref() === 'follow') applyTheme(); });
 
   function build() {
     root = document.createElement('div');
@@ -99,6 +137,7 @@
       '  <div class="ide-title-actions">' +
       '    <button type="button" class="ide-check" data-act="check" title="Check your answer" hidden>' + ICON.check + '<span>Check</span></button>' +
       '    <button type="button" class="ide-run" data-act="run" title="Run the active file (Ctrl+Enter)">' + ICON.run + '<span>Run</span></button>' +
+      '    <button type="button" class="ide-icon" data-act="theme" title="Editor theme" aria-label="Editor theme">' + ICON.sun + '</button>' +
       '    <button type="button" class="ide-icon" data-act="close" title="Close the editor" aria-label="Close the editor">' + ICON.close + '</button>' +
       '  </div>' +
       '</div>' +
@@ -133,6 +172,7 @@
       root.classList.add('side-hidden');
       root.querySelector('[data-act="toggle-side"]').classList.remove('is-active');
     }
+    applyTheme();
     treeEl = root.querySelector('.ide-tree');
     tabsEl = root.querySelector('.ide-tabs');
     editorEl = root.querySelector('.ide-editor');
@@ -232,7 +272,7 @@
         d.setCompilerOptions({ target: m.languages.typescript.ScriptTarget.ESNext, module: m.languages.typescript.ModuleKind.ESNext, allowNonTsExtensions: true, allowJs: true });
       });
       editor = m.editor.create(editorEl, {
-        theme: 'vs-dark',
+        theme: themeResolved() === 'dark' ? 'vs-dark' : 'vs',
         automaticLayout: true,
         fontSize: 14,
         fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace",
@@ -613,6 +653,7 @@
       var fid = btn.getAttribute('data-file');
       e.stopPropagation();
       if (act === 'close') close();
+      else if (act === 'theme') cycleTheme();
       else if (act === 'run') runActive();
       else if (act === 'check') runCheck();
       else if (act === 'hint') { if (check && check.showHint) { check.showHint(); renderHints(); } }
