@@ -25,6 +25,14 @@ export interface CacheAdapter {
   readonly name: string;
   connect?(): Promise<void>;
   disconnect?(): Promise<void>;
+  /**
+   * Reads one entry.
+   *
+   * `TValue` appears only in the return type, so it is an **unchecked
+   * assertion** by the caller: nothing verifies that the stored value has
+   * that shape. Validate a value that crosses a trust boundary (a shared
+   * cache, a schema that changed between deploys) before relying on it.
+   */
   get<TValue = unknown>(key: CacheKey): Promise<CacheGetResult<TValue>>;
   set<TValue = unknown>(
     key: CacheKey,

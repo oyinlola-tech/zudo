@@ -1,5 +1,38 @@
 # @zudojs/cache
 
+## 1.2.4
+
+### Patch Changes
+
+- Round 12 (academy findings) — INFRA group: cache, container, logger, observability.
+
+  **@zudojs/container**
+
+  - `registerClass(token, Class, { inject })`, `classProvider(Class, inject)` and `provideClass(token, Class, inject)` now type-check the `inject` list against the constructor, the way `registerFactory` already did ([#42](https://github.com/oyinlola-tech/zudo/issues/42)). `inject: [CLOCK, DB]` against `constructor(db: Db, clock: Clock)` is a compile error, and so is omitting `inject` for a constructor with required parameters (which threw `ProviderResolutionError` at resolve time). Untyped string/symbol tokens check nothing, a non-tuple `ProviderToken[]` built at runtime accepts any constructor, and defaulted/optional parameters beyond the list are fine, so code that worked keeps compiling. New exported types: `InjectedConstructor`, `InjectedConstructorArgs`; `RegisterClassOptions` gained an optional `Deps` type parameter (defaulting to the old shape).
+  - A missing dependency's error chain now ends at the missing token ([#62](https://github.com/oyinlola-tech/zudo/issues/62)): `Failed to resolve DueTodayReminder: No registration found for token "MAILER" (required by "DueTodayReminder"). (chain: DueTodayReminder -> MAILER)`, and `DependencyResolutionError.chain` includes it. The top-level `RegistrationNotFoundError` message is unchanged.
+  - Documented that `autoRegisterClasses` treats a constructor whose parameters all have defaults (or a rest parameter) as zero-arg — it is auto-registered and built with no arguments, defaults applied, nothing injected ([#69](https://github.com/oyinlola-tech/zudo/issues/69)) — and that every `register*` call except `registerValue` defaults to `ContainerScope.TRANSIENT` ([#129](https://github.com/oyinlola-tech/zudo/issues/129)).
+
+  **@zudojs/logger**
+
+  - An `Error` nested inside metadata or context (`logger.error("x", { cause: err })`) is normalized when the entry is built into plain data — `{ name, message, stack, ...ownFields, cause }`, own fields redacted like any metadata, a self-referential `cause` becoming `"[Circular]"` — so a custom transport that stringifies `entry.metadata` sees the error instead of `{}` ([#67](https://github.com/oyinlola-tech/zudo/issues/67)). The built-in formatters render the same output as before, including `includeStackTrace: false` leaving nested stacks out. New exports: `LOGGER_ERROR_VALUE`, `isLogErrorValue()`, `LogErrorValue`. `redactLogValue()` applies the same normalization to Errors it meets.
+  - The `Logger` level methods keep their single `(message, metadata?)` signature (a widened union broke structural consumers in an earlier release); the README now documents that `logger.error(message, err)` works at runtime and that the typed form is `log(level, message, { error, metadata })`, and notes that this package's default redaction and `@zudojs/core`'s `createLogRedactor` are separate APIs ([#118](https://github.com/oyinlola-tech/zudo/issues/118)).
+
+  **@zudojs/observability**
+
+  - `LogRecord` gained optional `requestId` and `correlationId`, stamped from the active `PropagationContext` alongside `traceId`/`spanId` (and omitted under `correlate: false`); the console log exporter writes them ([#123](https://github.com/oyinlola-tech/zudo/issues/123)).
+
+  **@zudojs/cache**
+
+  - Key-validation errors now report the operation that rejected the key (`get`, `set`, `lock_acquire`, `clear`, …) instead of `unknown`, in `error.operation`, `toJSON()`, batch results and `cache.error` events ([#140](https://github.com/oyinlola-tech/zudo/issues/140)).
+  - Under the default `:` separator a key containing `:` is still rejected — `a:b` would collide with key `b` in namespace `a`, and a namespace-scoped `clear` would reach it — but the message now says why and what to do (use the `namespace` option, use `.`/`-` inside a part, or configure a different separator) ([#130](https://github.com/oyinlola-tech/zudo/issues/130), [#120](https://github.com/oyinlola-tech/zudo/issues/120)). `CACHE_KEY_PATTERN` and `CACHE_PATTERN_PART_PATTERN` now include `:`; the active separator is rejected separately, so `:` is usable inside keys only under another separator (`config: { separator: "/" }` plus `createMemoryCacheAdapter({ separator: "/" })`), where it cannot collide with the scope structure.
+  - Documented that `get<TValue>()` is an unchecked assertion ([#5](https://github.com/oyinlola-tech/zudo/issues/5)).
+
+- Updated dependencies []:
+  - @zudojs/errors@1.4.0
+  - @zudojs/serialization@1.3.0
+  - @zudojs/types@1.3.0
+  - @zudojs/constants@1.2.0
+
 ## 1.2.3
 
 ### Patch Changes

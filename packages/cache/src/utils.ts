@@ -19,7 +19,12 @@ import {
   MAX_TTL_MS,
   MIN_TTL_MS,
 } from "./constants.js";
-import { CacheError, cacheInvalidKeyError } from "./errors.js";
+import {
+  CacheError,
+  CacheOperation,
+  cacheInvalidKeyError,
+  isCacheError,
+} from "./errors.js";
 
 /* -------------------------------------------------------------------------- */
 /* Monotonic clock                                                            */
@@ -206,7 +211,15 @@ export function assertValidPatternPart(part: string, separator: string): void {
   if (part.length === 0) {
     throw cacheInvalidKeyError(part, "Cache pattern must not be empty.");
   }
-  if (part.includes(separator) || !CACHE_PATTERN_PART_PATTERN.test(part)) {
+  if (part.includes(separator)) {
+    throw cacheInvalidKeyError(
+      part,
+      `Invalid cache pattern "${part}": patterns must not contain the ` +
+        `separator "${separator}"; scope a pattern with the namespace ` +
+        `option instead of writing the namespace into it.`,
+    );
+  }
+  if (!CACHE_PATTERN_PART_PATTERN.test(part)) {
     throw cacheInvalidKeyError(
       part,
       `Invalid cache pattern "${part}": patterns must match ${String(
@@ -261,4 +274,35 @@ export function assertValidTtl(ttl: CacheTTL | undefined): void {
       },
     );
   }
+}
+
+/**
+ * Returns `error` with its `operation` filled in when it is a `CacheError`
+ * raised before the operation was known — key, namespace, pattern and tag
+ * validation happens in the key builder, which has no idea whether a
+ * `get` or a `set` asked for the key. Anything else is returned unchanged.
+ * The original stack is kept so the throw site stays visible.
+ */
+export function attachCacheOperation(
+  error: unknown,
+  operation: CacheOperation,
+): unknown {
+  if (!isCacheError(error) || error.operation !== CacheOperation.UNKNOWN) {
+    return error;
+  }
+  const attributed = new CacheError(error.message, {
+    code: error.code,
+    category: error.category,
+    severity: error.severity,
+    operation,
+    key: error.key,
+    adapter: error.adapter,
+    statusCode: error.statusCode,
+    expose: error.expose,
+    isOperational: error.isOperational,
+    metadata: error.metadata,
+    cause: error.cause,
+  });
+  attributed.stack = error.stack;
+  return attributed;
 }

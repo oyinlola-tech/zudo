@@ -29,7 +29,6 @@ import type {
   CacheHealth,
   CacheHealthChecker,
   CacheNamespace,
-  CacheOperation,
   CacheOrComputeOptions,
   CacheOrComputeResult,
   CacheSerializer,
@@ -57,11 +56,12 @@ import { CacheLockManager, createLockManager } from "./lock.js";
 import { createCacheMetrics, InMemoryCacheMetrics } from "./metrics.js";
 import {
   CacheError,
+  CacheOperation,
   cacheDeserializationError,
   cacheSerializationError,
   isCacheError,
 } from "./errors.js";
-import { createGlobMatcher } from "./utils.js";
+import { attachCacheOperation, createGlobMatcher } from "./utils.js";
 
 /** Options accepted by every namespace-scoped read operation. */
 interface NamespaceOptions {
@@ -138,12 +138,16 @@ export class CacheService implements CacheHealthChecker {
     );
   }
 
+  /**
+   * Reads one entry. `TValue` is an unchecked assertion — it only shapes
+   * the return type; nothing verifies the stored value matches it.
+   */
   async get<TValue = unknown>(
     key: string,
     options?: NamespaceOptions,
   ): Promise<CacheGetResult<TValue>> {
     if (!this.enabled) return { hit: false, value: null };
-    const fullKey = this.buildKey(key, options);
+    const fullKey = this.buildKey(key, options, CacheOperation.GET);
     try {
       const result = await this.store.get<TValue>(fullKey);
       if (!result.hit || !this.serializer) return result;
@@ -173,8 +177,8 @@ export class CacheService implements CacheHealthChecker {
     },
   ): Promise<CacheSetResult> {
     if (!this.enabled) return { success: false, key, expiresAt: null };
-    const fullKey = this.buildKey(key, options);
-    if (options?.tags) this.validateTags(key, options.tags);
+    const fullKey = this.buildKey(key, options, CacheOperation.SET);
+    if (options?.tags) this.validateTags(key, options.tags, CacheOperation.SET);
     try {
       const stored = this.serializer ? this.serialize(value) : value;
       const result = await this.store.set(fullKey, stored, {
@@ -207,7 +211,7 @@ export class CacheService implements CacheHealthChecker {
     options?: NamespaceOptions,
   ): Promise<CacheDeleteResult> {
     if (!this.enabled) return { deleted: false, key };
-    const fullKey = this.buildKey(key, options);
+    const fullKey = this.buildKey(key, options, CacheOperation.DELETE);
     try {
       const result = await this.store.delete(fullKey);
       await this.tagStore.removeKey?.(fullKey);
@@ -220,7 +224,7 @@ export class CacheService implements CacheHealthChecker {
 
   async has(key: string, options?: NamespaceOptions): Promise<boolean> {
     if (!this.enabled) return false;
-    const fullKey = this.buildKey(key, options);
+    const fullKey = this.buildKey(key, options, CacheOperation.HAS);
     try {
       return await this.store.has(fullKey);
     } catch (error) {
@@ -248,6 +252,7 @@ export class CacheService implements CacheHealthChecker {
       const pattern = this.qualifyPattern(
         options.pattern ?? "*",
         options.namespace,
+        CacheOperation.CLEAR,
       );
       try {
         const result = await this.store.clear({ pattern });
@@ -277,7 +282,7 @@ export class CacheService implements CacheHealthChecker {
     options?: NamespaceOptions,
   ): Promise<number | null | undefined> {
     if (!this.enabled) return undefined;
-    const fullKey = this.buildKey(key, options);
+    const fullKey = this.buildKey(key, options, CacheOperation.TTL);
     try {
       const remaining = await this.store.ttl?.(fullKey);
       return typeof remaining === "number" && Number.isFinite(remaining)
@@ -298,7 +303,7 @@ export class CacheService implements CacheHealthChecker {
     options?: NamespaceOptions,
   ): Promise<boolean> {
     if (!this.enabled) return false;
-    const fullKey = this.buildKey(key, options);
+    const fullKey = this.buildKey(key, options, CacheOperation.EXPIRE);
     try {
       return (await this.store.expire?.(fullKey, ttl)) ?? false;
     } catch (error) {
@@ -313,7 +318,7 @@ export class CacheService implements CacheHealthChecker {
     options?: CacheOrComputeOptions,
   ): Promise<CacheOrComputeResult<TValue>> {
     if (!this.enabled) return { value: await fn(), cached: false };
-    const fullKey = this.buildKey(key, options);
+    const fullKey = this.buildKey(key, options, CacheOperation.GET);
     if (!options?.forceRefresh) {
       const cached = await this.get<TValue>(key, options);
       if (cached.hit) return { value: cached.value as TValue, cached: true };
@@ -344,7 +349,7 @@ export class CacheService implements CacheHealthChecker {
     options?: NamespaceOptions,
   ): Promise<{ readonly cleared: number }> {
     if (!this.enabled) return { cleared: 0 };
-    this.validateTags(tags.join(","), tags);
+    this.validateTags(tags.join(","), tags, CacheOperation.DELETE_MANY);
     try {
       return await this.invalidation.invalidateByTag(
         tags,
@@ -371,7 +376,11 @@ export class CacheService implements CacheHealthChecker {
     options?: NamespaceOptions,
   ): Promise<{ readonly cleared: number }> {
     if (!this.enabled) return { cleared: 0 };
-    const qualified = this.qualifyPattern(pattern, options?.namespace);
+    const qualified = this.qualifyPattern(
+      pattern,
+      options?.namespace,
+      CacheOperation.DELETE_MANY,
+    );
     try {
       const result = await this.invalidation.invalidateByPattern(qualified);
       await this.purgeTagsMatching(qualified);
@@ -415,6 +424,7 @@ export class CacheService implements CacheHealthChecker {
       options?.namespace !== undefined
         ? { namespace: options.namespace }
         : undefined,
+      CacheOperation.LOCK_ACQUIRE,
     );
     return this.lockManager.withLock(lockKey, fn, {
       ...(options?.ttl !== undefined ? { ttl: options.ttl } : {}),
@@ -588,22 +598,36 @@ export class CacheService implements CacheHealthChecker {
     return namespace !== undefined ? { namespace } : {};
   }
 
-  private qualifyPattern(pattern: string, namespace?: CacheNamespace): string {
+  private qualifyPattern(
+    pattern: string,
+    namespace: CacheNamespace | undefined,
+    operation: CacheOperation,
+  ): string {
     const build = this.keyBuilder.buildPattern?.bind(this.keyBuilder);
     if (!build) return pattern;
-    return this.guardInput(pattern, () =>
+    return this.guardInput(pattern, operation, () =>
       build(pattern, namespace !== undefined ? { namespace } : undefined),
     );
   }
 
   /** Builds a full key, counting a rejected key in the error stats. */
-  private buildKey(key: string, options?: NamespaceOptions): string {
-    return this.guardInput(key, () => this.keyBuilder.build(key, options));
+  private buildKey(
+    key: string,
+    options: NamespaceOptions | undefined,
+    operation: CacheOperation,
+  ): string {
+    return this.guardInput(key, operation, () =>
+      this.keyBuilder.build(key, options),
+    );
   }
 
   /** Validates tags, counting a rejected tag in the error stats. */
-  private validateTags(key: string, tags: readonly CacheTag[]): void {
-    this.guardInput(key, () => {
+  private validateTags(
+    key: string,
+    tags: readonly CacheTag[],
+    operation: CacheOperation,
+  ): void {
+    this.guardInput(key, operation, () => {
       for (const tag of tags) assertValidTag(tag);
     });
   }
@@ -611,14 +635,21 @@ export class CacheService implements CacheHealthChecker {
   /**
    * Runs input validation. A rejection is recorded like an adapter failure
    * (`getStats().errors`, `cache.error`) and rethrown: invalid input is a
-   * caller error, so `failSilently` never hides it.
+   * caller error, so `failSilently` never hides it. The key builder does
+   * not know which operation asked for the key, so the rejection is
+   * attributed to `operation` here rather than reported as `unknown`.
    */
-  private guardInput<T>(key: string, validate: () => T): T {
+  private guardInput<T>(
+    key: string,
+    operation: CacheOperation,
+    validate: () => T,
+  ): T {
     try {
       return validate();
     } catch (error) {
-      this.store.recordError(key, error);
-      throw error;
+      const attributed = attachCacheOperation(error, operation);
+      this.store.recordError(key, attributed);
+      throw attributed;
     }
   }
 

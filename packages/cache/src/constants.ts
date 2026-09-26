@@ -34,21 +34,27 @@ export const DEFAULT_PREFIX = "zudojs";
 export const MAX_KEY_LENGTH = 256;
 
 /**
- * Pattern used to validate each individual cache key part (prefix,
- * namespace, and raw key). Deliberately excludes the default separator
- * (`:`) so callers cannot forge namespaced keys (e.g. `build("admin:x")`
- * throws). Parts are additionally checked against the active separator.
+ * Alphabet of one cache key part (prefix, namespace, and raw key): letters,
+ * digits, `.`, `_`, `-` and `:`.
+ *
+ * The *active separator* is rejected separately, so with the default `:`
+ * separator a part can still never contain `:` — `build("admin:x")` would
+ * otherwise be indistinguishable from key `x` in namespace `admin`, and a
+ * namespace-scoped invalidation would reach it. `:` inside a part is only
+ * possible under a different separator
+ * (`createKeyBuilder({ separator: "/" })` gives `zudojs/tenant:1/dashboard`),
+ * where it cannot collide with the scope structure.
  */
-export const CACHE_KEY_PATTERN = /^[a-zA-Z0-9._\-]+$/;
+export const CACHE_KEY_PATTERN = /^[a-zA-Z0-9._:\-]+$/;
 
 /**
  * Pattern used to validate the caller-supplied *glob* segment of a key
  * pattern. It is the key alphabet plus the two glob metacharacters `*` and
  * `?` — nothing else has meaning for the matcher, so anything else is
- * caller error. The separator is excluded so a pattern cannot escape the
- * prefix/namespace scope it is composed into.
+ * caller error. The active separator is rejected separately so a pattern
+ * cannot escape the prefix/namespace scope it is composed into.
  */
-export const CACHE_PATTERN_PART_PATTERN = /^[a-zA-Z0-9._\-*?]+$/;
+export const CACHE_PATTERN_PART_PATTERN = /^[a-zA-Z0-9._:\-*?]+$/;
 
 /** Maximum length of a cache tag. Tags are untrusted map keys. */
 export const MAX_TAG_LENGTH = 128;

@@ -144,7 +144,18 @@ export class DefaultKeyBuilder implements CacheKeyBuilder {
   }
 
   private validatePart(part: string, separator: string): void {
-    if (part.includes(separator) || !CACHE_KEY_PATTERN.test(part)) {
+    if (part.includes(separator)) {
+      throw cacheInvalidKeyError(
+        part,
+        `Invalid cache key part "${part}": parts must not contain the ` +
+          `separator "${separator}", which delimits prefix, namespace and ` +
+          `key (a key "a${separator}b" would collide with key "b" in ` +
+          `namespace "a"). Put the scope in the namespace option ` +
+          `(cache.get("b", { namespace: "a" })), use "." or "-" inside ` +
+          `the part, or configure a different separator on the key builder.`,
+      );
+    }
+    if (!CACHE_KEY_PATTERN.test(part)) {
       throw cacheInvalidKeyError(
         part,
         `Invalid cache key part "${part}": parts must match ${String(

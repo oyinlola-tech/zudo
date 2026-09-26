@@ -45,10 +45,27 @@ const { value, cached } = await cache.getOrSet<User>(`user.${id}`, () =>
 );
 ```
 
-Key parts are validated individually and must match `/^[a-zA-Z0-9._-]+$/`, so
-use `.` rather than the `:` separator inside a key (`user.123`, not
-`user:123`) — `:` is reserved for the `prefix:namespace:key` structure the key
-builder produces.
+Key parts (prefix, namespace, key) are validated individually: letters,
+digits, `.`, `_`, `-` and `:`, minus the active separator. With the default
+`:` separator that means no `:` inside a key — `prefix:namespace:key` is the
+structure the key builder produces, so a key `a:b` would collide with key `b`
+in namespace `a`, and `clear({ namespace: "a" })` would delete it. Put the
+scope in `namespace` (`cache.get("dashboard", { namespace: tenantId })`), use
+`.` or `-` inside a key (`user.123`, not `user:123`), or, if your keys must
+contain `:` (keys built by another library, say), configure a different
+separator on both the service and the memory adapter:
+
+```typescript
+const cache = createCacheService({
+  adapter: createMemoryCacheAdapter({ separator: "/" }),
+  config: { separator: "/" },
+});
+await cache.set("tenant:kola:dashboard", totals); // zudojs/tenant:kola:dashboard
+```
+
+A rejected key throws a `CacheError` (`ERR_INVALID_INPUT`, status 400) whose
+`operation` names the call that rejected it (`get`, `set`, `lock_acquire`,
+`clear`, …) and whose message explains the separator rule.
 
 ## Features
 
