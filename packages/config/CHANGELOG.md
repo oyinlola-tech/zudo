@@ -1,5 +1,13 @@
 # @zudojs/config
 
+## 1.3.4
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.4.0
+  - @zudojs/constants@1.2.0
+
 ## 1.3.3
 
 ### Patch Changes
