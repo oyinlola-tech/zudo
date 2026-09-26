@@ -780,7 +780,17 @@ TRY IT YOURSELF
 
 Write `Setters<T>` that turns `{ name: string; priceKobo: number }` into `{ setName(value: string): void; setPriceKobo(value: number): void }`, and a runtime `createSetters` that updates a target object. Test the type with `Equal`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop with `for (const key of Object.keys(target) as (keyof T & string)[])`, and build each setter's name the same way the getter example does: `\`set${key[0]!.toUpperCase()}${key.slice(1)}\``.
+
+HINT 2
+
+Each setter is `(value) => { target[key] = value as T[typeof key]; }`. Store it in a `Record<string, (value: unknown) => void>` and return it `as Setters<T>` at the end; that one cast is where the string-building meets the type.
+
+SOLUTION
 
 setters.ts
 
@@ -828,7 +838,17 @@ TRY IT YOURSELF
 
 Using `KeysOfType`, write `moneyFields<T>(item: T, keys: readonly KeysOfType<T, number>[]): Record<string, string>` that formats each chosen numeric field as naira. Show that passing a string field does not compile, with `@ts-expect-error`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop over `keys` with a plain `for` loop, building an `out: Record<string, string>` as you go, the same way `enabledFlags` loops over its keys.
+
+HINT 2
+
+`out[String(key)] = \`₦${((item[key] as number) / 100).toLocaleString("en-NG")}\`;` then return `out`.
+
+SOLUTION
 
 money.ts
 
@@ -862,7 +882,17 @@ TRY IT YOURSELF
 
 Write `DeepPartial<T>` and `withOverrides<T>(base: T, overrides: DeepPartial<T>): T` that merges nested plain objects, so a test can change one nested config value. Use it to change only `paystack.timeoutMs`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+If `overrides` is `undefined`, return `base` unchanged. If either side is not a plain object (use `isPlainObject`), the override simply replaces the base.
+
+HINT 2
+
+Otherwise, copy `base` with `{ ...base }`, then for each `[key, value]` of `Object.entries(overrides)`, set `result[key] = merge(base[key], value)` — the recursive call is what makes it *deep*.
+
+SOLUTION
 
 overrides.ts
 

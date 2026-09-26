@@ -826,7 +826,17 @@ TRY IT YOURSELF
 
 The finance team may approve refunds of any size, but only after the order is at least 7 days old (fraud checks take a week). Add `"finance"` to `Role`, add `paidAt` (a `Date`) to `Order`, and pass `now` to `decideRefund`. Which existing line would have kept the system safe if you had added the role to the type but forgotten the rule?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look at how `decideRefund` ends: what does it return when none of the earlier checks matched a role?
+
+HINT 2
+
+Compare "deny by default, allow only what an explicit check permits" with "allow by default, deny only what an explicit check forbids". Which one is safe when a case is missing?
+
+SOLUTION
 
 The new rule, written as its own check before the final "allow":
 
@@ -848,7 +858,17 @@ TRY IT YOURSELF
 
 Write a strict Zod schema for `PATCH /me/email`, whose body has `email` and `currentPassword`. The email must be valid and at most 254 characters, stored in lower case. The password must be 8 to 200 characters. Show that a body with an extra `userId` field and a body with a 300-character email are both refused, and that the error does not contain the password.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`email: z.string().max(254).pipe(z.email()).transform((email) => email.toLowerCase())`. `.max` before `.pipe` matters: it rejects huge strings before the format check ever looks at them.
+
+HINT 2
+
+`currentPassword: z.string().min(8).max(200)`. No transform needed for it; it is checked against the stored hash later, not stored as-is.
+
+SOLUTION
 
 change-email.tsNode.js only
 
@@ -890,7 +910,17 @@ TRY IT YOURSELF
 
 A colleague's logger calls `JSON.stringify` on whatever it is given. Show that an object containing a `Secret` two levels deep, inside an array, is still logged as `[redacted]`, and explain why no special code in the logger was needed.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`gateways` is an array with one object in it: `[{ name: "primary", key: new Secret("...") }]`.
+
+HINT 2
+
+`const event = { service: "refunds", gateways: [{ name: "primary", key: new Secret("sk_live_example_not_a_real_key_000000") }] };`
+
+SOLUTION
 
 nested-secret.tsNode.js only
 

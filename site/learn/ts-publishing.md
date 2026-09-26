@@ -801,7 +801,17 @@ TRY IT YOURSELF
 
 Users of the invoicing service only need the parser. Move `parseNaira` into `src/parse.ts`, export it as the subpath `@naija-shop/naira/parse` with its own types, and show that importing the subpath works.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+A subpath export is an entry whose key is the subpath (`"./parse"`) and whose value has `"types"` and `"default"`, in that order, pointing at the built files under `dist`.
+
+HINT 2
+
+`"./parse": { "types": "./dist/parse.d.ts", "default": "./dist/parse.js" }`
+
+SOLUTION
 
 src/parse.ts
 
@@ -886,7 +896,17 @@ A colleague asks you to review this before the first publish. List every problem
 }
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Check the order inside `"exports"`'s `"."` entry, and compare `"main"` against where the real JavaScript ends up after a build.
+
+HINT 2
+
+Check which dependency list `@zudojs/logger` is in, and what `"files"` would include if it were missing entirely.
+
+SOLUTION
 
 - **No `files` field**: everything in the folder is published, including tests and any `.env`. Users would not notice; attackers might. Add `"files": ["dist", "src"]`.
 - **`"types"` after `"import"`**: TypeScript matches `"import"` first and never reads `"types"`. It works by luck while `index.d.ts` sits beside `index.js`; publint reports it. Put `"types"` first.
@@ -901,7 +921,17 @@ TRY IT YOURSELF
 
 For each change to `@naija-shop/naira`'s published types, choose the release type: (a) add an optional `decimals?: 0 | 2` to `FormatOptions`; (b) change `parseNaira`'s return type from `number | null` to `number | null | undefined`; (c) rename the exported interface `FormatOptions` to `NairaFormatOptions`; (d) fix a JSDoc comment; (e) let `formatNaira` accept `number | bigint`, with code that handles both.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask, for each change: does code that already compiles against the old types still compile against the new ones, unchanged?
+
+HINT 2
+
+(b) and (c) both break existing callers, for different reasons: one widens a type callers had narrowed against, the other removes a name callers imported.
+
+SOLUTION
 
 - (a) **Minor**: existing calls still compile; new callers get a new ability.
 - (b) **Major**: the return type got wider, so code that checked `=== null` and then used the number now fails to compile (`'kobo' is possibly 'undefined'`).

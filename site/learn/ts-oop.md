@@ -864,7 +864,17 @@ TRY IT YOURSELF
 
 Change the wallet's `ledger` getter so that the leak shown in the encapsulation section can no longer corrupt the wallet, and show what the same attack does now.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Return a copy, not the field itself: `[...this.#ledger]` makes a new array that outside code cannot use to reach the private one.
+
+HINT 2
+
+`return Object.freeze([...this.#ledger]);` — freezing the copy makes an attacker's `push` throw instead of silently succeeding.
+
+SOLUTION
 
 safe-wallet.ts
 
@@ -917,7 +927,17 @@ TRY IT YOURSELF
 
 Write a decorator `withQuietHours(channel, isQuiet)` for the notification channels: when `isQuiet()` returns true, it stores the message in a queue instead of sending it. It also has `pending()`, the number of queued messages, and `flush()`, which sends everything queued and returns how many it sent.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep a local `const queue: [to: string, text: string][] = [];` in the closure. In `send`, push onto it when `isQuiet()` is true, otherwise call `channel.send` as normal.
+
+HINT 2
+
+`flush` empties the queue with `queue.splice(0)` (so a re-entrant call cannot resend), then `await channel.send(to, text)` for each pair in order, and returns how many there were.
+
+SOLUTION
 
 quiet.ts
 
@@ -973,7 +993,17 @@ TRY IT YOURSELF
 
 Add an OPay provider (1.25% fee, capped at ₦1,500) to the object-oriented design as a class, and to the functional design as a union member. In each style, list what else had to change, and check the fee for ₦15,000.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Both places compute the same rule: `Math.round(amountKobo * 0.0125)`, then cap it with `Math.min(..., 150_000)`.
+
+HINT 2
+
+`Math.min(Math.round(amountKobo * 0.0125), 150_000)` in both `OpayAdapter.feeKobo` and the `"opay"` case.
+
+SOLUTION
 
 opay.ts
 

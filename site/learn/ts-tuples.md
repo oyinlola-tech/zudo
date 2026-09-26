@@ -580,7 +580,17 @@ TRY IT YOURSELF
 
 Write `range(amounts: readonly number[]): readonly [min: number, max: number] | null`, which returns `null` for an empty list. Use it on a list of withdrawals.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Destructure `const [first, ...rest] = amounts;` and return `null` when `first` is `undefined`. Otherwise track `min` and `max`, starting both at `first`, the way `span` tracks `lowest` and `highest`.
+
+HINT 2
+
+Write the return type yourself: `readonly [min: number, max: number] | null`. Without it, the returned array literal would be inferred as a plain array, not a tuple.
+
+SOLUTION
 
 range.ts
 
@@ -620,7 +630,17 @@ TRY IT YOURSELF
 
 Using the same idea as `createState`, write `useToggle(initial: boolean)` that returns a readonly tuple `[isOn: () => boolean, toggle: () => void]`. Use it for a "show balance" switch.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep the flag in a closed-over variable: `let on = initial;`. The getter is `() => on`; the toggle is `() => { on = !on; }`.
+
+HINT 2
+
+Return them as a tuple, and write the return type yourself: `readonly [isOn: () => boolean, toggle: () => void]`. Without it, the array literal infers as a plain array.
+
+SOLUTION
 
 toggle.ts
 
@@ -654,7 +674,17 @@ TRY IT YOURSELF
 
 For each of these, would you use a tuple or an object, and why? (a) A currency pair and its rate returned by `latestRate()`. (b) A customer record with name, e-mail, phone, BVN and date of birth. (c) The two halves of a split bill, `[yours, mine]`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask: will this value be destructured once, right where it is returned, with names the caller picks? Or does it need to travel further, into JSON, logs or a form with many fields?
+
+HINT 2
+
+Count the fields, and ask whether their order is obvious without looking anything up. Five fields of mixed meaning rarely stay obvious.
+
+SOLUTION
 
 (a) Either works; a labelled readonly tuple `[pair: string, rate: number]` is fine for a two-value return that callers destructure at once, and an object is better if it goes into JSON. (b) An object: five fields, all strings except the date, would be impossible to keep in the right order, and positions say nothing in logs or JSON. (c) A tuple: two values of the same kind, destructured immediately, where the caller naming them (`const [yours, mine] = split(bill)`) is the whole point.
 

@@ -672,7 +672,17 @@ TRY IT YOURSELF
 
 A server receives `code_verifier` values. Write `checkVerifier(v)` that returns `"ok"` only for 43 to 128 characters from the unreserved set, and a reason otherwise. Test a good verifier, one of 42 characters, one with a space, and one of 129 characters.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check the type and length first, in order: not a string, too short, too long, each with its own `return`.
+
+HINT 2
+
+The character check is a regular expression: `!/^[A-Za-z0-9\-._~]+$/.test(v)`. Only after every check passes does the function return `"ok"`.
+
+SOLUTION
 
 check-verifier.js
 
@@ -707,7 +717,17 @@ TRY IT YOURSELF
 
 Write two matchers for registered redirect URIs: `prefixMatch` (the broken kind: the requested URI starts with a registered one) and `exactMatch`. Show which of these requests each accepts: the registered URI, `https://budget.example/callbackevil`, `https://budget.example/callback/../admin` and `https://budget.example.evil.example/callback` (registered: `https://budget.example/callback`).
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`exactMatch` needs no loop or comparison operator you have not already used: an array method that asks "is this value one of these?"
+
+HINT 2
+
+`const exactMatch = (uri) => registered.includes(uri);`
+
+SOLUTION
 
 redirect-match.js
 
@@ -743,7 +763,17 @@ TRY IT YOURSELF
 
 The Budget App's log-in link is `/login?next=/reports/september`, and after the callback it sends the user to `next`. Write `safeNext(next)` that allows only paths on the app itself and falls back to `/`. Test `/reports/september`, `https://evil.example`, `//evil.example`, `/\evil.example` and `javascript:alert(1)`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Guard first, with plain string checks: `typeof next !== "string" || !next.startsWith("/") || next.startsWith("//") || next.includes("\\")`, returning `"/"` when any is true.
+
+HINT 2
+
+Then `const url = new URL(next, "https://budget.example"); return url.origin === "https://budget.example" ? url.pathname + url.search : "/";`.
+
+SOLUTION
 
 safe-next.js
 

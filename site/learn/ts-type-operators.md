@@ -883,7 +883,17 @@ TRY IT YOURSELF
 
 A shop sells in three currencies. Write one `as const` table with each currency's symbol and number of minor units per major unit (NGN 100, USD 100, JPY 1). Derive `Currency`, and write `format(minor: number, currency: Currency): string` so that `format(150050, "NGN")` gives `₦1500.50` and `format(1500, "JPY")` gives `¥1500`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Look up the row for `currency` in `CURRENCIES`: `const { symbol, minorUnits } = CURRENCIES[currency]`.
+
+HINT 2
+
+`decimals` is `0` when `minorUnits` is `1`, otherwise `2`. Build the string with `\`${symbol}${(minor / minorUnits).toFixed(decimals)}\``.
+
+SOLUTION
 
 currency.ts
 
@@ -934,7 +944,17 @@ type P3 = Expect<Equal<keyof { [reference: string]: Card }, ???>>;
 type P4 = Expect<Equal<[Card, Transfer]["length"], ???>>;
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+A union's `keyof` keeps only the keys every member shares. Indexing a union with that shared key gives the union of each member's value at that key.
+
+HINT 2
+
+`P3`'s string index signature also accepts numeric keys. `P4` indexes a tuple's `"length"`, which is a literal number, not `number`.
+
+SOLUTION
 
 predict.ts
 
@@ -967,7 +987,17 @@ TRY IT YOURSELF
 
 Write `pluckAll<T, K extends keyof T>(items: readonly T[], keys: readonly K[])` that returns, for each item, an object with only those keys. Use `Pick<T, K>` for the result type. Try it on products with `["name", "priceKobo"]`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Start each item with an empty object cast to the result type, `{} as Pick<T, K>`, then loop over `keys` and copy each one across.
+
+HINT 2
+
+`picked[key] = item[key]` is allowed because both sides are `T[K]` for the same `K`, the generic write rule from this lesson.
+
+SOLUTION
 
 pluck-all.ts
 

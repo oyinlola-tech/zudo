@@ -914,13 +914,17 @@ function stockLine(item: string): string {
 console.log(stockLine("rice"), "|", stockLine("beans"), "|", stockLine("garri"));
 ```
 
-Output of `npx tsx stock.ts` and of the browser terminal
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-```ts
-12 in stock | out of stock | out of stock
-```
+HINT 1
 
-**Show a solution**
+`!quantity` is true for both `undefined` ("garri" is not sold) and `0` ("beans" is out of stock). Compare with each explicitly instead: `quantity === undefined` and `quantity === 0`.
+
+HINT 2
+
+Order matters: check `undefined` first and return `"unknown item"`, then check `0` and return `"out of stock"`, then the general case.
+
+SOLUTION
 
 stock.ts
 
@@ -951,7 +955,17 @@ TRY IT YOURSELF
 
 Bookings are `{ status: "confirmed"; seat: string }` or `{ status: "waitlisted"; position: number }`. Write a type guard `isConfirmed` and use it with `filter` to print the seats of the confirmed bookings.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`isConfirmed`'s body is one line: `return booking.status === "confirmed";`. The return type `booking is Confirmed` is what makes `filter` know the result is `Confirmed[]`.
+
+HINT 2
+
+Once `isConfirmed` is correct, `bookings.filter(isConfirmed).map((booking) => booking.seat)` compiles because every remaining booking is a `Confirmed`.
+
+SOLUTION
 
 bookings.ts
 
@@ -987,7 +1001,17 @@ TRY IT YOURSELF
 
 Write `assertAccountId(value: unknown): asserts value is string` that accepts strings like `"ACC-00042"` (`ACC-` and five digits) and throws a `TypeError` otherwise. Call it on three values and print either the id in lower case or the error.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check both conditions at once: `if (typeof value !== "string" || !/^ACC-\d{5}$/.test(value))`.
+
+HINT 2
+
+When that condition holds, `throw new TypeError(\`not an account id: ${JSON.stringify(value)}\`);`. Otherwise the function just returns, and `value` is narrowed to `string` after the call.
+
+SOLUTION
 
 account-id.ts
 

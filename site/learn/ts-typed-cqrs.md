@@ -824,7 +824,17 @@ TRY IT YOURSELF
 
 Add a `"wallet.topUp"` command to a new spec: input `{ walletId: string; kobo: number }`, result `Result<{ balanceKobo: number }, "invalid-amount" | "wallet-not-found">`. Write the handler table and run three top-ups: a valid one, a negative amount and an unknown wallet.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check the amount first: `if (!Number.isInteger(kobo) || kobo <= 0) return { ok: false, error: "invalid-amount" };`, exactly as `redeem` checks `points` before touching the map.
+
+HINT 2
+
+Then `const balance = balances.get(walletId); if (balance === undefined) return { ok: false, error: "wallet-not-found" };`, and finally `balances.set(walletId, balance + kobo); return { ok: true, value: { balanceKobo: balance + kobo } };`.
+
+SOLUTION
 
 wallet.ts
 
@@ -875,7 +885,17 @@ TRY IT YOURSELF
 
 Write a `Middleware<ShopQueries>` that caches query results by `JSON.stringify(query)`. Explain why its one cast is safe, and show that the second identical query does not reach the handler.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Build the key once, `const key = JSON.stringify(query);`, and check `cache.has(key)` before calling `next()`.
+
+HINT 2
+
+`if (cache.has(key)) return cache.get(key) as ResultOf<ShopQueries, typeof query.type>;` then `const result = await next(); cache.set(key, result); return result;`.
+
+SOLUTION
 
 query-cache.ts
 
@@ -925,7 +945,17 @@ TRY IT YOURSELF
 
 Plugins register command handlers at runtime, so the compiler cannot check that all of them exist. Write `assertComplete(expected, registered)` that throws one error listing every missing name, and call it at startup with a list derived from a spec type using `satisfies`, so the list itself cannot miss a name.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`const missing = expected.filter((name) => !registered.includes(name));` finds every expected name that was never registered.
+
+HINT 2
+
+`if (missing.length > 0) throw new Error(\`missing handlers: ${missing.join(", ")}\`);`
+
+SOLUTION
 
 startup-check.ts
 

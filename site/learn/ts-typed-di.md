@@ -620,7 +620,7 @@ Ada paid for RICE-50KG on 2026-09-24
 [log] resolved together at 2026-09-24
 ```
 
-Swap two tokens in `registerFactory`'s `inject` list and the factory's parameters no longer match: a compile error, as in your container. The package's `registerClass`, however, types the class as `Constructor<T>`, whose parameter list is `any[]`, so its `inject` list is *not* checked against the constructor:
+Swap two tokens in `registerFactory`'s `inject` list and the factory's parameters no longer match: a compile error, as in your container. Since `@zudojs/container` 1.3.0, `registerClass` checks its `inject` list against the constructor the same way:
 
 zudo-class.ts
 
@@ -639,21 +639,25 @@ container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
 container.registerValue(LOGGER, { info: () => {} });
 container.registerFactory(CART, () => new Cart(), [], { scope: ContainerScope.SCOPED });
 container.registerClass(CHECKOUT, CheckoutService, { inject: [CLOCK, CART, LOGGER] });
-
-try {
-  console.log(container.createScope().resolve(CHECKOUT).checkout("Ada"));
-} catch (error) {
-  console.log(String(error));
-}
 ```
 
-Output of `npx tsx zudo-class.ts` and of the browser terminal
+What `npx tsc --noEmit` prints
 
 ```ts
-TypeError: Cannot read properties of undefined (reading 'join')
+zudo-class.ts:14:35 - error TS2345: Argument of type 'typeof CheckoutService' is not assignable to parameter of type 'InjectedConstructor<CheckoutService, NoInfer<readonly [InjectionToken<Clock>, InjectionToken<Cart>, InjectionToken<Logger>]>>'.
+  Types of parameters 'cart' and 'args' are incompatible.
+    Type '{ [x: number]: Cart | Clock | Logger; toString: never; toLocaleString: never; concat: never; join: never; slice: never; indexOf: never; lastIndexOf: never; every: never; ... 26 more ...; length: never; }' is not assignable to type '[cart: Cart, clock: Clock, log: Logger]'.
+      Type at position 0 in source is not compatible with type at position 0 in target.
+        Type 'Clock' is missing the following properties from type 'Cart': items, add
+
+14 container.registerClass(CHECKOUT, CheckoutService, { inject: [CLOCK, CART, LOGGER] });
+                                     ~~~~~~~~~~~~~~~
+
+
+Found 1 error in zudo-class.ts:14
 ```
 
-The clock was passed where the cart belongs, and the error surfaces deep inside `checkout`, far from the wiring mistake. Prefer `registerFactory` with a small arrow function that calls the constructor: it costs one line and turns this into a compile error. The package also enforces the runtime rules you implemented: resolving a scoped token at the root throws a `ScopedResolutionError`, a singleton that depends on a scoped token throws a `CaptiveDependencyError`, a cycle throws a `CircularDependencyError` naming the chain, and an unknown token throws a `RegistrationNotFoundError`. Two differences from your container are worth remembering: the default lifetime is **transient** when you pass no `scope`, and a class used as a token is registered automatically on first resolve, but only when its constructor takes no parameters.
+The clock was passed where the cart belongs, and `CheckoutService`'s constructor takes `(cart, clock, log)`: the compiler catches the swap before the program ever runs, the same way it would for `registerFactory`. (Before `@zudojs/container` 1.3.0, `registerClass` typed the class as `Constructor<T>`, whose parameter list is `any[]`; the mistake compiled, and only surfaced as `TypeError: Cannot read properties of undefined (reading 'join')` deep inside `checkout` at runtime.) The package also enforces the runtime rules you implemented: resolving a scoped token at the root throws a `ScopedResolutionError`, a singleton that depends on a scoped token throws a `CaptiveDependencyError`, a cycle throws a `CircularDependencyError` naming the chain, and an unknown token throws a `RegistrationNotFoundError`. Two differences from your container are worth remembering: the default lifetime is **transient** when you pass no `scope`, and a class used as a token is registered automatically on first resolve, but only when its constructor takes no parameters.
 
 ## Testing wiring and swapping in fakes
 
@@ -719,7 +723,17 @@ TRY IT YOURSELF
 
 Write `resolveAll(resolver, tokens)` that resolves several tokens at once and returns a tuple typed per token, like `@zudojs/container`'s `resolveMany`. Use `TypesOf`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`tokens.map((token) => resolver.resolve(token))` resolves every token in the same order they were given.
+
+HINT 2
+
+`return tokens.map((token) => resolver.resolve(token)) as TypesOf<D>;` — the cast is safe because there is one resolved value per token, in order.
+
+SOLUTION
 
 resolve-all.ts
 
@@ -755,7 +769,17 @@ TRY IT YOURSELF
 
 Write `buildContainer(overrides)`, the production composition root, where `overrides` may replace the clock. Show that production and a test get different dates from the same code, and that the override is type-checked.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Chain the registrations on the same `new Container()`: `.registerValue(CLOCK, ...)`, `.registerValue(LOGGER, ...)`, `.register(CART, "scoped", [], () => new Cart())`, `.registerClass(CHECKOUT, "transient", [CART, CLOCK, LOGGER], CheckoutService)`.
+
+HINT 2
+
+For a fixed production date, register `CLOCK` with `overrides.clock ?? { now: () => new Date("2026-09-24T09:00:00Z") }`, and `LOGGER` with `{ info: () => {} }` (tests do not need to see log lines).
+
+SOLUTION
 
 composition-root.ts
 
@@ -798,7 +822,17 @@ TRY IT YOURSELF
 
 Given the dependency graph as a map from service name to the names it needs, write `checkGraph` that returns every missing dependency and every cycle, using depth-first search. Run it on a graph with one of each.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep a `done: Set<string>` (checked already, skip) and recurse with a growing `path` array. If `path.includes(name)`, you have found a cycle: the loop is `path` from that name onwards, plus `name` again.
+
+HINT 2
+
+If `graph.get(name)` is `undefined`, report `missing: ${name} (needed by ${path.at(-1)})`. Otherwise recurse into each dependency with `visit(dep, [...path, name])`, then mark `name` done.
+
+SOLUTION
 
 check-graph.ts
 

@@ -730,23 +730,19 @@ interface Teller {
 console.log(greet({ id: "S-1", name: "Tunde" }));
 ```
 
-What `npx tsc --noEmit` prints
+  teller.ts:16:19 - error TS2741: Property 'branch' is missing in type '{ id: string; name: string; }' but required in type 'Teller'. 16 console.log(greet({ id: "S-1", name: "Tunde" })); ~~~~~~~~~~~~~~~~~~~~~~~~~~~~ teller.ts:13:3 - 'branch' is declared here. 13 branch: string; ~~~~~~ Found 1 error in teller.ts:16
 
-```ts
-teller.ts:16:19 - error TS2741: Property 'branch' is missing in type '{ id: string; name: string; }' but required in type 'Teller'.
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-16 console.log(greet({ id: "S-1", name: "Tunde" }));
-                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+HINT 1
 
-  teller.ts:13:3 - 'branch' is declared here.
-    13   branch: string;
-         ~~~~~~
+Delete the second `interface Teller { branch: string; }` and replace it with a new name that extends `Teller`: `interface BranchTeller extends Teller { branch: string; }`.
 
+HINT 2
 
-Found 1 error in teller.ts:16
-```
+Create `const tunde: BranchTeller = { id: "S-1", name: "Tunde", branch: "Yaba" };`, and print both: `greet({ id: "S-2", name: "Kemi" })` and `greet(tunde)`, plus `tunde.branch`.
 
-**Show a solution**
+SOLUTION
 
 The two `interface Teller` declarations are in the same module, so they merged: every `Teller` now needs a `branch`. The second declaration was probably meant for a teller *assigned to* a branch. Give that its own name:
 
@@ -782,7 +778,17 @@ TRY IT YOURSELF
 
 Customer support notes can have replies, which can have replies. Write a recursive `Note` type (author, text, replies) and a function `countNotes(note)` that counts a note and all replies at every depth. Then write `authors(note)` that returns every distinct author.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`countNotes`: `return 1 + note.replies.reduce((sum, reply) => sum + countNotes(reply), 0);`. The base case is a note with an empty `replies` array.
+
+HINT 2
+
+`authors`: `const all = [note.author, ...note.replies.flatMap(authors)]; return [...new Set(all)];`. `flatMap` calls `authors` on every reply and flattens the results.
+
+SOLUTION
 
 notes.ts
 
@@ -828,7 +834,17 @@ TRY IT YOURSELF
 
 For each of these, choose `interface` or `type`, and say why: (a) a card's state, one of `active`, `blocked` or `expired`; (b) the options object for a `createTransferService` function; (c) a pair of latitude and longitude; (d) the shape of a request context that plugins add fields to; (e) a function that validates an amount.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask first: is this an object shape, or something else (a union, a tuple, a function)? Only `type` can name the "something else" cases.
+
+HINT 2
+
+For the object shapes, ask a second question: will another file ever need to merge fields into this one from the outside, the way the fraud plugin did to `TransferEvent`?
+
+SOLUTION
 
 - (a) `type CardState = "active" | "blocked" | "expired"`: a union, which only an alias can name.
 - (b) `interface TransferServiceOptions`: an object shape that may grow and that other options may extend.

@@ -653,7 +653,17 @@ TRY IT YOURSELF
 
 A permissions module builds every permission string as `\`${Resource}:${Action}:${Scope}\``, with 40 resources, 12 actions and 250 scopes (one per branch office). Work out whether the compiler can build that union, and propose a design that keeps the checking useful.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Fill in the three numbers from the task's description: 40 resources, 12 actions, 250 scopes. Multiply all three for the full union, and just the first two for the union without scopes.
+
+HINT 2
+
+`40 * 12 * 250` is 120,000, over the ~100,000-member limit that triggers `TS2590`. `40 * 12` is 480, comfortably small.
+
+SOLUTION
 
 permissions.ts
 
@@ -681,7 +691,17 @@ TRY IT YOURSELF
 
 A package exports `export const defaultRates = loadRates();`, where `loadRates` has no return type annotation and returns an object with forty currency entries, each with five fields. Every service that imports the package now has that whole structure spelled out in its view of the package. What do you change, and how do you check that it helped?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+An unannotated exported function's inferred return type gets spelled out in full, wherever it is emitted or hovered. Give the shape a name, and annotate the function with it.
+
+HINT 2
+
+Compare the emitted `.d.ts` before and after (as the settings example in this lesson did), and the Types/Instantiations count a dependent project reports.
+
+SOLUTION
 
 Declare the shape once (`export interface ExchangeRates { … }`, or `Record<CurrencyCode, Rate>` with a `Rate` interface), annotate `loadRates(): ExchangeRates` and `defaultRates: ExchangeRates`. Then compare before and after: the size of the emitted `.d.ts` (as in the [settings example](#declarations), where naming the type removed two full copies of it), and the Types and Instantiations counts of a dependent project. With the annotation in place, turning on `isolatedDeclarations` for the package becomes possible as well.
 
@@ -691,7 +711,17 @@ TRY IT YOURSELF
 
 Write a `verify-build` step (as a small TypeScript script) that fails when any of a list of expected output files is missing after a build, so that the stale `.tsbuildinfo` trap cannot publish an empty package.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`expected.filter((file) => !existsSync(file))` keeps only the paths that are missing.
+
+HINT 2
+
+The script only creates `dist/index.js` itself (to simulate a partial build), so a correct `verifyBuild` should report `dist/index.d.ts` as missing.
+
+SOLUTION
 
 verify-build.tsNode.js only
 

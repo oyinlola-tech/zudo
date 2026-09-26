@@ -810,13 +810,17 @@ const options = Object.keys(Frequency).map((key) => ({ value: key, label: key })
 console.log(options.length);
 ```
 
-Output of `npx tsx dropdown.ts` and of the browser terminal
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-```ts
-8
-```
+HINT 1
 
-**Show a solution**
+`Object.keys(Frequency)` sees both directions of the reverse mapping. Start from `Object.values(Frequency)` instead, and keep only `typeof value === "number"`.
+
+HINT 2
+
+Then `.map((value) => ({ value, label: Frequency[value] }))`: the reverse mapping gives you the label for each numeric value.
+
+SOLUTION
 
 dropdown.ts
 
@@ -881,7 +885,17 @@ language.ts:11:43 - error TS2345: Argument of type '"yo"' is not assignable to p
 Found 1 error in language.ts:11
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Replace the commented `enum` with `const Language = { English: "en", French: "fr", Yoruba: "yo" } as const;` and `type Language = (typeof Language)[keyof typeof Language];`.
+
+HINT 2
+
+Give `greet` the parameter type `Language`, and write the same ternary as the worked example: compare with `Language.Yoruba` and `Language.French`.
+
+SOLUTION
 
 language.ts
 
@@ -915,7 +929,17 @@ TRY IT YOURSELF
 
 A `KycLevel` enum is stored in the database as numbers: `None`, `Basic`, `Verified`. Product wants a new level, `Enhanced`, between `Basic` and `Verified` in meaning. Write the enum so no stored value changes meaning, and so a check "at least Basic" still works for all four levels.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Pin values with gaps: `None = 0, Basic = 10, Enhanced = 15, Verified = 20`. The old stored numbers 0 and 10 keep their meaning; 15 has room to mean "between Basic and Verified".
+
+HINT 2
+
+`canTransfer` is one line: `return level >= KycLevel.Basic;`. That comparison still works for every one of the four levels.
+
+SOLUTION
 
 kyc.ts
 

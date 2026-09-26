@@ -838,7 +838,17 @@ TRY IT YOURSELF
 
 Customers download invoices at `GET /invoices/:id`, where files are stored as `invoices/INV-1042.pdf`. Write `invoicePath(id)` that avoids path traversal without using `confine` at all, and explain why it is safe. Then say what else the route must check before sending the file.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`INVOICE_ID.test(id)` is your whole validity check; nothing else needs to inspect the id's characters one by one.
+
+HINT 2
+
+`if (typeof id !== "string" || !INVOICE_ID.test(id)) return null; return join("invoices", \`${id}.pdf\`);`
+
+SOLUTION
 
 invoice-path.jsNode.js only
 
@@ -875,7 +885,17 @@ TRY IT YOURSELF
 
 Write `searchProducts(db, filters)` using the `products` table from this lesson. `filters` may contain `text` (a substring of the name), `maxPriceKobo` (a whole number) and `skus` (an array). Build the `WHERE` clause from fixed fragments and numbered placeholders only, and test it with a search term containing `%` and an apostrophe.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Each filter is independent: `if (typeof filters.text === "string" && filters.text.length <= 100) where.push(...)`, then a separate `if` for each of the other two.
+
+HINT 2
+
+`where.push(\`name ILIKE ${param(\`%${filters.text.replace(/[\\%_]/g, "\\$&")}%\`)} ESCAPE '\\'\`)`; `where.push(\`price_kobo <= ${param(filters.maxPriceKobo)}\`)`; `where.push(\`sku = ANY(${param(filters.skus.map(String))})\`)`.
+
+SOLUTION
 
 filters.jsNode.js only
 
@@ -931,7 +951,17 @@ TRY IT YOURSELF
 
 A new supplier serves images from `cdn.supplier-two.example`. A colleague proposes changing the host check to `url.hostname.endsWith("supplier-two.example")` "so all their subdomains work". What is wrong with that, and what would you do instead?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Could someone register a completely different domain that also ends with the same characters as `supplier-two.example`, with nothing in front of it but more letters?
+
+HINT 2
+
+Compare a pattern-based check with adding the one exact host you actually need to an allow-list. Which one is easy to review at a glance?
+
+SOLUTION
 
 `endsWith("supplier-two.example")` also matches `evil-supplier-two.example`, a completely different domain that anyone could register, because there is no dot in front. Even `endsWith(".supplier-two.example")` trusts every subdomain the supplier has now or will ever have, including forgotten ones that could be taken over. Add the exact host `cdn.supplier-two.example` to `ALLOWED_HOSTS`, preferably from configuration, and add a test that the lookalike host is refused. Exact matches are easy to review; patterns are where allow-lists quietly turn into deny-lists.
 

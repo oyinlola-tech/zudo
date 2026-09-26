@@ -1051,7 +1051,17 @@ TRY IT YOURSELF
 
 Add a setting `MAX_UPLOAD_MB` to a config loader: optional, default `10`, a whole number from 1 to 100. The typed result should hold `maxUploadBytes`, already converted to bytes. Try the default, `"25"`, `"0"` and `"2.5"`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Read the raw value with `env["MAX_UPLOAD_MB"] ?? "10"`, then check it with `/^\d{1,3}$/.test(raw)` before converting with `Number(raw)`.
+
+HINT 2
+
+Reject with the exact message `\`MAX_UPLOAD_MB must be a whole number from 1 to 100, got "${raw}"\`` when the regex fails or the number is out of range. Otherwise return `Object.freeze({ maxUploadBytes: mb * 1024 * 1024 })`.
+
+SOLUTION
 
 upload-config.tsNode.js only
 
@@ -1097,7 +1107,17 @@ TRY IT YOURSELF
 
 Write a `BankAccount` class that extends `EventEmitter<AccountEvents>`. `withdraw(kobo)` refuses to go below zero, and emits `"low-balance"` with the new balance when it drops under ₦5,000. Listen for it and withdraw twice from ₦12,000.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Guard first: `if (!Number.isSafeInteger(kobo) || kobo <= 0) throw new RangeError(...)`, then check `kobo > this.balanceKobo`.
+
+HINT 2
+
+After `this.balanceKobo -= kobo;`, check `if (this.balanceKobo < 500_000) this.emit("low-balance", this.balanceKobo);` before the final `return this.balanceKobo;`.
+
+SOLUTION
 
 bank-events.tsNode.js only
 
@@ -1151,7 +1171,17 @@ TRY IT YOURSELF
 
 Using the ENOENT guard, write `loadCart(path)`: when the file is missing, it writes an empty cart `{"items":[]}` and returns it; any other error is thrown. Call it twice on a fresh folder.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Wrap the read in `try`/`catch`. On success: `return { cart: JSON.parse(await readFile(path, "utf8")) as Cart, created: false }`.
+
+HINT 2
+
+In `catch`: `if (!isErrnoException(error) || error.code !== "ENOENT") throw error;`, then `await writeFile(path, JSON.stringify(cart), { flag: "wx" })` before returning `{ cart, created: true }`.
+
+SOLUTION
 
 cart-first-run.tsNode.js only
 

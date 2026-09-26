@@ -465,7 +465,17 @@ TRY IT YOURSELF
 
 Add a third account state, `{ kind: "deleted"; deletedAt: string }`, to the `AccountState` union in `account.ts`, and run `npx tsc --noEmit`. What does the compiler report, and why is that good? Then handle the new case.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Add the new member to the union with `|`: `type AccountState = { kind: "active"; lastLogin: string } | { kind: "deleted"; deletedAt: string };`.
+
+HINT 2
+
+Add a matching case before `default`: `case "deleted": return \`deleted on ${state.deletedAt}\`;`. Run `npx tsc --noEmit` first, without this case, to see the `never` error point at the missing branch.
+
+SOLUTION
 
 The `default` branch of `describeState` fails with an error like `Type '{ kind: "deleted"; deletedAt: string; }' is not assignable to type 'never'`, which points at every `switch` that forgot the new state. Add a case:
 
@@ -504,7 +514,17 @@ TRY IT YOURSELF
 
 Model a payment method as a discriminated union: a card (`last4`, `expires`), a bank transfer (`iban`) or cash. Write `label(method)` that prints e.g. `card ending 4242`. Why is a card number's last four digits a `string`, not a `number`?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Uncomment the `PaymentMethod` union, give `label` the parameter type `PaymentMethod`, and `switch (method.kind)` the way `summarize` does above.
+
+HINT 2
+
+Each case returns one template literal, listed in the comments in the stub. A `switch` with no `default` still compiles once every case returns.
+
+SOLUTION
 
 payment.ts
 
@@ -546,7 +566,17 @@ TRY IT YOURSELF
 
 In the user module, `suspend` checks that the actor is an admin, but not that the actor is active. A suspended admin can still suspend others. Fix it, and make sure an admin cannot suspend another admin either.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Build one boolean: `const allowed = actor.role === "admin" && actor.state.kind === "active" && target.role !== "admin" && actor.id !== target.id;`.
+
+HINT 2
+
+Then `if (!allowed) throw new Error(...);`, and only after that line, apply the change. Every rule must hold; there is no other way in.
+
+SOLUTION
 
 suspend.ts
 

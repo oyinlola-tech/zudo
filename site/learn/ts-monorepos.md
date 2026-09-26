@@ -1103,7 +1103,17 @@ TRY IT YOURSELF
 
 The shop needs `@shop/payments`: it charges an order through a payment provider, uses `Order` and `DomainError` from `core` and a `Logger`, and `http` will call it. List every file you must create or change, choose its tier, and say what `buildLevels` will print afterwards.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Every package needs the same four things: a `package.json`, a `tsconfig.json` with references, an entry in the root solution file, and a tier in `tools/rules.ts`. Then find who must now depend on it.
+
+HINT 2
+
+`payments` sits at the same tier as `auth` and `database` (it needs `core` and `logger`, and is needed by `http`), so it builds alongside them, one level after the leaves.
+
+SOLUTION
 
 - `packages/payments/package.json`: name `@shop/payments`, the same `exports` shape, dependencies on `@shop/core` and `@shop/logger`.
 - `packages/payments/tsconfig.json`: extends the base, `rootDir`/`outDir`/`tsBuildInfoFile` as the others, references to `../core` and `../logger`.
@@ -1120,7 +1130,17 @@ TRY IT YOURSELF
 
 `buildLevels` reports "cycle among: @shop/auth, @shop/http", which lists every package it could not build, including ones that are only stuck *behind* a cycle. Write `findCycle(graph)` that returns the actual loop, such as `@shop/auth -> @shop/http -> @shop/auth`, using depth-first search.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep a `path: string[]` of the nodes on the current call stack, and a `state` map. If a node is already `"visiting"`, the loop is the part of `path` from that node onwards, plus the node again.
+
+HINT 2
+
+Recurse into each dependency with `visit(dep)` before marking the current node `"done"`; return the first cycle any recursive call finds, all the way back up.
+
+SOLUTION
 
 cycle.ts
 
@@ -1181,7 +1201,17 @@ TRY IT YOURSELF
 
 Three new types are needed: (a) `Money` (an amount in kobo plus a currency), used by `database`, `auth` (for spending limits) and `http`; (b) `RouteParams`, used only inside `http`; (c) `AuditEvent`, produced by `auth` and stored by `database`. Which package should own each?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+A type used by only one package belongs in that package. A type shared by packages at the *same* tier, with neither depending on the other, cannot live in either of them.
+
+HINT 2
+
+Ask where each type would have to sit so that every package that needs it is *above* it in the dependency graph, without adding a sideways dependency between peers.
+
+SOLUTION
 
 - (a) `@shop/core`. Several packages across layers need it, and `core` is below all of them.
 - (b) `@shop/http`, unexported or exported only from `http`. A type used by one package belongs to that package; moving it down "just in case" makes `core` a dumping ground.

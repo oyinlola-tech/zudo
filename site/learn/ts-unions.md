@@ -901,7 +901,17 @@ TRY IT YOURSELF
 
 Customers may cancel a loan while it is pending. Add a `cancelled` member with a `cancelledOn` date, a `cancel(loan)` transition that only accepts pending loans, and handle it in an exhaustive `describe`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Add the member to the union, and a matching `Extract` alias: `type Cancelled = Extract<Loan, { status: "cancelled" }>;`. Give `cancel` the return type `Cancelled`.
+
+HINT 2
+
+`cancel` returns `{ status: "cancelled", id: loan.id, cancelledOn: today }`. Add the matching `case "cancelled":` to `describe` before `default`.
+
+SOLUTION
 
 cancel.ts
 
@@ -955,7 +965,17 @@ TRY IT YOURSELF
 
 A card payment can succeed (with an authorisation code), be declined by the bank (with a decline reason: `"insufficient-funds"`, `"expired-card"` or `"suspected-fraud"`), or need a one-time password first. Model `PaymentResult` as a discriminated union and write `nextStep(result)`, using a `Record` for the decline messages.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Uncomment the three commented lines, fill in `declineMessage` with one string per `DeclineReason`, and give `nextStep` the parameter type `PaymentResult`.
+
+HINT 2
+
+`switch (result.kind)`, one case per member, the way `describeEvent` does above. The `"declined"` case is one line: `return declineMessage[result.reason];`.
+
+SOLUTION
 
 payment.ts
 
@@ -1016,7 +1036,17 @@ interface Booking {
 }
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Uncomment the `Booking` union, give `summary` the parameter type `Booking`, and `switch (booking.status)` the way `status` switches on `item.kind` above.
+
+HINT 2
+
+Each case is one template literal, listed in the comments in the stub. Notice there is no `paid` field anywhere: "paid" is just what `confirmed` and `checked-in` mean.
+
+SOLUTION
 
 What is wrong: `status: string` allows any text and gives no narrowing; `paid` duplicates the status (a confirmed booking with `paid: false`?); and each optional field belongs to one state, but the type allows any mix, such as a room number on a held booking.
 

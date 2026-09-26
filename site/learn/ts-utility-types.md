@@ -765,7 +765,17 @@ TRY IT YOURSELF
 
 Write `Optional<T, K extends keyof T>`: the same as `T`, but with only the keys `K` made optional. Use it for a booking where `notes` and `roomId` may be filled in later, and prove it with type tests.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Split the type in two and combine with `&`: `Omit<T, K>` keeps every key not in `K` unchanged, and `Partial<Pick<T, K>>` makes the keys in `K` optional.
+
+HINT 2
+
+`type Optional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;`
+
+SOLUTION
 
 optional.ts
 
@@ -806,7 +816,17 @@ TRY IT YOURSELF
 
 Without looking back, write `MyExtract` and `MyNonNullable`. Use them to get the refund events from the event union below, and to type a list of phone numbers with the missing ones removed.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`MyExtract<T, U>` is a distributive conditional type: `T extends U ? T : never`. Written over a union, it tests each member on its own.
+
+HINT 2
+
+`MyNonNullable<T>` is `T extends null | undefined ? never : T`. Both are exactly the shape of the `PayloadOf`-style conditional types from [Conditional types](https://zudojs.oyinlola.site/learn/ts-conditional-types).
+
+SOLUTION
 
 rebuild.ts
 
@@ -850,7 +870,17 @@ TRY IT YOURSELF
 
 Write `memoize<F extends (arg: string) => unknown>(fn: F): (arg: Parameters<F>[0]) => ReturnType<F>` that caches results by argument. Use it on a slow exchange-rate lookup and show that the second call does not run the lookup.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Create `const cache = new Map<string, ReturnType<F>>()` outside the returned function, so it survives between calls.
+
+HINT 2
+
+On each call, check `cache.has(arg)` first. If not, compute `fn(arg) as ReturnType<F>`, store it with `cache.set(arg, result)`, then return it; if it is cached, return `cache.get(arg)`.
+
+SOLUTION
 
 memoize.ts
 

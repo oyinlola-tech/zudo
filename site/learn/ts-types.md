@@ -555,19 +555,19 @@ function titleOf(id: number): string {
 }
 ```
 
-What `npx tsc --noEmit` prints
+  lookup.ts:4:10 - error TS2532: Object is possibly 'undefined'. 4 return titles.find((t) => t.id === id).title; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Found 1 error in lookup.ts:4
 
-```ts
-lookup.ts:4:10 - error TS2532: Object is possibly 'undefined'.
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-4   return titles.find((t) => t.id === id).title;
-           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+HINT 1
 
+`titles.find(...)` gives `{ id, title } | undefined`. Reading `.title` straight off it is what `tsc` refuses.
 
-Found 1 error in lookup.ts:4
-```
+HINT 2
 
-**Show a solution**
+Use optional chaining and a fallback: `titles.find((t) => t.id === id)?.title ?? "not found"`. No `if`, `!` or `any` needed.
+
+SOLUTION
 
 lookup.ts
 
@@ -595,7 +595,17 @@ TRY IT YOURSELF
 
 Write `toCount(value: unknown): number`. A number is returned as it is. A string such as `"3"` is converted with `Number`. Anything else, and any result that is not a whole number of 0 or more, gives `0`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Start with `let n = 0;`. Narrow with `typeof value === "number"` and `typeof value === "string"`, the way this lesson's `shout` function did.
+
+HINT 2
+
+At the end, `return Number.isInteger(n) && n >= 0 ? n : 0;` covers every bad case: text that is not a number, and negative numbers.
+
+SOLUTION
 
 count.ts
 
@@ -622,7 +632,17 @@ TRY IT YOURSELF
 
 Write `minMax(numbers: readonly number[])` that returns a tuple `[min, max]`, or `undefined` for an empty array. Write the return type yourself.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check `numbers.length === 0` first and return `undefined`. Otherwise return a tuple: `[Math.min(...numbers), Math.max(...numbers)]`.
+
+HINT 2
+
+The return type is `[min: number, max: number] | undefined`. Labels like `min:` and `max:` are just documentation; they change nothing at runtime.
+
+SOLUTION
 
 min-max.ts
 

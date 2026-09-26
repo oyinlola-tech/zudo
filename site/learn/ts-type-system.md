@@ -1074,7 +1074,17 @@ const e: { sku: string } = { sku: "RICE-5", priceKobo: 850000 };
 const f: () => void = () => 42;
 ```
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Arrays and function returns are usually forgiving (covariant); function *parameters* are checked the other way round (contravariant); and a *fresh* object literal is checked for extra properties, but a variable holding the same value is not.
+
+HINT 2
+
+Only `b`, `c` and `e` fail: a `readonly` array cannot become mutable, `c`'s function would need `discountKobo` it might not get, and `e`'s literal has a property `{ sku: string }` does not mention.
+
+SOLUTION
 
 predict-answers.ts
 
@@ -1158,7 +1168,17 @@ const c: Importer<PaidOrder> = orderImporter;
 const d: PriceCache<string, Order> = paidCache;
 ```
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+A type only ever handed *out* (as a return value) is `out`. A type only ever taken *in* (as a parameter) is `in`. A type used both ways, like a cache's value, is `in out`.
+
+HINT 2
+
+`Report<out T>`, `Importer<in T>`, `PriceCache<in K, in out V>`. With those, `a` and `c` compile; `b` and `d` do not.
+
+SOLUTION
 
 annotate-answer.ts
 
@@ -1224,7 +1244,17 @@ TRY IT YOURSELF
 
 The `Reachable` type found the unreachable `"archived"` status. Write the same check as a plain runtime function, `unreachable(flow, start)`, that walks the table and returns the statuses never visited. Which version would you keep in a shop's codebase, and why?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep a `Set<string>` of statuses already seen, and a queue starting with `[start]`. While the queue is not empty, take one out, skip it if already seen, otherwise mark it seen and push its `flow[status]` onto the queue.
+
+HINT 2
+
+At the end, `Object.keys(flow).filter((status) => !seen.has(status))` is every status the walk never reached.
+
+SOLUTION
 
 unreachable.ts
 

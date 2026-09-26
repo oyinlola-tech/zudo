@@ -1174,7 +1174,17 @@ TRY IT YOURSELF
 
 Write `retry<T>(task: () => Promise<T>, attempts: number): Promise<T>` that calls `task` until it succeeds or `attempts` calls have failed, then rejects with the last error. Test it with a flaky rate lookup that fails twice.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop `for (let attempt = 1; attempt <= attempts; attempt++)` with `try`/`catch` inside, the same shape as `firstSuccess` above but calling the same `task` again each time.
+
+HINT 2
+
+Inside `try`, `return await task();`. In `catch`, save `lastError = error;` and log `\`attempt ${attempt} failed\``. After the loop, `throw lastError;`.
+
+SOLUTION
 
 retry.ts
 
@@ -1243,20 +1253,19 @@ const [orders, product] = await Promise.all(work);
 console.log(`${orders} orders, best seller: ${product.name}`);
 ```
 
-What `npx tsc --noEmit` prints
+  summary.ts:10:55 - error TS2339: Property 'name' does not exist on type 'number | { name: string; sold: number; }'. Property 'name' does not exist on type 'number'. 10 console.log(`${orders} orders, best seller: ${product.name}`); ~~~~ Found 1 error in summary.ts:10
 
-```ts
-summary.ts:10:55 - error TS2339: Property 'name' does not exist on type 'number | { name: string; sold: number; }'.
-  Property 'name' does not exist on type 'number'.
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-10 console.log(`${orders} orders, best seller: ${product.name}`);
-                                                         ~~~~
+HINT 1
 
+Write `const [orders, product] = await Promise.all([countOrders(), topProduct()]);` — the array literal goes straight into the call, the way the worked example does.
 
-Found 1 error in summary.ts:10
-```
+HINT 2
 
-**Show a solution**
+Then `console.log(\`${orders} orders, best seller: ${product.name}\`);`. Building the array in its own variable first is exactly what loses the tuple.
+
+SOLUTION
 
 summary.ts
 
@@ -1286,7 +1295,17 @@ TRY IT YOURSELF
 
 Writing to the ledger is cheaper in batches. Write `async function* batch<T>(source: AsyncIterable<T>, size: number): AsyncGenerator<T[], void, undefined>` that yields arrays of up to `size` items, and use it on an async generator of transaction ids.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep a running array, `let current: T[] = [];`, and `for await (const item of source) { current.push(item); ... }`, the same shape as `pairs` above but comparing `current.length` with `size`.
+
+HINT 2
+
+When `current.length === size`, `yield current;` then `current = [];` (a new array, not emptying the old one). After the loop, `if (current.length > 0) yield current;` for the last partial batch.
+
+SOLUTION
 
 batch.ts
 

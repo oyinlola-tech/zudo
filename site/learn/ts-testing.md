@@ -940,7 +940,17 @@ TRY IT YOURSELF
 
 Add a check to `splitKobo` that throws a `RangeError` for a non-integer total, a negative total, or a number of parts below 1. Then write assertions that each bad input throws a `RangeError`, and that a good input still splits correctly.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Two checks at the top of `splitKobo`: `if (!Number.isSafeInteger(totalKobo) || totalKobo < 0) throw new RangeError(...)`, and the same shape for `parts < 1`.
+
+HINT 2
+
+Loop over the four bad pairs the same way the worked example loops over sizes: `for (const [total, parts] of [[10.5, 2], [-100, 2], [100, 0], [100, 1.5]]) expect(() => splitKobo(total, parts)).toThrow(RangeError);`
+
+SOLUTION
 
 split.tsNode.js only
 
@@ -980,7 +990,17 @@ Here is a typed `indexBy`, which builds a lookup table from a list. Write type t
 export function indexBy<T, K extends PropertyKey>(items: readonly T[], keyOf: (item: T) => K): Record<K, T>
 ```
 
-**Show a solution**
+Write it in the editor and run it. Hints and the solution open up once you have tried.
+
+HINT 1
+
+For the result: `expectTypeOf(indexBy(orders, (o) => o.id)).toEqualTypeOf<Record<string, Order>>();`.
+
+HINT 2
+
+For the parameter: `expectTypeOf(indexBy<Order, string>).parameter(1).parameter(0).toEqualTypeOf<Order>();` walks into the key function, then its first parameter. For the refusal: `// @ts-expect-error: an object cannot be a key` above `indexBy(orders, (o) => ({ id: o.id }))`.
+
+SOLUTION
 
 index-by.types.tsNode.js only
 
@@ -1016,7 +1036,17 @@ TRY IT YOURSELF
 
 `RateClient.fetchRate` changes to return `Promise<{ rate: number; fetchedAt: string }>`, and `toKobo` is updated to read `.rate`. A test still has `const fetchRate = vi.fn().mockResolvedValue(1530)`. What happens when the test runs, what happens under `tsc`, and how do you make the compiler find this test?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+`vi.fn()` without a type argument has no idea what it is mocking. Give it the real signature, the same way a typed double was built earlier in this lesson.
+
+HINT 2
+
+`vi.fn<RateClient["fetchRate"]>()` types both the arguments `mockResolvedValue` accepts and what calling the mock returns.
+
+SOLUTION
 
 At runtime the mock resolves to `1530`, so `(1530).rate` is `undefined`. `toKobo` then refuses it as a nonsense rate, and the "converts at the rate" test fails with a confusing message, far from the real cause. `tsc` says nothing, because `vi.fn()` without a type argument accepts any implementation and any resolved value.
 

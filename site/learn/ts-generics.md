@@ -406,7 +406,17 @@ TRY IT YOURSELF
 
 Using the `Result` type from this lesson, write `findOrFail<T extends { id: number }>(items: readonly T[], id: number): Result<T>` that returns the item, or the error `"Item 7 not found"`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`const item = items.find((i) => i.id === id);`, the same way `firstAbove` uses `find` above.
+
+HINT 2
+
+`return item ? { ok: true, value: item } : { ok: false, error: \`Item ${id} not found\` };`
+
+SOLUTION
 
 find-or-fail.ts
 
@@ -442,7 +452,17 @@ TRY IT YOURSELF
 
 Write `groupBy<T, K>(items: readonly T[], keyOf: (item: T) => K): Map<K, T[]>`. Group tasks by their `status` and print how many are in each group.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Start a `Map<K, T[]>`, and for each item read its key with `keyOf(item)`. Read the existing group with `groups.get(key) ?? []`.
+
+HINT 2
+
+`push` the item onto that array, then `groups.set(key, group)`, the same way `tally` does above. Return `groups` at the end.
+
+SOLUTION
 
 group-by.ts
 
@@ -483,7 +503,17 @@ TRY IT YOURSELF
 
 Write a class `Stack<T>` with `push(item: T): void`, `pop(): T | undefined` and a `size` getter. Use it for an "undo" list of task titles.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`push` is one line: `this.items.push(item);`. `pop` is also one line: `return this.items.pop();`, the array method, not this class's own method.
+
+HINT 2
+
+`size` is already given as a getter reading `this.items.length`; you do not need to change it.
+
+SOLUTION
 
 stack.ts
 

@@ -1008,7 +1008,17 @@ TRY IT YOURSELF
 
 Orders can now be confirmed as delivered. Add a `DeliveredOrder` state (from `ShippedOrder` only, with `deliveredAt` and `receivedBy`) and a `markDelivered` transition, in a new file of the shop project. Show that delivering a paid (not shipped) order does not compile, and that a shipped order can be delivered.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+A transition should accept exactly one starting state, the same rule `markShipped` and `markPaid` already follow. `markDelivered`'s parameter type is currently a union of two states.
+
+HINT 2
+
+Change the parameter type from `PaidOrder | ShippedOrder` to `ShippedOrder` alone. The cast can go too, once every field the interface promises really is on the spread `order`.
+
+SOLUTION
 
 delivered.ts
 
@@ -1059,7 +1069,17 @@ TRY IT YOURSELF
 
 Fix the second type test in `domain.test.ts` so that it fails if failed payments ever become refundable. Why does the original version not do that?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`refundPayment`'s first parameter is `Permit<"payment:refund">`. Give `refund` that exact type, instead of `Permit<"order:pay">`.
+
+HINT 2
+
+`function failedCannotBeRefunded(refund: Permit<"payment:refund">, failed: FailedPayment): void` — now the only thing wrong with the call is `failed`, so the directive can only be satisfied by that mistake.
+
+SOLUTION
 
 better-type-test.ts
 
@@ -1091,7 +1111,17 @@ TRY IT YOURSELF
 
 Orders come back from the database as flat rows: `{ id, customer_id, status, total_kobo, version, payment_id, paid_at, tracking_code, cancel_reason }`, where the state-specific columns may be `null`. Write `parsePaymentState(row)` that returns a `Result` with the order's status and its state-specific fields for the four states, and an error naming the problem for a corrupt row (a paid order with no payment id, or an unknown status). Leave the lines out to keep it short.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Switch on `row.status`. For `"paid"` and `"shipped"`, check `row.payment_id === null || row.paid_at === null` first, before building the value; a helper like `const bad = (problem: string) => ({ ok: false, error: \`${row.id}: ${problem}\` })` keeps the messages short.
+
+HINT 2
+
+An unrecognised `row.status` (like the typo `"shiped"`) falls through to a `default` case: `bad(\`unknown status ${JSON.stringify(row.status)}\`)`.
+
+SOLUTION
 
 rows.ts
 

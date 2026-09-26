@@ -1483,7 +1483,17 @@ TRY IT YOURSELF
 
 Rule 5 of the Kora linking removes the password of an unverified account. Make that rare: after registration, e-mail a verification link. Write `createEmailVerification(db, mailer)` with `send(userId, email)` and `confirm(token)`, using `generateVerificationToken` and storing only a hash. A token works once, for 24 hours, and must not verify an address the user changed in the meantime.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`send` mirrors `createInvite`'s: `await generateVerificationToken()`, insert `await hashTokenForStorage(token)` with the user id, e-mail and `now() + interval '24 hours'`, then `mailer.send(...)` with the token in the link.
+
+HINT 2
+
+`confirm` needs `DELETE FROM email_verifications WHERE token_hash = $1 AND expires_at > now() RETURNING user_id, email`. No row means `false`. Otherwise `UPDATE users SET email_verified = true WHERE id = $1 AND email = $2` with the row's `user_id` and `email` — the returned row count, not just "no error", tells you whether it verified anything.
+
+SOLUTION
 
 verify-email.tsNode.js only
 
@@ -1552,7 +1562,17 @@ TRY IT YOURSELF
 
 Users want a list of the devices where they are signed in, with the current one marked. Write `listDevices(db, user)` for the verified token payload of the caller. Which fields must come from the token, and why must the list not contain session ids?
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The query needs both the owner and which row is "current": `WHERE user_id = $1 AND expires_at > now()`, with `id = $2 AS current` in the select list, parameters `[Number(user.sub), user.sid ?? ""]`.
+
+HINT 2
+
+`COALESCE(user_agent, 'unknown') AS device` handles a session with no recorded agent, and `ORDER BY created_at` keeps the list in login order.
+
+SOLUTION
 
 devices.tsNode.js only
 
@@ -1603,7 +1623,21 @@ TRY IT YOURSELF
 
 A teammate's version of the reset: `GET /reset?email=ada@example.com&token=…` sets the password to a value from the query string, compares `token` with the stored token using `===`, and keeps the token valid for 7 days so "users are not annoyed". List the problems.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look at each part of the URL in turn: the method, and everything that travels as a query parameter. What ends up in browser history, server logs and proxy logs that a body would not?
+
+HINT 2
+
+Compare "the token alone decides whose password changes" against what this endpoint actually trusts the client to say. And re-read the two incidents earlier in the lesson: one of them is this exact expiry, with a different number.
+
+HINT 3
+
+A reset that changes a password should also do one more thing everywhere else in this lesson a compromise-recovery flow does — check what a successful reset does to the user's other sessions.
+
+SOLUTION
 
 - **GET changes state**, and the new password and the token travel in the URL: into browser history, server logs, proxy logs and `Referer` headers. Use POST with a JSON body, and the token in the link's fragment.
 - **The token is stored in clear**, so a database leak is a set of working reset links. Store `hashTokenForStorage(token)` and compare hashes in the query.

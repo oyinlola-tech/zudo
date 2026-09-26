@@ -650,7 +650,17 @@ function isLocked(failedAttempts) {
 }
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Trace `failedAttempts = 3`: does `failedAttempts > 3` count that as locked? "Locks after 3 failed logins" means 3 itself should already be locked.
+
+HINT 2
+
+Change `>` to `>=`: `return failedAttempts >= 3;`
+
+SOLUTION
 
 Trace: after 1, 2 and 3 failures, `failedAttempts > 3` is false, so the account is still open after the third failure and a fourth try is allowed. "Locks after 3 failed logins" means locked when the count reaches 3: `>= 3`. It is an off-by-one on a boundary, caught by the boundary pair 2 and 3.
 
@@ -687,7 +697,17 @@ function averageOrder(totals) {
 }
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+With an empty list, the loop runs zero times: `sum` stays 0, and the function returns `0 / 0`, which is `NaN`. Add a guard clause before the loop.
+
+HINT 2
+
+`if (totals.length === 0) return null;`
+
+SOLUTION
 
 With an empty list the loop runs zero times, so `sum` is 0, and the function returns `0 / 0`, which is `NaN` in JavaScript: there is no sensible answer to "the average of nothing". The fix is a guard clause for the empty case, and the test is the empty list.
 
@@ -730,7 +750,17 @@ function allPaid(invoices) {
 allPaid([{ id: 1, paid: true }, { id: 2, paid: false }]);
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Both branches return immediately, so the loop can never look past the first invoice. Only return `false` as soon as you find an unpaid one; return `true` after the loop finishes checking everyone.
+
+HINT 2
+
+`if (!invoice.paid) return false;` inside the loop, and `return true;` after it. That also fixes the empty-list case: the loop never runs, and `true` is returned.
+
+SOLUTION
 
 Trace: the loop looks at invoice 1, which is paid, and *returns true* immediately. It never looks at invoice 2. Both branches return, so the loop can never get past its first item: it really answers "is the first invoice paid?". The fix: return `false` as soon as an unpaid invoice is found, and return `true` only after the loop has checked them all.
 

@@ -1239,7 +1239,17 @@ TRY IT YOURSELF
 
 Write `messageOf(value: unknown): string` that returns the `message` of an `Error`, the string itself for a string, the `message` property of an object that has a string `message` (some SDKs throw such objects), and `"unknown error"` otherwise. Use no `as` and no `any`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check `value instanceof Error` first, then `typeof value === "string"`. Both return immediately.
+
+HINT 2
+
+For the object case: `typeof value === "object" && value !== null && "message" in value && typeof value.message === "string"`, then return `value.message`. Otherwise fall through to `"unknown error"`.
+
+SOLUTION
 
 message-of.ts
 
@@ -1278,7 +1288,17 @@ TRY IT YOURSELF
 
 Add a `RefundWindowClosedError` to the payments system: code `"refund_window_closed"`, HTTP status 422, and a `closedOn` date string in its details. Which files must change, and how do you know you found them all?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Uncomment the `RefundWindowClosedError` class, add it to the `PaymentError` union with `|`, and add its entry to `STATUS`.
+
+HINT 2
+
+Add a matching `case "refund_window_closed":` to `details`, returning `{ closedOn: error.closedOn }`. Each of the three files (the class, the status table, the details switch) refuses to compile until it accounts for the new code, which is how you know you found them all.
+
+SOLUTION
 
 refund.ts
 
@@ -1357,14 +1377,17 @@ process.on("unhandledRejection", (reason) => console.log("escaped:", String(reas
 console.log(await requestRefund("PAY-X1"));
 ```
 
-Output of `npx tsx refund-queue.ts`
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-```ts
-refund queued
-escaped: Error: cannot refund PAY-X1
-```
+HINT 1
 
-**Show a solution**
+Add `await` before `queueRefund(paymentId)`, the way `recordAction` awaits `writeAuditLog`. Without it, the function returns before the rejection happens.
+
+HINT 2
+
+Replace `\`refund failed: ${error}\`` with a narrowed version: `\`refund failed: ${error instanceof Error ? error.message : String(error)}\``.
+
+SOLUTION
 
 refund-queue.ts
 

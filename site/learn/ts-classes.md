@@ -561,7 +561,17 @@ TRY IT YOURSELF
 
 Write a class `RateCounter` that counts login attempts per e-mail address. It has `hit(email: string): number` (adds one and returns the new count) and `reset(email: string): void`. The counts must not show up in `JSON.stringify` or be changeable from outside.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`hit`: `const next = (this.#counts.get(email) ?? 0) + 1; this.#counts.set(email, next); return next;`, the same as `visit` above.
+
+HINT 2
+
+`reset` is one line: `this.#counts.delete(email);`.
+
+SOLUTION
 
 rate-counter.ts
 
@@ -600,7 +610,17 @@ TRY IT YOURSELF
 
 Write a `ReminderService` with a method `remindOverdue()` that sends one message per overdue task and returns how many it sent. It takes two dependencies through its constructor: a function that returns the overdue titles (in the app, `() => service.overdue()`), and a `Notifier` interface with `send(text: string): Promise<void>`. Test it with a fake notifier that stores the messages in an array.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Uncomment `Notifier`, and give the constructor's second parameter that type instead of `any`. Make `FakeNotifier` say `implements Notifier`.
+
+HINT 2
+
+`remindOverdue`: `const titles = await this.overdueTitles(); for (const title of titles) await this.notifier.send(\`"${title}" is overdue\`); return titles.length;`
+
+SOLUTION
 
 remind.ts
 

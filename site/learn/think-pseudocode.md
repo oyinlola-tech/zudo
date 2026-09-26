@@ -476,7 +476,17 @@ TRY IT YOURSELF
 
 A university grades scores like this: 70 and above is A, 60 to 69 is B, 50 to 59 is C, 45 to 49 is D, 40 to 44 is E, below 40 is F. Write the pseudocode, then translate it into JavaScript and test it on the boundaries 70, 69, 45, 44 and 39.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check from the highest band down, so each condition only needs a lower limit: if a score reaches the "B" check, it has already failed the "A" check.
+
+HINT 2
+
+Chain six branches with `if` / `else if` / … / `else`: `score >= 70`, then `>= 60`, `>= 50`, `>= 45`, `>= 40`, and a plain `else` for F.
+
+SOLUTION
 
 ```ts
 START
@@ -538,7 +548,17 @@ TRY IT YOURSELF
 
 An ATM gives a customer three tries to enter the right PIN. After three wrong tries, the card is blocked. Draw the flowchart on paper (it has a loop), write the pseudocode, and translate it. Test it with the attempts `["1111", "2580", "4321"]` when the correct PIN is `"2580"`, and then with three wrong attempts.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The loop has two exits, just like the ticket gate: a matching pin, and a third wrong pin. Both use `break` to stop the loop early.
+
+HINT 2
+
+Inside the loop: on a match, set `accepted` to `true` and `break`. Otherwise increase `wrong`, log `"Wrong PIN"`, and when `wrong === 3`, log `"Card blocked"` and `break` as well.
+
+SOLUTION
 
 ```ts
 START
@@ -626,7 +646,17 @@ Output of `node savings-bug.js` and of the browser terminal
 Weeks: 7
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Trace it by hand: after 6 rounds, what is `saved`? Is the goal already reached at that point?
+
+HINT 2
+
+The pseudocode says `WHILE saved < goal`. Compare that to the JavaScript's `while` condition — one comparison operator was translated wrongly.
+
+SOLUTION
 
 The trace: after 6 rounds, `saved` is 45,000. The goal is reached, so the answer should be 6. But `45000 <= 45000` is true, so the loop runs a seventh time. The translation turned "less than" into "less than or equal to".
 

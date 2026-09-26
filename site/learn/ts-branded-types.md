@@ -505,13 +505,14 @@ zudo-ids.ts
 import { createEmailAddress, createTenantId, createTimestamp, createUserId, InvalidConstantError } from "@zudojs/constants";
 import type { TenantId, UserId } from "@zudojs/constants";
 
-const unchecked: UserId = createUserId("");
+const unchecked: UserId = createUserId("legacy-user-42");
 console.log(JSON.stringify(unchecked), typeof unchecked);
 
 const tenant: TenantId = createTenantId("  Mama-Put-Kitchen ");
 console.log(tenant);
 
 const attempts = [
+  () => createUserId(""),
   () => createTenantId("acme/../billing"),
   () => createEmailAddress("ada@"),
   () => createTimestamp("2026-02-30T10:00:00Z"),
@@ -529,15 +530,16 @@ console.log(createTimestamp("2026-09-24T19:05:00Z"), createEmailAddress("ada@exa
 Output of `npx tsx zudo-ids.ts` and of the browser terminal
 
 ```ts
-"" string
+"legacy-user-42" string
 mama-put-kitchen
+InvalidConstantError: UserId must be a non-empty string.
 InvalidConstantError: Invalid tenant id: "acme/../billing"
 InvalidConstantError: Invalid email address: "ada@"
 InvalidConstantError: Invalid ISO 8601 timestamp: "2026-02-30T10:00:00Z"
 2026-09-24T19:05:00Z ada@example.com
 ```
 
-- `createUserId` (and `createEventId`, `createRequestId`, `createSessionId` and the other id constructors) accept any string, even an empty one. They are a labelled cast: use them where the id was already checked, for example after `@zudojs/auth` verified a token, or wrap them in your own smart constructor that validates your id format first.
+- `createUserId` (and `createEventId`, `createRequestId`, `createCorrelationId`, `createSessionId`, `createMessageId`, `createMessageCausationId` and `createTokenId`) reject an empty string or a non-string with `InvalidConstantError`, but otherwise accept anything: they are mostly a labelled cast. Use them where the id was already checked, for example after `@zudojs/auth` verified a token, or wrap them in your own smart constructor that validates your id format first. (Before `@zudojs/constants` 1.2.0, they accepted even an empty string.)
 - `createTenantId` is a real smart constructor. It normalises (Unicode NFKC, trim, lower case) so two spellings of one tenant cannot become two tenants, and rejects anything that could act as a path segment or separator, because tenant ids end up in cache keys, schema names and file paths.
 - `createEmailAddress`, `createTimestamp` and `createUrl` validate too, and throw `InvalidConstantError` (owned by `@zudojs/errors`). `createTimestamp` even rejects 30 February, which `Date.parse` would quietly roll over into March.
 - Because the brand is a string key, `unchecked.__brand` type-checks (as `"UserId"`) and is `undefined` at runtime. Do not read it.
@@ -872,7 +874,17 @@ TRY IT YOURSELF
 
 Write `parseEmail(raw: string): Result<Email, string>` for a brand `Email`. It trims and lower-cases the input, rejects anything over 254 characters, and accepts only a simple `local@domain.tld` shape. Two spellings of the same address must produce the same `Email`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Normalise first: `const value = raw.trim().toLowerCase();`. Two differently-cased spellings must normalise to the same string, so check the pattern and length *after* normalising.
+
+HINT 2
+
+`if (value.length > 254) return { ok: false, error: "email is too long" };` then `if (!EMAIL.test(value)) return { ok: false, error: ... };` and finally `return { ok: true, value: value as Email };`.
+
+SOLUTION
 
 email.ts
 
@@ -912,7 +924,17 @@ TRY IT YOURSELF
 
 Three friends split a ₦10,000 bill. `10000 / 3` is not a whole number of kobo. Write `splitKobo(total: Kobo, parts: number): readonly Kobo[]` that returns amounts that differ by at most one kobo and always add up to exactly `total`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Compute `base = Math.floor(total / parts)` and `extra = total - base * parts` (how many kobo are left over, always less than `parts`).
+
+HINT 2
+
+`Array.from({ length: parts }, (_, i) => kobo(base + (i < extra ? 1 : 0)))`: the first `extra` people get one kobo more than the rest.
+
+SOLUTION
 
 split.ts
 
@@ -955,7 +977,17 @@ TRY IT YOURSELF
 
 Interest and VAT rates cause unit bugs too: is `7.5` a percent or a fraction? Add a brand `BasisPoints` (1 basis point = 0.01%, so 7.5% is 750 bp), a constructor that accepts whole numbers from 0 to 10,000, and `applyRate(amount: Kobo, rate: BasisPoints): Kobo`. Show that passing a plain `7.5` is a compile error.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Brand `BasisPoints` the same way as `Kobo`: `type BasisPoints = Brand<number, "BasisPoints">;`. Its constructor should throw for anything that is not a whole number from 0 to 10,000.
+
+HINT 2
+
+`const basisPoints = (value: number): BasisPoints => { if (!Number.isInteger(value) || value < 0 || value > 10000) throw new RangeError(...); return value as BasisPoints; };`
+
+SOLUTION
 
 rates.ts
 

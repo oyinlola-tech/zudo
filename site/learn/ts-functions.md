@@ -440,7 +440,17 @@ TRY IT YOURSELF
 
 Write a type `TaskCompare = (a: Task, b: Task) => number`, two comparers `byPriority` (highest first) and `byTitle` (A to Z, with `localeCompare`), and `sortTasks(tasks: readonly Task[], compare: TaskCompare): Task[]` that returns a sorted copy.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`type TaskCompare = (a: Task, b: Task) => number;`. `byPriority` sorts highest first: `(a, b) => b.priority - a.priority`.
+
+HINT 2
+
+`byTitle`: `(a, b) => a.title.localeCompare(b.title)`. `sortTasks` must copy first, since a `readonly Task[]` has no `sort`: `return [...tasks].sort(compare);`.
+
+SOLUTION
 
 sort.ts
 
@@ -480,7 +490,17 @@ TRY IT YOURSELF
 
 Write `retry(job: () => Promise<string>, attempts: number): Promise<string>`. It calls `job`; if the promise rejects, it tries again, up to `attempts` times in total, then throws the last error. Test it with a job that fails twice and then works.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Use a `for` loop from `1` to `attempts` with `try`/`catch` inside. `return await job();` inside `try` leaves the function as soon as one call works.
+
+HINT 2
+
+Declare `let lastError: unknown;` before the loop, set it in `catch`, and log `\`attempt ${i} failed\``. When the loop ends without returning, `throw lastError;`.
+
+SOLUTION
 
 retry.ts
 
@@ -538,33 +558,19 @@ notify(7);
 const sent: string = notify(7, "Hi");
 ```
 
-What `npx tsc --noEmit` prints
+  spot.ts:7:8 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'. 7 notify("7", "Your task is due"); ~~~ spot.ts:8:1 - error TS2554: Expected 2 arguments, but got 1. 8 notify(7); ~~~~~~ spot.ts:1:32 - An argument for 'message' was not provided. 1 type Notify = (userId: number, message: string) => Promise; ~~~~~~~~~~~~~~~ spot.ts:9:7 - error TS2322: Type 'Promise' is not assignable to type 'string'. 9 const sent: string = notify(7, "Hi"); ~~~~ Found 3 errors in the same file, starting at: spot.ts:7
 
-```ts
-spot.ts:7:8 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
 
-7 notify("7", "Your task is due");
-         ~~~
+HINT 1
 
-spot.ts:8:1 - error TS2554: Expected 2 arguments, but got 1.
+Check each call against `Notify`'s parameter types first, then look at what `notify(...)` itself returns, and compare that to what `sent` is declared as.
 
-8 notify(7);
-  ~~~~~~
+HINT 2
 
-  spot.ts:1:32 - An argument for 'message' was not provided.
-    1 type Notify = (userId: number, message: string) => Promise<void>;
-                                     ~~~~~~~~~~~~~~~
+One argument has the wrong type, one call is missing an argument, and one line stores a `Promise` in a variable typed `string`.
 
-spot.ts:9:7 - error TS2322: Type 'Promise<void>' is not assignable to type 'string'.
-
-9 const sent: string = notify(7, "Hi");
-        ~~~~
-
-
-Found 3 errors in the same file, starting at: spot.ts:7
-```
-
-**Show a solution**
+SOLUTION
 
 The id is a string, not a number; the message is missing; and `notify` returns a `Promise<void>`, which is not a string. Even with `await`, it would give `undefined`, because the function returns nothing.
 

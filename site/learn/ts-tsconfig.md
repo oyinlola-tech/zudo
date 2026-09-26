@@ -1548,7 +1548,17 @@ TRY IT YOURSELF
 
 For each bug, name the `tsconfig` option that turns it into a compile error: (a) `config.retries` read from `Record<string, number>` is `undefined`; (b) a subclass method `refund()` keeps running after the base class renamed it to `reverse()`; (c) `catch (e) { log(e.mesage) }`; (d) a Node.js service calls `localStorage.getItem`; (e) an update request with `email: undefined` erases a stored email.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Three of the five are part of plain `strict`; two are the "stricter than strict" flags from later in the lesson. Sort each bug into one group first.
+
+HINT 2
+
+(d) is not really about a flag being on; it is about a flag being *left out* of a list. Which option lists what built-in globals exist?
+
+SOLUTION
 
 (a) `noUncheckedIndexedAccess`: record lookups get `| undefined`. (b) `noImplicitOverride`: once `refund` is marked `override`, the rename makes it an error, because nothing is overridden any more. (c) `useUnknownInCatchVariables` (part of `strict`): `e` is `unknown`, so any property access needs a check first. (d) An explicit `"lib": ["ES2024"]` without `DOM`: `localStorage` is a browser API. (e) `exactOptionalPropertyTypes`: `email?: string` no longer accepts `undefined`.
 
@@ -1558,7 +1568,17 @@ TRY IT YOURSELF
 
 A project has `src/server.ts`, `src/routes/orders.ts` and `test/orders.test.ts`. The tsconfig has `"outDir": "dist"` and no `rootDir` or `include`. After `npx tsc`, `node dist/server.js` fails with "Cannot find module". Explain what happened and write the fixed tsconfig for the build.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+With no `include`, which files does `tsc` compile by default? With no `rootDir`, how does TypeScript 7 decide the common folder those files are copied from?
+
+HINT 2
+
+Once you know why `test/` pulled the output down a level, the fix is the same shape as the base config earlier in this lesson: pin `rootDir` and `include` to `src` only.
+
+SOLUTION
 
 The default `include` picked up `test/` as well, so the common root of all inputs is the project folder, and the output landed in `dist/src/server.js` and `dist/test/…`. There is no `dist/server.js`.
 
@@ -1593,7 +1613,17 @@ function phoneOf(id) {
 console.log(phoneOf("ada"), phoneOf("bola"));
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Give the parameter a type: `id: string`. Then read the lookup into a variable first: `const customer = customers[id];`.
+
+HINT 2
+
+`if (customer === undefined) return "unknown customer";`, then `return customer.phone ?? "no phone";`. Also write `{ name: "Ada" }` without a `phone` field, not `phone: undefined`, to satisfy `exactOptionalPropertyTypes`.
+
+SOLUTION
 
 phone-of.ts
 

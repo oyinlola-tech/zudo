@@ -694,13 +694,19 @@ const tier = loadLimits('{"tier": {"name": "gold", "limitKobo": "50000000"}}');
 console.log(tier.name, tier.limitKobo * 2);
 ```
 
-Output of `npx tsx limits.ts` and of the browser terminal
+  gold 100000000
 
-```ts
-gold 100000000
-```
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-**Show a solution**
+HINT 1
+
+Check `config` the way `loadAddress` checks `data`: `typeof config !== "object" || config === null || !("tier" in config)` before reading `config.tier`.
+
+HINT 2
+
+Repeat the pattern for `tier.name` (must be `"string"`) and `tier.limitKobo` (must be `"number"`), throwing a specific message for each, then return the checked values.
+
+SOLUTION
 
 limits.ts
 
@@ -782,7 +788,17 @@ cart.ts:5:70 - error TS2339: Property 'quantity' does not exist on type 'never'.
 Found 4 errors in the same file, starting at: cart.ts:3
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Uncomment the two interfaces, and annotate the cart: `const cart: Cart = { customer: "Ada", items: [] };`. That gives the empty array a real element type instead of `never[]`.
+
+HINT 2
+
+The total still needs finishing: `cart.items.reduce((sum, item) => sum + item.price * item.quantity, 0)`.
+
+SOLUTION
 
 cart.ts
 
@@ -834,16 +850,19 @@ phones.forEach(async (phone) => {
 console.log(`${phones.length} messages sent`);
 ```
 
-Output of `npx tsx sms.ts` and of the browser terminal
+  3 messages sent sms sent to 0803 000 1111 sms sent to 0805 222 3333 sms sent to 0807 444 5555
 
-```ts
-3 messages sent
-sms sent to 0803 000 1111
-sms sent to 0805 222 3333
-sms sent to 0807 444 5555
-```
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-**Show a solution**
+HINT 1
+
+`forEach`'s callback type returns `void`, so a callback that returns a promise is accepted, but nothing waits for it: the three sends and the last line all start at once.
+
+HINT 2
+
+Replace the `forEach` block with `await Promise.all(phones.map((phone) => sendSms(phone)));`, then the final `console.log`.
+
+SOLUTION
 
 `forEach` expects a callback returning `void`, and a function that returns a promise is allowed where the result is ignored. So `forEach` starts three sends and returns immediately. `Promise.all` waits for all of them, which run at the same time:
 

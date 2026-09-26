@@ -831,7 +831,17 @@ TRY IT YOURSELF
 
 Config keys in code are camelCase (`paystackSecretKey`), and environment variables are SCREAMING_SNAKE_CASE (`PAYSTACK_SECRET_KEY`). [Mapped types](https://zudojs.oyinlola.site/learn/ts-mapped-types#remapping) used plain `Uppercase` and got `WALLET_BALANCEKOBO`; this time, put an underscore before each word. Write `EnvName<S>` that converts one to the other, one character at a time, and a runtime `envName` that does the same. Check both.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`envName` only needs one regex: `key.replace(/[A-Z]/g, (letter) => \`_${letter}\`)` inserts the underscore before each capital, then `.toUpperCase()` finishes the job.
+
+HINT 2
+
+For the type, match one character with `S extends \`${infer C}${infer Rest}\`` (an `infer` right before another captures just one), test it with `C extends Lowercase<C>`, and recurse on `Rest`; the empty string is the base case.
+
+SOLUTION
 
 env-name.ts
 
@@ -870,7 +880,17 @@ TRY IT YOURSELF
 
 Prices in a product feed look like `"1500.50 NGN"`. Write `ParseMoney<S>` that gives a tuple `[amount, currency]` with a number literal and one of `"NGN" | "USD"`, or `never` for anything else.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+A template literal type can capture a typed hole: `${infer Amount extends number}` only matches when that piece of text is a valid number literal.
+
+HINT 2
+
+`type ParseMoney<S> = S extends \`${infer Amount extends number} ${infer C extends Currency}\` ? [Amount, C] : never;`
+
+SOLUTION
 
 money.ts
 
@@ -904,7 +924,17 @@ TRY IT YOURSELF
 
 A cache stores values under keys like `user:42`, `order:ORD-1042` and `cart:42:items`. Write a type `CacheKey` that accepts exactly those three shapes (numbers for user and cart IDs, `ORD-` plus a number for orders), and one small builder function per shape that returns the exact key. Show one call per shape and one key the type rejects.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Each builder is one line: a template literal with the argument spliced in, marked `as const` so the return type is the exact string, not `string`.
+
+HINT 2
+
+`userKey(id)` returns `\`user:${id}\` as const`. `orderKey` and `cartKey` follow the same shape with their own prefix and suffix.
+
+SOLUTION
 
 cache-key.ts
 

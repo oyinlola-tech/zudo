@@ -895,7 +895,17 @@ TRY IT YOURSELF
 
 Write `once(fn)`: it returns a function with exactly the same parameters and result as `fn`, which runs `fn` the first time and returns the first result on every later call. Use it for a "send receipt" function that must never send twice.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Declare `let done = false;` and `let result: R;` outside the returned function, so they persist between calls.
+
+HINT 2
+
+Inside the returned function: `if (!done) { result = fn(...args); done = true; }`, then `return result;` unconditionally, so a later call never runs `fn` again.
+
+SOLUTION
 
 once.ts
 
@@ -939,7 +949,17 @@ TRY IT YOURSELF
 
 Add a `/cancel` command to the router that takes no arguments and returns `"pending operation cancelled"`. What is its argument tuple? What does `router.run("cancel")` accept, and what happens with `/cancel now`?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`parse`'s return type is the argument tuple: an empty tuple, `[]`, when there are no arguments. Check `tokens.length === 0`.
+
+HINT 2
+
+`parse: (tokens): [] | string => (tokens.length === 0 ? [] : \`unexpected "${tokens.join(" ")}"\`)`, and `run: () => "pending operation cancelled"`.
+
+SOLUTION
 
 cancel.ts
 
@@ -975,7 +995,17 @@ TRY IT YOURSELF
 
 A notification module declares `interface Notifier { notify(event: OrderEvent): void }`, and someone registered an SMS notifier that only accepts `ShippedEvent`. Change the interface so the compiler refuses that registration, and show the error.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+A method written with the shorthand `notify(event: OrderEvent): void` is checked *bivariantly*: TypeScript allows a narrower parameter type there. Written as a property, `notify: (event: OrderEvent) => void`, it is checked strictly.
+
+HINT 2
+
+Change only the interface: `interface Notifier { notify: (event: OrderEvent) => void; }`. The `sms` object does not need to change; it is the one that should now fail.
+
+SOLUTION
 
 notifier.ts
 

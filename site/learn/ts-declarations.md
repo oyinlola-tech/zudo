@@ -1109,7 +1109,17 @@ TRY IT YOURSELF
 
 Your shop uses an untyped CommonJS package `slugger` whose whole API is one function: `slugger(text, { separator = "-", maxLength })` returns a lowercase URL slug, and returns an empty string for text with no letters or digits. Write `types/slugger.d.ts` so that `import slugger from "slugger"` is fully typed, and name the one thing about the result that a type cannot express.
 
-**Show a solution**
+Write it in the editor and run it. Hints and the solution open up once you have tried.
+
+HINT 1
+
+Give `SlugOptions` two optional properties: `separator?: string;` and `maxLength?: number;`, each with a doc comment saying what it does and its default.
+
+HINT 2
+
+A type cannot say "this string may be empty" versus "this string is never empty" — write that fact in a comment on `slugger`'s return, and check for `""` in code before using the result as a URL.
+
+SOLUTION
 
 types/slugger.d.ts
 
@@ -1137,7 +1147,17 @@ TRY IT YOURSELF
 
 Several handlers write `(req as any).tenantId`. Replace those assertions with an augmentation of `node:http`'s `IncomingMessage` that adds an optional `tenantId`, and write a function `requireTenant(req)` that returns the tenant id as a `string` or throws.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Inside `declare module "node:http" { interface IncomingMessage { ... } }`, add `tenantId?: string;`. It is optional because a request that has not passed the tenant middleware does not have it.
+
+HINT 2
+
+`if (!req.tenantId) throw new Error("No tenant on this request"); return req.tenantId;`
+
+SOLUTION
 
 tenant.tsNode.js only
 
@@ -1181,7 +1201,17 @@ TRY IT YOURSELF
 
 A teammate "simplified" the formatter's declaration to `export declare function parseNaira(text: string): number;`, and now the compiler lets callers skip the null check. The type check passes everywhere. Write a behaviour check that fails because of this declaration, and say which layer (types or tests) found it.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop as the ISBN example does: `const result = parseNaira(input); const ok = typeof result === "number";`.
+
+HINT 2
+
+`console.log(\`${ok ? "PASS" : "FAIL"} parseNaira(${JSON.stringify(input)}) -> ${result} (declared: number)\`);`
+
+SOLUTION
 
 vendor/naira-format/index.js
 

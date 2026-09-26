@@ -994,7 +994,17 @@ Output of `npx tsx booking.ts` and of the browser terminal
 55000
 ```
 
-**Show a solution**
+Write it in the editor and run it. Hints and the solution open up once you have tried.
+
+HINT 1
+
+Nothing here is checked automatically: write your prediction on paper first, line by line, then compile with `npx tsc --noEmit false --outDir dist` and compare.
+
+HINT 2
+
+Anything that is only a type disappears: the `import type` line, the whole `interface`, every `: SomeType`, the `<number>` on `reduce`, and `as number`. A default value like `= []` stays, because it is a real value.
+
+SOLUTION
 
 dist/booking.js
 
@@ -1029,7 +1039,17 @@ class Ledger {
 console.log(new Ledger("Ada").settle());
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+An `enum` becomes a `const` object plus a type of the same name: `const Status = { ... } as const; type Status = (typeof Status)[keyof typeof Status];`, which is already done for you here.
+
+HINT 2
+
+A parameter property becomes a declared field plus a plain constructor parameter, assigned by hand: `readonly owner: string;` as a field, then `constructor(owner: string, status: Status = Status.Pending) { this.owner = owner; this.status = status; }`.
+
+SOLUTION
 
 ledger.ts
 
@@ -1069,7 +1089,17 @@ TRY IT YOURSELF
 
 Write `readConfig(env)` that takes a `Record<string, string | undefined>` and returns `{ limit: number; feePercent: number }`. `TRANSFER_LIMIT` must be a positive whole number. `FEE_PERCENT` is optional (default `0.5`) and must be between 0 and 5. Collect every problem and throw one error listing them all.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Build a `const problems: string[] = []` first, and `push` a message onto it for each rule that fails. `Number(undefined)` is `NaN`, so a missing limit fails `Number.isInteger` without a separate check.
+
+HINT 2
+
+At the end: `if (problems.length > 0) throw new Error(problems.join("; "));`. Only after that check, `return { limit, feePercent };`.
+
+SOLUTION
 
 config.ts
 

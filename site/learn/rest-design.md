@@ -419,7 +419,17 @@ TRY IT YOURSELF
 
 Rewrite these endpoints in REST style: (a) `GET /getAllTasks`; (b) `POST /tasks/7/markDone`; (c) `GET /task?id=7`; (d) `POST /deleteTask` with `{"id": 7}`; (e) `GET /projects/3/tasks/7`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+A REST URL names a resource (a noun, usually plural); the HTTP method is the verb. Look for verbs hiding inside the path or the body.
+
+HINT 2
+
+For (b) and (d), which method means "change part of a resource", and which means "remove it"? For (e), does the task's own id already say everything the server needs to find it?
+
+SOLUTION
 
 (a) `GET /tasks`. (b) `PATCH /tasks/7` with `{"done": true}`. (c) `GET /tasks/7`. (d) `DELETE /tasks/7`. (e) `GET /tasks/7`: the task has its own id, so it does not need the project in its URL.
 
@@ -429,7 +439,17 @@ TRY IT YOURSELF
 
 Add a `since` parameter to `parseListQuery` and `listTasks`: only tasks with `createdAt` on or after that date. Accept only the form `YYYY-MM-DD`, and report anything else as an error. Test it with `since=2026-09-05` and `since=yesterday`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Test the format with a regular expression: `/^\d{4}-\d{2}-\d{2}$/.test(since)`. Only check it when `since !== null`.
+
+HINT 2
+
+`YYYY-MM-DD` strings compare correctly with `>=`: `all.filter((t) => t.createdAt >= query.since)`.
+
+SOLUTION
 
 since.js
 
@@ -471,7 +491,17 @@ TRY IT YOURSELF
 
 Which pagination would you pick for: (a) an activity feed in a mobile app with infinite scroll; (b) an admin screen that shows "page 4 of 30"; (c) a job that copies every task to another system overnight?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Does the caller need to jump to an arbitrary page number, or only ever move forward one page at a time?
+
+HINT 2
+
+For (c), what happens if a row is inserted or deleted while the job is halfway through, and the pagination is offset-based?
+
+SOLUTION
 
 (a) Cursor: new activity arrives all the time, and the user only scrolls forward. (b) Offset: people want page numbers, and the table is small enough. (c) Cursor: it must not skip or repeat a task, and the table may be large.
 

@@ -484,7 +484,17 @@ TRY IT YOURSELF
 
 A bank's form asks for a customer's birth year only, and the rule is "you must be 18 or older". Go through the checklist: what do you know, what don't you know, what would the obvious code assume? Then write an edge-case table for a check done in 2026.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Four bands, checked in an order that matters: an impossible (negative) difference first, then clearly old enough, then exactly on the boundary, then everyone else.
+
+HINT 2
+
+`if (difference < 0) { decision = "invalid birth year"; } else if (difference >= 19) { decision = "allow"; } else if (difference === 18) { decision = "ask for the full date of birth"; } else { decision = "refuse"; }`
+
+SOLUTION
 
 - **Known:** the birth year and the current year, 2026.
 - **Unknown:** the birthday. Someone born in 2008 is 18 in 2026 only after their birthday; before it, they are 17. With the year alone, the question cannot always be answered.
@@ -535,7 +545,17 @@ TRY IT YOURSELF
 
 A shop starts the day with 20 bags of rice. Through the day, events arrive: a positive number is a delivery, a negative number is a sale. Two invariants should hold after every event: the stock is never negative, and the stock equals the starting stock plus all deliveries minus all sales. Write a loop that processes `[5, -12, -8, -7, 10]`, tracks the stock, and checks the invariants after each event. What does it find, and what should the shop do about it?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Update `stock` first, then check both invariants right after, the same order as the wallet example.
+
+HINT 2
+
+Two separate checks, not one combined condition: `if (stock < 0) { ... }`, and then `if (stock !== start + delivered - soldTotal) { ... }`.
+
+SOLUTION
 
 stock.js
 
@@ -581,7 +601,17 @@ TRY IT YOURSELF
 
 A restaurant adds a 10% service charge to the bill before it is split. Write the preconditions and postconditions, then implement it for a bill of ₦23,000 among 4 people. Assume the charge is always a whole number of naira (the restaurant rounds it down). Check that the shares add up.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+10% of a number is `number / 10`; round it down with `Math.floor`, the same as the VAT example.
+
+HINT 2
+
+`const charge = Math.floor(bill / 10); const total = bill + charge;`
+
+SOLUTION
 
 - **Preconditions:** the bill is a whole number, 0 or more; people is a whole number, at least 1.
 - **Postconditions:** charge is 10% of the bill, rounded down; the shares add up to bill + charge; no two shares differ by more than ₦1.

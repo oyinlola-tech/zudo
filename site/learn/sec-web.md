@@ -917,7 +917,17 @@ if (req.method === "GET" && url.pathname === "/account/close") {
 }
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Which HTTP method is this handler reacting to, and what does that mean for a link or an `<img>` tag on someone else's page?
+
+HINT 2
+
+Look at what happens to `url.searchParams.get("name")` between reading it and writing it into the response. Is there a step missing?
+
+SOLUTION
 
 - It changes state on `GET`. A link or an image tag on any site can close the account, and `SameSite=Lax` still sends the cookie on top-level `GET` navigation. Make it a `POST` behind the origin check and the CSRF token (CSRF section).
 - It reflects `name` from the URL into HTML without encoding: reflected XSS. Use the escaping `html` template, or better, take the name from the session instead of the URL (XSS section).
@@ -929,7 +939,17 @@ TRY IT YOURSELF
 
 Write `isTrustedOrigin(origin)` that reads its list from a comma-separated setting such as `"https://wallet.example, https://mobile.wallet.example"`, trims spaces, ignores empty entries, and accepts only exact matches. Show that `https://wallet.example.evil.test`, `null` and an empty string are refused.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`loadTrustedOrigins` already does the parsing; `isTrustedOrigin` only needs to ask the resulting `Set` one question.
+
+HINT 2
+
+`const isTrustedOrigin = (origin) => trusted.has(origin);`
+
+SOLUTION
 
 trusted-origins.js
 
@@ -963,7 +983,17 @@ TRY IT YOURSELF
 
 A task list shows each task as `<input value="…">` so it can be edited in place. Use the `html` template from this lesson and prove that the title `Buy "fresh" bread` cannot close the attribute early.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Tag a template literal with `html`, exactly as the worked example does, with `title` interpolated inside the quoted `value` attribute, then call `.toString()` on the result.
+
+HINT 2
+
+`const field = html\`<input name="title" value="${title}">\`.toString();`
+
+SOLUTION
 
 attribute.js
 

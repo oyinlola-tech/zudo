@@ -451,37 +451,19 @@ function complete(task: Task): Task {
 console.log(complete(task, true).title);
 ```
 
-What `npx tsc --noEmit` prints
+  bugs.ts:7:22 - error TS2322: Type 'string' is not assignable to type 'number'. 7 const task: Task = { id: "1", title: "Buy milk", done: false }; ~~ bugs.ts:2:3 - The expected type comes from property 'id' which is declared here on type 'Task' 2 id: number; ~~ bugs.ts:10:21 - error TS2322: Type 'string' is not assignable to type 'boolean'. 10 return { ...task, done: "yes" }; ~~~~ bugs.ts:4:3 - The expected type comes from property 'done' which is declared here on type 'Task' 4 done: boolean; ~~~~ bugs.ts:13:28 - error TS2554: Expected 1 arguments, but got 2. 13 console.log(complete(task, true).title); ~~~~ Found 3 errors in the same file, starting at: bugs.ts:7
 
-```ts
-bugs.ts:7:22 - error TS2322: Type 'string' is not assignable to type 'number'.
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-7 const task: Task = { id: "1", title: "Buy milk", done: false };
-                       ~~
+HINT 1
 
-  bugs.ts:2:3 - The expected type comes from property 'id' which is declared here on type 'Task'
-    2   id: number;
-        ~~
+Run `npx tsc --noEmit` first and read all three errors before changing anything: one is on `task`, one is missing from `complete`, one is at the call.
 
-bugs.ts:10:21 - error TS2322: Type 'string' is not assignable to type 'boolean'.
+HINT 2
 
-10   return { ...task, done: "yes" };
-                       ~~~~
+`id: "1"` should be `id: 1`. `complete` should `return { ...task, done: true };`. Call it with one argument: `complete(task)`.
 
-  bugs.ts:4:3 - The expected type comes from property 'done' which is declared here on type 'Task'
-    4   done: boolean;
-        ~~~~
-
-bugs.ts:13:28 - error TS2554: Expected 1 arguments, but got 2.
-
-13 console.log(complete(task, true).title);
-                              ~~~~
-
-
-Found 3 errors in the same file, starting at: bugs.ts:7
-```
-
-**Show a solution**
+SOLUTION
 
 bugs.ts
 
@@ -513,7 +495,17 @@ TRY IT YOURSELF
 
 Compile your fixed `bugs.ts` to a `dist` folder and run the result with `node`. Before you open `dist/bugs.js`, guess which lines of your file will be different in it.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look for anything that only exists to describe a shape or a value's type: the `type Task` block, and every `: SomeType` after a name.
+
+HINT 2
+
+`npx tsc --noEmit false --outDir dist` writes `dist/bugs.js`. Open it and compare line by line with `bugs.ts`.
+
+SOLUTION
 
 Terminal on your computer
 
@@ -537,7 +529,17 @@ enum Priority { Low, High }
 function double(n: number): number { return n * 2; }
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask: if you deleted every type from this line by hand, would what is left still be valid JavaScript on its own, with nothing new needed?
+
+HINT 2
+
+Two of the three lines are just a value with an annotation removed. One of them needs an object built at runtime to hold its members, which is code that has to be generated.
+
+SOLUTION
 
 The `enum`. Deleting the types from the other two lines leaves valid JavaScript (`const limit = 10;` and `function double(n) { return n * 2; }`). An `enum` has no JavaScript equivalent, so TypeScript must generate an object for it, and Node's type stripping does not generate code. Use `tsx`, or write a union of strings instead: `type Priority = "low" | "high"`.
 

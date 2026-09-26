@@ -631,7 +631,17 @@ TRY IT YOURSELF
 
 A delivery company has a list of order statuses: `["delivered", "pending", "pending", "cancelled", "delivered", "pending"]`. Write an algorithm that counts the pending orders. Say the expected answer before running it.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Start a counter at 0, and step through each status with a `for...of` loop.
+
+HINT 2
+
+Inside the loop: `if (status === "pending") { pending = pending + 1; }`
+
+SOLUTION
 
 Expected: 3.
 
@@ -663,7 +673,17 @@ TRY IT YOURSELF
 
 Three suppliers quote for a carton of paracetamol. The names are `["Emzor", "Fidson", "May & Baker"]` and their prices, in the same order, are `[18500, 17200, 19000]`. Find the cheapest price and who offers it. Then test it with the cheapest supplier first, and with the cheapest last.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop with an index, `for (let i = 0; i < prices.length; i++)`, so you can read the same position from both arrays.
+
+HINT 2
+
+`if (prices[i] < cheapest) { cheapest = prices[i]; cheapestName = suppliers[i]; }`
+
+SOLUTION
 
 cheapest.js
 
@@ -696,7 +716,17 @@ TRY IT YOURSELF
 
 A pharmacy gives a 10% discount on items priced ₦5,000 or more. Given the prices `[2500, 8000, 5000, 1200, 12000]`, make a new list with the discounted price of *only* the items that qualify. What length do you expect the result to have?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The `if` is the filter (keep only prices ₦5,000 or more); the calculation inside `push` is the transform.
+
+HINT 2
+
+`if (price >= 5000) { discounted.push(price - price / 10); }`
+
+SOLUTION
 
 Three prices qualify (8,000, 5,000 and 12,000), so the result has 3 items: 7,200, 4,500 and 10,800.
 

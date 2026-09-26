@@ -591,7 +591,17 @@ TRY IT YOURSELF
 
 Describe an ATM cash withdrawal in the IPO model, in plain language. Then write a program with these inputs: the balance is ₦25,000 and the customer asks for ₦10,000. It should print the new balance, or `Not enough money` when the amount is larger than the balance. Try it again with a request of ₦30,000.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Compare `amount` to `balance` with `<=` ("less than or equal to"), the same shape as the laundry discount's `>=` check.
+
+HINT 2
+
+Inside the `if` branch, log the dispense line and the new balance; inside `else`, log the refusal message — use the exact texts from the task.
+
+SOLUTION
 
 - **Input:** the balance of the account and the amount requested. (A real ATM also takes the card and the PIN.)
 - **Processing:** if the amount is not more than the balance, subtract it; otherwise refuse.
@@ -626,7 +636,17 @@ TRY IT YOURSELF
 
 Ada wants to save ₦50,000 for a new phone. She can put away ₦7,500 each week. How many weeks until she has enough? First, work it out by hand. Then write a program that adds ₦7,500 at a time and counts the weeks until the savings reach the goal.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+A `while` loop repeats its block for as long as its condition stays true, checking it again before every round — the same shape as the laundry-shop loop.
+
+HINT 2
+
+Each round of the loop should do two updates: increase `saved` by `perWeek`, and increase `weeks` by `1`.
+
+SOLUTION
 
 By hand: 6 weeks gives ₦45,000, which is not enough; 7 weeks gives ₦52,500. So the answer is 7 weeks.
 
@@ -662,7 +682,17 @@ TRY IT YOURSELF
 
 A bus company charges ₦300 for trips up to 5 km and ₦500 for longer trips. Children under 5 years old ride free. Go through steps 1 to 5 of the problem-solving loop in plain language: what would you ask, what are the inputs and outputs, and what are the steps? Then implement it and test it with a 5 km trip for an adult, a 6 km trip for an adult, and a 10 km trip for a 4-year-old.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check the age first, before the distance: a child under 5 rides free no matter how far they travel.
+
+HINT 2
+
+Structure it as `if (age < 5) { ... } else if (distance <= 5) { ... } else { ... }`, filling in each fare from the task.
+
+SOLUTION
 
 1. **Understand:** is 5 km exactly the cheaper fare or the dearer one? ("Up to 5 km" means 5 km is ₦300.) Is a 5-year-old free? ("Under 5" means no.)
 2. **Break down:** decide if the rider is free; if not, decide the fare from the distance.

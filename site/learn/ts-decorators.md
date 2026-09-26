@@ -1292,7 +1292,17 @@ TRY IT YOURSELF
 
 Write a decorator factory `deprecated(replacement)` for methods. The first call to a deprecated method logs `"NAME is deprecated, use REPLACEMENT"`; later calls stay silent. Put it on a `getBalance` method whose replacement is `balanceKobo`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Declare `let warned = false;` just above the returned function. Check and set it inside: `if (!warned) { warned = true; console.log(...); }`, before calling `method.apply(this, args)`.
+
+HINT 2
+
+The message is `\`${String(context.name)} is deprecated, use ${replacement}\``. The flag lives in the decorator's closure, shared by every instance, which is why the second account does not warn again.
+
+SOLUTION
 
 deprecated.ts
 
@@ -1344,7 +1354,17 @@ TRY IT YOURSELF
 
 Shipping fees are expensive to compute. Write `@memoize` for one-argument methods: it caches results per instance and per argument. Use a `WeakMap` from instance to cache so that dropped instances can be garbage-collected. Show that the second call with the same destination does not recompute.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Declare `const caches = new WeakMap<This, Map<A, R>>();` outside the returned function. Inside, `let cache = caches.get(this); if (!cache) caches.set(this, (cache = new Map()));`.
+
+HINT 2
+
+`if (!cache.has(arg)) cache.set(arg, method.call(this, arg)); return cache.get(arg)!;`
+
+SOLUTION
 
 memoize.ts
 
@@ -1394,7 +1414,17 @@ TRY IT YOURSELF
 
 Write `maxLength(n)` for `accessor` fields of type `string`: it trims the value and throws a `RangeError` if the result is longer than `n`, both for the initial value and for later assignments. Use it on a customer's display name.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`check` should trim first: `const trimmed = value.trim();`, then compare `trimmed.length` against `limit`.
+
+HINT 2
+
+`const trimmed = value.trim(); if (trimmed.length > limit) throw new RangeError(\`${String(context.name)} is longer than ${limit} characters\`); return trimmed;`
+
+SOLUTION
 
 max-length.ts
 

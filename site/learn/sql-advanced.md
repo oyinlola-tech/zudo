@@ -459,7 +459,17 @@ TRY IT YOURSELF
 
 Write one query that lists every user with their number of **open** tasks, including users with none, busiest first, then by name. Return plain numbers.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Start from `from users u left join tasks t on t.user_id = u.id`, and add `and not t.done` to the same `on` clause so it filters before the join, not after.
+
+HINT 2
+
+`select u.name, count(t.id)::int as open ... group by u.id, u.name order by open desc, u.name`. `count` ignores the `null` a left join produces for Grace, giving 0.
+
+SOLUTION
 
 busiest.jsNode.js only
 
@@ -495,7 +505,17 @@ TRY IT YOURSELF
 
 For each user who has tasks, show the title of their task with the largest estimate. Hint: a correlated subquery can compare a task's estimate with the maximum for the same user.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The subquery needs to see the outer row's `user_id`: `(select max(estimate) from tasks where user_id = t.user_id)`.
+
+HINT 2
+
+Compare it in the `where`: `where t.estimate = (select max(estimate) from tasks where user_id = t.user_id)`, then `order by u.name`.
+
+SOLUTION
 
 biggest.jsNode.js only
 

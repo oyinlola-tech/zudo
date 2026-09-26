@@ -1011,13 +1011,17 @@ try {
 }
 ```
 
-Output of `npx tsx settings.ts` and of the browser terminal
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-```ts
-TypeError: limit.toUpperCase is not a function
-```
+HINT 1
 
-**Show a solution**
+Uncomment `Settings`, annotate `store: Settings` instead of `Record<string, unknown>`, and change `getSetting` to `<K extends keyof Settings>(key: K): Settings[K]`, returning `store[key]` with no `as`.
+
+HINT 2
+
+Call it as `getSetting("dailyLimitKobo")` and `getSetting("currency")`, with no type argument. Print `limit / 100` and `currency.toLowerCase()`, plus `getSetting("smsAlerts")`.
+
+SOLUTION
 
 settings.ts
 
@@ -1053,7 +1057,17 @@ TRY IT YOURSELF
 
 Add a method `once<K extends keyof Events>(name: K, listener: (payload: Events[K]) => void): void` to `TypedEmitter` that runs the listener for the first event only. Build it on top of `on`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`const stop = this.on(name, (payload) => { ... });`, the same way `onceOnly` wraps `on` above.
+
+HINT 2
+
+Inside the wrapper, call `stop()` first, then `listener(payload)`. Unsubscribing before calling means a listener that emits the same event again does not run itself twice.
+
+SOLUTION
 
 once.ts
 
@@ -1104,7 +1118,17 @@ TRY IT YOURSELF
 
 Write `all<T, E>(results: readonly Result<T, E>[]): Result<T[], E>` that returns every value when all succeeded, or the *first* error. Use it to validate a batch of transfer amounts.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop over `results`, collecting into `const values: T[] = [];`. As soon as one `!result.ok`, return that failed result unchanged: it fits `Result<T[], E>` because a failure carries no value.
+
+HINT 2
+
+When the loop finishes without returning, every result succeeded: `return { ok: true, value: values };`.
+
+SOLUTION
 
 all.ts
 

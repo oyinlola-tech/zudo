@@ -528,7 +528,17 @@ TRY IT YOURSELF
 
 A restaurant in Enugu wants customers to order jollof rice and other meals from their phones for delivery. Write the first level of the decomposition tree. Then break "place an order" down until every leaf is one clear step.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Start from the nouns in the description — customers, menu, cart, orders, payments, kitchen, delivery, notifications — as the first level, before breaking any one of them further.
+
+HINT 2
+
+For "place an order", check each leaf against the three questions: can it be said in one sentence without "and", do you know its input and output, and could it be tested alone?
+
+SOLUTION
 
 ```ts
 Food ordering app
@@ -563,7 +573,17 @@ TRY IT YOURSELF
 
 A school results portal has these pieces. Say what each one needs, then give an order to build them: Students, Subjects, Scores (a student's score in a subject), Report cards (all of one student's scores, with an average), Parent SMS (sends a report card summary to a parent's phone), Parents (a parent's name and phone, linked to a student).
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For each piece, ask which other pieces it must already know about before it can exist — that answers what it "needs".
+
+HINT 2
+
+A piece that needs nothing can be built first, and pieces needing nothing from each other can be built at the same time; the piece needing the most goes last.
+
+SOLUTION
 
 ```ts
 Piece          needs
@@ -583,7 +603,17 @@ TRY IT YOURSELF
 
 The cooperative adds a rule: a member may send at most ₦100,000 in total per day. Build this as a piece on its own. Its inputs are how much the member has already sent today and the new amount; its output is `allowed` or `over the daily limit`. Test it with ₦80,000 already sent and new amounts of ₦19,999, ₦20,000 and ₦20,001. Decide the expected answers first.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Add `sentToday` and `amount`, and compare the total to `dailyLimit` with `>` ("more than"), the same shape as the stock check.
+
+HINT 2
+
+`if (sentToday + amount > dailyLimit) { result = "over the daily limit"; }`
+
+SOLUTION
 
 Expected: ₦80,000 + ₦19,999 is below the limit, allowed. ₦80,000 + ₦20,000 is exactly ₦100,000, which "at most" allows. ₦80,000 + ₦20,001 is over.
 

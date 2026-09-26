@@ -792,7 +792,17 @@ TRY IT YOURSELF
 
 Your servers got faster, and you raise Argon2id's memory from 19,456 KiB to 47,104 KiB (46 MiB). Using `passwords.js`, show that a hash made with the old parameters still verifies, that `needsRehash` reports it with the new parameters, and that the upgraded hash has the new cost in it.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`NEXT` just needs the new costs: `{ m: 47104, t: 1, p: 1 }`. Everything else already calls the right functions in the right order.
+
+HINT 2
+
+With the real `NEXT`, `needsRehash(old, NEXT)` is `true` (the old hash was made with different costs), and `needsRehash(upgraded, NEXT)` is `false` (it was made with `NEXT` itself).
+
+SOLUTION
 
 raise-cost.jsNode.js only
 
@@ -826,7 +836,17 @@ TRY IT YOURSELF
 
 The bank has two services, `bank-app` and `loans-app`, signed with the same key. Show that a token issued for `loans-app` is refused by `bank-app`'s verifier, and explain what would go wrong without the audience check.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The token's `aud` claim must say who it is *for*: it should be `"loans-app"`, not `"bank-api"` (that is the issuer, a different claim).
+
+HINT 2
+
+With `aud: "loans-app"`, `verify(..., { audience: "loans-app" })` succeeds and `verify(..., { audience: "bank-app" })` fails with `"wrong audience"`.
+
+SOLUTION
 
 audience.jsNode.js only
 
@@ -857,7 +877,17 @@ TRY IT YOURSELF
 
 Using `sessions.js`, write a log-in step that ends the pre-login session (if any) and starts a new one. Show that the token an attacker planted before log-in does not become Ada's session.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Add one line before the `return`: `if (preLoginToken) await endSession(db, preLoginToken);`.
+
+HINT 2
+
+Order matters: end the old session *before* starting the new one, so the planted token is already gone by the time `readSession` is asked about it.
+
+SOLUTION
 
 rotate-on-login.jsNode.js only
 

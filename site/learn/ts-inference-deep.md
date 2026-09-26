@@ -757,7 +757,17 @@ TRY IT YOURSELF
 
 `pair(150_000, "NGN")` fails because both arguments share one type parameter. Rewrite `pair` so it accepts two different types and returns a tuple of exactly those types, then check that `pair(150_000, "NGN")` is `[number, string]`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Give `first` and `second` their own type parameters, `<A, B>`, instead of sharing one `T`.
+
+HINT 2
+
+`function pair<A, B>(first: A, second: B): [A, B] { return [first, second]; }`
+
+SOLUTION
 
 pair.ts
 
@@ -788,7 +798,17 @@ TRY IT YOURSELF
 
 Write the shop's settings as one object: `currency` (one of `"NGN" | "USD"`), `vatPercent` (a number), and `paymentMethods` (a list of `"card" | "transfer" | "ussd"`). Make it checked, deeply read-only, and precise enough that `(typeof settings)["paymentMethods"][number]` is exactly the methods you listed.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`Settings` needs three `readonly` fields: `currency: "NGN" | "USD"`, `vatPercent: number`, and `paymentMethods: readonly ("card" | "transfer" | "ussd")[]`.
+
+HINT 2
+
+`const settings = { currency: "NGN", vatPercent: 7.5, paymentMethods: ["card", "transfer"] } as const satisfies Settings;` then `type Enabled = (typeof settings)["paymentMethods"][number];`.
+
+SOLUTION
 
 settings.ts
 
@@ -829,7 +849,17 @@ TRY IT YOURSELF
 
 Callers of the route module keep forgetting `satisfies Record<string, RouteDef>`. Write a helper `defineRoutes` that checks a table and returns it with its precise type, so that `const routes = defineRoutes({ … })` has the same inferred type as the `satisfies` version. Prove it with a type test on one path.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Constrain the type parameter to the shape you are checking: `<T extends Record<string, RouteDef>>`. That alone gives you the checking that `satisfies` gives a variable.
+
+HINT 2
+
+Add `const` before the type parameter, `<const T extends Record<string, RouteDef>>`, so object and array literals passed in keep their literal types instead of being widened.
+
+SOLUTION
 
 define-routes.ts
 

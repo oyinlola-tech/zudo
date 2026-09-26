@@ -686,7 +686,17 @@ TRY IT YOURSELF
 
 For each situation, name the promise needed and the tool: (a) a mobile app caches the product catalogue and must notice if the cached file was corrupted on disk; (b) your shop sends delivery partners a daily manifest, and partners must be sure it came from you, but you do not want partners to be able to create manifests; (c) you store customers' dates of birth and must show them on the profile page; (d) two of your own services call each other inside your network.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask, for each: does it need a secret key at all? Does the reader need to get the original value back, or only to check that it has not changed?
+
+HINT 2
+
+(b) needs many readers to verify but only one writer to sign; which family of algorithm has different keys for those two jobs?
+
+SOLUTION
 
 - (a) Integrity against accidents: a SHA-256 checksum stored with the file. No key, because the threat is corruption, not an attacker.
 - (b) Public verifiability: an Ed25519 signature with a `kid`, with your public keys published as a JWKS. HMAC would let every partner forge manifests.
@@ -699,7 +709,17 @@ TRY IT YOURSELF
 
 A signature made for a receipt must not be accepted as, say, a refund approval, even if someone copies the payload across. Extend `signReceipt`/`verifyReceipt` so the signed bytes include a `purpose` (`"receipt"`) and `verify` refuses any other purpose. Show that a correctly signed `"refund-approval"` envelope is refused by the receipt verifier.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`signFor` needs to sign `{ purpose, data }` as one JSON object, not just `data`.
+
+HINT 2
+
+After verifying the signature in `verifyFor`: `const message = JSON.parse(payload.toString("utf8")); return message.purpose === purpose ? message.data : \`wrong purpose: ${message.purpose}\`;`.
+
+SOLUTION
 
 purpose.jsNode.js only
 
@@ -741,7 +761,17 @@ TRY IT YOURSELF
 
 Your stock updates are signed with HMAC-SHA256, and the header looks like `v1=<hex>`. Write `verifyStock(secrets, rawBody, header)` where `secrets` is an object such as `{ v1: oldSecret, v2: newSecret }`. Pick the secret by the version prefix, compare in constant time, and refuse unknown versions. Show that during a rotation both versions verify, and that an unknown version is refused.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Start with the regular expression: `const match = /^(v\d+)=([0-9a-f]{64})$/.exec(header ?? ""); if (!match) return "malformed header";`.
+
+HINT 2
+
+`const secret = Object.hasOwn(secrets, match[1]) ? secrets[match[1]] : undefined; if (secret === undefined) return "unknown version";`, then compare with `timingSafeEqual` against `createHmac("sha256", secret).update(rawBody).digest()`.
+
+SOLUTION
 
 hmac-ring.jsNode.js only
 

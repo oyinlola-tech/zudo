@@ -722,7 +722,17 @@ const limits = [
 startServer({ port: 8080, limits });
 ```
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The array's element type is inferred as `{ maxOrderKobo: number; currency: string }`, so the mismatch only shows up where it meets `Limits[]`: at the call. Check each element where it is written instead.
+
+HINT 2
+
+Drop `ServerConfig`/`startServer` from this file entirely, and write `const limits = [ ... ] satisfies Limits[];`. The error now names the exact line and property.
+
+SOLUTION
 
 limits.ts
 
@@ -766,7 +776,17 @@ A helper `pickDefault(options, preferred)` returns `preferred` if it is one of t
 function pickDefault<T extends string>(options: readonly T[], preferred: T): T
 ```
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Both arguments currently contribute to inferring `T`, so `T` becomes the union of everything passed, including `"cash"`. Stop `preferred` from contributing.
+
+HINT 2
+
+`function pickDefault<T extends string>(options: readonly T[], preferred: NoInfer<T>): T` — now `T` comes only from `options`, and `preferred` is checked against it.
+
+SOLUTION
 
 pick.ts
 
@@ -807,7 +827,17 @@ File '~/shop-app/node_modules/@naija-shop/naira/dist/index.d.ts' does not exist.
 Failed to resolve under condition 'types'.
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+The trace never says the package or its `exports` map are wrong. It stops at one specific, named file. What does that file's absence tell you about how the package got there?
+
+HINT 2
+
+`ls node_modules/@naija-shop/naira/dist` tells you which of the two causes you have: an unbuilt workspace package, or a broken published one.
+
+SOLUTION
 
 The package is installed and its `exports` map is read correctly, but the declaration file it promises is not in the installed package. Either it was never published (the `files` field left it out, exactly the 1.0.0 release in [Publishing TypeScript packages](https://zudojs.oyinlola.site/learn/ts-publishing#problem)), or, for a workspace package, it was never built (the `dist` folder does not exist yet). `ls node_modules/@naija-shop/naira/dist` tells you which: an empty or missing folder in a workspace means "build it"; a folder with only `.js` files from the registry means "the package is broken; tell its authors, and add a local declaration meanwhile".
 

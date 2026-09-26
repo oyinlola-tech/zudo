@@ -856,7 +856,17 @@ TRY IT YOURSELF
 
 `waitFor` waits forever if the event never comes. Write `waitForWithin(bus, name, ms)` that resolves with the payload, or rejects with `Error("timed out waiting for NAME")` after `ms` milliseconds, and unsubscribes in both cases. The payload type must still follow the name.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Build your own promise: `new Promise((resolve, reject) => { ... })`. Inside it, `const off = bus.once(name, (...args) => { clearTimeout(timer); resolve(args[0] as E[K]); });`, and a `setTimeout` that calls `off()` then `reject(new Error(...))`.
+
+HINT 2
+
+The timer must be declared before the listener (so the listener's callback can clear it), and the listener before the timeout fires (so the timeout's callback can call `off()`). Declare `let timer` and `const off = bus.once(...)` in that order, then create the timer referencing both.
+
+SOLUTION
 
 wait-within.ts
 
@@ -901,7 +911,17 @@ TRY IT YOURSELF
 
 Analytics wants one line of text for every shop event. Write a mapped type `Formatters<E>` that requires a formatter for every event name, taking that event's payload, and a function `trackAll(bus, formatters, log)` that subscribes all of them. Adding a new event to `ShopEvents` must make the formatters object fail to compile until it has a line for it.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`Formatters<E>` needs each payload's real type: `{ readonly [K in EventName<E>]: (payload: E[K]) => string }`.
+
+HINT 2
+
+Inside `trackAll`: `bus.onPattern("*", (event) => { const format = formatters[event.name] as (payload: unknown) => string; log(\`${event.name}: ${format(event.payload)}\`); });`.
+
+SOLUTION
 
 track-all.ts
 
@@ -952,7 +972,17 @@ TRY IT YOURSELF
 
 The `forward(name, payload)` function from the correlated-union section accepted a cancellation payload for `"stock.low"`. Rewrite it so that it takes one `EventOf` value and publishes it on the full bus, and show that the correct call still works.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`shop.publish(event)` takes exactly one `EventOf` value and returns a `Promise<EmitReport>`. `forward` can be a thin wrapper around it.
+
+HINT 2
+
+`const report = await shop.publish(event); return report.delivered;`
+
+SOLUTION
 
 forward.ts
 

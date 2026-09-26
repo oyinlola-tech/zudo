@@ -426,7 +426,17 @@ TRY IT YOURSELF
 
 Write a module with `createTask(db, userId, title)`, `listOpen(db, userId)` and `completeTask(db, userId, id)`. `completeTask` returns the updated task, or `null` when no such task exists for that user. Use placeholders everywhere, and test that user 2 cannot complete user 1's task.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Every query needs a placeholder, never a pasted-in value: `db.query("... $1 ...", [value])`. Add `returning` to get a row back after `insert` or `update`.
+
+HINT 2
+
+`completeTask`'s `where` needs both `id = $1 and user_id = $2`. When nothing matches, `rows` is empty, so return `rows[0] ?? null`.
+
+SOLUTION
 
 store.jsNode.js only
 
@@ -474,7 +484,17 @@ TRY IT YOURSELF
 
 Which of these are safe? (a) `db.query("select * from tasks where id = " + Number(id))`; (b) `db.query(\`select * from tasks order by ${sort}\`)` where `sort` comes from the query string; (c) `db.query("select * from tasks where title = $1", [title])`; (d) `db.query("select * from tasks where title = '" + title.replaceAll("'", "") + "'")`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Only one of these uses a placeholder. Are the others building the SQL text out of a value that came from the caller?
+
+HINT 2
+
+(a) is safe today only because `Number` can never produce anything but a number. (b) names a column, which a placeholder cannot quote for you: what should you check it against instead?
+
+SOLUTION
 
 Only (c) is right. (a) happens to be safe because `Number` can only produce a number, but it is fragile: the next person edits it and drops `Number`. (b) is injectable: check `sort` against an allow-list. (d) tries to clean the input by hand; that approach fails sooner or later (and it also breaks titles such as `Ada's book`). Use placeholders.
 

@@ -992,7 +992,17 @@ TRY IT YOURSELF
 
 A year is a leap year if it divides by 4, except years that divide by 100, which are leap years only if they also divide by 400. Before coding, list your test years and their expected answers. Then write `isLeapYear(year)`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check the most specific rule first, the same order as the fizzbuzz example: divides by 400, then by 100, then by 4.
+
+HINT 2
+
+`if (year % 400 === 0) return true; if (year % 100 === 0) return false; return year % 4 === 0;`
+
+SOLUTION
 
 Reasoning: the rule has three parts, so you need a test for each part plus a normal year. 2024 (divides by 4: leap), 2026 (not by 4: not leap), 1900 (by 100 but not 400: not leap), 2000 (by 400: leap). The order of the checks follows the "except" in the rule: the most specific rule first.
 
@@ -1036,7 +1046,17 @@ TRY IT YOURSELF
 
 The shop must now add VAT at 7.5% on the goods, but not on delivery. Where does VAT go in the pseudocode of problem 9? Is an empty cart still ₦0? Write `totalWithVat(subtotalKobo)` that takes the goods subtotal and returns the final total, and test a ₦13,500 cart, a ₦20,000 cart and an empty cart.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Guard the empty cart first: `if (subtotal === 0) return 0;`, the same as the school-fee example.
+
+HINT 2
+
+`const vat = Math.round(subtotal * 0.075); const delivery = subtotal >= 2000000 ? 0 : 150000; return subtotal + vat + delivery;`
+
+SOLUTION
 
 VAT is worked out on the subtotal, rounded to whole kobo, before the delivery rule. The free-delivery rule still looks at the goods alone. An empty cart has no VAT and no delivery, so it stays ₦0.
 
@@ -1079,7 +1099,17 @@ TRY IT YOURSELF
 
 After approving a withdrawal, the ATM must decide which notes to pay out: as many ₦1,000 notes as possible, then ₦500 notes. Reason first: what are the inputs, the output, and the edge cases? Then write `notesFor(amount)` that returns text like `"2 x ₦1000, 1 x ₦500"`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`thousands = Math.floor(amount / 1000)`. The remainder for ₦500 notes is `amount % 1000`, and dividing that by 500 gives how many.
+
+HINT 2
+
+`return \`${thousands} x ₦1000, ${fiveHundreds} x ₦500\`;` with `fiveHundreds = (amount % 1000) / 500`.
+
+SOLUTION
 
 Input: an approved amount (already a positive multiple of 500). Output: two counts. Edge cases: an amount that needs no ₦500 note (₦3,000), one that needs only a ₦500 note (₦500), and a large amount. `Math.floor` rounds down, so `Math.floor(2500 / 1000)` is 2; the remainder `2500 % 1000` is what is left for ₦500 notes.
 

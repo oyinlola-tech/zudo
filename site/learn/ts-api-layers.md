@@ -1572,7 +1572,17 @@ TRY IT YOURSELF
 
 Add `GET /users/:id`. A user may read their own profile and an admin may read anyone's. Anyone else gets **404**, not 403, so ids cannot be probed. Write it as a function that uses the project's repository, and try it as Ada, as the admin and with no token.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Start with `const principal = requirePrincipal(await auth.principalFrom(request));` and `const id = toId(request.params["id"]);`. Those two lines alone give you the 401 case.
+
+HINT 2
+
+`const user = principal.userId === id || principal.role === "admin" ? await users.findById(id) : undefined;`, then `if (user === undefined) throw new AppError({ kind: "not_found", resource: "user", id });`.
+
+SOLUTION
 
 try-get-user.tsNode.js only
 
@@ -1634,7 +1644,17 @@ TRY IT YOURSELF
 
 Add `{ kind: "rate_limited"; retryAfterSeconds: number }` to a copy of the failure union, and make the mapping compile again: status 429, a message that says when to retry, and the response should carry a `Retry-After` header value.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Add the member to the `Failure` union first; TypeScript will then point at `STATUS` and the `switch`, which both need a `"rate_limited"` entry.
+
+HINT 2
+
+`case "rate_limited": return \`Too many requests, try again in ${failure.retryAfterSeconds} seconds\`;` and `const headers = failure.kind === "rate_limited" ? { "retry-after": String(failure.retryAfterSeconds) } : {};`.
+
+SOLUTION
 
 rate-limited.ts
 
@@ -1686,7 +1706,17 @@ TRY IT YOURSELF
 
 Place each job in a layer (DTO parser, mapper, service, repository, controller): (a) "the price must be a whole number of cents"; (b) "only admins may change prices"; (c) "turn `price_cents` into `priceCents`"; (d) "show the price as `12.99`"; (e) "a customer's second order today gets free delivery"; (f) "read the `Authorization` header".
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask, for each job: does it only care about the shape of the input, about column names, about presentation, or about a business rule that needs data?
+
+HINT 2
+
+(b) and (e) both need a decision that depends on who is asking or on other data; which layer is the only one that knows nothing about HTTP or SQL, yet is allowed to hold that logic?
+
+SOLUTION
 
 (a) The DTO parser: it is about the shape of the input. (b) The service: it depends on who is asking. (c) The repository's row mapper: only it knows column names. (d) The response mapper: presentation for the client. (e) The service: a business rule that needs data (today's orders) and knows nothing about HTTP or SQL. (f) The HTTP layer, the `Authenticator`: headers are an HTTP idea, and the service only ever sees the resulting `Principal`.
 

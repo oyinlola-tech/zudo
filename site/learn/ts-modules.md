@@ -427,7 +427,17 @@ TRY IT YOURSELF
 
 Add `src/stats.ts` with a function `countByStatus(tasks: readonly Task[])` that returns a `Record<Status, number>`. Export it from the barrel, use it in `main.ts`, and check that `npm run check` and `npm run build` pass.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+In `stats.ts`, start `const counts: Record<Status, number> = { todo: 0, doing: 0, done: 0 };`, then `for (const task of tasks) counts[task.status] += 1;`, the same as `tallyHealth` above.
+
+HINT 2
+
+In `main.ts`, add `import { countByStatus } from "./stats.js";` at the top, and `console.log(countByStatus(tasks));` at the end.
+
+SOLUTION
 
 src/task.ts
 
@@ -489,7 +499,17 @@ import type { STATUSES } from "./task.js";
 import { schema } from "@zudojs/schema";
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For each line, ask two questions: is the imported name a type or a value, and does the path end in `.js` with the extension written out?
+
+HINT 2
+
+An `import type` line is removed entirely before the code runs, so anything inside it becomes unavailable as a value, even if the name refers to something that really exists at runtime.
+
+SOLUTION
 
 - Line 1 is rejected (TS1484): `Task` is a type. Write `import type { Task }`.
 - Line 2 is correct.

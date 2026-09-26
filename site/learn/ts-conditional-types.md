@@ -914,7 +914,17 @@ TRY IT YOURSELF
 
 An event system stores handlers such as `(event: { orderId: string; amountKobo: number }) => void`. Write `PayloadOf<H>` that gives the event type of a handler, and `never` for anything that is not a one-argument function. Prove it with `Expect` lines, including a non-function.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Match the shape with `infer`: `H extends (event: infer E) => void ? E : never`.
+
+HINT 2
+
+Written on a bare type parameter like `H`, a conditional type distributes automatically over a union, which is exactly what `P2` needs: no extra work required.
+
+SOLUTION
 
 payload.ts
 
@@ -948,7 +958,17 @@ TRY IT YOURSELF
 
 A teammate wrote `type IsNullable<T> = T extends null | undefined ? true : false` to check whether a field may be empty. `IsNullable<string | null>` gives `boolean`. Explain why, and fix it so it answers `true` when any member is `null` or `undefined`, and `false` otherwise.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The problem is distribution: a conditional type written on a bare type parameter checks each union member separately. Stop it by wrapping both sides of `extends` in a one-element tuple, `[...]`.
+
+HINT 2
+
+`type IsNullable<T> = [Extract<T, null | undefined>] extends [never] ? false : true;` — `Extract` first keeps only the empty members, then one non-distributive check asks whether anything is left.
+
+SOLUTION
 
 nullable.ts
 
@@ -980,7 +1000,17 @@ TRY IT YOURSELF
 
 Some loaders return a promise of an array of promises, such as `Promise<Promise<Invoice>[]>`. Write `Settled<T>` that unwraps promises and, if the result is an array, unwraps its elements too, so that type becomes `Invoice[]`. Then use it on a real function with `Promise.all`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Two conditional branches, tried in order: first `T extends PromiseLike<infer V> ? Settled<V> : ...`, then `T extends readonly (infer E)[] ? Settled<E>[] : T`.
+
+HINT 2
+
+The promise branch must come first: put the array branch first and a promise of an array would be unwrapped as an array of promises instead, which is wrong.
+
+SOLUTION
 
 settled.ts
 

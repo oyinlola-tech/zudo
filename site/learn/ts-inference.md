@@ -776,21 +776,19 @@ const config = { provider: "paystack", timeoutMs: 5000 };
 console.log(connect(config));
 ```
 
-What `npx tsc --noEmit` prints
+  config.ts:13:21 - error TS2345: Argument of type '{ provider: string; timeoutMs: number; }' is not assignable to parameter of type 'GatewayConfig'. Types of property 'provider' are incompatible. Type 'string' is not assignable to type 'Provider'. 13 console.log(connect(config)); ~~~~~~ Found 1 error in config.ts:13
 
-```ts
-config.ts:13:21 - error TS2345: Argument of type '{ provider: string; timeoutMs: number; }' is not assignable to parameter of type 'GatewayConfig'.
-  Types of property 'provider' are incompatible.
-    Type 'string' is not assignable to type 'Provider'.
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-13 console.log(connect(config));
-                       ~~~~~~
+HINT 1
 
+The first fix: give `config` a `: GatewayConfig` annotation, so `provider` is checked against `Provider` instead of widening to `string`.
 
-Found 1 error in config.ts:13
-```
+HINT 2
 
-**Show a solution**
+The second fix: `const frozen = { provider: "flutterwave", timeoutMs: 8000 } as const;`, with no annotation. Call `connect` with each config and log both results on two lines.
+
+SOLUTION
 
 `config` is inferred on its own line, before TypeScript knows it will go to `connect`, so `provider` widens to `string`. Fix it by annotating, or by keeping the literal with `as const`:
 
@@ -848,7 +846,17 @@ Output of `npx tsx shipping.ts` and of the browser terminal
 Shipping: ₦undefined
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Add `: number` after the parameter list of `shippingFee`. `tsc` now reports the missing return *inside* the function, not at the caller.
+
+HINT 2
+
+Add a final `return weightKg <= 5 ? 3500 : 6000;` for every other state, so the function always returns a number.
+
+SOLUTION
 
 For every state except Lagos and Abuja the function falls off the end, so its inferred return type is `1500 | 2500 | 3000 | 4500 | undefined`, and the template string happily prints `undefined`. Annotate the return type as `number` and TS2366 appears inside `shippingFee`. Then add the missing case:
 
@@ -877,7 +885,17 @@ TRY IT YOURSELF
 
 Write a `notifiers` object with one function per channel, `"sms"`, `"email"` and `"push"`, each taking `(to: string, message: string)` and returning a string. Type the object once, so that none of the three functions needs a parameter annotation, and so that forgetting a channel is an error.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Annotate the whole object at once: `const notifiers: Record<Channel, (to: string, message: string) => string> = { ... };`. That gives every arrow function's parameters their types through contextual typing.
+
+HINT 2
+
+`Record` requires exactly one property per `Channel`, so leaving out `push` would be a compile error. Each handler's body is one template literal, as described above.
+
+SOLUTION
 
 notify.ts
 

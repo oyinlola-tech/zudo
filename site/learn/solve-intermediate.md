@@ -874,7 +874,17 @@ TRY IT YOURSELF
 
 A shop wants to show "our second most expensive item". Given a list of prices in kobo, return the second-highest *distinct* price, or `null` if there is none. Reason first: what are the answers for `[500, 900, 900]`, `[700]` and `[]`?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep two variables, `first` and `second`, both starting at `null`. When a new value beats `first`, the old `first` becomes the new `second`.
+
+HINT 2
+
+`else if (p < first && (second === null || p > second)) { second = p; }` — the `p < first` is what skips a repeat of the highest.
+
+SOLUTION
 
 Reasoning: "distinct" means that two items at the top price do not count as first and second. `[500, 900, 900]` gives 500. A single item or an empty list has no second price: `null`. Keep two "best so far" values in one pass: the highest and the second highest, and update both when a new highest appears.
 
@@ -916,7 +926,17 @@ TRY IT YOURSELF
 
 A school wants to know which first letter is most common among its students' names, to plan name tags. Count the first letters (ignoring case) of `["Ada", "amaka", "Bola", "Chen", "bayo", "Abdul"]` and print the table.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Skip an empty name first: `if (name.length === 0) continue;`, the same as skipping an empty order code.
+
+HINT 2
+
+`const letter = name[0].toUpperCase(); if (counts[letter] === undefined) counts[letter] = 0; counts[letter] = counts[letter] + 1;`
+
+SOLUTION
 
 letters.js
 
@@ -951,7 +971,17 @@ TRY IT YOURSELF
 
 A meeting room has bookings with start and end hours, such as `{ who: "Ada", start: 9, end: 11 }`. A booking that ends at 11 and one that starts at 11 do not clash. Write `clashes(bookings)` that lists every pair that overlaps. Reason about the boundary before you code.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Two bookings overlap exactly when `a.start < b.end && b.start < a.end` — using `<`, not `<=`, so back-to-back bookings don't count.
+
+HINT 2
+
+`if (a.start < b.end && b.start < a.end) found.push(\`${a.who} and ${b.who}\`);`
+
+SOLUTION
 
 Two bookings overlap when each one starts before the other ends: `a.start < b.end && b.start < a.end`. Using `<` (not `<=`) makes back-to-back bookings legal. Every pair must be compared, so this is the nested-loop shape from problem 1, which is fine for the few bookings one room has in a day.
 

@@ -321,7 +321,17 @@ TRY IT YOURSELF
 
 Change `hello.js` so it prints your name, what you want to build, and the year JavaScript was created (1995, from [Meet JavaScript](https://zudojs.oyinlola.site/learn/js-intro#history)) as a number. Run it in the browser, then on your computer.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Each line is its own `console.log(...)` call. The first two take a single string.
+
+HINT 2
+
+The last line takes the label and the number as two separate arguments: `console.log("JavaScript was created in", 1995)`.
+
+SOLUTION
 
 about-me.js
 
@@ -347,7 +357,17 @@ TRY IT YOURSELF
 
 Start `node` and work out how many minutes there are in a week (7 days of 24 hours of 60 minutes). Then leave the REPL. Do the same in a file, with `console.log`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Use `console.log` with a text label, a comma, then the calculation: days times hours times minutes.
+
+HINT 2
+
+`console.log("Minutes in a week:", 7 * 24 * 60);`
+
+SOLUTION
 
 In the REPL, type `7 * 24 * 60` and press Enter, then `.exit`. In a file:
 
@@ -377,7 +397,17 @@ Console.log("- Bread");
 console.log("- Milk"
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Read the error's name and message first. `ReferenceError: Console is not defined` means a name was used that JavaScript never declared.
+
+HINT 2
+
+JavaScript is case-sensitive: `console` and `Console` are different names. Change `Console.log` to `console.log`.
+
+SOLUTION
 
 fixed-list.js
 

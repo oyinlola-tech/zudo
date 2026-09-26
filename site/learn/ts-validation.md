@@ -838,7 +838,17 @@ TRY IT YOURSELF
 
 Add an optional `couponCode` (uppercase letters and digits, 4 to 12 characters) to the mini library's `NewOrderSchema`. You need an `optional` combinator first. Show that `NewOrder` now includes `couponCode` with no other edit.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Write `optional` exactly like the worked example above, then add `couponCode: optional(string({ min: 4, max: 12, pattern: /^[A-Z0-9]+$/ }))` as a fourth key in the shape.
+
+HINT 2
+
+No other line needs to change: `NewOrder`, `order.couponCode` and the two `parse` calls already expect the new field once the shape has it.
+
+SOLUTION
 
 coupon.ts
 
@@ -888,7 +898,17 @@ TRY IT YOURSELF
 
 Write a Zod schema for `GET /products?page=2&perPage=20&category=grains`: `page` defaults to 1 and `perPage` to 20, both whole numbers, `perPage` at most 100; `category` is optional, one of `grains`, `dairy`, `drinks`. Parse `Object.fromEntries(new URLSearchParams(query))` for three queries, including one with `perPage=500`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Use `z.strictObject`, not `z.object`, so an unrecognised key such as `sort` in the third query is reported. Coerce both numbers: `z.coerce.number().int().min(1)`.
+
+HINT 2
+
+`page: z.coerce.number().int().min(1).default(1)`, `perPage: z.coerce.number().int().min(1).max(100).default(20)`, `category: z.enum(["grains", "dairy", "drinks"]).optional()`.
+
+SOLUTION
 
 product-query.tsNode.js only
 
@@ -923,7 +943,17 @@ TRY IT YOURSELF
 
 A transfer request has `fromAccount` and `toAccount` (10-digit strings) and `amountKobo` (a whole number from 100 to 50,000,000), and the two accounts must differ. Write it in Valibot, using `v.forward` and `v.partialCheck` for the cross-field rule, and run it on a valid transfer and on a transfer to the same account.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Wrap the object in `v.pipe(v.object({ ... }), v.forward(v.partialCheck([["fromAccount"], ["toAccount"]], (t) => t.fromAccount !== t.toAccount, "must differ from fromAccount"), ["toAccount"]))`.
+
+HINT 2
+
+`partialCheck` lists the fields it reads (`fromAccount`, `toAccount`), and `forward`'s second argument is the path the resulting issue is attached to.
+
+SOLUTION
 
 transfer-valibot.tsNode.js only
 

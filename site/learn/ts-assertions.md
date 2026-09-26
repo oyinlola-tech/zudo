@@ -680,13 +680,17 @@ function roomFor(bookingId: string): string {
 console.log(roomFor("B1"), roomFor("B2"));
 ```
 
-Output of `npx tsx booking.ts` and of the browser terminal
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-```ts
-Deluxe undefined
-```
+HINT 1
 
-**Show a solution**
+The booking lookup is the "must exist" case: `if (booking === undefined) throw new Error(\`booking not found: ${bookingId}\`);`.
+
+HINT 2
+
+The room lookup is the "fine if missing" case: `return rooms.get(booking.roomId) ?? "room unavailable";`.
+
+SOLUTION
 
 booking.ts
 
@@ -744,13 +748,17 @@ const providers = {
 console.log(providers.twilio.timeoutMs * 2);
 ```
 
-Output of `npx tsx providers.ts` and of the browser terminal
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-```ts
-NaN
-```
+HINT 1
 
-**Show a solution**
+Change `as Record<Provider, ProviderConfig>` to `satisfies Record<Provider, ProviderConfig>`, then run `npx tsc --noEmit` and read what it reports about `twilio`.
+
+HINT 2
+
+Add the missing field: `twilio: { baseUrl: "https://api.twilio.com", timeoutMs: 8000 }`.
+
+SOLUTION
 
 With `satisfies`, `tsc` reports that `timeoutMs` is missing in the `twilio` entry. Add it:
 
@@ -790,7 +798,17 @@ Three assertions from a codebase. Which one is justified, and what should replac
 2. `const methods = Object.keys(feeTable) as PaymentMethod[];`, where `feeTable` is a `Record<PaymentMethod, number>` literal defined just above.
 3. `const port = process.env.PORT as unknown as number;`
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For each one, ask: did this value cross a boundary (network, environment, another service), or did the same file just create it a line or two above?
+
+HINT 2
+
+A double assertion, `as unknown as T`, is a strong hint on its own: ask what it is really doing, and whether it converts anything at all.
+
+SOLUTION
 
 Only the second. The keys come from an object literal the same file created, and the proof is on the line above.
 

@@ -1414,7 +1414,17 @@ TRY IT YOURSELF
 
 What should `checkout` do when `charge` throws a network error? Write a stub that throws `Error("ECONNRESET")` and a test that checks two things: the error reaches the caller, and the order stays `pending` (the money may or may not have moved, so it must not be marked paid or declined).
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The stub is an object literal: `{ charge: async () => { throw new Error("ECONNRESET"); } }`, typed as `PaymentGateway`.
+
+HINT 2
+
+`await assert.rejects(new CheckoutService(orders, unreachable, silentMailer).checkout(1, aCart(), "tok_visa"), /ECONNRESET/);` then `assert.equal((await orders.find(1))?.status, "pending");`.
+
+SOLUTION
 
 tests/provider-down.test.tsNode.js only
 
@@ -1461,7 +1471,17 @@ TRY IT YOURSELF
 
 A customer can split a cart into two orders. Without vouchers, the two subtotals must add up to the subtotal of the whole cart. Write that property with fast-check. Does it also hold for the *totals*? Think about rounding, then let fast-check answer (fix the seed so it is repeatable).
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Replace the placeholder predicate with the real comparison: `(a, b, all) => a.subtotalKobo + b.subtotalKobo === all.subtotalKobo`.
+
+HINT 2
+
+Write the same shape for `totalKobo`. VAT is rounded once per order (`Math.round`), so think about whether rounding two smaller amounts always gives the same sum as rounding the combined amount, before you run it.
+
+SOLUTION
 
 split-property.tsNode.js only
 
@@ -1508,7 +1528,17 @@ TRY IT YOURSELF
 
 Which double fits each test? (a) Checking that a failed login writes one line to the audit log. (b) Making the exchange-rate service return exactly 1,550 naira per dollar. (c) Fifty tests that need somewhere to save users. (d) A constructor wants a logger, but this test never logs. (e) Asserting that the SMS provider is called with exactly `+2348031234567` and the one-time code.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look at the table above: is the point of the test a canned answer, an effect that happened, an exact call, or that nothing happens at all?
+
+HINT 2
+
+(c) needs to behave like a real store across fifty tests, not just answer one question, which rules out a stub. (e) cares about the exact arguments of one call, decided in advance.
+
+SOLUTION
 
 (a) A spy on the audit log: the effect is the point. (b) A stub: a canned answer. (c) A fake: an in-memory user store, shared by all fifty tests and itself checked by a contract suite. (d) A dummy. (e) A mock (or a spy checked afterwards): the exact call to the provider is the contract, and the provider is an edge of the system, so this is a place where checking calls is right.
 

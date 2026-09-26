@@ -654,7 +654,17 @@ TRY IT YOURSELF
 
 Write tests for `TaskList.complete`: it marks the task as done, and it throws `Task 9 not found` for an id that does not exist. Use `beforeEach` for a fresh list.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`assert.equal(actual, expected)` checks a value. `list.complete(1)` returns the task, so check its `.done` property.
+
+HINT 2
+
+For the throw: `assert.throws(() => list.complete(9), { message: "Task 9 not found" })`. Note the arrow function: `assert.throws` must call it itself, not receive an already-thrown error.
+
+SOLUTION
 
 complete.test.jsNode.js only
 
@@ -703,7 +713,17 @@ TRY IT YOURSELF
 
 Unit, integration or end-to-end? (a) `slug("Buy milk")` returns `buy-milk`; (b) `GET /v1/tasks?limit=0` returns a 400 problem details body; (c) the task store's SQL returns only the current user's tasks from PGlite; (d) `parseListQuery` reports an invalid `sort`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Does the test call a plain function directly, talk to a real database or dependency, or go in through HTTP the way a real client would?
+
+HINT 2
+
+(b) and (c) both touch something outside pure logic; what is the difference between "through HTTP" and "with a real database, but not through the network"?
+
+SOLUTION
 
 (a) Unit. (b) End-to-end: it goes through HTTP. (c) Integration: your code together with a real database. (d) Unit: it is a pure function.
 

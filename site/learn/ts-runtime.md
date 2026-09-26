@@ -422,7 +422,17 @@ TRY IT YOURSELF
 
 Write `readPort(value: string | undefined): Result<number, string>` for `process.env.PORT`. Missing means `3000`. Anything that is not a whole number from 1 to 65535 is an error. Why is the parameter `string | undefined` and not `number`?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check `value === undefined || value.trim() === ""` first, the way `readRetries` does, and return the default.
+
+HINT 2
+
+Otherwise: `const port = Number(value); if (!Number.isInteger(port) || port < 1 || port > 65535) return { ok: false, error: ... };`, then `return { ok: true, value: port };`.
+
+SOLUTION
 
 port.ts
 
@@ -488,13 +498,17 @@ if (isUser(body)) {
 }
 ```
 
-Output of `npx tsx lying-guard.ts` and of the browser terminal
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
-```ts
-TypeError: Cannot read properties of undefined (reading 'join')
-```
+HINT 1
 
-**Show a solution**
+Add checks for `email`'s type and for `tags`: `if (!("email" in value) || typeof value.email !== "string") return false;` and similarly for `tags` with `Array.isArray`.
+
+HINT 2
+
+An array being present is not enough: check every element is a string, the way `isAddress` does with `.every((p: unknown) => typeof p === "string")`. Then simplify the call site to `console.log(isUser(body) ? body.tags.join(", ") : "not a user");`.
+
+SOLUTION
 
 The guard only checks that `email` exists. It checks neither that `email` is a string nor that `tags` is an array of strings. `tsc` does not compare a guard's body with its `value is User` promise; it simply believes it.
 
@@ -529,7 +543,17 @@ TRY IT YOURSELF
 
 Write `parseTaskPatch(body: unknown): Result<{ title?: string; done?: boolean }, string[]>`. Both fields are optional, but when present they must be valid (title 3 to 100 characters after trimming). An empty patch `{}` is an error: there is nothing to change.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check `body` is a non-null, non-array object first, the same way `parseProfilePatch` does, then read it as `Record<string, unknown>`.
+
+HINT 2
+
+For each field present in the input, validate it and set it on `patch`, or push an issue. At the end, if there are no issues but `patch` is still empty, push `"nothing to change"`.
+
+SOLUTION
 
 patch.ts
 

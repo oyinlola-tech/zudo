@@ -502,7 +502,17 @@ TRY IT YOURSELF
 
 Given `interface User { id: number; email: string; name: string; passwordHash: string; role: "member" | "admin" }`, write a type `PublicUser` without `passwordHash`, and a function `toPublic(user: User): PublicUser`. Why should `toPublic` build a new object by name instead of deleting a property from a copy?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Uncomment `PublicUser` and use it as `toPublic`'s return type: `function toPublic(user: User): PublicUser`.
+
+HINT 2
+
+Build a fresh object naming each field to keep: `{ id: user.id, email: user.email, name: user.name, role: user.role }`, the same way `toPublicProduct` does above.
+
+SOLUTION
 
 public-user.ts
 
@@ -539,7 +549,17 @@ TRY IT YOURSELF
 
 Using `EventName` from the lesson, write `const descriptions: Record<EventName, string>`. How many properties must it have? What happens if you add `"archived"` to `Action`?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+`EventName` is a template literal type built from two unions. Count how many strings `\`${Entity}.${Action}\`` can produce: it is every combination, not a sum.
+
+HINT 2
+
+`Record<EventName, string>` needs one property per member of that union. Adding a member to `Action` changes `EventName` itself, which is what makes the object react to it.
+
+SOLUTION
 
 Six, one for each combination of `Entity` and `Action`. Adding `"archived"` makes it eight, and the compiler reports the object as missing `"task.archived"` and `"user.archived"` until you add them. That is the point: the list of descriptions can never fall behind the list of events.
 
@@ -549,7 +569,17 @@ TRY IT YOURSELF
 
 Write a mapped type `Nullable<T>` that allows `null` for every property of `T`, and use it for a task where any field may be missing in an old database row.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Uncomment `Nullable`: `{ [K in keyof T]: T[K] | null }`, one union with `null` per property. Annotate the row with it: `const legacyRow: Nullable<Task> = { id: 3, title: null, dueDate: null };`.
+
+HINT 2
+
+Then default each field when you print it: `console.log(legacyRow.title ?? "(untitled)", legacyRow.dueDate ?? "(no due date)");`.
+
+SOLUTION
 
 nullable.ts
 

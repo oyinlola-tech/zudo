@@ -1211,7 +1211,17 @@ function topSellers(sales: { sku: string; units: number }[]): string[] {
 }
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`readonly Sale[]` has no `sort`. `toSorted` is its non-mutating twin: it returns a new, sorted array and leaves the original alone.
+
+HINT 2
+
+`sales.toSorted((a, b) => b.units - a.units).slice(0, 3).map((s) => s.sku)`
+
+SOLUTION
 
 top-sellers-fixed.ts
 
@@ -1249,7 +1259,17 @@ TRY IT YOURSELF
 
 Write `all<T, E>(results: readonly Result<T, E>[]): Result<readonly T[], E>`. It returns every value when all results are `ok`, and the first error otherwise. Use it to parse three quantities typed by a customer. (Functional libraries call this `sequence` or `all`.)
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop over `results` with a plain `for` loop. For each one, check `!result.ok` first and return it immediately if so.
+
+HINT 2
+
+When a result is `ok`, push `result.value` onto a local `values: T[]`. After the loop finishes (nothing failed), return `ok(values)`.
+
+SOLUTION
 
 all.ts
 
@@ -1291,7 +1311,17 @@ TRY IT YOURSELF
 
 Add a `{ kind: "fixed-off"; sku: string; offKobo: number }` promotion (a fixed amount off each unit of one product, never below zero) to the `Promotion` type of the `adt` project. What does the compiler do before you change `discountKobo` and `describe`? Then implement it.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Sum, over the matching lines, the smaller of the voucher amount and that line's unit price, times the quantity: `Math.min(promo.offKobo, l.unitKobo) * l.qty`.
+
+HINT 2
+
+`return matching.reduce((sum, l) => sum + Math.min(promo.offKobo, l.unitKobo) * l.qty, 0);`
+
+SOLUTION
 
 With only the type changed, `tsc` reports `discountKobo` (the switch no longer returns on every path, TS2366) and `describe` (the handlers object is missing `"fixed-off"`, TS2741). Every interpreter is listed for you; nothing is silently skipped. The finished version:
 
