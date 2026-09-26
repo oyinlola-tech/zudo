@@ -1,5 +1,19 @@
 # @zudojs/api
 
+## 1.2.4
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/queue@1.6.0
+  - @zudojs/rpc@1.5.0
+  - @zudojs/openapi@1.6.0
+  - @zudojs/security@1.3.4
+  - @zudojs/errors@1.4.0
+  - @zudojs/schema@1.3.0
+  - @zudojs/serialization@1.3.0
+  - @zudojs/types@1.3.0
+
 ## 1.2.3
 
 ### Patch Changes
