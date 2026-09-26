@@ -23,6 +23,8 @@ import {
 import {
   connectionHandle,
   internals,
+  runInPlace,
+  type TransactionDetach,
 } from "../transaction/transaction.internal.js";
 import {
   SavepointError,
@@ -41,6 +43,12 @@ export interface PropagationContext {
   readonly hooks: TransactionHooks | undefined;
   /** Lifecycle event emitter. Defaults to discarding events. */
   readonly emit?: TransactionEmitter;
+  /**
+   * Runs after-commit / after-rollback work in the scope that enclosed the
+   * new transaction, so it does not inherit the finished transaction's
+   * context. Defaults to running the work in place.
+   */
+  readonly detach?: TransactionDetach;
 }
 
 /**
@@ -58,7 +66,13 @@ export async function beginRoot(
   const emit = context.emit ?? noopEmitter;
   assertAdapterSupports(adapter, opts);
 
-  const transaction = createTransaction(opts, parentId, "root");
+  const transaction = createTransaction(
+    opts,
+    parentId,
+    "root",
+    undefined,
+    context.detach ?? runInPlace,
+  );
   if (hooks?.beforeBegin) await hooks.beforeBegin({ transaction });
 
   try {
@@ -97,7 +111,13 @@ async function beginSavepoint(
     );
   }
 
-  const child = createTransaction(opts, parent.id, "savepoint", parent);
+  const child = createTransaction(
+    opts,
+    parent.id,
+    "savepoint",
+    parent,
+    context.detach ?? runInPlace,
+  );
   if (hooks?.beforeBegin) await hooks.beforeBegin({ transaction: child });
 
   const savepoint = `sp_${child.id}`;

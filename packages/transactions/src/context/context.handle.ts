@@ -7,7 +7,7 @@
 import type { Transaction } from "../transactionTypes/transaction.interface.js";
 import type { TransactionContext } from "../transactionTypes/transactionAdapter.js";
 import { connectionHandle } from "../transaction/transaction.internal.js";
-import { getDefaultContext } from "./context.core.js";
+import { currentTransaction, getDefaultContext } from "./context.core.js";
 
 /**
  * The adapter handle a transaction runs on: whatever the adapter's
@@ -37,13 +37,14 @@ export function getTransactionHandle<THandle = unknown>(
  *
  * Uses the default context unless one is supplied; pass the same context
  * the manager was created with when it was given a custom one (or call the
- * manager's `getCurrentHandle()`).
+ * manager's `getCurrentHandle()`). A finished transaction still held by
+ * the store yields `undefined`; see `currentTransaction`.
  *
  * @typeParam THandle - The handle type your adapter's `begin()` returns.
  */
 export function currentTransactionHandle<THandle = unknown>(
   context: TransactionContext = getDefaultContext(),
 ): THandle | undefined {
-  const transaction = context.get();
+  const transaction = currentTransaction(context);
   return transaction ? getTransactionHandle<THandle>(transaction) : undefined;
 }

@@ -21,7 +21,11 @@ import {
   canTransition,
   createTransitionFunction,
 } from "./transactionStateMachine.js";
-import { attachInternals } from "./transaction.internal.js";
+import {
+  attachInternals,
+  runInPlace,
+  type TransactionDetach,
+} from "./transaction.internal.js";
 import { deferCallbacksToParent } from "./transaction.savepoint.js";
 
 /**
@@ -31,14 +35,18 @@ function generateTransactionId(): string {
   return `txn_${randomBytes(16).toString("hex")}`;
 }
 
-/** Runs callbacks in order, collecting failures rather than aborting. */
+/**
+ * Runs callbacks in order, collecting failures rather than aborting. Each
+ * runs detached from the finished transaction's context.
+ */
 async function runCallbacks(
   callbacks: Array<() => Promise<void>>,
+  detach: TransactionDetach,
 ): Promise<unknown[]> {
   const errors: unknown[] = [];
   for (const callback of callbacks.splice(0)) {
     try {
-      await callback();
+      await detach(callback);
     } catch (error) {
       errors.push(error);
     }
@@ -54,12 +62,15 @@ async function runCallbacks(
  * @param kind - How this handle relates to the adapter transaction.
  * @param parent - The enclosing transaction of a savepoint. Its callbacks
  *   are deferred to `parent` on release instead of running.
+ * @param detach - Runs after-commit / after-rollback work in the scope
+ *   that enclosed the transaction. Defaults to running it in place.
  */
 export function createTransaction(
   options: TransactionOptions = {},
   parentId?: string,
   kind: TransactionKind = "root",
   parent?: Transaction,
+  detach: TransactionDetach = runInPlace,
 ): Transaction {
   let state: TransactionState = "pending";
   let rollbackOnly = false;
@@ -142,7 +153,7 @@ export function createTransaction(
       afterRollbackCallbacks.length = 0;
       // The commit stands whatever the callbacks do; their failures are
       // kept for the manager to report instead of being dropped.
-      callbackErrors = await runCallbacks(afterCommitCallbacks);
+      callbackErrors = await runCallbacks(afterCommitCallbacks, detach);
     },
 
     async rollback(reason?: unknown): Promise<void> {
@@ -157,7 +168,7 @@ export function createTransaction(
       transition("rolling_back");
       transition("rolled_back");
       afterCommitCallbacks.length = 0;
-      const errors = await runCallbacks(afterRollbackCallbacks);
+      const errors = await runCallbacks(afterRollbackCallbacks, detach);
 
       if (errors.length > 0) {
         throw new TransactionRollbackError(id, {
@@ -197,5 +208,6 @@ export function createTransaction(
     },
     _getRollbackOnlyReason: (): unknown => rollbackOnlyReason,
     _drainCallbackErrors: (): unknown[] => callbackErrors.splice(0),
+    _detach: detach,
   });
 }

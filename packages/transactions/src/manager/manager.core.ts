@@ -17,8 +17,15 @@ import type {
   TransactionHooks,
   TransactionRegistry,
 } from "../transactionTypes/transactionHooks.js";
-import { getDefaultContext } from "../context/context.core.js";
-import { internals } from "../transaction/transaction.internal.js";
+import type { TransactionManager } from "../transactionTypes/transactionManager.js";
+import {
+  currentTransaction,
+  getDefaultContext,
+} from "../context/context.core.js";
+import {
+  internals,
+  type TransactionDetach,
+} from "../transaction/transaction.internal.js";
 import { isTerminal } from "../transaction/transactionStateMachine.js";
 import { TransactionRollbackError } from "../transactionErrors/transactionError.types.js";
 import { getTransactionHandle } from "../context/context.handle.js";
@@ -54,8 +61,17 @@ function isFinished(transaction: Transaction): boolean {
 
 /**
  * Create a transaction manager.
+ *
+ * The manager reads the transaction in scope through `currentTransaction`,
+ * so a transaction that has finished but whose context is still active
+ * (inside an `afterCommit` callback, or in a timer armed during the
+ * transaction) is never joined; a new `run()` there opens a fresh
+ * transaction. After-commit and after-rollback callbacks and hooks run in
+ * the scope that enclosed the transaction, not inside its context.
  */
-export function createTransactionManager(options: TransactionManagerOptions) {
+export function createTransactionManager(
+  options: TransactionManagerOptions,
+): TransactionManager {
   const { adapter, hooks, registry } = options;
   const context = options.context ?? getDefaultContext();
   const emit = createEmitter(options.onEvent);
@@ -111,9 +127,14 @@ export function createTransactionManager(options: TransactionManagerOptions) {
      */
     async begin(opts?: TransactionOptions): Promise<Transaction> {
       const propagation = opts?.propagation ?? "required";
-      const current = suspendsTransaction(propagation)
-        ? undefined
-        : context.get();
+      const enclosing = currentTransaction(context);
+      const current = suspendsTransaction(propagation) ? undefined : enclosing;
+
+      // Post-completion work returns to whatever enclosed this transaction:
+      // the outer transaction of a `requires_new`, or no transaction at all.
+      const detach: TransactionDetach = enclosing
+        ? (work) => context.run(enclosing, work)
+        : (work) => context.exit(work);
 
       const transaction = await resolvePropagation(propagation, {
         current,
@@ -121,6 +142,7 @@ export function createTransactionManager(options: TransactionManagerOptions) {
         adapter,
         hooks,
         emit,
+        detach,
       });
 
       if (owns(transaction)) {
@@ -223,9 +245,12 @@ export function createTransactionManager(options: TransactionManagerOptions) {
       }
     },
 
-    /** The transaction in scope for the current async execution, if any. */
+    /**
+     * The transaction in scope for the current async execution, if any. A
+     * finished transaction still held by the context is not in scope.
+     */
     getCurrent(): Transaction | undefined {
-      return context.get();
+      return currentTransaction(context);
     },
 
     /**
@@ -234,7 +259,7 @@ export function createTransactionManager(options: TransactionManagerOptions) {
      * outside a transaction. See `getTransactionHandle`.
      */
     getCurrentHandle<THandle = unknown>(): THandle | undefined {
-      const current = context.get();
+      const current = currentTransaction(context);
       return current ? getTransactionHandle<THandle>(current) : undefined;
     },
   };

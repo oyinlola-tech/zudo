@@ -44,7 +44,25 @@ export interface TransactionInternals {
    * trace. The manager drains them and reports them to `hooks.onError`.
    */
   _drainCallbackErrors(): unknown[];
+  /**
+   * Run work in the scope that enclosed this transaction, rather than in
+   * the transaction's own context.
+   *
+   * After-commit and after-rollback callbacks and hooks run once the
+   * transaction has finished, yet they used to run with its context still
+   * active, so anything they started (a timer, a queued job) inherited a
+   * finished transaction and joined it. The manager supplies this from the
+   * context the transaction was begun in; a transaction created without a
+   * manager runs the work in place.
+   */
+  _detach<T>(work: () => Promise<T>): Promise<T>;
 }
+
+/** Runs post-completion work in the scope enclosing a transaction. */
+export type TransactionDetach = <T>(work: () => Promise<T>) => Promise<T>;
+
+/** The detach used when no manager supplied one: run the work in place. */
+export const runInPlace: TransactionDetach = (work) => work();
 
 /**
  * Access the manager-only surface of a transaction.

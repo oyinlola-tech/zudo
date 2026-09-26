@@ -182,7 +182,10 @@ export async function commitTransaction(
   }
 
   if (hooks?.afterCommit && transaction.kind !== "savepoint") {
-    await hooks.afterCommit({ transaction });
+    // Detached: the transaction is finished, so work the hook starts must
+    // not inherit its context (see TransactionInternals._detach).
+    const afterCommit = hooks.afterCommit;
+    await internals(transaction)._detach(() => afterCommit({ transaction }));
   }
 }
 
@@ -236,5 +239,8 @@ export async function rollbackTransaction(
   }
 
   emit(TRANSACTION_EVENTS.ROLLED_BACK, transaction, reason);
-  if (hooks?.afterRollback) await hooks.afterRollback({ transaction });
+  if (hooks?.afterRollback) {
+    const afterRollback = hooks.afterRollback;
+    await internals(transaction)._detach(() => afterRollback({ transaction }));
+  }
 }

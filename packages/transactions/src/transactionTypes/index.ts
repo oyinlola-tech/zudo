@@ -25,6 +25,8 @@ export {
   type TransactionContext,
 } from "./transactionAdapter.js";
 
+export { type TransactionManager } from "./transactionManager.js";
+
 export {
   type TransactionHookContext,
   type TransactionErrorContext,

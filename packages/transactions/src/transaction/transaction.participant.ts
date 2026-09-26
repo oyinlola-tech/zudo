@@ -102,6 +102,7 @@ export function createParticipant(parent: Transaction): Transaction {
     _getRollbackOnlyReason: (): unknown =>
       internals(parent)._getRollbackOnlyReason(),
     _drainCallbackErrors: (): unknown[] => [],
+    _detach: (work) => internals(parent)._detach(work),
   });
 
   return Object.freeze(participant);

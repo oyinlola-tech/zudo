@@ -17,9 +17,9 @@ npm install @zudojs/transactions
 ## Quick Start
 
 ```typescript
-import { createTransactionManager } from "@zudojs/transactions";
+import { createTransactionManager, type TransactionManager } from "@zudojs/transactions";
 
-const manager = createTransactionManager({ adapter: databaseAdapter });
+const manager: TransactionManager = createTransactionManager({ adapter: databaseAdapter });
 
 // `run` opens a transaction, commits on success, rolls back on a throw.
 const orderId = await manager.run(async (transaction) => {
@@ -166,6 +166,15 @@ the transaction.
   `manager.commit()` / `manager.rollback()` releases its timer and registry entry.
 - Failures thrown by `afterCommit` callbacks never undo the commit; they are
   reported to `hooks.onError` as an `AggregateError`.
+- A finished transaction is never joined. `afterCommit`/`afterRollback`
+  callbacks and hooks run in the scope that enclosed the transaction (the
+  outer transaction of a `requires_new`, otherwise none), and
+  `manager.getCurrent()`, `getCurrentHandle()`, `currentTransactionHandle()`
+  and `begin()` all read the scope through `currentTransaction()`, which
+  ignores a committed, rolled-back or failed transaction still held by the
+  context. Work started from an after-commit callback, or by a timer armed
+  inside the callback that fires after the commit, therefore starts a new
+  root transaction instead of a participant on a closed one.
 - `retry` replays only attempts that opened their own transaction. An attempt
   that joined an enclosing transaction has marked it rollback-only and is not
   replayed.

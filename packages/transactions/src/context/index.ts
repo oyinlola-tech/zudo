@@ -6,6 +6,7 @@
 
 export {
   createTransactionContext,
+  currentTransaction,
   getDefaultContext,
   resetDefaultContext,
 } from "./context.core.js";
