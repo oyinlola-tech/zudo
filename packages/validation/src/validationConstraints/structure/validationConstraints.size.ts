@@ -7,19 +7,28 @@
 
 import { SerializationLimits } from "@zudojs/constants";
 import { SerializationPayloadTooLargeError } from "@zudojs/errors";
+import { jsonStringByteLength } from "@zudojs/types";
 import { MAX_MEASURABLE_DEPTH } from "./validationConstraints.depth.js";
 import {
   TraversalLimitError,
   traverse,
 } from "./validationConstraints.traverse.js";
 
-/** Bytes charged for a single node, excluding its children. */
+/**
+ * Bytes charged for a single node, excluding its children.
+ *
+ * Strings are charged their UTF-8 size as JSON writes them (quotes and
+ * escapes included). The previous `length * 2` was the UTF-16 size, which
+ * undercounts every character above U+07FF: a thousand "₦" estimated at
+ * 2,013 bytes against 3,002 on the wire, so `assertSizeWithinLimit` let
+ * bodies half again larger than the limit through.
+ */
 function chargeFor(value: unknown): number {
   if (value === null || value === undefined) return 4;
 
   switch (typeof value) {
     case "string":
-      return value.length * 2 + 2;
+      return jsonStringByteLength(value);
     case "number":
       // JSON emits up to 21 characters for a double; charge the worst case
       // rather than a flat 8, which under-counted every numeric field.
@@ -44,7 +53,7 @@ function chargeFor(value: unknown): number {
   const keys = Object.keys(value as Record<string, unknown>);
   return (
     2 +
-    keys.reduce((total, key) => total + key.length + 4, 0) +
+    keys.reduce((total, key) => total + jsonStringByteLength(key) + 2, 0) +
     Math.max(0, keys.length - 1)
   );
 }
@@ -72,6 +81,10 @@ function resolveToJson(value: unknown): unknown {
 
 /**
  * Estimate the byte size of a value as JSON without allocating a string.
+ *
+ * The estimate is meant to sit at or above the real UTF-8 size: strings are
+ * measured exactly, numbers are charged their worst case, and containers
+ * their punctuation.
  *
  * A value referenced from several places is charged once per occurrence, the
  * way a serializer expands it. Counting it once let a compact payload built

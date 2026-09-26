@@ -1,3 +1,5 @@
+import { ConfigurationError } from "@zudojs/errors";
+
 import type { ValidationConstraint } from "../validationConstraints/index.js";
 import type { ValidationResult } from "../validationResult/validationResult.type.js";
 import { checkConstraints } from "../validationConstraints/index.js";
@@ -20,13 +22,31 @@ export interface ValidationRuleOptions {
 
 /** Normalizes registry keys. */
 function normalizeRuleName(name: string): string {
-  const normalized = name.trim();
-  if (normalized.length === 0)
-    throw new TypeError("Validation rule name cannot be empty.");
+  const normalized = typeof name === "string" ? name.trim() : "";
+  if (normalized.length === 0) {
+    throw registryError("Validation rule name cannot be empty.");
+  }
   return normalized;
 }
 
-/** Registry of reusable validation schemas and constraints. */
+/**
+ * A registry mistake is a wiring error in the service, not bad input: it is
+ * a `ConfigurationError` (500, not exposed) rather than a bare `Error`, so
+ * callers can tell it from a defect and from a validation failure.
+ */
+function registryError(message: string, ruleName?: string): ConfigurationError {
+  return new ConfigurationError(message, {
+    component: "ValidationRegistry",
+    ...(ruleName !== undefined ? { configKey: ruleName } : {}),
+  });
+}
+
+/**
+ * Registry of reusable validation schemas and constraints.
+ *
+ * Misuse (an empty or unknown rule name, a duplicate registration, a rule
+ * without a schema or constraints) throws `ConfigurationError`.
+ */
 export class ValidationRegistry {
   private readonly rules = new Map<string, ValidationRule>();
 
@@ -35,11 +55,16 @@ export class ValidationRegistry {
     options: ValidationRuleOptions = {},
   ): this {
     const name = normalizeRuleName(rule.name);
-    if (!options.overwrite && this.rules.has(name))
-      throw new Error(`Validation rule "${name}" is already registered.`);
+    if (!options.overwrite && this.rules.has(name)) {
+      throw registryError(
+        `Validation rule "${name}" is already registered.`,
+        name,
+      );
+    }
     if (!rule.schema && (!rule.constraints || rule.constraints.length === 0)) {
-      throw new TypeError(
+      throw registryError(
         `Validation rule "${name}" must define a schema or at least one constraint.`,
+        name,
       );
     }
     this.rules.set(
@@ -88,9 +113,19 @@ export class ValidationRegistry {
       ValidationRule<T> | undefined;
   }
 
+  /**
+   * Returns a registered rule.
+   *
+   * @throws {ConfigurationError} when no rule of that name is registered.
+   */
   public require<T = unknown>(name: string): ValidationRule<T> {
     const rule = this.get<T>(name);
-    if (!rule) throw new Error(`Validation rule "${name}" is not registered.`);
+    if (!rule) {
+      throw registryError(
+        `Validation rule "${name}" is not registered.`,
+        name,
+      );
+    }
     return rule;
   }
 
@@ -139,8 +174,9 @@ export class ValidationRegistry {
       return checkConstraints(constraints, parsed.data);
     }
     if (constraints.length > 0) return checkConstraints(constraints, value as T);
-    throw new TypeError(
+    throw registryError(
       `Validation rule "${name}" has no validation implementation.`,
+      name,
     );
   }
 

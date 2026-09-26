@@ -18,10 +18,19 @@ export interface ValidationIssue {
   readonly received?: unknown;
 }
 
-/** Formats validation issues into a human-readable string. */
+/**
+ * Formats validation issues into a human-readable string.
+ *
+ * An issue with an empty path (one about the value as a whole) prints just
+ * its message rather than ": message".
+ */
 export function formatIssues(issues: readonly ValidationIssue[]): string {
   if (issues.length === 0) return "";
-  return issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+  return issues
+    .map((i) =>
+      i.path.length > 0 ? `${i.path.join(".")}: ${i.message}` : i.message,
+    )
+    .join("; ");
 }
 
 /**

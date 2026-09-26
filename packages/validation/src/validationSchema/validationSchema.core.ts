@@ -1,4 +1,5 @@
 import { z, ZodError, type ZodType } from "zod";
+import { ConfigurationError } from "@zudojs/errors";
 import type {
   ValidationIssue,
   ValidationResult,
@@ -35,13 +36,46 @@ export function mapZodIssues(
   }));
 }
 
-/** Safely parses input using a Zod schema. */
+/**
+ * Runs a synchronous Zod parse, turning Zod's "async schema in a sync parse"
+ * fault into a framework error.
+ *
+ * A schema with an async `refine`/`transform` cannot be parsed synchronously;
+ * Zod throws a bare `Error`, which escaped `validate()` and `isValid()` as an
+ * anonymous 500. It is a wiring mistake, not invalid input, so it is reported
+ * as a `ConfigurationError` naming the fix rather than as a validation
+ * failure (which would return a 400 for a bug in the service).
+ *
+ * @throws {ConfigurationError} when the schema needs `validateAsync()`.
+ */
+function safeParseSync<T>(schema: ValidationSchema<T>, value: unknown) {
+  try {
+    return schema.safeParse(value);
+  } catch (error) {
+    if (error instanceof z.core.$ZodAsyncError) {
+      throw new ConfigurationError(
+        "The schema contains an async refine() or transform() and cannot be parsed synchronously; use validateAsync(), parseAsync() or createAsyncValidator().",
+        { component: "@zudojs/validation", cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Safely parses input using a Zod schema.
+ *
+ * Invalid input is always a `{ success: false }` result. The one throw is a
+ * schema with async refinements (see `validateAsync`).
+ *
+ * @throws {ConfigurationError} when the schema needs `validateAsync()`.
+ */
 export function validate<T>(
   schema: ValidationSchema<T>,
   value: unknown,
   options: ParseOptions = {},
 ): ValidationResult<T> {
-  const result = schema.safeParse(value);
+  const result = safeParseSync(schema, value);
   if (result.success) return success(result.data as T);
   return failure(mapZodIssues(result.error, options.pathPrefix));
 }
@@ -84,7 +118,7 @@ export function isValid<T>(
   schema: ValidationSchema<T>,
   value: unknown,
 ): value is T {
-  return schema.safeParse(value).success;
+  return safeParseSync(schema, value).success;
 }
 
 /** Creates a validation function from a schema. */

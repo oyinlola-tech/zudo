@@ -154,7 +154,12 @@ export function hasValidationErrorCode(
   return isValidationError(error) && error.validationCode === code;
 }
 
-/** Creates a validation error from a collection of issues. */
+/**
+ * Creates a validation error from a collection of issues.
+ *
+ * The code defaults to `INVALID_INPUT` (the issues describe rejected input),
+ * not `UNKNOWN`, which is reserved for errors whose cause really is unknown.
+ */
 export function createValidationError(
   issues: readonly ValidationIssue[],
   options: ValidationErrorOptions = {},
@@ -162,6 +167,6 @@ export function createValidationError(
   return new ValidationError(
     formatIssues(issues) || "Validation failed.",
     issues,
-    options,
+    { ...options, code: options.code ?? ValidationErrorCode.INVALID_INPUT },
   );
 }

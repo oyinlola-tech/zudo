@@ -1,5 +1,5 @@
 import { ValidationLength, ValidationPattern } from "@zudojs/constants";
-import { formatCount } from "@zudojs/types";
+import { characterLength, formatCount } from "@zudojs/types";
 
 import type { ValidationConstraint } from "../validationConstraints.base.js";
 
@@ -7,11 +7,6 @@ import {
   createConstraint,
   assertNonNegativeInteger,
 } from "../validationConstraints.base.js";
-
-/** Counts Unicode code points rather than UTF-16 code units. */
-function characterLength(value: string): number {
-  return [...value].length;
-}
 
 /**
  * Requires a string to be non-empty after trimming.

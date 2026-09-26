@@ -91,6 +91,12 @@ export function exactItems<T>(
 
 /**
  * Requires every array item to satisfy a constraint.
+ *
+ * The message says it is about the items ("Every item must satisfy: …").
+ * Reusing the item constraint's message verbatim told a caller who sent a
+ * number instead of an array that the "value must be a valid email address".
+ * The issue is reported at the array's path: a constraint yields one issue,
+ * so the failing index is not part of it.
  */
 export function everyItem<T>(
   constraint: ValidationConstraint<T>,
@@ -100,7 +106,7 @@ export function everyItem<T>(
     {
       name: `every_${constraint.name}`,
       code: "item_constraint_failed",
-      message: constraint.message,
+      message: `Every item must satisfy: ${constraint.message}`,
       guard: isArrayOf,
     },
   );

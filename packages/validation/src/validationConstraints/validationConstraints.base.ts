@@ -132,12 +132,25 @@ export function checkConstraints<T>(
   return success(value);
 }
 
+/** Turns an internal constraint name (`one_of`, `min_length_3`) into words. */
+function describeConstraint(name: string): string {
+  return name.replace(/_+/g, " ").trim() || "custom";
+}
+
 /**
  * Combines constraints into a single constraint.
+ *
+ * The combined message lists the member messages, so a failure says what
+ * was required ("Value must contain at least 3 characters. Value must
+ * contain only letters.") rather than "One or more validation constraints
+ * failed."
  */
 export function combineConstraints<T>(
   ...constraints: readonly ValidationConstraint<T>[]
 ): ValidationConstraint<T> {
+  const messages = [
+    ...new Set(constraints.map((constraint) => constraint.message)),
+  ].filter((message) => message.length > 0);
   return createConstraint<T>(
     (value) =>
       constraints.every((constraint) => runConstraint(constraint, value)),
@@ -146,13 +159,20 @@ export function combineConstraints<T>(
         constraints.map((constraint) => constraint.name).join("_and_") ||
         "combined",
       code: "combined_constraint_failed",
-      message: "One or more validation constraints failed.",
+      message:
+        messages.length > 0
+          ? messages.join(" ")
+          : "One or more validation constraints failed.",
     },
   );
 }
 
 /**
  * Creates a negated constraint.
+ *
+ * Without an explicit `message` the default names the inner constraint in
+ * words (`Value must not satisfy the "one of" constraint.`) instead of its
+ * internal identifier (`one_of`).
  */
 export function not<T>(
   constraint: ValidationConstraint<T>,
@@ -174,7 +194,9 @@ export function not<T>(
     {
       name: options.name ?? `not_${constraint.name}`,
       code: options.code ?? "negated_constraint_failed",
-      message: options.message ?? `Value must not satisfy ${constraint.name}.`,
+      message:
+        options.message ??
+        `Value must not satisfy the "${describeConstraint(constraint.name)}" constraint.`,
       ...(guard ? { guard } : {}),
     },
   );
