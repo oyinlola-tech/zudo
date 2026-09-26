@@ -6,7 +6,9 @@
  * An OAuth provider is an untrusted remote. Every request made here is
  * bounded three ways:
  *
- * - **Time** — `AbortSignal.timeout(config.timeoutMs)`, default 10s.
+ * - **Time** — a ref'd deadline of `config.timeoutMs` (default 10s) that
+ *   aborts the request and the body read; see `createRequestDeadline` for
+ *   why it is not `AbortSignal.timeout()`.
  * - **Size** — the body is streamed and abandoned the moment it exceeds
  *   `config.maxResponseBytes` (default 256 KiB), and a `Content-Length` over
  *   the cap is refused before reading at all.
@@ -23,6 +25,10 @@ import {
 } from "../oauthErrors/index.js";
 import { parseJsonObject, parseJsonValue } from "../oauthSecurity/index.js";
 import type { ResolvedOAuthConfig } from "./oauthConfig.resolve.js";
+import {
+  createRequestDeadline,
+  type RequestDeadline,
+} from "./http/index.js";
 
 /** Provider `error` codes are echoed only if they look like OAuth error codes. */
 const SAFE_ERROR_CODE = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -120,15 +126,30 @@ export async function requestProviderValue(
   resolved: ResolvedOAuthConfig,
   request: ProviderRequest,
 ): Promise<unknown> {
+  const deadline = createRequestDeadline(resolved.timeoutMs);
+  try {
+    return await requestWithinDeadline(resolved, request, deadline);
+  } finally {
+    deadline.clear();
+  }
+}
+
+async function requestWithinDeadline(
+  resolved: ResolvedOAuthConfig,
+  request: ProviderRequest,
+  deadline: RequestDeadline,
+): Promise<unknown> {
   let response: Response;
   try {
-    response = await resolved.fetchImpl(request.url.toString(), {
-      method: request.method,
-      headers: request.headers,
-      ...(request.body !== undefined ? { body: request.body } : {}),
-      redirect: "manual",
-      signal: AbortSignal.timeout(resolved.timeoutMs),
-    });
+    response = await deadline.race(
+      resolved.fetchImpl(request.url.toString(), {
+        method: request.method,
+        headers: request.headers,
+        ...(request.body !== undefined ? { body: request.body } : {}),
+        redirect: "manual",
+        signal: deadline.signal,
+      }),
+    );
   } catch (cause) {
     throw toNetworkError(cause, request.label, resolved.timeoutMs);
   }
@@ -142,7 +163,9 @@ export async function requestProviderValue(
 
   let text: string;
   try {
-    text = await readCappedText(response, resolved.maxResponseBytes);
+    text = await deadline.race(
+      readCappedText(response, resolved.maxResponseBytes),
+    );
   } catch (cause) {
     // The timeout signal also aborts the body stream, and a transport can
     // fail mid-body. Both surfaced here as a raw `DOMException` /

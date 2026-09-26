@@ -189,8 +189,14 @@ Every one of these is covered by a test in `tests/`.
   **Limit:** the check is on the literal host; DNS is not resolved, so DNS
   rebinding is out of scope. Pair this with network egress controls if endpoint
   URLs come from untrusted operators.
-- **Bounded responses.** Every provider request carries
-  `AbortSignal.timeout(timeoutMs)` (default 10s) and the body is streamed and
+  **Testing against a local fake:** the guard applies in tests too, so a
+  `custom` provider with `tokenUrl: "http://127.0.0.1:4000/token"` is refused.
+  Keep a public-looking `https` URL (`https://oauth.example.test/token`) and
+  route it to your fake with `config.fetch`, which receives the URL string and
+  `RequestInit` and can answer with any `Response`.
+- **Bounded responses.** Every provider request carries a ref'd deadline of
+  `timeoutMs` (default 10s) — not `AbortSignal.timeout()`, whose unref'd timer
+  let a one-shot script exit with code 13 before the timeout fired — and the body is streamed and
   abandoned the moment it passes `maxResponseBytes` (default 256 KiB); an
   oversized `Content-Length` is refused before a byte is read.
 - **Defensive parsing.** A token response must be a JSON _object_ with a
