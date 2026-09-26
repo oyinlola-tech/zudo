@@ -138,6 +138,27 @@ for (const name of FILES) {
   if (!CHECK && out !== src) writeFileSync(file, out);
 }
 
+/* SVG shapes in page markup: a literal fill or stroke that is not themed with a
+   style="fill: var(--z-…)" beside it turns invisible against currentColor labels
+   in dark. Brand and code-palette colours are allowed as in stylesheets. */
+import { readdirSync } from "node:fs";
+const MARKUP_DIRS = ["../site-src/learn/", "../site/docs/", "../site/"];
+for (const dir of MARKUP_DIRS) {
+  const abs = fileURLToPath(new URL(dir, import.meta.url));
+  for (const name of readdirSync(abs).filter((f) => f.endsWith(".html"))) {
+    const html = readFileSync(abs + name, "utf8");
+    for (const m of html.matchAll(/<(rect|path|polygon|ellipse|circle|line)\b([^>]*)>/g)) {
+      const attrs = m[2];
+      for (const c of attrs.matchAll(/\b(fill|stroke)="(#[0-9A-Fa-f]{3,8})"/g)) {
+        if (INVARIANT.has(c[2].toUpperCase()) || ["#C0392B", "#1A1A2E", "#FAFAF9"].includes(c[2].toUpperCase())) continue;
+        if (new RegExp(`style="[^"]*${c[1]}:\\s*var\\(--z-`).test(attrs)) continue;
+        const line = html.slice(0, m.index).split("\n").length;
+        problems.push(`${dir.replace("../", "")}${name}:${line}  <${m[1]} ${c[1]}="${c[2]}"> (add style="${c[1]}: var(--z-…)")`);
+      }
+    }
+  }
+}
+
 if (problems.length) {
   console.error(`${problems.length} colour(s) have no token:\n  ` + problems.join("\n  "));
   process.exit(1);
