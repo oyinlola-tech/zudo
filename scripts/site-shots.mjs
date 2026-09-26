@@ -37,6 +37,7 @@ const REPO = fileURLToPath(new URL("..", import.meta.url));
 const PAGES = [
   { id: "home", path: "/" },
   { id: "docs", path: "/docs/architecture" },
+  { id: "themes", path: "/docs/design-themes" },
   { id: "getting-started", path: "/docs/getting-started" },
   { id: "package", path: "/docs/packages-container" },
   { id: "packages", path: "/docs/packages" },
