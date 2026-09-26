@@ -74,9 +74,12 @@ export class MiddlewareTimeoutError extends MiddlewareError {
   public readonly timeoutMs: number;
 
   constructor(middlewareName: string, timeoutMs: number) {
+    // A middleware that ran out of time is a gateway timeout to the client
+    // (504), not an internal error (500). Message and code stay internal.
     super(`Middleware "${middlewareName}" timed out after ${timeoutMs}ms.`, {
       code: ErrorCode.MIDDLEWARE_TIMEOUT,
       middlewareName,
+      statusCode: 504,
       metadata: { timeoutMs },
     });
 

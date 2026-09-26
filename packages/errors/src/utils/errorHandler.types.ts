@@ -51,6 +51,8 @@ export interface PublicErrorHandlerResult {
   readonly correlationId?: string;
   /** Allow-listed, redacted metadata (see `ErrorHandlerOptions.publicMetadataKeys`). */
   readonly details?: Readonly<Record<string, unknown>>;
+  /** Issues of an exposable validation or schema error, values redacted. */
+  readonly issues?: readonly unknown[];
 }
 
 /** Callback used to report errors to an external logger or monitoring system. */
@@ -83,11 +85,17 @@ export interface ErrorHandlerOptions {
    */
   readonly includeStack?: boolean;
   /**
-   * Metadata keys copied into `PublicErrorHandlerResult.details`. When omitted,
-   * exposed errors contribute their (redacted) metadata and non-exposed errors
-   * contribute nothing.
+   * Metadata keys copied into `PublicErrorHandlerResult.details`, for exposed
+   * and non-exposed errors alike. When omitted, no metadata is published
+   * unless `exposeMetadata` is set.
    */
   readonly publicMetadataKeys?: readonly string[];
+  /**
+   * Copy the whole (redacted) metadata of errors with `expose: true` into
+   * `details`. Defaults to false; see `ErrorSerializerOptions.exposeMetadata`
+   * for why this is opt-in. Ignored when `publicMetadataKeys` is set.
+   */
+  readonly exposeMetadata?: boolean;
   /** Pattern used to detect sensitive metadata keys. */
   readonly sensitiveKeyPattern?: RegExp;
 }

@@ -23,10 +23,21 @@ export interface ErrorSerializerOptions {
    * Metadata keys allowed in public output.
    *
    * When provided, only these keys are copied into `PublicErrorResponse.metadata`
-   * (for exposed and non-exposed errors alike). When omitted, metadata is only
-   * included for errors with `expose: true`, and never for non-exposed errors.
+   * (for exposed and non-exposed errors alike). This is the recommended way
+   * to publish metadata: name the keys a client may see.
    */
   readonly publicMetadataKeys?: readonly string[];
+  /**
+   * Copy the whole (redacted) metadata of errors with `expose: true` into
+   * `PublicErrorResponse.metadata`. Defaults to false.
+   *
+   * This was the behaviour before round 12 and is a data-exposure risk:
+   * `expose` says the message is safe for a client, not that everything put
+   * in `metadata` (decline codes, upstream ids, internal state) is. Prefer
+   * `publicMetadataKeys`; enable this only for errors whose metadata is
+   * written for clients. Ignored when `publicMetadataKeys` is set.
+   */
+  readonly exposeMetadata?: boolean;
 }
 
 /** Public error representation suitable for an API response. */
@@ -36,6 +47,12 @@ export interface PublicErrorResponse {
   readonly category: ErrorCategory;
   readonly statusCode: number;
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /**
+   * Validation or schema issues of an exposable error (`ValidationError`,
+   * `SchemaError` and any error carrying an `issues` array), with submitted
+   * values replaced by type descriptions. Absent for non-exposed errors.
+   */
+  readonly issues?: readonly unknown[];
 }
 
 /** Internal serialized error representation. */

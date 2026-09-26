@@ -44,7 +44,7 @@ export class AdapterConnectionError extends AdapterError {
       code: ErrorCode.ADAPTER_CONNECTION_FAILED,
       adapter: adapterName,
       cause,
-      statusCode: 500,
+      statusCode: 503,
       expose: false,
       isOperational: false,
     });
@@ -83,7 +83,7 @@ export class AdapterTimeoutError extends AdapterError {
         adapter: adapterName,
         cause,
         metadata: { operation, timeout },
-        statusCode: 500,
+        statusCode: 504,
         expose: false,
         isOperational: false,
       },

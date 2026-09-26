@@ -7,6 +7,12 @@ import type { ErrorMetadata } from "../core/errorMetadata.type.js";
  * Options used to construct a Zudojs application error.
  */
 export interface BaseErrorOptions {
+  /**
+   * Machine-readable code. `ErrorCode` lists the codes this package knows,
+   * but the set is deliberately open so applications can mint their own
+   * (`"PAYMENT_CARD_DECLINED"`); use `isErrorCode()` to narrow a value back
+   * to the enum before an exhaustive `switch`.
+   */
   readonly code?: ErrorCode | string;
   readonly category?: ErrorCategory;
   readonly severity?: ErrorSeverity;

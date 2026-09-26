@@ -73,6 +73,13 @@ export class BadGatewayError extends HttpError {
 
 /**
  * 503 Service Unavailable
+ *
+ * Unlike the other 5xx classes this one exposes its message by default: 503
+ * is the status a service sends on purpose (maintenance, overload, a
+ * dependency down), and its message ("Back at 03:00 UTC") is written for the
+ * client, as it is for `APIUnavailableError` and `RPCUnavailableError`. Pass
+ * `expose: false` for a message that must stay internal. Metadata is not
+ * exposed by `expose` alone (see `ErrorSerializerOptions.exposeMetadata`).
  */
 export class ServiceUnavailableError extends HttpError {
   constructor(
@@ -83,7 +90,7 @@ export class ServiceUnavailableError extends HttpError {
       ...options,
       statusCode: 503,
       code: options.code ?? ErrorCode.HTTP_SERVICE_UNAVAILABLE,
-      expose: options.expose ?? false,
+      expose: options.expose ?? true,
     });
   }
 }

@@ -4,7 +4,6 @@
 
 import type { BaseError } from "../base/core/baseError.core.js";
 import {
-  pickErrorMetadata,
   redactErrorMetadata,
   serializeErrorMetadata,
 } from "../base/core/errorMetadata.core.js";
@@ -14,6 +13,10 @@ import {
   normalizeUnknownToBaseError,
 } from "../base/utils/baseError.utils.js";
 import { ErrorSerializer } from "./errorSerializer.core.js";
+import {
+  selectPublicIssues,
+  selectPublicMetadata,
+} from "./errorSerializer.public.js";
 import type {
   ErrorHandlerOptions,
   ErrorHandlerResult,
@@ -47,6 +50,7 @@ export class ErrorHandler {
   private readonly defaultMessage: string;
   private readonly includeStack: boolean;
   private readonly publicMetadataKeys: readonly string[] | undefined;
+  private readonly exposeMetadata: boolean;
   private readonly sensitiveKeyPattern: RegExp | undefined;
 
   constructor(options: ErrorHandlerOptions = {}) {
@@ -57,6 +61,7 @@ export class ErrorHandler {
       options.defaultMessage ?? "An unexpected error occurred.";
     this.includeStack = options.includeStack ?? false;
     this.publicMetadataKeys = options.publicMetadataKeys;
+    this.exposeMetadata = options.exposeMetadata ?? false;
     this.sensitiveKeyPattern = options.sensitiveKeyPattern;
   }
 
@@ -140,14 +145,12 @@ export class ErrorHandler {
     error: BaseError,
     context?: ErrorHandlerContext,
   ): PublicErrorHandlerResult {
-    let details: Readonly<ErrorMetadata> | undefined;
-    if (this.publicMetadataKeys !== undefined) {
-      details = this.redact(
-        pickErrorMetadata(error.metadata, this.publicMetadataKeys),
-      );
-    } else if (error.expose) {
-      details = this.redact(error.metadata);
-    }
+    const details = selectPublicMetadata(error, {
+      publicMetadataKeys: this.publicMetadataKeys,
+      exposeMetadata: this.exposeMetadata,
+      sensitiveKeyPattern: this.sensitiveKeyPattern,
+    });
+    const issues = selectPublicIssues(error);
 
     return {
       code: error.code,
@@ -157,9 +160,8 @@ export class ErrorHandler {
       ...(context?.correlationId
         ? { correlationId: context.correlationId }
         : {}),
-      ...(details !== undefined && Object.keys(details).length > 0
-        ? { details }
-        : {}),
+      ...(details !== undefined ? { details } : {}),
+      ...(issues !== undefined ? { issues } : {}),
     };
   }
 

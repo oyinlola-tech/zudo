@@ -3,10 +3,7 @@
  */
 
 import { BaseError } from "../base/core/baseError.core.js";
-import {
-  pickErrorMetadata,
-  redactErrorMetadata,
-} from "../base/core/errorMetadata.core.js";
+import { redactErrorMetadata } from "../base/core/errorMetadata.core.js";
 import {
   isGenuineSerializedBaseError,
   MAX_CAUSE_DEPTH,
@@ -24,6 +21,10 @@ import type {
   InternalErrorResponse,
 } from "./errorSerializer.types.js";
 import { normalizeUnknownError } from "./errorSerializer.factory.js";
+import {
+  selectPublicIssues,
+  selectPublicMetadata,
+} from "./errorSerializer.public.js";
 
 export type {
   ErrorSerializerOptions,
@@ -46,6 +47,7 @@ export class ErrorSerializer {
   private readonly redactSensitiveData: boolean;
   private readonly sensitiveKeyPattern: RegExp | undefined;
   private readonly publicMetadataKeys: readonly string[] | undefined;
+  private readonly exposeMetadata: boolean;
 
   constructor(options: ErrorSerializerOptions = {}) {
     this.includeStack = options.includeStack ?? false;
@@ -55,6 +57,7 @@ export class ErrorSerializer {
     this.redactSensitiveData = options.redactSensitiveData ?? true;
     this.sensitiveKeyPattern = options.sensitiveKeyPattern;
     this.publicMetadataKeys = options.publicMetadataKeys;
+    this.exposeMetadata = options.exposeMetadata ?? false;
   }
 
   /**
@@ -72,18 +75,22 @@ export class ErrorSerializer {
   /**
    * Serializes an error for an untrusted API client.
    *
-   * Never includes a stack or cause. Metadata is only included when the error
-   * is exposable (or when `publicMetadataKeys` allow-lists specific keys) and
-   * is always redacted.
+   * Never includes a stack or cause. Metadata is included only for keys
+   * allow-listed by `publicMetadataKeys`, or, with `exposeMetadata`, for
+   * errors with `expose: true`; either way it is redacted. The `issues` of an
+   * exposable validation or schema error are included with submitted values
+   * replaced by type descriptions.
    */
   public serializePublic(error: BaseError): PublicErrorResponse {
     const metadata = this.publicMetadata(error);
+    const issues = selectPublicIssues(error);
     return {
       code: error.code,
       message: error.expose ? error.message : this.safeMessage,
       category: error.category,
       statusCode: error.statusCode,
       ...(metadata !== undefined ? { metadata } : {}),
+      ...(issues !== undefined ? { issues } : {}),
     };
   }
 
@@ -160,20 +167,12 @@ export class ErrorSerializer {
     error: BaseError,
   ): Readonly<Record<string, unknown>> | undefined {
     if (!this.includeMetadata) return undefined;
-
-    let metadata: Readonly<ErrorMetadata>;
-    if (this.publicMetadataKeys !== undefined) {
-      metadata = pickErrorMetadata(error.metadata, this.publicMetadataKeys);
-    } else if (error.expose) {
-      metadata = error.metadata;
-    } else {
-      return undefined;
-    }
-
-    const redacted = this.redactSensitiveData
-      ? this.redactMetadata(metadata)
-      : metadata;
-    return Object.keys(redacted).length > 0 ? redacted : undefined;
+    return selectPublicMetadata(error, {
+      publicMetadataKeys: this.publicMetadataKeys,
+      exposeMetadata: this.exposeMetadata,
+      redactSensitiveData: this.redactSensitiveData,
+      sensitiveKeyPattern: this.sensitiveKeyPattern,
+    });
   }
 
   /** Removes commonly sensitive metadata fields (recursively). */

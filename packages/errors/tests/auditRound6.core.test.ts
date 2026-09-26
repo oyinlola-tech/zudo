@@ -102,7 +102,7 @@ describe("audit round 6 — errors core", () => {
           list: [{ password: "p", id: 1 }],
         },
       });
-      const result = serializePublicError(exposed);
+      const result = serializePublicError(exposed, { exposeMetadata: true });
       expect(result.metadata).toEqual({
         Authorization: "[REDACTED]",
         headers: { cookie: "[REDACTED]", "x-api-key": "[REDACTED]", ok: "fine" },

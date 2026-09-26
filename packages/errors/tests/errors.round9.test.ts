@@ -56,12 +56,18 @@ describe("ERR-R9-01: a sensitive-key pattern with the g/y flag redacts on every 
       metadata: { secret: "v" },
       statusCode: 400,
     });
-    const serializer = new ErrorSerializer({ sensitiveKeyPattern: /secret/g });
+    const serializer = new ErrorSerializer({
+      sensitiveKeyPattern: /secret/g,
+      exposeMetadata: true,
+    });
     expect(
       [1, 2, 3].map(() => serializer.serializePublic(error).metadata?.secret),
     ).toEqual(["[REDACTED]", "[REDACTED]", "[REDACTED]"]);
 
-    const handler = new ErrorHandler({ sensitiveKeyPattern: /secret/g });
+    const handler = new ErrorHandler({
+      sensitiveKeyPattern: /secret/g,
+      exposeMetadata: true,
+    });
     expect(
       [1, 2, 3].map(() => handler.toPublicResult(error).details?.secret),
     ).toEqual(["[REDACTED]", "[REDACTED]", "[REDACTED]"]);

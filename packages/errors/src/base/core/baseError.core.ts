@@ -33,6 +33,12 @@ export const BASE_ERROR_BRAND: unique symbol = Symbol.for(
  * HTTP responses, monitoring, and serialization.
  */
 export class BaseError extends Error {
+  /**
+   * Machine-readable code. Typed `ErrorCode | string` on purpose: the enum
+   * lists the framework's codes, and applications add their own. A `switch`
+   * over `error.code` is therefore never exhaustive; narrow with
+   * `isErrorCode(error.code)` first when exhaustiveness matters.
+   */
   public readonly code: ErrorCode | string;
   public readonly category: ErrorCategory;
   public readonly severity: ErrorSeverity;

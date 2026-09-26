@@ -20,7 +20,17 @@ export interface ExternalServiceErrorOptions extends Omit<
   readonly serviceCode?: string | number;
 }
 
-/** Error raised when an external dependency fails. */
+/** Service name recorded when a caller supplies none. */
+const UNKNOWN_SERVICE = "unknown";
+
+/**
+ * Error raised when an external dependency fails.
+ *
+ * `options.service` is required by the type. A JavaScript caller (or a
+ * `catch` block re-throwing with only a message) that omits the options
+ * object gets `service: "unknown"` rather than a `TypeError` thrown from
+ * inside the error constructor, which hid the failure it was reporting.
+ */
 export class ExternalServiceError extends BaseError {
   public readonly service: string;
   public readonly operation?: string;
@@ -29,8 +39,9 @@ export class ExternalServiceError extends BaseError {
 
   constructor(
     message = "An external service operation failed.",
-    options: ExternalServiceErrorOptions,
+    options: ExternalServiceErrorOptions = { service: UNKNOWN_SERVICE },
   ) {
+    options = withService(options);
     super(message, {
       ...options,
       code: options.code ?? ErrorCode.EXTERNAL_SERVICE,
@@ -73,6 +84,18 @@ export class ExternalServiceError extends BaseError {
         : {}),
     };
   }
+}
+
+/** Fills in the service name when the caller left the options incomplete. */
+function withService(
+  options: ExternalServiceErrorOptions | null | undefined,
+): ExternalServiceErrorOptions {
+  const partial = (options ?? {}) as Partial<ExternalServiceErrorOptions>;
+  const service =
+    typeof partial.service === "string" && partial.service.length > 0
+      ? partial.service
+      : UNKNOWN_SERVICE;
+  return { ...partial, service };
 }
 
 /** Creates an external service error. */
