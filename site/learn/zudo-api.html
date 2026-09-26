@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1A1A2E">
+  <!-- theme:start -->
+  <script>(function () { var KEY = 'zudo.theme'; var root = document.documentElement; var pick = /[?&]theme=(light|dark|system)\b/.exec(location.search); var saved = null; try { if (pick) { if (pick[1] === 'system') localStorage.removeItem(KEY); else localStorage.setItem(KEY, pick[1]); } saved = localStorage.getItem(KEY); } catch (e) { } var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches); root.setAttribute('data-theme', dark ? 'dark' : 'light'); })();</script>
+  <script src="/js/theme.js" defer></script>
+  <!-- theme:end -->
   <title>One operation, many transports — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-api.md" title="Markdown version">
   <meta name="description" content="Write business logic once as an operation with @zudojs/api, then run it from HTTP, RPC and a queue with the same validation, errors and timeouts.">
@@ -818,7 +822,48 @@ if (!cancelled.ok) console.log("[caller]", cancelled.error.code, cancelled.error
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="admin.ts" data-project="api-admin" data-command="npx tsx admin.ts" data-title="Admins only"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Admins only</h3><div class="lx-ex-task"><p>Write an interceptor that refuses every operation tagged <code>"Admin"</code> unless the <strong>verified</strong> role in the context is <code>"admin"</code>. Store the role with your own context key. The input must never decide the role: test it with an input that claims <code>role: "admin"</code>.</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="12" data-file="admin.ts" data-project="api-admin">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="admin.ts" data-project="api-admin" data-command="npx tsx admin.ts" data-title="Admins only"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Admins only</h3><div class="lx-ex-task"><p>Write an interceptor that refuses every operation tagged <code>"Admin"</code> unless the <strong>verified</strong> role in the context is <code>"admin"</code>. Store the role with your own context key. The input must never decide the role: test it with an input that claims <code>role: "admin"</code>.</p></div><script type="text/plain" class="lx-ex-starter" data-file="admin.ts">// Example to learn from: an interceptor that checks a different verified
+// slot, guarding a different tag.
+//
+//   const BetaKey = createContextKey<boolean>("beta");
+//   const betaOnly: APIInterceptor = {
+//     async intercept(call, next) {
+//       if (call.operation.metadata?.tags?.includes("Beta") && call.context.get(BetaKey) !== true) {
+//         return apiFailure(new APIAuthorizationError("Beta access required."));
+//       }
+//       return next();
+//     },
+//   };
+//
+// Now write adminOnly the same way, checking RoleKey against "admin".
+
+import { APIAuthorizationError, APIExecutor, apiFailure, createAPIContext, createContextKey, defineOperation } from "@zudojs/api";
+import type { APIInterceptor } from "@zudojs/api";
+
+const RoleKey = createContextKey<"user" | "admin">("role");
+const adminOnly: APIInterceptor = {
+  async intercept(call, next) {
+    // If call.operation.metadata?.tags includes "Admin" and
+    // call.context.get(RoleKey) is not "admin", return
+    // apiFailure(new APIAuthorizationError("Admins only.")). Otherwise
+    // return next().
+    return next();
+  },
+};
+const deleteAll = defineOperation({
+  name: "tasks.deleteAll",
+  metadata: { tags: ["Admin"] },
+  handler: async () => "all tasks deleted",
+});
+
+const executor = new APIExecutor([adminOnly]);
+const bo = createAPIContext("req-1", {});
+bo.set(RoleKey, "user");
+const denied = await executor.execute(deleteAll, { role: "admin" }, bo);
+if (!denied.ok) console.log(denied.error.statusCode, denied.error.message);
+const ada = createAPIContext("req-2", {});
+ada.set(RoleKey, "admin");
+console.log(await executor.execute(deleteAll, {}, ada));</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Read the tags off <code>call.operation.metadata?.tags</code>, and the verified role off <code>call.context.get(RoleKey)</code>, never off <code>call.input</code>. Combine both with <code>&amp;&amp;</code> before refusing.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>if (call.operation.metadata?.tags?.includes("Admin") &amp;&amp; call.context.get(RoleKey) !== "admin") return apiFailure(new APIAuthorizationError("Admins only.")); return next();</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="12" data-file="admin.ts" data-project="api-admin">
 <figcaption class="lx-bar"><span class="lx-file">admin.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">APIAuthorizationError</span><span class="t-pn">,</span> <span class="t-ty">APIExecutor</span><span class="t-pn">,</span> apiFailure<span class="t-pn">,</span> createAPIContext<span class="t-pn">,</span> createContextKey<span class="t-pn">,</span> defineOperation <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">APIInterceptor</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
@@ -877,7 +922,33 @@ console.log(await executor.execute(deleteAll, {}, ada));</script>
 { ok: true, data: 'all tasks deleted' }</pre></div>
 </figure>
 <p>The role comes only from the context, which the transport fills after it verified the caller. The <code>role</code> in the input is ignored.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="exit-code.ts" data-project="api-exit" data-command="npx tsx exit-code.ts" data-title="Exit codes for a command-line transport"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Exit codes for a command-line transport</h3><div class="lx-ex-task"><p><code>runApiCli</code> turns results into exit codes for you. To see how, write your own <code>exitCode(result)</code>: 0 for success, 77 for status 401 or 403, 65 for 422, and 1 for anything else. Test it with results made by <code>apiSuccess</code> and <code>apiFailure</code>.</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="13" data-file="exit-code.ts" data-project="api-exit">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="exit-code.ts" data-project="api-exit" data-command="npx tsx exit-code.ts" data-title="Exit codes for a command-line transport"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Exit codes for a command-line transport</h3><div class="lx-ex-task"><p><code>runApiCli</code> turns results into exit codes for you. To see how, write your own <code>exitCode(result)</code>: 0 for success, 77 for status 401 or 403, 65 for 422, and 1 for anything else. Test it with results made by <code>apiSuccess</code> and <code>apiFailure</code>.</p></div><script type="text/plain" class="lx-ex-starter" data-file="exit-code.ts">// Example to learn from: mapping a different set of statuses to fixed
+// buckets.
+//
+//   function httpBucket(status: number): "ok" | "client" | "server" {
+//     if (status < 400) return "ok";
+//     if (status < 500) return "client";
+//     return "server";
+//   }
+//
+// Now write exitCode, mapping the four specific cases below to numbers.
+
+import { APIAuthenticationError, APIConflictError, APIValidationError, apiFailure, apiSuccess } from "@zudojs/api";
+import type { APIResult } from "@zudojs/api";
+
+function exitCode(result: APIResult<unknown>): number {
+  // 0 for result.ok. Otherwise look at result.error.statusCode: 77 for 401
+  // or 403, 65 for 422, 1 for anything else.
+  return 1;
+}
+
+const results: APIResult<unknown>[] = [
+  apiSuccess({ id: 1 }),
+  apiFailure(new APIAuthenticationError("Sign in first.")),
+  apiFailure(new APIValidationError("Invalid input.", ["title: invalid"])),
+  apiFailure(new APIConflictError("Already exists.")),
+];
+console.log(results.map(exitCode));</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Check <code>result.ok</code> first and return early. Otherwise read <code>result.error.statusCode</code> and compare it against 401, 403 and 422 in turn.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>if (result.ok) return 0; const status = result.error.statusCode; if (status === 401 || status === 403) return 77; if (status === 422) return 65; return 1;</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="13" data-file="exit-code.ts" data-project="api-exit">
 <figcaption class="lx-bar"><span class="lx-file">exit-code.ts</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">APIAuthenticationError</span><span class="t-pn">,</span> <span class="t-ty">APIConflictError</span><span class="t-pn">,</span> <span class="t-ty">APIValidationError</span><span class="t-pn">,</span> apiFailure<span class="t-pn">,</span> apiSuccess <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">APIResult</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>

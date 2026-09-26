@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1A1A2E">
+  <!-- theme:start -->
+  <script>(function () { var KEY = 'zudo.theme'; var root = document.documentElement; var pick = /[?&]theme=(light|dark|system)\b/.exec(location.search); var saved = null; try { if (pick) { if (pick[1] === 'system') localStorage.removeItem(KEY); else localStorage.setItem(KEY, pick[1]); } saved = localStorage.getItem(KEY); } catch (e) { } var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches); root.setAttribute('data-theme', dark ? 'dark' : 'light'); })();</script>
+  <script src="/js/theme.js" defer></script>
+  <!-- theme:end -->
   <title>Anatomy of a ZudoJS project — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-project-anatomy.md" title="Markdown version">
   <meta name="description" content="Trace a generated ZudoJS project from src/server.ts through config, runtime and composition root to controller, service and repository, with its real files.">
@@ -2320,7 +2324,7 @@ console.log(badJson.status, badJson.text);
 const noBody = await client.post("/api/v1/examples");
 console.log(noBody.status, noBody.text);
 await client.close();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx errors-trace.ts</code></div><pre class="lx-no-copy">500 {"error":"Internal Server Error"}
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx errors-trace.ts</code></div><pre class="lx-no-copy">500 {"error":"Internal Server Error","code":"INTERNAL_SERVER_ERROR"}
 400 {"error":"The request body is not valid JSON.","code":"BAD_REQUEST"}
 400 {"error":"Validation failed","issues":[{"path":"","message":"Expected object, received undefined"}]}</pre></div>
 </figure>
@@ -2513,7 +2517,62 @@ lost routes marker   /health 200 | /api/v1/examples 404</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="log-500.ts" data-project="anatomy" data-command="npx tsx log-500.ts" data-title="Log the errors you answer with 500"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Log the errors you answer with 500</h3><div class="lx-ex-task"><p>Change <code>dispatch</code> so an unexpected error is logged with its message before it is rethrown, but a 4xx error is not logged. Try it with the broken repository.</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="26" data-file="log-500.ts" data-project="anatomy">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="log-500.ts" data-project="anatomy" data-command="npx tsx log-500.ts" data-title="Log the errors you answer with 500"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Log the errors you answer with 500</h3><div class="lx-ex-task"><p>Change <code>dispatch</code> so an unexpected error is logged with its message before it is rethrown, but a 4xx error is not logged. Try it with the broken repository.</p></div><script type="text/plain" class="lx-ex-starter" data-file="log-500.ts">// Example to learn from: logging only the failures worth an operator's
+// attention, not the ones a caller already turned into a normal answer.
+//
+//   function handle(work: () => string): { status: number; body: string } {
+//     try {
+//       return { status: 200, body: work() };
+//     } catch (error) {
+//       if (error instanceof RangeError) return { status: 400, body: "bad input" };
+//       console.error(`unexpected: ${(error as Error).message}`);
+//       throw error;
+//     }
+//   }
+//
+// Now do the same for dispatch below: log only when errorResponse found
+// nothing to turn the error into.
+
+import { HttpMiddlewarePipeline, createRouter } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+import { createLogger } from "@zudojs/logger";
+import { createHttpTestClient } from "@zudojs/testing";
+
+import { ExamplesController } from "./src/controllers/examples.controller.js";
+import type { CreateExampleInput, Example } from "./src/dtos/examples.dto.js";
+import { InMemoryExamplesRepository } from "./src/repositories/examples.repository.js";
+import { registerExamplesRoutes } from "./src/routes/examples.routes.js";
+import { ExamplesService } from "./src/services/examples.service.js";
+import { errorResponse } from "./src/utils/http.js";
+
+class BrokenRepository extends InMemoryExamplesRepository {
+  public override async create(_input: CreateExampleInput): Promise<Example> {
+    throw new Error("disk full at /var/lib/shop/data.db");
+  }
+}
+
+const logger = createLogger({ name: "task-api" });
+const router = createRouter();
+registerExamplesRoutes(router, new ExamplesController(new ExamplesService(new BrokenRepository())));
+
+const dispatch: HttpMiddleware = async (context) => {
+  try {
+    return (await router.dispatch(context.request, { signal: context.signal })).response;
+  } catch (error) {
+    const response = errorResponse(error);
+    if (response !== undefined) return response;
+    // This is an unexpected (non-HTTP) error: log it with logger.error,
+    // including context.request.method, context.request.path and
+    // (error as Error).message, then rethrow so the caller still gets 500.
+    // your code here
+    throw error;
+  }
+};
+
+const client = createHttpTestClient(new HttpMiddlewarePipeline({ middlewares: [dispatch] }));
+console.log((await client.get("/api/v1/examples/not-a-uuid")).status);
+console.log((await client.post("/api/v1/examples").send({ name: "Buy milk" })).status);
+await client.close();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>logger.error</code> takes one message string. Build it with a template literal: <code>`unhandled error on ${context.request.method} ${context.request.path}: ${(error as Error).message}`</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>logger.error(...)</code> goes right before <code>throw error;</code>, inside the same <code>if (response !== undefined) return response;</code> branch's <code>else</code> path (i.e. after that <code>if</code>, since it already returned when <code>response</code> exists).</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="26" data-file="log-500.ts" data-project="anatomy">
 <figcaption class="lx-bar"><span class="lx-file">log-500.ts</span><button type="button" class="lx-edit" data-index="26" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
@@ -2595,7 +2654,59 @@ await client.close();</script>
 500</pre></div>
 </figure>
 <p>The 400 is expected behaviour and stays quiet; the 500 now leaves a line in the log with the method, the path and the real message, which only the operator sees. In <code>server.ts</code>, create the logger once at the top, or pass in the runtime's logger.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="small-store.ts" data-project="anatomy" data-command="npx tsx small-store.ts" data-title="Swap a layer at the composition root"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Swap a layer at the composition root</h3><div class="lx-ex-task"><p>Write a repository that refuses to store more than two examples (throwing <code>ConflictError</code> from <code>@zudojs/errors</code>) and plug it in with the generated controller and service. What does the third <code>POST</code> answer, and why did no other layer need to change?</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="27" data-file="small-store.ts" data-project="anatomy">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="small-store.ts" data-project="anatomy" data-command="npx tsx small-store.ts" data-title="Swap a layer at the composition root"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Swap a layer at the composition root</h3><div class="lx-ex-task"><p>Write a repository that refuses to store more than two examples (throwing <code>ConflictError</code> from <code>@zudojs/errors</code>) and plug it in with the generated controller and service. What does the third <code>POST</code> answer, and why did no other layer need to change?</p></div><script type="text/plain" class="lx-ex-starter" data-file="small-store.ts">// Example to learn from: a repository subclass that adds one rule, then
+// delegates to the original for the real work.
+//
+//   class LimitedCart extends InMemoryCart {
+//     override async add(item: CartItem): Promise<void> {
+//       if ((await this.items()).length >= 2) throw new ConflictError("Cart is full.");
+//       return super.add(item);
+//     }
+//   }
+//
+// Now do the same for the examples repository below: refuse a third example.
+
+import { ConflictError } from "@zudojs/errors";
+import { HttpMiddlewarePipeline, createRouter } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+import { createHttpTestClient } from "@zudojs/testing";
+
+import { ExamplesController } from "./src/controllers/examples.controller.js";
+import type { CreateExampleInput, Example } from "./src/dtos/examples.dto.js";
+import { InMemoryExamplesRepository } from "./src/repositories/examples.repository.js";
+import { registerRoutes } from "./src/routes/index.js";
+import { ExamplesService } from "./src/services/examples.service.js";
+import { errorResponse } from "./src/utils/http.js";
+
+class TwoSlotRepository extends InMemoryExamplesRepository {
+  public override async create(input: CreateExampleInput): Promise<Example> {
+    // Refuse with `new ConflictError("Only two examples fit in this store.")`
+    // once this.findAll() already has 2 or more; otherwise super.create(input).
+    // your code here
+    return super.create(input);
+  }
+}
+
+const router = createRouter();
+registerRoutes(router, {
+  health: async () => ({ ready: true, checks: {} }),
+  examplesController: new ExamplesController(new ExamplesService(new TwoSlotRepository())),
+});
+const dispatch: HttpMiddleware = async (context) => {
+  try {
+    return (await router.dispatch(context.request, { signal: context.signal })).response;
+  } catch (error) {
+    const response = errorResponse(error);
+    if (response === undefined) throw error;
+    return response;
+  }
+};
+const client = createHttpTestClient(new HttpMiddlewarePipeline({ middlewares: [dispatch] }));
+for (const name of ["Buy milk", "Pay rent", "Call Ada"]) {
+  const response = await client.post("/api/v1/examples").send({ name });
+  console.log(response.status, response.status === 201 ? name : response.text);
+}
+await client.close();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>(await this.findAll()).length &gt;= 2</code> tells you the store is already full.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>if ((await this.findAll()).length &gt;= 2) throw new ConflictError("Only two examples fit in this store."); return super.create(input);</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="27" data-file="small-store.ts" data-project="anatomy">
 <figcaption class="lx-bar"><span class="lx-file">small-store.ts</span><button type="button" class="lx-edit" data-index="27" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConflictError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
@@ -2681,7 +2792,7 @@ await client.close();</script>
 409 {"error":"Only two examples fit in this store.","code":"ERR_CONFLICT"}</pre></div>
 </figure>
 <p>The third request gets 409 Conflict. The service calls <code>repository.create</code> through the <code>ExamplesRepository</code> interface, the error already carries its status, and <code>errorResponse</code> turns any exposed 4xx error into a response. Only the composition root changed.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Where would you look?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Where would you look?</h3><div class="lx-ex-task"><p>For each report, name the first file you would open: (a) the app does not start and says <code>PORT must be an integer between 0 and 65535</code>; (b) every response lacks the <code>x-frame-options</code> header; (c) <code>POST /api/v1/examples</code> accepts a 300-character name; (d) after a restart, all examples are gone.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Where would you look?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Where would you look?</h3><div class="lx-ex-task"><p>For each report, name the first file you would open: (a) the app does not start and says <code>PORT must be an integer between 0 and 65535</code>; (b) every response lacks the <code>x-frame-options</code> header; (c) <code>POST /api/v1/examples</code> accepts a 300-character name; (d) after a restart, all examples are gone.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Match each report to a layer: parsing a setting, a middleware in the pipeline, a schema's rule, or where a repository keeps its rows.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(a) and (c) both point at a place a value is checked; (b) and (d) both point at a place something is set up once, in <code>src/server.ts</code> or <code>src/container.ts</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
 <li>(a) <code>src/configs/index.ts</code>, the <code>port</code> function, then your <code>.env</code> or environment.</li>
 <li>(b) <code>src/server.ts</code>: is <code>securityHeaders()</code> still first in the pipeline? Then <code>src/utils/http.ts</code>.</li>
 <li>(c) <code>src/dtos/examples.dto.ts</code>: the <code>max(200)</code> on <code>CreateExampleSchema</code>, and whether the controller parses the body with it.</li>

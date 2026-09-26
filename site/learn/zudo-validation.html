@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1A1A2E">
+  <!-- theme:start -->
+  <script>(function () { var KEY = 'zudo.theme'; var root = document.documentElement; var pick = /[?&]theme=(light|dark|system)\b/.exec(location.search); var saved = null; try { if (pick) { if (pick[1] === 'system') localStorage.removeItem(KEY); else localStorage.setItem(KEY, pick[1]); } saved = localStorage.getItem(KEY); } catch (e) { } var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches); root.setAttribute('data-theme', dark ? 'dark' : 'light'); })();</script>
+  <script src="/js/theme.js" defer></script>
+  <!-- theme:end -->
   <title>Schemas and validation in depth — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-validation.md" title="Markdown version">
   <meta name="description" content="Validate everything crossing the Task API's boundary with @zudojs/schema: issues, coercion, transforms, refinements, unknown fields, responses and hostile JSON.">
@@ -706,9 +710,9 @@ for (const [label, body] of bodies) {
 }</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx guards.ts</code> and of the browser terminal</div><pre class="lx-no-copy">normal -&gt; passed
 too deep -&gt; SerializationDepthError 400 Maximum serialization depth exceeded: 11 &gt; 10
-too big -&gt; SerializationPayloadTooLargeError 413 Serialized payload too large: 100013 bytes (max: 16384)</pre></div>
+too big -&gt; SerializationPayloadTooLargeError 413 Serialized payload too large: 50013 bytes (max: 16384)</pre></div>
 </figure>
-<p>Both hostile bodies were stopped. The size check is an estimate, not a byte count: it counts two bytes per UTF-16 code unit. That is double the real size for plain ASCII text such as the <code>x</code>s here, but <em>less</em> than the real UTF-8 size for characters such as <code>₦</code>, which take three bytes. <a href="/learn/zudo-validation-rules#guards">Validation rules</a> measures the difference. Treat the guard as a cheap check on the parsed value, and keep the server's own body limit as the limit on real bytes.</p>
+<p>Both hostile bodies were stopped. The size check counts real UTF-8 bytes now: 50,013 for the <code>x</code>s here is within a rounding hair of the true 50,012-byte JSON, ASCII or not. Before this was fixed, the guard counted two bytes per UTF-16 code unit instead, which overcounted plain ASCII text by roughly double and <em>undercounted</em> a field full of multi-byte characters such as <code>₦</code>, which take three UTF-8 bytes but only one UTF-16 code unit each; <a href="/learn/zudo-validation-rules#guards">Validation rules</a> shows the two figures side by side. Treat the guard as a cheap check on the parsed value all the same, and keep the server's own body limit as the authority on real bytes on the wire, since the guard measures the parsed value, not the exact bytes the client sent.</p>
 <p>Look at the status codes. The size error is a <strong>413 Payload Too Large</strong>, and the depth error a <strong>400 Bad Request</strong>: both are the client's mistake, so thrown from a route they become the right 4xx answer by themselves.</p>
 <div class="callout callout-note"><p class="lx-callout-label">NOTE</p><code>@zudojs/validation</code> also offers a complete schema system based on the Zod library (<code>validate</code>, <code>z.object(...)</code>), plus rules, normalizers and composers. It does not share schemas with <code>@zudojs/schema</code>. This course describes every DTO with <code>@zudojs/schema</code>; <a href="/learn/zudo-validation-rules">the next lesson</a> shows what <code>@zudojs/validation</code> adds on top.</div>
 </section>
@@ -1348,28 +1352,52 @@ for (const [method, path, body] of [
   console.log(method, path, response.status, (await response.text()).slice(0, 120));
 }
 await server.stop();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx src/check-validation.ts</code></div><pre class="lx-no-copy">PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx src/check-validation.ts</code></div><pre class="lx-no-copy">PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":[],"code":"unknown_keys","message":"Unknow
 PATCH /tasks/2 200 {"id":2,"title":"Walk the dog","done":true,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}
 GET /tasks?done=false&amp;limit=1&amp;page=2 200 [{"id":3,"title":"Water the plants","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]
-GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
-PATCH /tasks/2 413 {"error":"Serialized payload too large: 80013 bytes (max: 65536)","code":"ERR_PAYLOAD_TOO_LARGE"}</pre></div>
+GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["limit"],"code":"too_large","message":"Ex
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_large","message":"St</pre></div>
 </figure>
-<p>The unknown <code>id</code> was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and a huge body never reached a schema: it got a 413 that names the size and the limit, and nothing from the body itself. You do not map this error yourself: the guard marks it as safe to show, so the router's default answer here, and the generated <code>errorResponse</code> in the running server, both send it as it is. The 400 bodies still only say "Validation failed"; <a href="/learn/zudo-errors">The ZudoJS error system</a> adds the list of issues for every route at once. Run the same script in your project:</p>
+<p>The unknown <code>id</code> was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and the huge title got a 400 too — but not the 413 you might expect. The byte-size guard now counts real UTF-8 bytes (see <a href="#guards">above</a>), so 40,000 ASCII characters is a ~40,013-byte body, comfortably under the 65,536-byte limit; it passes the guard and reaches the schema, where the <code>title</code> field's own length constraint rejects it as <code>too_large</code>. You do not map any of these errors yourself: the guard and the schema both mark their failures as safe to show, so the router's default answer, and the generated <code>errorResponse</code> in the running server, send each one as it is, <code>issues</code> array included. <a href="/learn/zudo-errors">The ZudoJS error system</a> is what makes that array show up on every route at once, without each handler building it by hand. Run the same script in your project:</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
 <pre class="lx-shell-body" data-copy="npx tsc --noEmit
 npx tsx src/check-validation.ts"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npx tsc --noEmit</span>
 <span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npx tsx src/check-validation.ts</span>
-<span class="lx-res">PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}</span>
+<span class="lx-res">PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":[],"code":"unknown_keys","message":"Unknow</span>
 <span class="lx-res">PATCH /tasks/2 200 {"id":2,"title":"Walk the dog","done":true,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}</span>
 <span class="lx-res">GET /tasks?done=false&amp;limit=1&amp;page=2 200 [{"id":3,"title":"Water the plants","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]</span>
-<span class="lx-res">GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}</span>
-<span class="lx-res">PATCH /tasks/2 413 {"error":"Serialized payload too large: 80013 bytes (max: 65536)","code":"ERR_PAYLOAD_TOO_LARGE"}</span></pre></figure>
+<span class="lx-res">GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["limit"],"code":"too_large","message":"Ex</span>
+<span class="lx-res">PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_large","message":"St</span></pre></figure>
 <p><code>registerRoutes</code> already registers <code>registerTaskRoutes</code>, so the running server has the new <code>PATCH /tasks/:id</code> route as soon as <code>npm run dev</code> restarts.</p>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="search.ts" data-title="A search parameter"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A search parameter</h3><div class="lx-ex-task"><p>Add a <code>q</code> parameter to <code>ListTasksQuery</code> for searching titles. It is optional, is trimmed, must be 1 to 50 characters, and is compared in lower case, so turn it to lower case in the schema. Test it with <code>?q=%20MILK%20</code> (the <code>%20</code> are spaces) and with <code>?q=</code>.</p></div><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="search.ts">
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="search.ts" data-title="A search parameter"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A search parameter</h3><div class="lx-ex-task"><p>Add a <code>q</code> parameter to <code>ListTasksQuery</code> for searching titles. It is optional, is trimmed, must be 1 to 50 characters, and is compared in lower case, so turn it to lower case in the schema. Test it with <code>?q=%20MILK%20</code> (the <code>%20</code> are spaces) and with <code>?q=</code>.</p></div><script type="text/plain" class="lx-ex-starter" data-file="search.ts">// Example to learn from: an optional "category" filter, trimmed, lower
+// cased, and limited to 1-30 characters.
+//
+//   const Schema = schema.object({
+//     category: schema.string().trim().toLowerCase().min(1).max(30).optional(),
+//   });
+//   for (const category of [" Fruit ", ""]) {
+//     const result = Schema.safeParse({ category });
+//     console.log(JSON.stringify(category), "->", result.success ? result.data : result.issues[0]?.message);
+//   }
+//
+// Now do the same for q below.
+
+import { schema } from "@zudojs/schema";
+
+const ListTasksQuery = schema.object({
+  // q: optional, trimmed, lower cased, 1 to 50 characters
+  // your code here
+});
+
+for (const q of [" MILK ", ""]) {
+  const result = ListTasksQuery.safeParse({ q });
+  console.log(JSON.stringify(q), "->", result.success ? result.data : result.issues[0]?.message);
+}
+console.log(ListTasksQuery.parse({}));</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Chain the modifiers in the same order as <code>category</code> above: trim, then lower case, then the length bounds, then <code>.optional()</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>q: schema.string().trim().toLowerCase().min(1).max(50).optional()</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="search.ts">
 <figcaption class="lx-bar"><span class="lx-file">search.ts</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="18"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
@@ -1409,7 +1437,48 @@ console.log(ListTasksQuery.parse({}));</script>
 <script type="text/plain" class="lx-src">function updateTask(task: StoredTask, body: Record<string, unknown>): StoredTask {
   return { ...task, ...body } as StoredTask;
 }</script>
-</figure></div><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p><code>{ ...task, ...body }</code> copies <em>every</em> field of the request body onto the task: <code>id</code>, <code>createdAt</code>, and in later lessons <code>ownerId</code>. A client could move a task to another user or overwrite its id. The <code>as StoredTask</code> hides the problem from TypeScript. The fix parses first and copies only known fields:</p>
+</figure></div><script type="text/plain" class="lx-ex-starter" data-file="fixed.ts">// Example to learn from: a rename endpoint that parses first and copies
+// only the field it expects, instead of trusting the whole body.
+//
+//   const RenameSchema = schema
+//     .object({ nickname: schema.string().trim().min(1).max(20) })
+//     .partial()
+//     .strict();
+//   function renameUser(user: StoredUser, body: unknown): StoredUser {
+//     const changes = RenameSchema.parse(body);
+//     return { ...user, nickname: changes.nickname ?? user.nickname };
+//   }
+//
+// Now do the same for updateTask below.
+
+import { schema } from "@zudojs/schema";
+
+const UpdateTaskSchema = schema.object({
+  // title: schema.string().trim().min(3).max(100), done: schema.boolean()
+  // then .partial().strict()
+  // your code here
+});
+
+interface StoredTask {
+  readonly id: number;
+  readonly ownerId: number;
+  readonly title: string;
+  readonly done: boolean;
+}
+
+function updateTask(task: StoredTask, body: unknown): StoredTask {
+  // parse body with UpdateTaskSchema, then copy only its title/done onto task
+  // your code here
+  return { ...task, ...(body as Record<string, unknown>) } as StoredTask;
+}
+
+const task: StoredTask = { id: 1, ownerId: 7, title: "Buy milk", done: false };
+console.log(updateTask(task, { done: true }));
+try {
+  updateTask(task, { done: true, ownerId: 1 });
+} catch (error) {
+  console.log((error as Error).name, (error as Error).message);
+}</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The unknown field to catch is <code>ownerId</code>: a task with an id and title should never accept a new <code>id</code> or <code>ownerId</code> from a client. Build <code>UpdateTaskSchema</code> the same way as <code>RenameSchema</code> above, but with <code>title</code> and <code>done</code> instead of <code>nickname</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>schema.object({ title: schema.string().trim().min(3).max(100), done: schema.boolean() }).partial().strict()</code>, then inside <code>updateTask</code>: <code>const changes = UpdateTaskSchema.parse(body); return { ...task, title: changes.title ?? task.title, done: changes.done ?? task.done };</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p><code>{ ...task, ...body }</code> copies <em>every</em> field of the request body onto the task: <code>id</code>, <code>createdAt</code>, and in later lessons <code>ownerId</code>. A client could move a task to another user or overwrite its id. The <code>as StoredTask</code> hides the problem from TypeScript. The fix parses first and copies only known fields:</p>
 <figure class="lx-example" data-index="20" data-file="fixed.ts">
 <figcaption class="lx-bar"><span class="lx-file">fixed.ts</span><button type="button" class="lx-edit" data-index="20" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="20"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>

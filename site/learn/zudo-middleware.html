@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1A1A2E">
+  <!-- theme:start -->
+  <script>(function () { var KEY = 'zudo.theme'; var root = document.documentElement; var pick = /[?&]theme=(light|dark|system)\b/.exec(location.search); var saved = null; try { if (pick) { if (pick[1] === 'system') localStorage.removeItem(KEY); else localStorage.setItem(KEY, pick[1]); } saved = localStorage.getItem(KEY); } catch (e) { } var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches); root.setAttribute('data-theme', dark ? 'dark' : 'light'); })();</script>
+  <script src="/js/theme.js" defer></script>
+  <!-- theme:end -->
   <title>Middleware, CORS, security headers and graceful shutdown — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-middleware.md" title="Markdown version">
   <meta name="description" content="Wrap every Task API route in middleware: how a pipeline runs, security headers, a CORS allow-list, rate limits, and a shutdown that lets requests finish.">
@@ -379,16 +383,16 @@ await withServer(pipeline, async (base) => {
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx headers.ts</code></div><pre class="lx-no-copy">x-content-type-options: nosniff
 x-frame-options: DENY
 referrer-policy: strict-origin-when-cross-origin
-content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
-strict-transport-security: max-age=31536000; includeSubDomains; preload</pre></div>
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+strict-transport-security: max-age=63072000; includeSubDomains; preload</pre></div>
 </figure>
 <p>What they do, in short:</p>
 <ul>
 <li><code>X-Content-Type-Options: nosniff</code>: the browser must trust the <code>Content-Type</code> you send and not guess, so a JSON answer can never be run as a script.</li>
 <li><code>X-Frame-Options: DENY</code> and CSP's <code>frame-ancestors 'none'</code>: no other site may show your pages inside a frame. This stops <strong>clickjacking</strong>, where an invisible frame tricks the user into clicking your buttons.</li>
 <li><code>Referrer-Policy</code>: other sites do not see your full URLs, which may contain ids.</li>
-<li><code>Content-Security-Policy</code> (CSP): the list of places a page may load scripts, styles and images from.</li>
-<li><code>Strict-Transport-Security</code> (HSTS): "only ever talk to me over HTTPS" for a year.</li>
+<li><code>Content-Security-Policy</code> (CSP): the list of places a page may load scripts, styles and images from. Neither scripts nor styles may run inline (no <code>'unsafe-inline'</code>), and <code>object-src 'none'</code> blocks <code>&lt;object&gt;</code>/<code>&lt;embed&gt;</code>, a route around the other rules browsers have closed one at a time.</li>
+<li><code>Strict-Transport-Security</code> (HSTS): "only ever talk to me over HTTPS" for two years (<code>max-age=63072000</code>), the value browsers' preload lists expect.</li>
 </ul>
 <p>The middleware also sends a few more (<code>Permissions-Policy</code> and the cross-origin headers). You get all of them with one line, and you never have to remember them.</p>
 <div class="callout callout-warning"><p class="lx-callout-label">HSTS AND LOCALHOST</p>Browsers remember HSTS, but they only accept it from an HTTPS answer: over plain <code>http://</code> they ignore it. If a development server on <code>localhost</code> ever answers over HTTPS (with a local certificate, or behind a local proxy) and sends HSTS, browsers then refuse plain <code>http://localhost</code> for a year, on every port. For such a server, use <code>createSecurityMiddleware({ strictTransportSecurity: "max-age=0" })</code>, which tells browsers to forget it, and keep the default in production behind HTTPS. <a href="/learn/zudo-security#headers">Security for every public API</a> goes deeper into CSP and HSTS.</div>
@@ -553,10 +557,10 @@ await withServer(pipeline, async (base) => {
 });</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx rate-limit.ts</code></div><pre class="lx-no-copy">POST 201 retry-after: null {"ok":true}
 POST 201 retry-after: null {"ok":true}
-POST 429 retry-after: 60 {"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}}
+POST 429 retry-after: 60 {"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"},"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}
 GET 200 retry-after: null {"ok":true}</pre></div>
 </figure>
-<p>The third <code>POST</code> got 429, with a JSON body (sent as <code>application/json</code>) and a <code>Retry-After</code> header: the number of seconds to wait. Reading still works, because <code>GET</code> requests only count against the gentle limit.</p>
+<p>The third <code>POST</code> got 429, with a JSON body (sent as <code>application/json</code>) and a <code>Retry-After</code> header: the number of seconds to wait. The <code>code</code> and <code>message</code> are repeated at the top level of the body, not only nested under <code>error</code>, so client code that reads either shape finds them. Reading still works, because <code>GET</code> requests only count against the gentle limit.</p>
 <ul>
 <li>The client is identified by <code>request.remoteAddress</code>. Behind a <strong>proxy</strong> or load balancer, every request seems to come from the proxy, so all users would share one allowance. Tell the adapter how many proxies you run, for example <code>createNodeHttpAdapter({ trustProxy: 1 })</code>; only then does it believe the <code>X-Forwarded-For</code> header. Never trust that header without it: any client can send it and pick its own address.</li>
 <li>These counts live in the memory of one process. With several copies of the app, each counts separately; <a href="/learn/zudo-security#rate-limit">Security for every public API</a> covers that case and login limits.</li>
@@ -1139,7 +1143,7 @@ curl -i -X POST http://localhost:3000/tasks -H &quot;content-type: application/j
 <span class="lx-res">x-frame-options: DENY</span>
 <span class="lx-res">…</span>
 <span class="lx-res"></span>
-<span class="lx-res">{"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}}</span></pre></figure>
+<span class="lx-res">{"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"},"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}</span></pre></figure>
 <p>Your own app's origin got the CORS headers, the 21st write got 429 with <code>Retry-After</code>, and <code>curl http://localhost:3000/tasks</code> still answers 200. <code>x-ratelimit-reset</code> is the time the window ends, in seconds since 1970. The loop is for macOS, Linux and Git Bash; on Windows PowerShell, run the <code>curl.exe</code> command 21 times with the arrow keys instead. Now press <kbd>Ctrl</kbd> + <kbd>C</kbd> in the server's terminal:</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
 <pre class="lx-shell-body" data-copy=""><span class="lx-res">^CReceived SIGINT: shutting down.</span>
@@ -1154,7 +1158,38 @@ curl -i -X POST http://localhost:3000/tasks -H &quot;content-type: application/j
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="request-id.ts" data-command="npx tsx request-id.ts" data-title="A request id on every response"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A request id on every response</h3><div class="lx-ex-task"><p>Write a middleware that puts an <code>x-request-id</code> header on every response, using <code>context.request.id</code>: the unique id <code>@zudojs/http</code> gives every request. Test it with two requests made by <code>createRequestContext</code>, and check that they get different ids.</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="request-id.ts">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="request-id.ts" data-command="npx tsx request-id.ts" data-title="A request id on every response"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A request id on every response</h3><div class="lx-ex-task"><p>Write a middleware that puts an <code>x-request-id</code> header on every response, using <code>context.request.id</code>: the unique id <code>@zudojs/http</code> gives every request. Test it with two requests made by <code>createRequestContext</code>, and check that they get different ids.</p></div><script type="text/plain" class="lx-ex-starter" data-file="request-id.ts">// Example to learn from: a middleware that reads the response next()
+// produced, then adds one header to it before returning it.
+//
+//   const served: HttpMiddleware = async (context, next) => {
+//     const response = await next();
+//     return response.setHeader("x-served-by", "api-1");
+//   };
+//
+// Now do the same for the request id below.
+
+import { createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+
+const requestId: HttpMiddleware = async (context, next) => {
+  // await next() for the response, then setHeader("x-request-id",
+  // context.request.id) on it and return it
+  // your code here
+  return next();
+};
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(requestId, { priority: -100 });
+pipeline.use(async (context) => context.response.json({ ok: true }));
+
+const first = createRequestContext({ method: "GET", url: "/tasks" });
+const second = createRequestContext({ method: "GET", url: "/tasks" });
+const a = await pipeline.execute(first, createResponseContext());
+const b = await pipeline.execute(second, createResponseContext());
+
+console.log(a.headers["x-request-id"] === first.id, b.headers["x-request-id"] === second.id);
+console.log("different ids:", first.id !== second.id);
+console.log(a.headers["x-request-id"]);</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>const response = await next(); return response.setHeader("x-request-id", context.request.id);</code>, the same shape as <code>served</code> above.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>setHeader</code> returns the response, so you can return its result directly; no need for a separate variable if you prefer <code>return (await next()).setHeader(...)</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="request-id.ts">
 <figcaption class="lx-bar"><span class="lx-file">request-id.ts</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createRequestContext<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> <span class="t-ty">HttpMiddlewarePipeline</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
@@ -1203,7 +1238,25 @@ different ids: true
 </figure>
 <p>The id is a random <strong>UUID</strong>, different on every run. When a user reports an error, they can send you the id from the response, and you can find that exact request in your logs. The <a href="/learn/zudo-logging">logging lesson</a> builds on this.</p>
 <div class="callout callout-note"><p class="lx-callout-label">NOTE</p>When a real request arrives with an <code>X-Request-Id</code> header of 1 to 128 letters, digits, dots, dashes, underscores or colons, <code>request.id</code> reuses it. That way an id set by a proxy or another service in front of yours follows the request through your logs. The adapter refuses a malformed one with 400. Treat the id as a label, never as proof of anything, because any client can choose it. <code>createNodeHttpAdapter({ trustRequestId: false })</code> always generates a new one.</div></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="cors-two.ts" data-project="mw" data-command="npx tsx cors-two.ts" data-title="Allow a second origin"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Allow a second origin</h3><div class="lx-ex-task"><p>The Task API also gets a mobile web app at <code>https://m.tasks.example.com</code>. Change the CORS example so it is allowed too, and show that <code>https://tasks.example.com.evil.example</code>, which merely <em>starts</em> with an allowed origin, is still refused.</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="19" data-file="cors-two.ts" data-project="mw">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="cors-two.ts" data-project="mw" data-command="npx tsx cors-two.ts" data-title="Allow a second origin"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Allow a second origin</h3><div class="lx-ex-task"><p>The Task API also gets a mobile web app at <code>https://m.tasks.example.com</code>. Change the CORS example so it is allowed too, and show that <code>https://tasks.example.com.evil.example</code>, which merely <em>starts</em> with an allowed origin, is still refused.</p></div><script type="text/plain" class="lx-ex-starter" data-file="cors-two.ts">// Example to learn from: an allow-list of exact origins, as an array.
+//
+//   pipeline.use(createCorsMiddleware({ allowOrigin: ["https://shop.example.com", "https://admin.shop.example.com"] }));
+//
+// Now add the mobile app's origin to the list below.
+
+import { createCorsMiddleware, HttpMiddlewarePipeline } from "@zudojs/http";
+import { withServer } from "./serve.js";
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(createCorsMiddleware({ allowOrigin: ["https://tasks.example.com"] })); // add the mobile origin here too
+pipeline.use(async (context) => context.response.json([]));
+
+await withServer(pipeline, async (base) => {
+  for (const origin of ["https://m.tasks.example.com", "https://tasks.example.com.evil.example"]) {
+    const response = await fetch(`${base}/tasks`, { headers: { origin } });
+    console.log(origin, "->", response.headers.get("access-control-allow-origin"));
+  }
+});</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Add a second string to the array: <code>allowOrigin: ["https://tasks.example.com", "https://m.tasks.example.com"]</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>The evil origin stays refused either way: the list is compared exactly, and merely starting with an allowed origin is not the same string.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="19" data-file="cors-two.ts" data-project="mw">
 <figcaption class="lx-bar"><span class="lx-file">cors-two.ts</span><button type="button" class="lx-edit" data-index="19" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createCorsMiddleware<span class="t-pn">,</span> <span class="t-ty">HttpMiddlewarePipeline</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> withServer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./serve.js"</span><span class="t-pn">;</span>

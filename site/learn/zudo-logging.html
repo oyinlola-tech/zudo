@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1A1A2E">
+  <!-- theme:start -->
+  <script>(function () { var KEY = 'zudo.theme'; var root = document.documentElement; var pick = /[?&]theme=(light|dark|system)\b/.exec(location.search); var saved = null; try { if (pick) { if (pick[1] === 'system') localStorage.removeItem(KEY); else localStorage.setItem(KEY, pick[1]); } saved = localStorage.getItem(KEY); } catch (e) { } var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches); root.setAttribute('data-theme', dark ? 'dark' : 'light'); })();</script>
+  <script src="/js/theme.js" defer></script>
+  <!-- theme:end -->
   <title>Structured logging — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-logging.md" title="Markdown version">
   <meta name="description" content="Replace console.log with structured entries a program can search: levels, child loggers, request ids, redaction and JSON logs with @zudojs/logger.">
@@ -536,6 +540,7 @@ logFailure(logger, new Error("connect ECONNREFUSED 127.0.0.1:5432"), "POST /task
 <span class="lx-res">    at async node:internal/modules/esm/loader:643:26</span>
 <span class="lx-res">    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)</span></pre></figure>
 <p>The first frame points at line 22 of your file, where the error was created. That is where you start looking.</p>
+<p><code>logError</code> is not the only place an <code>Error</code> can end up. Since <code>@zudojs/logger</code> 1.5.0, an <code>Error</code> nested anywhere in metadata, such as <code>logger.error("retry failed", { cause: previousError })</code>, is normalized the same way when the entry is built: <code>{ name, message, stack, …ownFields }</code>, with its own fields redacted like any other metadata and a self-referential <code>cause</code> written as <code>"[Circular]"</code>. Before that fix, an error nested this way had no enumerable properties of its own, so a custom transport that stringifies <code>entry.metadata</code> saw <code>{}</code> and the failure it was trying to record vanished. The built-in formatters already rendered it correctly; the fix is for your own transports.</p>
 <p>Two rules make error logs useful:</p>
 <ul>
 <li><strong>4xx is not an error of your server.</strong> A missing task or a bad request body is the client's mistake. Log it as <code>warn</code> (or <code>info</code>), without a stack trace. Keep <code>error</code> for 5xx, the failures you must fix. If every 404 is an <code>error</code>, the real errors drown.</li>
@@ -758,7 +763,33 @@ NODE_ENV=production npx tsx src/server.ts"><span class="lx-cmd"><span class="lx-
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="count-levels.ts" data-title="Count entries per level"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Count entries per level</h3><div class="lx-ex-task"><p>A transport can do more than print. Write one that counts entries per level name in a <code>Map</code> (use <code>entry.levelName</code>). Log two <code>info</code> entries, one <code>warn</code> and one <code>debug</code> with the default level, then print the map.</p></div><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="12" data-file="count-levels.ts">
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="count-levels.ts" data-title="Count entries per level"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Count entries per level</h3><div class="lx-ex-task"><p>A transport can do more than print. Write one that counts entries per level name in a <code>Map</code> (use <code>entry.levelName</code>). Log two <code>info</code> entries, one <code>warn</code> and one <code>debug</code> with the default level, then print the map.</p></div><script type="text/plain" class="lx-ex-starter" data-file="count-levels.ts">// Example to learn from: a transport that counts by a different field.
+//
+//   const seen = new Map<string, number>();
+//   const logger = createLogger({
+//     name: "task-api",
+//     transports: [(entry) => {
+//       seen.set(entry.message, (seen.get(entry.message) ?? 0) + 1);
+//     }],
+//   });
+//
+// Now count by entry.levelName instead of entry.message.
+
+import { createLogger } from "@zudojs/logger";
+
+const counts = new Map<string, number>();
+const logger = createLogger({
+  name: "task-api",
+  transports: [(entry) => {
+    // Increment counts.get(entry.levelName), starting from 0 when missing.
+  }],
+});
+
+logger.info("task created");
+logger.info("task completed");
+logger.warn("slow query");
+logger.debug("cache miss");
+console.log(counts);</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Inside the transport, read the current count with <code>counts.get(entry.levelName) ?? 0</code> before writing it back with <code>counts.set</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>counts.set(entry.levelName, (counts.get(entry.levelName) ?? 0) + 1);</code>. The <code>debug</code> call never reaches the transport at all, because the default level is <code>info</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="12" data-file="count-levels.ts">
 <figcaption class="lx-bar"><span class="lx-file">count-levels.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="12"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createLogger <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/logger"</span><span class="t-pn">;</span>
 
@@ -794,7 +825,7 @@ console.log(counts);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx count-levels.ts</code> and of the browser terminal</div><pre class="lx-no-copy">Map(2) { 'info' =&gt; 2, 'warn' =&gt; 1 }</pre></div>
 </figure>
 <p>The <code>debug</code> entry never reached the transport: the level check happens first. A transport like this is also handy in tests, to check what your code logged.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="think" data-title="Find the leaks"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Find the leaks</h3><div class="lx-ex-task"><p>Which of these lines leak a secret into the logs, and how do you fix them? (a) <code>log.info("login", { user, password })</code> (b) <code>log.info(`token issued: ${token}`)</code> (c) <code>log.debug("request", { headers: request.headers })</code> (d) <code>log.info("user", { profile: { name, creditCard, phone } })</code></p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) is safe: <code>password</code> is redacted by name. (b) leaks: the token is inside the message text, which is never redacted. Log <code>"token issued"</code> with a harmless field like <code>{ userId }</code> instead. (c) is safe for <code>authorization</code> and <code>cookie</code>, but you still log every other header, some of which may be personal. Log only the headers you need. (d) half leaks: <code>creditCard</code> is redacted by default (the list also knows <code>cardNumber</code>, <code>cvv</code> and <code>ssn</code>), but <code>phone</code> is personal data the logger does not know about. Add it with <code>redact: { keys: ["phone"] }</code>. Better still, log only the <code>userId</code>, and never put card data in a log object at all.</p></div></div>
+<div class="lx-exercise" data-exercise="2" data-mode="think" data-title="Find the leaks"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Find the leaks</h3><div class="lx-ex-task"><p>Which of these lines leak a secret into the logs, and how do you fix them? (a) <code>log.info("login", { user, password })</code> (b) <code>log.info(`token issued: ${token}`)</code> (c) <code>log.debug("request", { headers: request.headers })</code> (d) <code>log.info("user", { profile: { name, creditCard, phone } })</code></p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Redaction checks a field <em>name</em>, at any depth of an object. Ask, for each case, whether the secret value sits in a named field at all, or whether it has already been merged into plain text.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(a) and part of (d) are already covered by the built-in name list. (b) has no field to redact, because a template literal is just a string. (c) and the rest of (d) need a decision about which fields belong in a log at all, not just whether the logger recognises their names.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) is safe: <code>password</code> is redacted by name. (b) leaks: the token is inside the message text, which is never redacted. Log <code>"token issued"</code> with a harmless field like <code>{ userId }</code> instead. (c) is safe for <code>authorization</code> and <code>cookie</code>, but you still log every other header, some of which may be personal. Log only the headers you need. (d) half leaks: <code>creditCard</code> is redacted by default (the list also knows <code>cardNumber</code>, <code>cvv</code> and <code>ssn</code>), but <code>phone</code> is personal data the logger does not know about. Add it with <code>redact: { keys: ["phone"] }</code>. Better still, log only the <code>userId</code>, and never put card data in a log object at all.</p></div></div>
 </section>
 
 <section>

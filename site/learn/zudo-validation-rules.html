@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1A1A2E">
+  <!-- theme:start -->
+  <script>(function () { var KEY = 'zudo.theme'; var root = document.documentElement; var pick = /[?&]theme=(light|dark|system)\b/.exec(location.search); var saved = null; try { if (pick) { if (pick[1] === 'system') localStorage.removeItem(KEY); else localStorage.setItem(KEY, pick[1]); } saved = localStorage.getItem(KEY); } catch (e) { } var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches); root.setAttribute('data-theme', dark ? 'dark' : 'light'); })();</script>
+  <script src="/js/theme.js" defer></script>
+  <!-- theme:end -->
   <title>Validation rules with @zudojs/validation — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-validation-rules.md" title="Markdown version">
   <meta name="description" content="Go beyond data shapes with @zudojs/validation: constraints, normalizers, composers, Zod, guards and errors, and treat request and response failures differently.">
@@ -173,15 +177,15 @@ created "Buy  milk"
 created "BUY MILK"
 created "Ｂｕｙ milk"
 created "Buy milk\u0007"
-created "🛒🛒"
-tasks stored: 6</pre></div>
+refused (String must be at least 3 characters)
+tasks stored: 5</pre></div>
 </figure>
 <ul>
 <li>Four spellings of "Buy milk" are now four tasks: two spaces, capitals, and "fullwidth" letters that some phone keyboards produce. To a person they are the same task.</li>
 <li>A title with an invisible control character (<code>\u0007</code>, the "bell") was stored. It will end up in e-mails, logs and CSV exports.</li>
-<li>Two emoji passed <code>min(3)</code>, because JavaScript counts an emoji as two "characters" (two UTF-16 code units).</li>
+<li>The two emoji were correctly refused this time: <code>@zudojs/schema</code>'s <code>min()</code> counts Unicode code points, so <code>🛒🛒</code> is 2 characters, not the 4 UTF-16 code units older versions counted. A shape check can measure length; it still has no opinion on duplicates or control characters.</li>
 </ul>
-<p>None of these is a shape problem. They are <strong>rules</strong> about what a value means: which titles count as the same, which characters are allowed, how long a string is to a human. <code>@zudojs/validation</code> is the ZudoJS package for such rules. It also brings structural guards, which you have used since the last lesson, a Zod integration, and an error class for validation failures.</p>
+<p>Two of these are not shape problems. They are <strong>rules</strong> about what a value means: which titles count as the same, which characters are allowed. <code>@zudojs/validation</code> is the ZudoJS package for such rules. It also brings structural guards, which you have used since the last lesson, a Zod integration, and an error class for validation failures.</p>
 </section>
 
 <section>
@@ -197,7 +201,7 @@ tasks stored: 6</pre></div>
 </tbody>
 </table></div>
 <p>The rule of thumb for this course: <strong>schemas describe shapes, <code>@zudojs/validation</code> checks rules</strong>. A DTO stays a <code>@zudojs/schema</code> schema. Rules that need more than a type, a length and a format, such as "no control characters", "same title ignoring case and spacing", "USSD transfers at most ₦20,000", are written as constraints and composed with <code>@zudojs/validation</code>, and run after the schema has produced a typed value. Its Zod schemas are the alternative for a project that already uses Zod; do not describe the same DTO in both.</p>
-<p>The two error classes look alike but are not the same class, and one guard does not recognise the other's errors:</p>
+<p>The two error classes look alike but are not the same class, and only one of the two guards reaches across packages:</p>
 <figure class="lx-example" data-index="1" data-file="two-errors.ts">
 <figcaption class="lx-bar"><span class="lx-file">two-errors.ts</span><button type="button" class="lx-edit" data-index="1" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="1"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> isSchemaValidationError<span class="t-pn">,</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
@@ -240,9 +244,9 @@ for (const error of errors) {
   console.log(e.name, e.statusCode, e.code, "| schema guard:", isSchemaValidationError(error), "| validation guard:", isValidationError(error));
 }</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx two-errors.ts</code> and of the browser terminal</div><pre class="lx-no-copy">SchemaError 400 ERR_SCHEMA_VALIDATION | schema guard: true | validation guard: false
-SchemaValidationError 400 ERR_SCHEMA_VALIDATION | schema guard: false | validation guard: true</pre></div>
+SchemaValidationError 400 ERR_SCHEMA_VALIDATION | schema guard: true | validation guard: true</pre></div>
 </figure>
-<p>Both are exposed 400s with the same <code>code</code>, so a generic error handler answers both correctly. But code that checks <code>isSchemaValidationError</code> to read <code>issues</code>, as the Task API's error handler will in <a href="/learn/zudo-errors">the next lesson</a>, does not recognise errors from <code>@zudojs/validation</code>. Keep that in mind when you mix them; this lesson's Task API rules are written so that their error message carries the details.</p>
+<p>Both are exposed 400s with the same <code>code</code>, so a generic error handler answers both correctly. <code>isSchemaValidationError</code> now recognises both: any <code>BaseError</code> coded <code>ERR_SCHEMA_VALIDATION</code> with an issue list counts, whichever package threw it, so code that checks it to read <code>issues</code>, as the Task API's error handler will in <a href="/learn/zudo-errors">the next lesson</a>, works for both. The reverse still does not hold: <code>isValidationError</code> only recognises <code>@zudojs/validation</code>'s own errors, not a plain <code>SchemaError</code> from <code>@zudojs/schema</code>. Reach for <code>isSchemaValidationError</code> when you need one guard that covers a mixed codebase.</p>
 </section>
 
 <section>
@@ -285,7 +289,7 @@ emoji        [ 'title: Value must contain at least 3 characters.' ]</pre></div>
 <p>A few details matter:</p>
 <ul>
 <li><code>checkConstraints</code> runs <em>every</em> constraint and reports every failure, so a form can show all problems at once. The <code>path</code> argument puts the field name on each issue.</li>
-<li>String lengths count <strong>code points</strong>, so an emoji is one character: <code>🛒🛒</code> is two, and fails <code>minLength(3)</code>. <code>@zudojs/schema</code>'s <code>min(3)</code> counts UTF-16 code units and let it through. When length means "what a person sees", use the constraint.</li>
+<li>String lengths count <strong>code points</strong>, so an emoji is one character: <code>🛒🛒</code> is two, and fails <code>minLength(3)</code>. <code>@zudojs/schema</code>'s <code>min(3)</code> counts the same way now, so the two packages agree on "what a person sees" — you no longer need the constraint just to get this right, only for rules a schema cannot express at all.</li>
 <li><code>httpUrl</code> accepts only <code>http:</code> and <code>https:</code>. A <code>javascript:</code> "URL" in a profile link is a classic stored-XSS trick.</li>
 <li>The rejected value is <strong>not</strong> copied into the issue. Issues end up in error responses and logs, and the rejected value may be a password or a card number.</li>
 </ul>
@@ -342,11 +346,11 @@ console.log(checkConstraints([integer, between(1, 8)], 2.5).issues?.map((i) => i
 ]
 false
 Choose another username true
-Value must not satisfy one_of.
-One or more validation constraints failed.
+Value must not satisfy the "one of" constraint.
+Value must be an integer. Value must be between 1 and 8.
 [ 'Value must be an integer.' ]</pre></div>
 </figure>
-<p>Two things to notice. <code>not</code> without options reports the internal name of the constraint it negates (<code>one_of</code>), which means nothing to a user, so give it your own message. And <code>combineConstraints</code> turns several constraints into one, but its failure message is generic: when the reason matters to the user, pass the list to <code>checkConstraints</code> instead.</p>
+<p>Two things to notice. <code>not</code> without options now reports a readable phrase naming the constraint it negates (<code>the "one of" constraint</code>) instead of the bare internal name <code>one_of</code>; giving it your own <code>message</code>, as <code>notReserved</code> does, still gives the best wording for a user. And <code>combineConstraints</code> turns several constraints into one, and its failure message now lists every member's message in one string; when you need each one as a separate issue instead, pass the list to <code>checkConstraints</code>.</p>
 </section>
 
 <section>
@@ -688,9 +692,9 @@ try {
   ]
 }
 true
-validate threw: Error - Encountered Promise during synchronous parse. Use .parseAsync() instead.</pre></div>
+validate threw: ConfigurationError - The schema contains an async refine() or transform() and cannot be parsed synchronously; use validateAsync(), parseAsync() or createAsyncValidator().</pre></div>
 </figure>
-<p>The synchronous call did not return a failure result: it threw a plain <code>Error</code>, which a server would answer with 500. Use <code>validateAsync</code> or <code>parseAsync</code> for any schema with an asynchronous rule. And keep such checks out of schemas for writes that must be unique: between the check and the insert another request can take the name. The database's unique index is the real guarantee; the check only gives a friendlier message.</p>
+<p>The synchronous call did not return a failure result: it threw a <code>ConfigurationError</code> naming the fix, rather than the bare <code>Error</code> it used to throw — a clue instead of a mystery 500, though it is still your bug to fix, not the client's. Use <code>validateAsync</code> or <code>parseAsync</code> for any schema with an asynchronous rule. And keep such checks out of schemas for writes that must be unique: between the check and the insert another request can take the name. The database's unique index is the real guarantee; the check only gives a friendlier message.</p>
 </section>
 
 <section>
@@ -723,7 +727,7 @@ console.log(error.message);
 console.log(error.fieldErrors);
 console.log(JSON.stringify(error.toJSON().issues[0]));
 console.log(isValidationError(error));</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx errors.ts</code> and of the browser terminal</div><pre class="lx-no-copy">ValidationError 400 true ERR_VALIDATION_FAILED
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx errors.ts</code> and of the browser terminal</div><pre class="lx-no-copy">ValidationError 400 true ERR_INVALID_INPUT
 password: Password must be at least 12 characters; email: Enter a valid email address
 [Object: null prototype] {
   password: 'Password must be at least 12 characters',
@@ -832,12 +836,12 @@ try {
   console.log((error as Error).message);
 }</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx depth-size.ts</code> and of the browser terminal</div><pre class="lx-no-copy">3 0
-a estimate: 2013 real UTF-8 bytes: 1012
-₦ estimate: 2013 real UTF-8 bytes: 3012
-任 estimate: 2013 real UTF-8 bytes: 3012
-2,500-byte limit: passed</pre></div>
+a estimate: 1013 real UTF-8 bytes: 1012
+₦ estimate: 3013 real UTF-8 bytes: 3012
+任 estimate: 3013 real UTF-8 bytes: 3012
+Serialized payload too large: 3013 bytes (max: 2500)</pre></div>
 </figure>
-<p>The size estimate counts two bytes per UTF-16 code unit. For plain ASCII that is about double the real size, but <code>₦</code> and most non-Latin scripts take three bytes in UTF-8, and there the estimate is too <em>low</em>: the 3,012-byte body passed a 2,500-byte limit. Treat the guard as a cheap check on the parsed structure, and keep the HTTP server's body limit (10 MB by default, set lower for a JSON API) as the hard limit on real bytes.</p>
+<p>The size estimate now counts real UTF-8 bytes, the same as <code>JSON.stringify</code> would put on the wire — within a byte of it here, for the one byte of quoting the key adds. Plain ASCII, <code>₦</code> and 任 all come out right, where the old estimate charged every string two bytes per UTF-16 code unit: correct for nothing in particular, roughly double the real size for ASCII, and <em>short</em> for <code>₦</code> and most non-Latin scripts, which take three bytes each in UTF-8 but only one UTF-16 code unit. That undercount is what let the 3,012-byte <code>₦</code> body pass a 2,500-byte limit before; now it is correctly refused. Treat the guard as a cheap check on the parsed structure, and keep the HTTP server's body limit (10 MB by default, set lower for a JSON API) as the authority on real bytes on the wire.</p>
 </section>
 
 <section>
@@ -1483,17 +1487,17 @@ await server.stop();</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx src/check-rules.ts</code></div><pre class="lx-no-copy">POST "  Buy \t milk " 201 {"id":1,"title":"Buy milk","done":false,"priority":"normal","createdAt":"2026-09-25T09:00:00.000Z"}
 POST "BUY  MILK"      409 {"error":"A task called \"BUY MILK\" already exists","code":"ERR_CONFLICT"}
 POST "Ｂｕｙ milk"       409 {"error":"A task called \"Ｂｕｙ milk\" already exists","code":"ERR_CONFLICT"}
-POST "Pay rent\u0007" 400 {"error":"title: Title must not contain control characters","code":"ERR_VALIDATION_FAILED"}
-POST "🛒🛒"           400 {"error":"title: Value must contain between 3 and 100 characters.","code":"ERR_VALIDATION_FAILED"}
+POST "Pay rent\u0007" 400 {"error":"title: Title must not contain control characters","code":"ERR_INVALID_INPUT","issues":[{"path":["title"],"code":"control_character","message":"Title must not contain control characters"}]}
+POST "🛒🛒"           400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_small","message":"String must be at least 3 characters"}]}
 PATCH "Buy Milk"       200 {"id":1,"title":"Buy Milk","done":false,"priority":"normal","createdAt":"2026-09-25T09:00:00.000Z"}
-GET /tasks/99 500 {"error":"Internal Server Error"}</pre></div>
+GET /tasks/99 500 {"error":"Internal Server Error","code":"INTERNAL_SERVER_ERROR"}</pre></div>
 </figure>
 <p>Read the answers:</p>
 <ul>
 <li>The first title was stored clean: <code>Buy milk</code>, with the tab and the extra spaces gone.</li>
 <li><code>BUY  MILK</code> and the fullwidth spelling are now conflicts, 409, because their keys match. Renaming task 1 to <code>Buy Milk</code> is allowed: it is the same task.</li>
-<li>The bell character and the two emoji were refused with 400, and the message says which rule failed. It is carried by the error's <code>message</code>, which every error handler sends.</li>
-<li>The planted task with <code>done: "no"</code> got a plain 500: the client learns nothing about your data. With the error handler from <a href="/learn/zudo-errors">the next lesson</a>, that 500 is logged together with <code>taskId</code> and the failing fields.</li>
+<li>The bell character was refused by <code>checkTitle</code>'s constraint, <code>ERR_INVALID_INPUT</code>, with an <code>issues</code> entry for <code>title</code>. The two emoji never reach <code>checkTitle</code> at all: <code>NewTaskSchema.title</code>'s own <code>min(3)</code> now counts code points too (<a href="#why">above</a>), so it refuses a two-emoji title first, as <code>ERR_SCHEMA_VALIDATION</code>. Different package, different code, same shape of answer: both are exposed 400s with an <code>issues</code> array, because <code>@zudojs/errors</code> now attaches one to every exposed error that has one, whichever package built it.</li>
+<li>The planted task with <code>done: "no"</code> got a 500 that names only its <code>code</code>, <code>INTERNAL_SERVER_ERROR</code>: the client learns nothing about your data. With the error handler from <a href="/learn/zudo-errors">the next lesson</a>, that 500 is logged together with <code>taskId</code> and the failing fields.</li>
 </ul>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
 <pre class="lx-shell-body" data-copy="npx tsc --noEmit
@@ -1504,7 +1508,55 @@ npx tsx src/check-rules.ts"><span class="lx-cmd"><span class="lx-prompt" aria-hi
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="booking-rules.ts" data-title="Rules for a booking"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Rules for a booking</h3><div class="lx-ex-task"><p>Write a composer for hotel bookings <code>{ room, nights, guests, promoCode? }</code> using constraints: <code>nights</code> an integer from 1 to 30, <code>guests</code> from 1 to 4, and a promo code, when present, of 4 to 12 letters or digits. Report every problem at once, each with its field path.</p></div><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="22" data-file="booking-rules.ts">
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="booking-rules.ts" data-title="Rules for a booking"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Rules for a booking</h3><div class="lx-ex-task"><p>Write a composer for hotel bookings <code>{ room, nights, guests, promoCode? }</code> using constraints: <code>nights</code> an integer from 1 to 30, <code>guests</code> from 1 to 4, and a promo code, when present, of 4 to 12 letters or digits. Report every problem at once, each with its field path.</p></div><script type="text/plain" class="lx-ex-starter" data-file="booking-rules.ts">// Example to learn from: a two-field composer for a signup, each field
+// checked with its own constraints through the field() helper.
+//
+//   interface Signup { readonly username: string; readonly age: number; }
+//   const signupRules = createValidationComposer<Signup>(
+//     [
+//       field("username", (username) => checkConstraints([lengthBetween(3, 20)], username, ["username"]).issues ?? []),
+//       field("age", (age) => checkConstraints([integer, between(13, 120)], age, ["age"]).issues ?? []),
+//     ],
+//     { name: "signup-rules", stopOnFirstError: false },
+//   );
+//
+// Now do the same for Booking below: nights, guests and promoCode.
+
+import { between, checkConstraints, createValidationComposer, failure, integer, lengthBetween, matches, success } from "@zudojs/validation";
+import type { ValidationIssue, ValidationStep } from "@zudojs/validation";
+
+interface Booking {
+  readonly room: string;
+  readonly nights: number;
+  readonly guests: number;
+  readonly promoCode?: string;
+}
+
+function field<K extends keyof Booking>(name: K, check: (value: Booking[K]) => readonly ValidationIssue[]): ValidationStep<Booking> {
+  return (booking) => {
+    const issues = check(booking[name]);
+    return issues.length === 0 ? success(booking) : failure(issues);
+  };
+}
+
+const bookingRules = createValidationComposer<Booking>(
+  [
+    field("nights", (nights) => checkConstraints([integer, between(1, 30)], nights, ["nights"]).issues ?? []),
+    // guests: an integer from 1 to 4
+    // your code here
+    // promoCode: when present, 4 to 12 letters or digits (matches(/^[A-Z0-9]+$/i, "Letters and digits only"))
+    // your code here
+  ],
+  { name: "booking-rules", stopOnFirstError: false },
+);
+
+for (const booking of [
+  { room: "Ikoyi suite", nights: 2, guests: 2 },
+  { room: "Ikoyi suite", nights: 45, guests: 6, promoCode: "SAVE 20" },
+]) {
+  const result = bookingRules.validate(booking);
+  console.log(result.success ? "ok" : result.issues.map((i) => `${i.path.join(".")}: ${i.message}`));
+}</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Add two more entries to the array, the same shape as <code>nights</code>: <code>field("guests", (guests) =&gt; checkConstraints([integer, between(1, 4)], guests, ["guests"]).issues ?? [])</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>For the optional field, return no issues when it is absent: <code>field("promoCode", (code) =&gt; code === undefined ? [] : (checkConstraints([lengthBetween(4, 12), matches(/^[A-Z0-9]+$/i, "Letters and digits only")], code, ["promoCode"]).issues ?? []))</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="22" data-file="booking-rules.ts">
 <figcaption class="lx-bar"><span class="lx-file">booking-rules.ts</span><button type="button" class="lx-edit" data-index="22" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="22"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> between<span class="t-pn">,</span> checkConstraints<span class="t-pn">,</span> createValidationComposer<span class="t-pn">,</span> failure<span class="t-pn">,</span> integer<span class="t-pn">,</span> lengthBetween<span class="t-pn">,</span> matches<span class="t-pn">,</span> success <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/validation"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">ValidationIssue</span><span class="t-pn">,</span> <span class="t-ty">ValidationStep</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/validation"</span><span class="t-pn">;</span>
@@ -1585,7 +1637,42 @@ for (const booking of [
 ]</pre></div>
 </figure>
 <p><code>stopOnFirstError: false</code> is right here, because the three checks are independent: the guest can fix all of them in one go. The <code>field</code> helper keeps the path on every issue.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="respond.ts" data-title="A safe response helper"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A safe response helper</h3><div class="lx-ex-task"><p>Write <code>respond(schema, value)</code> for a Zod response schema: on success return the parsed value; on failure throw an <code>InternalServerError</code> whose metadata lists each failing path and code, but no messages. Show it with a user record that has a numeric <code>email</code> field and an internal <code>passwordHash</code>.</p></div><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="23" data-file="respond.ts">
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="respond.ts" data-title="A safe response helper"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A safe response helper</h3><div class="lx-ex-task"><p>Write <code>respond(schema, value)</code> for a Zod response schema: on success return the parsed value; on failure throw an <code>InternalServerError</code> whose metadata lists each failing path and code, but no messages. Show it with a user record that has a numeric <code>email</code> field and an internal <code>passwordHash</code>.</p></div><script type="text/plain" class="lx-ex-starter" data-file="respond.ts">// Example to learn from: the same pattern for a product response, an
+// allow-list that also turns a broken record into an InternalServerError.
+//
+//   function reply<T>(schema: ValidationSchema<T>, value: unknown): T {
+//     const result = validate(schema, value);
+//     if (!result.success) {
+//       throw new InternalServerError("Response failed its schema", {
+//         metadata: { failures: result.issues.map((i) => `${i.path.join(".")}: ${i.code}`) },
+//       });
+//     }
+//     return result.data;
+//   }
+//
+// Now do the same for respond below.
+
+import { InternalServerError } from "@zudojs/errors";
+import { validate, z } from "@zudojs/validation";
+import type { ValidationSchema } from "@zudojs/validation";
+
+function respond<T>(schema: ValidationSchema<T>, value: unknown): T {
+  const result = validate(schema, value);
+  // on failure: throw new InternalServerError("Response failed its schema", { metadata: { failures: ... } })
+  // on success: return result.data
+  // your code here
+  return result as unknown as T;
+}
+
+const UserResponse = z.object({ id: z.number(), name: z.string(), email: z.string() });
+
+console.log(respond(UserResponse, { id: 1, name: "Ada", email: "ada@example.com", passwordHash: "$argon2id$..." }));
+try {
+  respond(UserResponse, { id: 2, name: "Bayo", email: 42, passwordHash: "$argon2id$..." });
+} catch (error) {
+  const e = error as InternalServerError;
+  console.log(e.statusCode, e.expose, JSON.stringify(e.metadata));
+}</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Guard on <code>result.success</code>, the same as <code>reply</code> above: when it is <code>false</code>, throw; when it is <code>true</code>, return <code>result.data</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>if (!result.success) { throw new InternalServerError("Response failed its schema", { metadata: { failures: result.issues.map((i) =&gt; `${i.path.join(".")}: ${i.code}`) } }); } return result.data;</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="23" data-file="respond.ts">
 <figcaption class="lx-bar"><span class="lx-file">respond.ts</span><button type="button" class="lx-edit" data-index="23" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="23"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">InternalServerError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> validate<span class="t-pn">,</span> z <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/validation"</span><span class="t-pn">;</span>
@@ -1643,7 +1730,7 @@ try {
 <section>
 <h2 id="recap">Recap</h2>
 <ul>
-<li><code>@zudojs/schema</code> describes shapes; <code>@zudojs/validation</code> checks rules, normalizes, composes and guards. Both throw exposed 400s with <code>issues</code>, but <code>isSchemaValidationError</code> only recognises <code>@zudojs/schema</code>'s errors.</li>
+<li><code>@zudojs/schema</code> describes shapes; <code>@zudojs/validation</code> checks rules, normalizes, composes and guards. Both throw exposed 400s with <code>issues</code>; <code>isSchemaValidationError</code> recognises both packages' errors, but <code>isValidationError</code> only recognises <code>@zudojs/validation</code>'s own.</li>
 <li>Constraints are named rules with a code and a message. <code>checkConstraints</code> reports every failure and never copies the rejected value into an issue. String lengths count code points.</li>
 <li>Normalize before you check or compare: store a clean NFC form, compare an identifier key (NFKC plus case folding) for uniqueness.</li>
 <li>Composers turn steps into reusable validators; <code>when</code> makes a rule conditional; <code>stopOnFirstError: false</code> collects independent problems.</li>

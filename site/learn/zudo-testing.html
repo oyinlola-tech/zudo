@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1A1A2E">
+  <!-- theme:start -->
+  <script>(function () { var KEY = 'zudo.theme'; var root = document.documentElement; var pick = /[?&]theme=(light|dark|system)\b/.exec(location.search); var saved = null; try { if (pick) { if (pick[1] === 'system') localStorage.removeItem(KEY); else localStorage.setItem(KEY, pick[1]); } saved = localStorage.getItem(KEY); } catch (e) { } var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches); root.setAttribute('data-theme', dark ? 'dark' : 'light'); })();</script>
+  <script src="/js/theme.js" defer></script>
+  <!-- theme:end -->
   <title>Testing a ZudoJS app — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-testing.md" title="Markdown version">
   <meta name="description" content="Test the Task API with Vitest and @zudojs/testing: a test clock, mocks and recording buses, a test container, ordered cleanup, and real HTTP integration tests.">
@@ -313,6 +317,7 @@ log lines: [ 'info task created {"taskId":1}', 'info task created {"taskId":2}' 
 events: [ 'task.created', 'task.created' ]</pre></div>
 </figure>
 <p>Two days later, only "Buy milk" (due after one day) is overdue. One e-mail went out, with the exact address and subject. No time passed, no e-mail was sent, nothing was printed by the logger. Two more doubles: <code>createStub&lt;T&gt;(overrides)</code> makes an object whose methods do nothing unless you write them, and <code>createSpyMethod(object, "name")</code> records the calls of a real object's method until you call <code>restore()</code>.</p>
+<p>A mock's value can also change from one call to the next. <code>mockResolvedValueOnce(v)</code>, <code>mockRejectedValueOnce(error)</code>, <code>mockReturnValueOnce(v)</code> and <code>mockImplementationOnce(fn)</code> each queue a result for exactly the <em>next</em> call; once the queue is empty, the mock falls back to whatever <code>mockResolvedValue</code> or <code>mockImplementation</code> set. Queue several to script a sequence: <code>send.mockRejectedValueOnce(new Error("SMTP down")); send.mockResolvedValue("sent");</code> makes the first call fail and every call after it succeed, which is exactly the shape of "the mail server was down for one message, then recovered".</p>
 <p>The recording happens inside the bus itself. Whether your code calls <code>publish</code>, <code>publishEvent</code> or <code>emit</code>, and whether it got the double or its <code>bus</code> property, every event lands in <code>published</code>. You can pass the double anywhere an <code>EventBus</code> is expected. <code>createTestMessageBus</code> records every <code>send</code> and <code>dispatch</code> the same way, and <code>createTestQueue</code> every <code>add</code>.</p>
 </section>
 
@@ -809,7 +814,33 @@ describe("POST /tasks", () => {
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="failing-mailer.ts" data-project="tt" data-command="npx tsx failing-mailer.ts" data-title="A mailer that fails"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A mailer that fails</h3><div class="lx-ex-task"><p>What should <code>remind</code> do when the mail server is down? Make the mock fail with <code>mockRejectedValue</code>, and check with <code>assertRejects</code> that <code>remind</code> passes the error on. Print how many times the mailer was called.</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="10" data-file="failing-mailer.ts" data-project="tt">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="failing-mailer.ts" data-project="tt" data-command="npx tsx failing-mailer.ts" data-title="A mailer that fails"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A mailer that fails</h3><div class="lx-ex-task"><p>What should <code>remind</code> do when the mail server is down? Make the mock fail with <code>mockRejectedValue</code>, and check with <code>assertRejects</code> that <code>remind</code> passes the error on. Print how many times the mailer was called.</p></div><script type="text/plain" class="lx-ex-starter" data-file="failing-mailer.ts">// Example to learn from: the same mockRejectedValue-then-assertRejects
+// shape, for a different dependency.
+//
+//   const save = createMockFn<[Task], Promise<void>>();
+//   save.mockRejectedValue(new Error("disk full"));
+//   const error = await assertRejects(() => save({ id: 1, title: "x", dueAt: new Date() }), "disk full");
+//   console.log(error.message, "- save calls:", save.callCount);
+//
+// Now do the same for the mailer in tasks.remind below.
+
+import { assertRejects, createMockFn, createSpyLogger, createTestClock, createTestEventBus } from "@zudojs/testing";
+import { createTaskService } from "./task-service.js";
+
+const clock = createTestClock("2026-10-01T09:00:00Z");
+const send = createMockFn<[string, string], Promise<void>>();
+// Make send reject with new Error("SMTP server unreachable").
+const events = createTestEventBus();
+const tasks = createTaskService({ now: () => clock.now, logger: createSpyLogger(), events, mailer: { send }, maxOpenTasks: 3 });
+await tasks.create("Buy milk", 1);
+clock.add({ days: 2 });
+try {
+  const error = await assertRejects(() => tasks.remind("ada@example.com"), "unreachable");
+  console.log(error.message, "- mailer calls:", send.callCount);
+} catch {
+  console.log("remind() did not reject - mailer calls:", send.callCount);
+}
+events.dispose();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>send.mockRejectedValue(new Error("SMTP server unreachable"));</code> makes every call to the mock reject with that error, so <code>tasks.remind</code>'s <code>await deps.mailer.send(...)</code> throws.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>send.mockRejectedValue(new Error("SMTP server unreachable"));</code>. With that in place, <code>assertRejects</code> finds a real rejection and returns the error instead of throwing its own "did not reject" failure.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="10" data-file="failing-mailer.ts" data-project="tt">
 <figcaption class="lx-bar"><span class="lx-file">failing-mailer.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> assertRejects<span class="t-pn">,</span> createMockFn<span class="t-pn">,</span> createSpyLogger<span class="t-pn">,</span> createTestClock<span class="t-pn">,</span> createTestEventBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createTaskService <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./task-service.js"</span><span class="t-pn">;</span>
@@ -841,7 +872,27 @@ events.dispose();</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx failing-mailer.ts</code></div><pre class="lx-no-copy">SMTP server unreachable - mailer calls: 1</pre></div>
 </figure>
 <p>This test documents today's behaviour: the first failure stops the loop. If you decide later that <code>remind</code> should try every task and report the failures, change the test first and watch it fail.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="messages.ts" data-project="tt" data-command="npx tsx messages.ts" data-title="Messages you did not send"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Messages you did not send</h3><div class="lx-ex-task"><p>Use <code>createTestMessageBus</code>. Send an <code>email.send</code> message, then check with <code>assertMessageDispatched</code> that it was sent and with <code>assertMessageNotDispatched</code> that no <code>sms.send</code> was.</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="11" data-file="messages.ts" data-project="tt">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="messages.ts" data-project="tt" data-command="npx tsx messages.ts" data-title="Messages you did not send"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Messages you did not send</h3><div class="lx-ex-task"><p>Use <code>createTestMessageBus</code>. Send an <code>email.send</code> message, then check with <code>assertMessageDispatched</code> that it was sent and with <code>assertMessageNotDispatched</code> that no <code>sms.send</code> was.</p></div><script type="text/plain" class="lx-ex-starter" data-file="messages.ts">// Example to learn from: the same dispatched/not-dispatched pair of
+// checks, for a different message type.
+//
+//   const bus = createTestMessageBus();
+//   await bus.send({ type: "audit.log", payload: { action: "login" } });
+//   assertMessageDispatched(bus.dispatched, "audit.log");
+//   assertMessageNotDispatched(bus.dispatched, "audit.delete");
+//
+// Now send "email.send" below, and check it the same way.
+
+import { assertMessageDispatched, assertMessageNotDispatched, createTestMessageBus } from "@zudojs/testing";
+
+const messages = createTestMessageBus();
+
+// Send an "email.send" message with messages.send({ type: "email.send",
+// payload: { to: "ada@example.com", subject: "Overdue: Buy milk" } }).
+// Then check with assertMessageDispatched that "email.send" was sent, and
+// with assertMessageNotDispatched that "sms.send" was not.
+
+console.log(messages.findByType("email.send").map((recorded) => recorded.message.payload));
+messages.dispose();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>messages.send(...)</code> takes the same <code>{ type, payload }</code> shape as an event or a command. Send it before checking it: an assertion can only see messages already dispatched.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>await messages.send({ type: "email.send", payload: { to: "ada@example.com", subject: "Overdue: Buy milk" } }); assertMessageDispatched(messages.dispatched, "email.send"); assertMessageNotDispatched(messages.dispatched, "sms.send");</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="11" data-file="messages.ts" data-project="tt">
 <figcaption class="lx-bar"><span class="lx-file">messages.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> assertMessageDispatched<span class="t-pn">,</span> assertMessageNotDispatched<span class="t-pn">,</span> createTestMessageBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
 

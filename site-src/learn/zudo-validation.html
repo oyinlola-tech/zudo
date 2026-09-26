@@ -720,12 +720,21 @@ for (const [method, path, body] of [
 await server.stop();
 </example>
 <output>
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":[],"code":"unknown_keys","message":"Unknow
+PATCH /tasks/2 200 {"id":2,"title":"Walk the dog","done":true,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}
+GET /tasks?done=false&limit=1&page=2 200 [{"id":3,"title":"Water the plants","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]
+GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["limit"],"code":"too_large","message":"Ex
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_large","message":"St
 </output>
-<p>PROSE_PLACEHOLDER_CHECKVALIDATION</p>
+<p>The unknown <code>id</code> was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and the huge title got a 400 too — but not the 413 you might expect. The byte-size guard now counts real UTF-8 bytes (see <a href="#guards">above</a>), so 40,000 ASCII characters is a ~40,013-byte body, comfortably under the 65,536-byte limit; it passes the guard and reaches the schema, where the <code>title</code> field's own length constraint rejects it as <code>too_large</code>. You do not map any of these errors yourself: the guard and the schema both mark their failures as safe to show, so the router's default answer, and the generated <code>errorResponse</code> in the running server, send each one as it is, <code>issues</code> array included. <a href="/learn/zudo-errors">The ZudoJS error system</a> is what makes that array show up on every route at once, without each handler building it by hand. Run the same script in your project:</p>
 <shell title="Terminal on your computer">
 $ npx tsc --noEmit
 $ npx tsx src/check-validation.ts
-SHELL_PLACEHOLDER
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":[],"code":"unknown_keys","message":"Unknow
+PATCH /tasks/2 200 {"id":2,"title":"Walk the dog","done":true,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}
+GET /tasks?done=false&limit=1&page=2 200 [{"id":3,"title":"Water the plants","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]
+GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["limit"],"code":"too_large","message":"Ex
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_large","message":"St
 </shell>
 <p><code>registerRoutes</code> already registers <code>registerTaskRoutes</code>, so the running server has the new <code>PATCH /tasks/:id</code> route as soon as <code>npm run dev</code> restarts.</p>
 </section>
@@ -734,6 +743,35 @@ SHELL_PLACEHOLDER
 <h2 id="practice">Practice</h2>
 <exercise title="A search parameter">
 <p>Add a <code>q</code> parameter to <code>ListTasksQuery</code> for searching titles. It is optional, is trimmed, must be 1 to 50 characters, and is compared in lower case, so turn it to lower case in the schema. Test it with <code>?q=%20MILK%20</code> (the <code>%20</code> are spaces) and with <code>?q=</code>.</p>
+<starter file="search.ts">
+// Example to learn from: an optional "category" filter, trimmed, lower
+// cased, and limited to 1-30 characters.
+//
+//   const Schema = schema.object({
+//     category: schema.string().trim().toLowerCase().min(1).max(30).optional(),
+//   });
+//   for (const category of [" Fruit ", ""]) {
+//     const result = Schema.safeParse({ category });
+//     console.log(JSON.stringify(category), "->", result.success ? result.data : result.issues[0]?.message);
+//   }
+//
+// Now do the same for q below.
+
+import { schema } from "@zudojs/schema";
+
+const ListTasksQuery = schema.object({
+  // q: optional, trimmed, lower cased, 1 to 50 characters
+  // your code here
+});
+
+for (const q of [" MILK ", ""]) {
+  const result = ListTasksQuery.safeParse({ q });
+  console.log(JSON.stringify(q), "->", result.success ? result.data : result.issues[0]?.message);
+}
+console.log(ListTasksQuery.parse({}));
+</starter>
+<hint><p>Chain the modifiers in the same order as <code>category</code> above: trim, then lower case, then the length bounds, then <code>.optional()</code>.</p></hint>
+<hint><p><code>q: schema.string().trim().toLowerCase().min(1).max(50).optional()</code>.</p></hint>
 <solution>
 <example file="search.ts">
 import { schema } from "@zudojs/schema";
@@ -763,6 +801,52 @@ function updateTask(task: StoredTask, body: Record<string, unknown>): StoredTask
   return { ...task, ...body } as StoredTask;
 }
 </example>
+<starter file="fixed.ts">
+// Example to learn from: a rename endpoint that parses first and copies
+// only the field it expects, instead of trusting the whole body.
+//
+//   const RenameSchema = schema
+//     .object({ nickname: schema.string().trim().min(1).max(20) })
+//     .partial()
+//     .strict();
+//   function renameUser(user: StoredUser, body: unknown): StoredUser {
+//     const changes = RenameSchema.parse(body);
+//     return { ...user, nickname: changes.nickname ?? user.nickname };
+//   }
+//
+// Now do the same for updateTask below.
+
+import { schema } from "@zudojs/schema";
+
+const UpdateTaskSchema = schema.object({
+  // title: schema.string().trim().min(3).max(100), done: schema.boolean()
+  // then .partial().strict()
+  // your code here
+});
+
+interface StoredTask {
+  readonly id: number;
+  readonly ownerId: number;
+  readonly title: string;
+  readonly done: boolean;
+}
+
+function updateTask(task: StoredTask, body: unknown): StoredTask {
+  // parse body with UpdateTaskSchema, then copy only its title/done onto task
+  // your code here
+  return { ...task, ...(body as Record<string, unknown>) } as StoredTask;
+}
+
+const task: StoredTask = { id: 1, ownerId: 7, title: "Buy milk", done: false };
+console.log(updateTask(task, { done: true }));
+try {
+  updateTask(task, { done: true, ownerId: 1 });
+} catch (error) {
+  console.log((error as Error).name, (error as Error).message);
+}
+</starter>
+<hint><p>The unknown field to catch is <code>ownerId</code>: a task with an id and title should never accept a new <code>id</code> or <code>ownerId</code> from a client. Build <code>UpdateTaskSchema</code> the same way as <code>RenameSchema</code> above, but with <code>title</code> and <code>done</code> instead of <code>nickname</code>.</p></hint>
+<hint><p><code>schema.object({ title: schema.string().trim().min(3).max(100), done: schema.boolean() }).partial().strict()</code>, then inside <code>updateTask</code>: <code>const changes = UpdateTaskSchema.parse(body); return { ...task, title: changes.title ?? task.title, done: changes.done ?? task.done };</code>.</p></hint>
 <solution>
 <p><code>{ ...task, ...body }</code> copies <em>every</em> field of the request body onto the task: <code>id</code>, <code>createdAt</code>, and in later lessons <code>ownerId</code>. A client could move a task to another user or overwrite its id. The <code>as StoredTask</code> hides the problem from TypeScript. The fix parses first and copies only known fields:</p>
 <example file="fixed.ts">

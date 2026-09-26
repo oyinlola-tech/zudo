@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1A1A2E">
+  <!-- theme:start -->
+  <script>(function () { var KEY = 'zudo.theme'; var root = document.documentElement; var pick = /[?&]theme=(light|dark|system)\b/.exec(location.search); var saved = null; try { if (pick) { if (pick[1] === 'system') localStorage.removeItem(KEY); else localStorage.setItem(KEY, pick[1]); } saved = localStorage.getItem(KEY); } catch (e) { } var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches); root.setAttribute('data-theme', dark ? 'dark' : 'light'); })();</script>
+  <script src="/js/theme.js" defer></script>
+  <!-- theme:end -->
   <title>Plugins — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-plugins.md" title="Markdown version">
   <meta name="description" content="Extend the Task API through a fixed interface without editing it: plugin lifecycle, dependencies, scoped context, rollback and diagnostics with @zudojs/plugins.">
@@ -456,15 +460,15 @@ for (const entry of report.plugins) {
 }</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx rollback.ts</code></div><pre class="lx-no-copy">audit-log: stopped
 audit-log: file closed
-start failed: cannot reach slack.com
-total 2, healthy 0, failed 1
-audit-log disposed degraded
+start failed: Plugin "slack" failed to start: cannot reach slack.com
+total 2, healthy 1, failed 1
+audit-log disposed healthy
 slack disposed unhealthy cannot reach slack.com</pre></div>
 </figure>
 <ul>
 <li>The audit log had started, so it was stopped and its cleanup ran. Nothing is left running.</li>
-<li><code>diagnostics()</code> reports every plugin's state and health. The failed plugin keeps its error message in <code>health.details</code>, so a health endpoint or a log line can say <em>why</em>.</li>
-<li><code>hookTimeout</code> fails a hook that takes longer than the limit, so one hanging plugin cannot freeze the start-up of the whole Task API.</li>
+<li><code>diagnostics()</code> reports every plugin's state and health. A plugin that finished stopping or disposing cleanly reads <code>healthy</code>, same as one that never started; only a plugin still mid-boot, mid-shutdown, or actually failed is <code>degraded</code>/<code>unhealthy</code>. Slack's raw <code>Error</code> was not already a typed plugin error, so the manager re-throws it as a <code>PluginStartError</code> naming the plugin and quoting the original message; <code>diagnostics()</code> and the failed plugin's own <code>health.details</code> still keep that original message.</li>
+<li><code>hookTimeout</code> fails a hook that takes longer than the limit, so one hanging plugin cannot freeze the start-up of the whole Task API. <code>start()</code> rejects with a <code>PluginTimeoutError</code> naming the plugin and the limit (<code>Plugin "slow-plugin" timed out after 100ms.</code>), and the manager rolls it back the same as any other failed start.</li>
 </ul>
 <p>A disposed plugin cannot be started again: calling <code>manager.start</code> a second time throws a <code>PluginStateError</code>. To retry, create a new manager with fresh plugin objects.</p>
 </section>
@@ -744,7 +748,56 @@ npm pack --dry-run"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="tr
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="src/plugins/stats.ts" data-project="host" data-command="npx tsx src/plugins/stats.ts" data-title="A statistics plugin"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A statistics plugin</h3><div class="lx-ex-task"><p>Write <code>createStatsPlugin()</code>: it counts <code>task.completed</code> events per user and, in <code>stop</code>, logs the counts with <code>context.logger</code>. Remember to unsubscribe in the cleanup list.</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="9" data-file="src/plugins/stats.ts" data-project="host">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="src/plugins/stats.ts" data-project="host" data-command="npx tsx src/plugins/stats.ts" data-title="A statistics plugin"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A statistics plugin</h3><div class="lx-ex-task"><p>Write <code>createStatsPlugin()</code>: it counts <code>task.completed</code> events per user and, in <code>stop</code>, logs the counts with <code>context.logger</code>. Remember to unsubscribe in the cleanup list.</p></div><script type="text/plain" class="lx-ex-starter" data-file="src/plugins/stats.ts">// Example to learn from: a plugin that counts a single running total
+// instead of one count per user.
+//
+//   function createRequestCounterPlugin(): Plugin {
+//     let total = 0;
+//     return {
+//       metadata: { name: "request-counter", version: "1.0.0" },
+//       start(context) {
+//         const onRequest = () => { total += 1; };
+//         context.events?.on("http.request", onRequest);
+//         context.onDispose(() => context.events?.off("http.request", onRequest));
+//       },
+//       stop(context) {
+//         context.logger?.info("requests handled", total);
+//       },
+//     };
+//   }
+//
+// Now do the same for per-user completion counts below.
+
+import { createEventBus } from "@zudojs/events";
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+import type { Plugin } from "@zudojs/plugins";
+
+function createStatsPlugin(): Plugin {
+  const perUser = new Map<string, number>();
+  return {
+    metadata: { name: "stats", version: "1.0.0" },
+    start(context) {
+      // TODO: subscribe to "task.completed" with context.events.on, and
+      // for every event increment perUser.get(userId). Keep the handler
+      // in a variable so context.onDispose can unsubscribe it with
+      // context.events.off.
+    },
+    stop(context) {
+      context.logger?.info("tasks completed per user", Object.fromEntries(perUser));
+    },
+  };
+}
+
+const events = createEventBus();
+const logger = { info: console.log, warn: console.log, error: console.log };
+const manager = new PluginManager();
+manager.register(createStatsPlugin());
+const context = createPluginContext({ name: "task-api" }, { events, logger });
+await manager.start(context);
+for (const userId of ["ada", "linus", "ada"]) {
+  await events.publishEvent({ type: "task.completed", payload: { taskId: 1, userId } });
+}
+await manager.stop(context);</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Inside <code>start(context)</code>, write a handler that receives the event's payload directly — <code>const onCompleted = (event: unknown) => { const { userId } = event as { userId: string }; ... };</code> — and does <code>perUser.set(userId, (perUser.get(userId) ?? 0) + 1)</code>. Register it with <code>context.events?.on("task.completed", onCompleted)</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Add <code>context.onDispose(() => context.events?.off("task.completed", onCompleted));</code> right after subscribing, so the same function reference is removed later. A plugin that starts and stops more than once must not pile up duplicate handlers.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="9" data-file="src/plugins/stats.ts" data-project="host">
 <figcaption class="lx-bar"><span class="lx-file">src/plugins/stats.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createEventBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/events"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createPluginContext<span class="t-pn">,</span> <span class="t-ty">PluginManager</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/plugins"</span><span class="t-pn">;</span>
@@ -813,7 +866,7 @@ for (const userId of ["ada", "linus", "ada"]) {
 await manager.stop(context);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx src/plugins/stats.ts</code></div><pre class="lx-no-copy">tasks completed per user { ada: 2, linus: 1 }</pre></div>
 </figure></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="think" data-title="Which order?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Which order?</h3><div class="lx-ex-task"><p>Plugins: <code>api</code> depends on <code>db</code> and <code>cache</code>, <code>cache</code> depends on <code>db</code>. They are registered as <code>api</code>, <code>cache</code>, <code>db</code>. In which order do they start, and in which order do they stop? What happens if <code>db</code> also declares a dependency on <code>api</code>?</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>Start: <code>db</code>, <code>cache</code>, <code>api</code>: every plugin starts after everything it depends on. Stop: the reverse, <code>api</code>, <code>cache</code>, <code>db</code>. If <code>db</code> depended on <code>api</code>, there would be a cycle (<code>api</code> → <code>db</code> → <code>api</code>) with no valid order. <code>manager.start</code> throws a <code>PluginDependencyCycleError</code> that names the cycle, before any hook runs.</p></div></div>
+<div class="lx-exercise" data-exercise="2" data-mode="think" data-title="Which order?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Which order?</h3><div class="lx-ex-task"><p>Plugins: <code>api</code> depends on <code>db</code> and <code>cache</code>, <code>cache</code> depends on <code>db</code>. They are registered as <code>api</code>, <code>cache</code>, <code>db</code>. In which order do they start, and in which order do they stop? What happens if <code>db</code> also declares a dependency on <code>api</code>?</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Registration order is not start order: the manager starts a plugin only once everything it depends on has already started, regardless of the order you called <code>register</code> in.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Stop order is the exact reverse of start order — the same rule you saw in the reminders example, where cleanup ran after the dependent plugins had already been asked to stop. For the last question, think about what a dependency <em>from</em> <code>db</code> <em>to</em> <code>api</code> would mean for "everything api depends on must start first" when api already depends on db.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>Start: <code>db</code>, <code>cache</code>, <code>api</code>: every plugin starts after everything it depends on. Stop: the reverse, <code>api</code>, <code>cache</code>, <code>db</code>. If <code>db</code> depended on <code>api</code>, there would be a cycle (<code>api</code> → <code>db</code> → <code>api</code>) with no valid order. <code>manager.start</code> throws a <code>PluginDependencyCycleError</code> that names the cycle, before any hook runs.</p></div></div>
 </section>
 
 <section>

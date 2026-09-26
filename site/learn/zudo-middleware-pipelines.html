@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1A1A2E">
+  <!-- theme:start -->
+  <script>(function () { var KEY = 'zudo.theme'; var root = document.documentElement; var pick = /[?&]theme=(light|dark|system)\b/.exec(location.search); var saved = null; try { if (pick) { if (pick[1] === 'system') localStorage.removeItem(KEY); else localStorage.setItem(KEY, pick[1]); } saved = localStorage.getItem(KEY); } catch (e) { } var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches); root.setAttribute('data-theme', dark ? 'dark' : 'light'); })();</script>
+  <script src="/js/theme.js" defer></script>
+  <!-- theme:end -->
   <title>Middleware pipelines with @zudojs/middleware — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-middleware-pipelines.md" title="Markdown version">
   <meta name="description" content="Build one pipeline for HTTP, CLI and jobs with @zudojs/middleware: logging, auth checks, validation, rate limits, timeouts, error modes and execution tracking.">
@@ -1807,7 +1811,7 @@ console.log("tasks now:", tasks.list().map((task) => task.title));
 console.log("log lines:", logged.length);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx src/check-import.ts</code></div><pre class="lx-no-copy">no token   401 - {"error":"A valid import token is required","code":"ERR_AUTHENTICATION_FAILED"}
 intern     403 - {"error":"This token may not import tasks","code":"ERR_FORBIDDEN"}
-bad body   400 - {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+bad body   400 - {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["tasks"],"code":"too_small","message":"Array must have at least 1 item"}]}
 import     201 - {"created":1,"skipped":["Buy milk"]}
 again      201 - {"created":1,"skipped":[]}
 too often  429 60 {"error":"Too many imports, try again later"}
@@ -1874,7 +1878,51 @@ curl -s -X POST http://localhost:3000/tasks/import -d '{&quot;tasks&quot;:[{&quo
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="daily-cap.ts" data-project="pipe" data-command="npx tsx daily-cap.ts" data-title="A daily limit in kobo"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A daily limit in kobo</h3><div class="lx-ex-task"><p>Tellers may move at most ₦100,000 per day in total. Write a middleware <code>dailyCap</code> for the transfer pipeline that keeps a running total per user id and refuses a transfer that would go over the cap, with an <code>AuthorizationError</code>. Where in the list does it go, and why? Show three transfers of ₦45,000 by Ada.</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="26" data-file="daily-cap.ts" data-project="pipe">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="daily-cap.ts" data-project="pipe" data-command="npx tsx daily-cap.ts" data-title="A daily limit in kobo"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A daily limit in kobo</h3><div class="lx-ex-task"><p>Tellers may move at most ₦100,000 per day in total. Write a middleware <code>dailyCap</code> for the transfer pipeline that keeps a running total per user id and refuses a transfer that would go over the cap, with an <code>AuthorizationError</code>. Where in the list does it go, and why? Show three transfers of ₦45,000 by Ada.</p></div><script type="text/plain" class="lx-ex-starter" data-file="daily-cap.ts">// Example to learn from: a middleware that keeps a running total per key,
+// and only adds to it once the wrapped work actually succeeded.
+//
+//   const dataCap: NamedMiddleware<DownloadContext, string> = {
+//     name: "data-cap",
+//     handler: async (context, next) => {
+//       const already = usedToday.get(context.userId) ?? 0;
+//       if (already + context.bytes > CAP_BYTES) throw new Error(`Daily data cap of ${CAP_BYTES} bytes reached`);
+//       const result = await next();
+//       usedToday.set(context.userId, already + context.bytes);
+//       return result;
+//     },
+//   };
+//
+// Now do the same for the daily kobo cap below.
+
+import { AuthorizationError } from "@zudojs/errors";
+import { createPipeline } from "@zudojs/middleware";
+import type { NamedMiddleware } from "@zudojs/middleware";
+import { moveMoney, naira, request } from "./bank.js";
+import type { TransferContext } from "./bank.js";
+import { authenticate, authorize, validate } from "./checks.js";
+
+const CAP_KOBO = 10_000_000;
+const movedToday = new Map<string, number>();
+
+const dailyCap: NamedMiddleware<TransferContext, string> = {
+  name: "daily-cap",
+  handler: async (context, next) => {
+    // 1. already = movedToday.get(context.user!.id) ?? 0
+    // 2. if already + context.transfer!.amountKobo > CAP_KOBO, throw
+    //    new AuthorizationError(`Daily limit of ${naira(CAP_KOBO)} reached`)
+    // 3. otherwise: const result = await next(); then
+    //    movedToday.set(context.user!.id, already + context.transfer!.amountKobo);
+    //    return result;
+    // your code here
+    return next();
+  },
+};
+
+const run = createPipeline([authenticate, authorize, validate, dailyCap], moveMoney);
+for (let i = 1; i <= 3; i++) {
+  const outcome = await run(request("tok-ada", { from: "acc-1", to: "acc-2", amountKobo: 4_500_000 }));
+  console.log(i, outcome.success ? outcome.result : (outcome.error as Error).message);
+}</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Read the amount and user the same way the checks before it already resolved them: <code>context.user!.id</code> and <code>context.transfer!.amountKobo</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Guard first: <code>if (already + amount &gt; CAP_KOBO) throw new AuthorizationError(...)</code>. Only after <code>await next()</code> succeeds do you update the map, so a failed transfer never counts against the cap.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="26" data-file="daily-cap.ts" data-project="pipe">
 <figcaption class="lx-bar"><span class="lx-file">daily-cap.ts</span><button type="button" class="lx-edit" data-index="26" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">AuthorizationError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createPipeline <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/middleware"</span><span class="t-pn">;</span>
@@ -1942,7 +1990,45 @@ for (let i = 1; i <= 3; i++) {
 3 Daily limit of ₦100,000 reached</pre></div>
 </figure>
 <p>It goes after <code>validate</code>, because it needs the parsed amount, and after <code>authenticate</code>, because it needs the user. It adds to the total only after <code>next()</code> succeeded, so a transfer that fails in the handler (insufficient funds, a timeout) does not count. Between checking and adding, a second request could slip through; with a shared database you would do both in one transaction.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="batch.ts" data-project="pipe" data-command="npx tsx batch.ts" data-title="A pipeline for a queue job"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A pipeline for a queue job</h3><div class="lx-ex-task"><p>Reuse the transfer checks for a nightly batch job: build a pipeline for the context <code>request("tok-ada", …)</code> with <code>errorMode: "throw"</code>, an <code>errorMiddleware</code> that prints the failing request id, and the handler <code>moveMoney</code>. Run two jobs, one valid and one with an amount of ₦0.50, and let the job runner's own <code>try</code>/<code>catch</code> decide what to do.</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="27" data-file="batch.ts" data-project="pipe">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="batch.ts" data-project="pipe" data-command="npx tsx batch.ts" data-title="A pipeline for a queue job"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A pipeline for a queue job</h3><div class="lx-ex-task"><p>Reuse the transfer checks for a nightly batch job: build a pipeline for the context <code>request("tok-ada", …)</code> with <code>errorMode: "throw"</code>, an <code>errorMiddleware</code> that prints the failing request id, and the handler <code>moveMoney</code>. Run two jobs, one valid and one with an amount of ₦0.50, and let the job runner's own <code>try</code>/<code>catch</code> decide what to do.</p></div><script type="text/plain" class="lx-ex-starter" data-file="batch.ts">// Example to learn from: a pipeline built with errorMode: "throw", so the
+// caller's own try/catch decides what happens to a failure.
+//
+//   const runJob = createPipeline<ReminderJob, string>(
+//     [errorMiddleware<string>((_error, context) => console.log("job failed:", (context as ReminderJob).requestId))],
+//     sendReminder,
+//     { errorMode: "throw" },
+//   );
+//
+// Now build the transfer batch job's pipeline below.
+
+import { createPipeline, errorMiddleware } from "@zudojs/middleware";
+import { moveMoney, request } from "./bank.js";
+import type { TransferContext } from "./bank.js";
+import { authenticate, authorize, validate } from "./checks.js";
+
+const runJob = createPipeline<TransferContext, string>(
+  [
+    // log the failing request id: errorMiddleware<string>((_error, context) =>
+    //   console.log("job failed:", (context as TransferContext).requestId))
+    // your code here
+    authenticate,
+    authorize,
+    validate,
+  ],
+  moveMoney,
+  // add { errorMode: "throw" } as a fourth argument
+  // your code here
+);
+
+for (const amountKobo of [150_000, 50]) {
+  const job = request("tok-ada", { from: "acc-1", to: "acc-2", amountKobo });
+  try {
+    const outcome = await runJob(job);
+    console.log("job done:", outcome.success && outcome.result);
+  } catch (error) {
+    console.log("runner: will not retry a", (error as Error).name);
+  }
+}</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The middleware list's first entry: <code>errorMiddleware&lt;string&gt;((_error, context) =&gt; console.log("job failed:", (context as TransferContext).requestId))</code>, before <code>authenticate</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>createPipeline</code> takes the options object as its third argument, after the handler: <code>moveMoney, { errorMode: "throw" }</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="27" data-file="batch.ts" data-project="pipe">
 <figcaption class="lx-bar"><span class="lx-file">batch.ts</span><button type="button" class="lx-edit" data-index="27" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createPipeline<span class="t-pn">,</span> errorMiddleware <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/middleware"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> moveMoney<span class="t-pn">,</span> request <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./bank.js"</span><span class="t-pn">;</span>

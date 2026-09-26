@@ -4,10 +4,27 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1A1A2E">
+  <!-- theme:start -->
+  <script>(function () { var KEY = 'zudo.theme'; var root = document.documentElement; var pick = /[?&]theme=(light|dark|system)\b/.exec(location.search); var saved = null; try { if (pick) { if (pick[1] === 'system') localStorage.removeItem(KEY); else localStorage.setItem(KEY, pick[1]); } saved = localStorage.getItem(KEY); } catch (e) { } var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches); root.setAttribute('data-theme', dark ? 'dark' : 'light'); })();</script>
+  <script src="/js/theme.js" defer></script>
+  <!-- theme:end -->
   <title>The application runtime and lifecycle — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-runtime.md" title="Markdown version">
   <meta name="description" content="See how @zudojs/runtime starts your app's modules in dependency order, rolls back a failed start, reports readiness honestly and shuts down gracefully.">
   <!-- seo:start -->
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-runtime">
+  <meta property="og:site_name" content="ZudoJS">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="The application runtime and lifecycle — ZudoJS Academy">
+  <meta property="og:description" content="See how @zudojs/runtime starts your app's modules in dependency order, rolls back a failed start, reports readiness honestly and shuts down gracefully.">
+  <meta property="og:url" content="https://zudojs.oyinlola.site/learn/zudo-runtime">
+  <meta property="og:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="The application runtime and lifecycle — ZudoJS Academy">
+  <meta name="twitter:description" content="See how @zudojs/runtime starts your app's modules in dependency order, rolls back a failed start, reports readiness honestly and shuts down gracefully.">
+  <meta name="twitter:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"ZudoJS","item":"https://zudojs.oyinlola.site/"},{"@type":"ListItem","position":2,"name":"Academy","item":"https://zudojs.oyinlola.site/learn"},{"@type":"ListItem","position":3,"name":"ZudoJS fundamentals","item":"https://zudojs.oyinlola.site/learn/zudo-fundamentals"},{"@type":"ListItem","position":4,"name":"The application runtime and lifecycle","item":"https://zudojs.oyinlola.site/learn/zudo-runtime"}]}</script>
   <!-- seo:end -->
   <meta name="keywords" content="zudojs runtime, createRuntime, module lifecycle, onInitialize, onReady, onShutdown, onDestroy, dependency order, rollback, RuntimeStartError, graceful shutdown, SIGTERM, readiness check, health, runtime state, BaseModule">
   <meta name="author" content="Oluwayemi Oyinlola Michael">
@@ -592,12 +609,12 @@ console.log("state:", runtime.state, "| runtime.ready:", runtime.ready);</script
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx readiness-stop.ts</code></div><pre class="lx-no-copy">initialize store
 ready      store
 shutdown   store (finishing its work)
-state: stopping | runtime.ready: true
+state: stopping | runtime.ready: false
 safe answer: false
 destroy    store
-state: stopped | runtime.ready: true</pre></div>
+state: stopped | runtime.ready: false</pre></div>
 </figure>
-<p>Look at <code>runtime.ready</code>. In the published <code>@zudojs/runtime</code>, running the checks while the runtime stops sets <code>ready</code> back to <code>true</code>, and it stays <code>true</code> after the runtime has stopped. So never answer a probe from <code>runtime.ready</code> alone: combine it with <code>runtime.state === "running"</code>, as the "safe answer" line does. The generated project is protected twice: <code>src/app.ts</code> registers a check called <code>modules</code> that returns <code>runtime.state === "running"</code>, and the <code>health</code> function in <code>src/server.ts</code> checks <code>runtime.state</code> itself. At the <a href="#task-api">end of this lesson</a>, <code>/health</code> reports every readiness check and keeps that state check.</p>
+<p>Look at <code>runtime.ready</code>: it is already <code>false</code> the moment <code>stop()</code> begins, and running the checks again while the store's own check still returns <code>true</code> does not flip it back. <code>shutting_down</code> is <strong>sticky</strong>: once the runtime starts to stop, only a fresh <code>setState()</code> can leave it, so a check that races the shutdown and still passes cannot make <code>ready</code> true again. This is a newer fix; before it, running the checks during <code>stop()</code> did set <code>ready</code> back to <code>true</code>, and it stayed <code>true</code> after the runtime had fully stopped, so a probe timed just wrong could route a request to an instance with its connections already closing. It is still worth combining <code>runtime.ready</code> with <code>runtime.state === "running"</code>, as the "safe answer" line does: a state check reads cleanly in one line, does not depend on which patch version of the package you have, and says directly what you mean, "handling traffic right now". The generated project is protected twice this way: <code>src/app.ts</code> registers a check called <code>modules</code> that returns <code>runtime.state === "running"</code>, and the <code>health</code> function in <code>src/server.ts</code> checks <code>runtime.state</code> itself. At the <a href="#task-api">end of this lesson</a>, <code>/health</code> reports every readiness check and keeps that state check.</p>
 </section>
 
 <section>
@@ -1163,7 +1180,30 @@ npm run dev"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ <
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="mailer.ts" data-project="rt" data-command="npx tsx mailer.ts" data-title="Add a mailer module"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Add a mailer module</h3><div class="lx-ex-task"><p>Using <code>traceModule</code> and <code>buildRuntime</code> from this lesson, add a <code>mailer</code> module that needs <code>tasks</code>, next to <code>http</code>, which also needs <code>tasks</code>. Before running it, write down the order you expect for all four rounds of hooks. Then run it.</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="15" data-file="mailer.ts" data-project="rt">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="mailer.ts" data-project="rt" data-command="npx tsx mailer.ts" data-title="Add a mailer module"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Add a mailer module</h3><div class="lx-ex-task"><p>Using <code>traceModule</code> and <code>buildRuntime</code> from this lesson, add a <code>mailer</code> module that needs <code>tasks</code>, next to <code>http</code>, which also needs <code>tasks</code>. Before running it, write down the order you expect for all four rounds of hooks. Then run it.</p></div><script type="text/plain" class="lx-ex-starter" data-file="mailer.ts">// Example to learn from: two independent modules that share one
+// dependency, declared as data in a list, in the wrong order on purpose.
+//
+//   const runtime = buildRuntime([
+//     traceModule("recommendations", ["catalog"]),
+//     traceModule("search", ["catalog"]),
+//     traceModule("catalog", ["db"]),
+//     traceModule("db"),
+//   ]);
+//   await runtime.start();
+//   await runtime.stop();
+//
+// Now add mailer and http below, both needing tasks.
+
+import { buildRuntime, traceModule } from "./trace.js";
+
+const runtime = buildRuntime([
+  // add traceModule("mailer", ["tasks"]) here
+  // add traceModule("http", ["tasks"]) here
+  traceModule("tasks", ["store"]),
+  traceModule("store"),
+]);
+await runtime.start();
+await runtime.stop();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Add two more entries to the array, in the same shape as <code>traceModule("tasks", ["store"])</code>: <code>traceModule("mailer", ["tasks"])</code> and <code>traceModule("http", ["tasks"])</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Order inside the array does not matter for modules that do not depend on each other; the runtime still starts <code>store</code> and <code>tasks</code> first, since <code>mailer</code> and <code>http</code> both need <code>tasks</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="15" data-file="mailer.ts" data-project="rt">
 <figcaption class="lx-bar"><span class="lx-file">mailer.ts</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> buildRuntime<span class="t-pn">,</span> traceModule <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./trace.js"</span><span class="t-pn">;</span>
 
@@ -1204,7 +1244,37 @@ destroy    tasks
 destroy    store</pre></div>
 </figure>
 <p><code>mailer</code> and <code>http</code> do not depend on each other, so either may come first. The runtime keeps the order you listed them in, and stops them in exactly the reverse order.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="init-fail.ts" data-project="rt" data-command="npx tsx init-fail.ts" data-title="A failing initialization"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A failing initialization</h3><div class="lx-ex-task"><p>Make the <code>tasks</code> module throw <code>new Error("Schema is out of date")</code> in <code>onInitialize</code>. Which hooks run, what is the error's <code>phase</code>, and why does <code>onShutdown</code> run for no module at all?</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="16" data-file="init-fail.ts" data-project="rt">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="init-fail.ts" data-project="rt" data-command="npx tsx init-fail.ts" data-title="A failing initialization"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A failing initialization</h3><div class="lx-ex-task"><p>Make the <code>tasks</code> module throw <code>new Error("Schema is out of date")</code> in <code>onInitialize</code>. Which hooks run, what is the error's <code>phase</code>, and why does <code>onShutdown</code> run for no module at all?</p></div><script type="text/plain" class="lx-ex-starter" data-file="init-fail.ts">// Example to learn from: overriding one hook on top of a working module,
+// by spreading it and replacing just that key.
+//
+//   const cache = {
+//     ...traceModule("cache", ["store"]),
+//     onInitialize: () => {
+//       console.log("initialize cache");
+//       throw new Error("cache cluster unreachable");
+//     },
+//   };
+//
+// Now do the same for tasks below.
+
+import { RuntimeStartError } from "@zudojs/runtime";
+import { buildRuntime, traceModule } from "./trace.js";
+
+const tasks = {
+  ...traceModule("tasks", ["store"]),
+  // override onInitialize: log "initialize tasks", then throw
+  // new Error("Schema is out of date")
+  // your code here
+};
+
+const runtime = buildRuntime([traceModule("store"), tasks, traceModule("http", ["tasks"])]);
+try {
+  await runtime.start();
+} catch (error) {
+  if (error instanceof RuntimeStartError) {
+    console.log(error.phase, "-", (error.cause as Error).message);
+  }
+}</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>onInitialize: () =&gt; { console.log("initialize tasks"); throw new Error("Schema is out of date"); }</code>, replacing the key <code>traceModule</code> already gave <code>tasks</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Once <code>tasks</code> throws, <code>store</code> (already ready) and <code>tasks</code> (half-initialized) both get destroyed; <code>http</code>, which depends on <code>tasks</code>, is never reached at all.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="16" data-file="init-fail.ts" data-project="rt">
 <figcaption class="lx-bar"><span class="lx-file">init-fail.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">RuntimeStartError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/runtime"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> buildRuntime<span class="t-pn">,</span> traceModule <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./trace.js"</span><span class="t-pn">;</span>
@@ -1253,7 +1323,7 @@ initialize - Schema is out of date</pre></div>
 </figure>
 <p>The failure happened in the first round, so no module ever became ready and there is nothing to shut down. <code>http</code> was never initialized, so it is not destroyed either. <code>tasks</code> is destroyed even though its <code>onInitialize</code> failed halfway: it may have opened something before throwing, so its <code>onDestroy</code> must cope with a half-initialized state.</p>
 <p>The error itself is a <code>RuntimeInitializationError</code>, a kind of <code>RuntimeStartError</code>, so the <code>instanceof RuntimeStartError</code> check matches it too.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="open" data-target="0" data-file="src/server.ts (part)" data-title="Stop on failure"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Stop on failure</h3><div class="lx-ex-task"><p>In the Task API, <code>src/server.ts</code> calls <code>await runtime.start()</code> without a <code>try</code>, just before it creates the HTTP server. Change it so that a failed start logs the error, calls <code>runtime.stop()</code> and exits with code 1.</p></div><p class="lx-ex-how">Write it in the editor and run it. Hints and the solution open up once you have tried.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="17" data-file="src/server.ts (part)">
+<div class="lx-exercise" data-exercise="3" data-mode="open" data-target="0" data-file="src/server.ts (part)" data-title="Stop on failure"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Stop on failure</h3><div class="lx-ex-task"><p>In the Task API, <code>src/server.ts</code> calls <code>await runtime.start()</code> without a <code>try</code>, just before it creates the HTTP server. Change it so that a failed start logs the error, calls <code>runtime.stop()</code> and exits with code 1.</p></div><script type="text/plain" class="lx-ex-starter" data-file="src/server.ts (part)">await runtime.start();</script><p class="lx-ex-how">Write it in the editor and run it. Hints and the solution open up once you have tried.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Wrap the call in <code>try</code>/<code>catch</code>. A failed start still leaves some modules registered and possibly partially started, so the <code>catch</code> block should still call <code>runtime.stop()</code> before exiting.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>try { await runtime.start(); } catch (error) { console.error("Startup failed:", error); await runtime.stop(); process.exit(1); }</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="17" data-file="src/server.ts (part)">
 <figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">try</span> <span class="t-pn">{</span>
   <span class="t-kw">await</span> runtime<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>

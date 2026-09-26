@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1A1A2E">
+  <!-- theme:start -->
+  <script>(function () { var KEY = 'zudo.theme'; var root = document.documentElement; var pick = /[?&]theme=(light|dark|system)\b/.exec(location.search); var saved = null; try { if (pick) { if (pick[1] === 'system') localStorage.removeItem(KEY); else localStorage.setItem(KEY, pick[1]); } saved = localStorage.getItem(KEY); } catch (e) { } var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches); root.setAttribute('data-theme', dark ? 'dark' : 'light'); })();</script>
+  <script src="/js/theme.js" defer></script>
+  <!-- theme:end -->
   <title>Observability — ZudoJS Academy</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-observability.md" title="Markdown version">
   <meta name="description" content="See inside a running Task API: metrics count what happens, traces show where time goes, and logs share one trace id with @zudojs/observability.">
@@ -462,6 +466,7 @@ info outside any request trace=-</pre></div>
 </figure>
 <p>Both requests ran at the same time and finished in the opposite order, yet each <code>loadTasks</code> saw its own request, and each log line carries its own trace id. <code>loadTasks</code> has no request parameter. Outside a <code>run</code>, there is no context. This example sets fixed trace ids so the output stays the same on every run. Normally <code>createPropagationContext()</code> creates a random one.</p>
 <p>A trace id that you put on every log line, every span and every error report is a <strong>correlation id</strong>: with one id you can find everything that belongs to one request. Put it in your error responses too, for example as a <code>traceId</code> field. When a user reports a problem, they can send you that id.</p>
+<p>Since <code>@zudojs/observability</code> 1.3.0, a log record carries the propagation context's <code>requestId</code> and <code>correlationId</code> the same way it already carried <code>traceId</code>: a custom exporter like <code>printLogs</code> above can read <code>r.requestId</code> and <code>r.correlationId</code> straight off the record, with no extra plumbing, and the console exporter writes them too. A logger's <code>correlate</code> option (default <code>true</code>) is what stamps these fields on; a logger built with <code>correlate: false</code> never adds them, which matters for a line written well before any request context exists.</p>
 </section>
 
 <section>
@@ -759,7 +764,26 @@ caller flag 0 -&gt; recording: false</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="priority.ts" data-command="npx tsx priority.ts" data-title="Count tasks by priority"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Count tasks by priority</h3><div class="lx-ex-task"><p>Add a counter <code>tasks.created</code> with a <code>priority</code> label. Create two <code>high</code> tasks and one <code>low</code> task, then print every series with <code>obs.metrics.getSeries("tasks.created")</code>. Would a <code>title</code> label be a good idea?</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="9" data-file="priority.ts">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="priority.ts" data-command="npx tsx priority.ts" data-title="Count tasks by priority"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Count tasks by priority</h3><div class="lx-ex-task"><p>Add a counter <code>tasks.created</code> with a <code>priority</code> label. Create two <code>high</code> tasks and one <code>low</code> task, then print every series with <code>obs.metrics.getSeries("tasks.created")</code>. Would a <code>title</code> label be a good idea?</p></div><script type="text/plain" class="lx-ex-starter" data-file="priority.ts">// Example to learn from: a different counter with a small, fixed label set.
+//
+//   for (const status of ["success", "success", "failed"]) {
+//     obs.metrics.counter("logins", { status }).increment();
+//   }
+//   for (const series of obs.metrics.getSeries("logins")) console.log(series.labels, series.value);
+//
+// Now count "tasks.created" by priority the same way.
+
+import { createObservability } from "@zudojs/observability";
+
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false });
+
+for (const priority of ["high", "high", "low"]) {
+  // Increment obs.metrics.counter("tasks.created", { priority }).
+}
+for (const series of obs.metrics.getSeries("tasks.created")) {
+  console.log(series.labels, series.value);
+}
+await obs.shutdown();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>obs.metrics.counter(name, labels)</code> returns the same counter for the same name and labels, so calling it once per loop turn and incrementing it is enough: <code>obs.metrics.counter("tasks.created", { priority }).increment();</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>obs.metrics.counter("tasks.created", { priority }).increment();</code> inside the loop. Two calls with <code>priority: "high"</code> add up to the same series.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="9" data-file="priority.ts">
 <figcaption class="lx-bar"><span class="lx-file">priority.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createObservability <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/observability"</span><span class="t-pn">;</span>
 
@@ -788,7 +812,26 @@ await obs.shutdown();</script>
 { priority: 'low' } 1</pre></div>
 </figure>
 <p>A priority has three possible values, so it makes three series at most. A title can be anything a user types: one series per title is a cardinality explosion. Put the title in a log line or a span attribute instead.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="slow-step.ts" data-project="obs" data-command="npx tsx slow-step.ts" data-title="Find the slow step"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Find the slow step</h3><div class="lx-ex-task"><p>Using <code>spanTree</code> from <code>print.ts</code>, trace a <code>POST /tasks</code> request with three steps: <code>validate</code> (1 ms), <code>db.insert</code> (40 ms) and <code>events.publish</code> (5 ms). Which step would you optimize first?</p></div><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="10" data-file="slow-step.ts" data-project="obs">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="slow-step.ts" data-project="obs" data-command="npx tsx slow-step.ts" data-title="Find the slow step"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Find the slow step</h3><div class="lx-ex-task"><p>Using <code>spanTree</code> from <code>print.ts</code>, trace a <code>POST /tasks</code> request with three steps: <code>validate</code> (1 ms), <code>db.insert</code> (40 ms) and <code>events.publish</code> (5 ms). Which step would you optimize first?</p></div><script type="text/plain" class="lx-ex-starter" data-file="slow-step.ts">// Example to learn from: the same nested-span shape for a different request.
+//
+//   await withSpan(obs.tracer, "GET /report", async () => {
+//     await withSpan(obs.tracer, "load data", () => wait(30));
+//     await withSpan(obs.tracer, "render pdf", () => wait(10));
+//   });
+//
+// Now trace POST /tasks with its three steps below.
+
+import { createObservability, withSpan } from "@zudojs/observability";
+import { spanTree } from "./print.js";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false, spanExporter: spanTree });
+
+// Wrap a "POST /tasks" span (withSpan(obs.tracer, "POST /tasks", async () => { ... }))
+// around three nested spans, each wrapping a wait(): "validate" (1),
+// "db.insert" (40), "events.publish" (5).
+
+await obs.shutdown();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Nest the calls the way the worked example nests <code>"load data"</code> and <code>"render pdf"</code> inside <code>"GET /report"</code>: each inner <code>withSpan</code> call is <code>await</code>ed inside the outer one's callback.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>await withSpan(obs.tracer, "POST /tasks", async () => { await withSpan(obs.tracer, "validate", () =&gt; wait(1)); await withSpan(obs.tracer, "db.insert", () =&gt; wait(40)); await withSpan(obs.tracer, "events.publish", () =&gt; wait(5)); });</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="10" data-file="slow-step.ts" data-project="obs">
 <figcaption class="lx-bar"><span class="lx-file">slow-step.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createObservability<span class="t-pn">,</span> withSpan <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/observability"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> spanTree <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./print.js"</span><span class="t-pn">;</span>
@@ -821,7 +864,7 @@ await obs.shutdown();</script>
   events.publish 13ms</pre></div>
 </figure>
 <p><code>db.insert</code>: it is most of the request. Making <code>validate</code> ten times faster would save almost nothing. Always measure before you optimize.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Is this header safe?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Is this header safe?</h3><div class="lx-ex-task"><p>A client sends <code>traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01</code> and <code>x-user-role: admin</code>. The Task API joins the trace. Should it also trust the role?</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>No. Joining a trace only links spans together: at worst, a client makes its request appear inside someone else's trace. A role decides what the caller may do, so it must come from your own authentication (a verified session or token, as in <a href="/learn/zudo-auth">the auth lesson</a>), never from a header the client can type. Treat every incoming header as untrusted, and give each one only as much power as it can safely have.</p></div></div>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Is this header safe?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Is this header safe?</h3><div class="lx-ex-task"><p>A client sends <code>traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01</code> and <code>x-user-role: admin</code>. The Task API joins the trace. Should it also trust the role?</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Re-read what joining a trace actually does to a request's <em>power</em>, versus what a role decides. Do the two headers carry the same kind of claim?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Ask where each value would need to come from if it were trustworthy: is there a place in this lesson, or an earlier one, that already answers "where does a verified identity or role come from"?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>No. Joining a trace only links spans together: at worst, a client makes its request appear inside someone else's trace. A role decides what the caller may do, so it must come from your own authentication (a verified session or token, as in <a href="/learn/zudo-auth">the auth lesson</a>), never from a header the client can type. Treat every incoming header as untrusted, and give each one only as much power as it can safely have.</p></div></div>
 </section>
 
 <section>
