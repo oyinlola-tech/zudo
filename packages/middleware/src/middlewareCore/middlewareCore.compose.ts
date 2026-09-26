@@ -121,9 +121,9 @@ export interface TimingOptions {
 /**
  * Wrap a middleware so that slow executions are reported.
  *
- * The wrapper is transparent: the inner middleware's return value and any
- * error it throws pass through unchanged, and the timing is reported either
- * way.
+ * The result and any error pass through; timing is reported either way.
+ * Annotate `ctx` (or pass a typed middleware) to infer both types:
+ * `withTiming<Ctx>` alone leaves `TResult` at its `void` default.
  */
 export function withTiming<TContext, TResult = void>(
   name: string,
