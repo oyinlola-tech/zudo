@@ -58,3 +58,9 @@ export * from "./deadLetter/index.js";
 
 // Context propagation across the queue boundary
 export * from "./contextCarrier/index.js";
+
+// Permanent failures
+export * from "./jobFailure/index.js";
+
+// Error classes (owned by @zudojs/errors)
+export * from "./queueErrors/index.js";

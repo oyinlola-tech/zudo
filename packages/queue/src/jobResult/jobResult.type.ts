@@ -10,6 +10,12 @@ export interface JobResult<T = unknown> {
   readonly data?: T;
   /** Error message if the job failed. */
   readonly error?: string;
+  /**
+   * When `true` on a failed result, the job is dead-lettered at once
+   * instead of being retried. See `markUnrecoverable` for the thrown-error
+   * equivalent.
+   */
+  readonly unrecoverable?: boolean;
   /** Duration of the job execution in milliseconds. */
   readonly durationMs: number;
   /** When the result was created. */

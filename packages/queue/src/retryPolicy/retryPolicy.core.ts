@@ -70,10 +70,17 @@ export function applyJitter(
  * The result is always a finite, non-negative number no greater than
  * {@link MAX_TIMER_DELAY}. Jitter is applied only when the backoff opts
  * into it, so a backoff without `jitter` stays deterministic.
+ *
+ * @param attempt - The 1-based number of the attempt that just failed.
+ * @param backoff - The backoff to apply; no backoff means no delay.
+ * @param random - Source of randomness for jitter, returning a number in
+ *   `[0, 1)`. Defaults to `Math.random`; inject a seeded function to make a
+ *   jittered backoff reproducible in tests.
  */
 export function calculateRetryDelay(
   attempt: number,
   backoff?: BackoffOptions,
+  random: () => number = Math.random,
 ): number {
   if (!backoff) {
     return 0;
@@ -98,7 +105,7 @@ export function calculateRetryDelay(
     }
   };
 
-  return clampDelay(applyJitter(clampDelay(base()), jitter));
+  return clampDelay(applyJitter(clampDelay(base()), jitter, random));
 }
 
 /**

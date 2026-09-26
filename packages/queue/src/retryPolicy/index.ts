@@ -5,7 +5,11 @@
  * creating backoff configurations.
  */
 export {
+  DEFAULT_RETRY_BACKOFF,
+  MAX_TIMER_DELAY,
+  applyJitter,
   calculateRetryDelay,
+  resolveBackoff,
   shouldRetry,
   createBackoffOptions,
   createFixedBackoff,

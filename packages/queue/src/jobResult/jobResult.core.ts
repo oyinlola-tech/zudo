@@ -16,14 +16,21 @@ export function createJobResult<T>(data: T, durationMs: number): JobResult<T> {
 
 /**
  * Creates a failed job result.
+ *
+ * @param error - The failure message.
+ * @param durationMs - How long the attempt ran.
+ * @param options - Pass `unrecoverable: true` to dead-letter the job at
+ *   once instead of retrying it.
  */
 export function createJobErrorResult(
   error: string,
   durationMs: number,
+  options: { readonly unrecoverable?: boolean } = {},
 ): JobResult {
   return {
     success: false,
     error,
+    ...(options.unrecoverable === true ? { unrecoverable: true } : {}),
     durationMs,
     timestamp: new Date().toISOString() as Timestamp,
   };

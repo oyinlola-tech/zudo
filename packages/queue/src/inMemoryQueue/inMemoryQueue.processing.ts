@@ -29,6 +29,8 @@ import {
   settleWithin,
 } from "./inMemoryQueue.settle.js";
 
+import { isUnrecoverableJobError } from "../jobFailure/jobFailure.unrecoverable.js";
+
 import { JobMaxAttemptsError } from "@zudojs/errors";
 
 /**
@@ -75,6 +77,22 @@ export interface ProcessJobDependencies<TData> {
    * when the queue was configured without a logger.
    */
   readonly logger?: QueueLogger;
+  /** See `QueueOptions.random`. */
+  readonly random?: () => number;
+}
+
+/**
+ * How an attempt failed, beyond its message.
+ */
+export interface JobFailureDetails {
+  /** The value the processor threw or the result it returned, if any. */
+  readonly error?: unknown;
+  /**
+   * The failure is permanent: dead-letter the job now rather than retry.
+   * Set when the thrown error was marked with `markUnrecoverable` or the
+   * returned `JobResult` carries `unrecoverable: true`.
+   */
+  readonly unrecoverable?: boolean;
 }
 
 /**
@@ -175,7 +193,9 @@ export async function processJob<TData>(
     );
 
     if (isJobResult(result) && !result.success) {
-      await handleJobFailure(updatedJob, result.error ?? "Job failed", deps);
+      await handleJobFailure(updatedJob, result.error ?? "Job failed", deps, {
+        unrecoverable: result.unrecoverable === true,
+      });
     } else {
       const completedJob = updateJobState(updatedJob, JobStateEnum.COMPLETED, {
         completedAt: new Date().toISOString() as never,
@@ -199,7 +219,10 @@ export async function processJob<TData>(
     if (abortController.signal.aborted && !timedOut) {
       emitter.emit("job:cancelled", { job: updatedJob });
     }
-    await handleJobFailure(updatedJob, errorMessage, deps);
+    await handleJobFailure(updatedJob, errorMessage, deps, {
+      error,
+      unrecoverable: isUnrecoverableJobError(error),
+    });
   } finally {
     counters.processedCount++;
   }
@@ -210,14 +233,20 @@ export async function processJob<TData>(
  *
  * A failure that will be retried is reported as `job:retrying` and counted
  * separately; only a terminal failure increments `failedCount`, so the
- * counters describe outcomes rather than attempts.
+ * counters describe outcomes rather than attempts. An unrecoverable failure
+ * skips the remaining attempts and is dead-lettered with the processor's
+ * own error.
  */
 export async function handleJobFailure<TData>(
   job: Job<TData>,
   errorMessage: string,
   deps: ProcessJobDependencies<TData>,
+  details: JobFailureDetails = {},
 ): Promise<void> {
   const { jobs, emitter, counters, deadLetterStore } = deps;
+
+  const thrown =
+    details.error instanceof Error ? details.error : new Error(errorMessage);
 
   const failedJob = updateJobState(job, JobStateEnum.FAILED, {
     error: errorMessage,
@@ -225,15 +254,15 @@ export async function handleJobFailure<TData>(
   });
   jobs.set(job.id, failedJob);
 
-  emitter.emit("job:failed", {
-    job: failedJob,
-    error: new Error(errorMessage),
-  });
+  emitter.emit("job:failed", { job: failedJob, error: thrown });
 
   const incrementedJob = incrementJobAttempt(failedJob);
   jobs.set(job.id, incrementedJob);
 
-  if (shouldRetry(incrementedJob.attempt, incrementedJob.maxAttempts)) {
+  if (
+    details.unrecoverable !== true &&
+    shouldRetry(incrementedJob.attempt, incrementedJob.maxAttempts)
+  ) {
     const retryingJob = updateJobState(incrementedJob, JobStateEnum.RETRYING);
     jobs.set(job.id, retryingJob);
 
@@ -245,7 +274,11 @@ export async function handleJobFailure<TData>(
     });
 
     const backoff = resolveBackoff(incrementedJob.backoff);
-    const delay = calculateRetryDelay(incrementedJob.attempt, backoff);
+    const delay = calculateRetryDelay(
+      incrementedJob.attempt,
+      backoff,
+      deps.random,
+    );
 
     const timer = setTimeout(() => {
       deps.deregisterRetryTimer?.(job.id);
@@ -275,15 +308,13 @@ export async function handleJobFailure<TData>(
   counters.failedCount++;
   counters.deadLetteredCount++;
 
-  const maxAttemptsError = new JobMaxAttemptsError(
-    job.id,
-    incrementedJob.attempt,
-    incrementedJob.maxAttempts,
-    { queueName: job.queueName },
-  );
+  const deadLetterError =
+    details.unrecoverable === true
+      ? thrown
+      : describeExhaustedAttempts(incrementedJob, errorMessage);
 
   try {
-    await moveToDeadLetter(deadLetterStore, incrementedJob, maxAttemptsError, {
+    await moveToDeadLetter(deadLetterStore, incrementedJob, deadLetterError, {
       reason: errorMessage,
     });
   } catch {
@@ -294,13 +325,31 @@ export async function handleJobFailure<TData>(
   const deadLetterJob = updateJobState(
     incrementedJob,
     JobStateEnum.DEAD_LETTER,
-    { error: maxAttemptsError.message },
+    { error: deadLetterError.message },
   );
   jobs.set(job.id, deadLetterJob);
   emitter.emit("job:dead-lettered", {
     job: deadLetterJob,
-    error: maxAttemptsError,
+    error: deadLetterError,
     reason: errorMessage,
   });
   deps.onSettled?.(deadLetterJob);
+}
+
+/**
+ * The error recorded for a job whose attempts ran out.
+ *
+ * The message names the last failure, so a dead-letter entry says what
+ * went wrong ("... Last error: card declined") rather than only that the
+ * attempts were used up; the bare reason is still on `reason`.
+ */
+function describeExhaustedAttempts<TData>(
+  job: Job<TData>,
+  lastError: string,
+): JobMaxAttemptsError {
+  const error = new JobMaxAttemptsError(job.id, job.attempt, job.maxAttempts, {
+    queueName: job.queueName,
+  });
+  error.message = `${error.message} Last error: ${lastError}`;
+  return error;
 }

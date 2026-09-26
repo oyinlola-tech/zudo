@@ -614,6 +614,7 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
           onJobReady: () => this.jobReady(),
           isDisposed: () => this.disposed,
           ...(this.options.logger ? { logger: this.options.logger } : {}),
+          ...(this.options.random ? { random: this.options.random } : {}),
         },
       );
     } catch (error) {

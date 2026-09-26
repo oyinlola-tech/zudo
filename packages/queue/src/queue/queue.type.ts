@@ -147,6 +147,12 @@ export interface QueueOptions {
    * id, trace ids). See {@link QueueContextCarrier}.
    */
   readonly contextCarriers?: readonly QueueContextCarrier[];
+  /**
+   * Source of randomness for retry jitter, returning a number in `[0, 1)`.
+   * Defaults to `Math.random`; inject a seeded function to make a jittered
+   * backoff reproducible in tests.
+   */
+  readonly random?: () => number;
 }
 
 /**
