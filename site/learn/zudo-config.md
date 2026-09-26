@@ -687,6 +687,14 @@ Add a `request_timeout_ms` setting to the [config schema](#validate), with a def
 
 Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
+HINT 1
+
+`request_timeout_ms: schema.coerce.number().int().min(1000).max(120_000),`, the same shape as `max_upload_mb` above.
+
+HINT 2
+
+`sources: [createDefaultsConfigSource({ request_timeout_ms: 30_000 }), createEnvironmentConfigSource({ prefix: "TASKS_", env: { TASKS_REQUEST_TIMEOUT_MS: value }, priority: 20 })]`.
+
 SOLUTION
 
 timeout-setting.ts
@@ -726,6 +734,14 @@ TRY IT YOURSELF
 A teammate wants to debug a production problem and adds `console.log("config", config.toObject())` at startup. What is wrong, and what should the line be?
 
 Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read the two methods a config manager offers for reading everything at once, and what each promises about sensitive values.
+
+HINT 2
+
+Think about where logs end up and who can read them, not just whether the code that wrote the line was trusted.
 
 SOLUTION
 

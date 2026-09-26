@@ -488,10 +488,10 @@ Output of `npx tsx guards.ts` and of the browser terminal
 ```ts
 normal -> passed
 too deep -> SerializationDepthError 400 Maximum serialization depth exceeded: 11 > 10
-too big -> SerializationPayloadTooLargeError 413 Serialized payload too large: 100013 bytes (max: 16384)
+too big -> SerializationPayloadTooLargeError 413 Serialized payload too large: 50013 bytes (max: 16384)
 ```
 
-Both hostile bodies were stopped. The size check is an estimate, not a byte count: it counts two bytes per UTF-16 code unit. That is double the real size for plain ASCII text such as the `x`s here, but *less* than the real UTF-8 size for characters such as `₦`, which take three bytes. [Validation rules](https://zudojs.oyinlola.site/learn/zudo-validation-rules#guards) measures the difference. Treat the guard as a cheap check on the parsed value, and keep the server's own body limit as the limit on real bytes.
+Both hostile bodies were stopped. The size check counts real UTF-8 bytes now: 50,013 for the `x`s here is within a rounding hair of the true 50,012-byte JSON, ASCII or not. Before this was fixed, the guard counted two bytes per UTF-16 code unit instead, which overcounted plain ASCII text by roughly double and *undercounted* a field full of multi-byte characters such as `₦`, which take three UTF-8 bytes but only one UTF-16 code unit each; [Validation rules](https://zudojs.oyinlola.site/learn/zudo-validation-rules#guards) shows the two figures side by side. Treat the guard as a cheap check on the parsed value all the same, and keep the server's own body limit as the authority on real bytes on the wire, since the guard measures the parsed value, not the exact bytes the client sent.
 
 Look at the status codes. The size error is a **413 Payload Too Large**, and the depth error a **400 Bad Request**: both are the client's mistake, so thrown from a route they become the right 4xx answer by themselves.
 
@@ -853,25 +853,25 @@ await server.stop();
 Output of `npx tsx src/check-validation.ts`
 
 ```ts
-PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":[],"code":"unknown_keys","message":"Unknow
 PATCH /tasks/2 200 {"id":2,"title":"Walk the dog","done":true,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}
 GET /tasks?done=false&limit=1&page=2 200 [{"id":3,"title":"Water the plants","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]
-GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
-PATCH /tasks/2 413 {"error":"Serialized payload too large: 80013 bytes (max: 65536)","code":"ERR_PAYLOAD_TOO_LARGE"}
+GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["limit"],"code":"too_large","message":"Ex
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_large","message":"St
 ```
 
-The unknown `id` was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and a huge body never reached a schema: it got a 413 that names the size and the limit, and nothing from the body itself. You do not map this error yourself: the guard marks it as safe to show, so the router's default answer here, and the generated `errorResponse` in the running server, both send it as it is. The 400 bodies still only say "Validation failed"; [The ZudoJS error system](https://zudojs.oyinlola.site/learn/zudo-errors) adds the list of issues for every route at once. Run the same script in your project:
+The unknown `id` was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and the huge title got a 400 too — but not the 413 you might expect. The byte-size guard now counts real UTF-8 bytes (see [above](#guards)), so 40,000 ASCII characters is a ~40,013-byte body, comfortably under the 65,536-byte limit; it passes the guard and reaches the schema, where the `title` field's own length constraint rejects it as `too_large`. You do not map any of these errors yourself: the guard and the schema both mark their failures as safe to show, so the router's default answer, and the generated `errorResponse` in the running server, send each one as it is, `issues` array included. [The ZudoJS error system](https://zudojs.oyinlola.site/learn/zudo-errors) is what makes that array show up on every route at once, without each handler building it by hand. Run the same script in your project:
 
 Terminal on your computer
 
 ```bash
 $ npx tsc --noEmit
 $ npx tsx src/check-validation.ts
-PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":[],"code":"unknown_keys","message":"Unknow
 PATCH /tasks/2 200 {"id":2,"title":"Walk the dog","done":true,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}
 GET /tasks?done=false&limit=1&page=2 200 [{"id":3,"title":"Water the plants","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]
-GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
-PATCH /tasks/2 413 {"error":"Serialized payload too large: 80013 bytes (max: 65536)","code":"ERR_PAYLOAD_TOO_LARGE"}
+GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["limit"],"code":"too_large","message":"Ex
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_large","message":"St
 ```
 
 `registerRoutes` already registers `registerTaskRoutes`, so the running server has the new `PATCH /tasks/:id` route as soon as `npm run dev` restarts.
@@ -885,6 +885,14 @@ TRY IT YOURSELF
 Add a `q` parameter to `ListTasksQuery` for searching titles. It is optional, is trimmed, must be 1 to 50 characters, and is compared in lower case, so turn it to lower case in the schema. Test it with `?q=%20MILK%20` (the `%20` are spaces) and with `?q=`.
 
 Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Chain the modifiers in the same order as `category` above: trim, then lower case, then the length bounds, then `.optional()`.
+
+HINT 2
+
+`q: schema.string().trim().toLowerCase().min(1).max(50).optional()`.
 
 SOLUTION
 
@@ -929,6 +937,14 @@ function updateTask(task: StoredTask, body: Record<string, unknown>): StoredTask
 ```
 
 Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The unknown field to catch is `ownerId`: a task with an id and title should never accept a new `id` or `ownerId` from a client. Build `UpdateTaskSchema` the same way as `RenameSchema` above, but with `title` and `done` instead of `nickname`.
+
+HINT 2
+
+`schema.object({ title: schema.string().trim().min(3).max(100), done: schema.boolean() }).partial().strict()`, then inside `updateTask`: `const changes = UpdateTaskSchema.parse(body); return { ...task, title: changes.title ?? task.title, done: changes.done ?? task.done };`.
 
 SOLUTION
 

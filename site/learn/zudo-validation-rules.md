@@ -60,15 +60,15 @@ created "Buy  milk"
 created "BUY MILK"
 created "Ｂｕｙ milk"
 created "Buy milk\u0007"
-created "🛒🛒"
-tasks stored: 6
+refused (String must be at least 3 characters)
+tasks stored: 5
 ```
 
 - Four spellings of "Buy milk" are now four tasks: two spaces, capitals, and "fullwidth" letters that some phone keyboards produce. To a person they are the same task.
 - A title with an invisible control character (`\u0007`, the "bell") was stored. It will end up in e-mails, logs and CSV exports.
-- Two emoji passed `min(3)`, because JavaScript counts an emoji as two "characters" (two UTF-16 code units).
+- The two emoji were correctly refused this time: `@zudojs/schema`'s `min()` counts Unicode code points, so `🛒🛒` is 2 characters, not the 4 UTF-16 code units older versions counted. A shape check can measure length; it still has no opinion on duplicates or control characters.
 
-None of these is a shape problem. They are **rules** about what a value means: which titles count as the same, which characters are allowed, how long a string is to a human. `@zudojs/validation` is the ZudoJS package for such rules. It also brings structural guards, which you have used since the last lesson, a Zod integration, and an error class for validation failures.
+Two of these are not shape problems. They are **rules** about what a value means: which titles count as the same, which characters are allowed. `@zudojs/validation` is the ZudoJS package for such rules. It also brings structural guards, which you have used since the last lesson, a Zod integration, and an error class for validation failures.
 
 ## @zudojs/schema or @zudojs/validation?
 
@@ -83,7 +83,7 @@ ZudoJS has two validation packages, and it is fair to ask why:
 
 The rule of thumb for this course: **schemas describe shapes, `@zudojs/validation` checks rules**. A DTO stays a `@zudojs/schema` schema. Rules that need more than a type, a length and a format, such as "no control characters", "same title ignoring case and spacing", "USSD transfers at most ₦20,000", are written as constraints and composed with `@zudojs/validation`, and run after the schema has produced a typed value. Its Zod schemas are the alternative for a project that already uses Zod; do not describe the same DTO in both.
 
-The two error classes look alike but are not the same class, and one guard does not recognise the other's errors:
+The two error classes look alike but are not the same class, and only one of the two guards reaches across packages:
 
 two-errors.ts
 
@@ -113,10 +113,10 @@ Output of `npx tsx two-errors.ts` and of the browser terminal
 
 ```ts
 SchemaError 400 ERR_SCHEMA_VALIDATION | schema guard: true | validation guard: false
-SchemaValidationError 400 ERR_SCHEMA_VALIDATION | schema guard: false | validation guard: true
+SchemaValidationError 400 ERR_SCHEMA_VALIDATION | schema guard: true | validation guard: true
 ```
 
-Both are exposed 400s with the same `code`, so a generic error handler answers both correctly. But code that checks `isSchemaValidationError` to read `issues`, as the Task API's error handler will in [the next lesson](https://zudojs.oyinlola.site/learn/zudo-errors), does not recognise errors from `@zudojs/validation`. Keep that in mind when you mix them; this lesson's Task API rules are written so that their error message carries the details.
+Both are exposed 400s with the same `code`, so a generic error handler answers both correctly. `isSchemaValidationError` now recognises both: any `BaseError` coded `ERR_SCHEMA_VALIDATION` with an issue list counts, whichever package threw it, so code that checks it to read `issues`, as the Task API's error handler will in [the next lesson](https://zudojs.oyinlola.site/learn/zudo-errors), works for both. The reverse still does not hold: `isValidationError` only recognises `@zudojs/validation`'s own errors, not a plain `SchemaError` from `@zudojs/schema`. Reach for `isSchemaValidationError` when you need one guard that covers a mixed codebase.
 
 ## Constraints
 
@@ -154,7 +154,7 @@ emoji        [ 'title: Value must contain at least 3 characters.' ]
 A few details matter:
 
 - `checkConstraints` runs *every* constraint and reports every failure, so a form can show all problems at once. The `path` argument puts the field name on each issue.
-- String lengths count **code points**, so an emoji is one character: `🛒🛒` is two, and fails `minLength(3)`. `@zudojs/schema`'s `min(3)` counts UTF-16 code units and let it through. When length means "what a person sees", use the constraint.
+- String lengths count **code points**, so an emoji is one character: `🛒🛒` is two, and fails `minLength(3)`. `@zudojs/schema`'s `min(3)` counts the same way now, so the two packages agree on "what a person sees" — you no longer need the constraint just to get this right, only for rules a schema cannot express at all.
 - `httpUrl` accepts only `http:` and `https:`. A `javascript:` "URL" in a profile link is a classic stored-XSS trick.
 - The rejected value is **not** copied into the issue. Issues end up in error responses and logs, and the rejected value may be a password or a card number.
 
@@ -200,12 +200,12 @@ Output of `npx tsx custom.ts` and of the browser terminal
 ]
 false
 Choose another username true
-Value must not satisfy one_of.
-One or more validation constraints failed.
+Value must not satisfy the "one of" constraint.
+Value must be an integer. Value must be between 1 and 8.
 [ 'Value must be an integer.' ]
 ```
 
-Two things to notice. `not` without options reports the internal name of the constraint it negates (`one_of`), which means nothing to a user, so give it your own message. And `combineConstraints` turns several constraints into one, but its failure message is generic: when the reason matters to the user, pass the list to `checkConstraints` instead.
+Two things to notice. `not` without options now reports a readable phrase naming the constraint it negates (`the "one of" constraint`) instead of the bare internal name `one_of`; giving it your own `message`, as `notReserved` does, still gives the best wording for a user. And `combineConstraints` turns several constraints into one, and its failure message now lists every member's message in one string; when you need each one as a separate issue instead, pass the list to `checkConstraints`.
 
 ## Normalize, then validate
 
@@ -488,10 +488,10 @@ Output of `npx tsx zod-async.ts` and of the browser terminal
   ]
 }
 true
-validate threw: Error - Encountered Promise during synchronous parse. Use .parseAsync() instead.
+validate threw: ConfigurationError - The schema contains an async refine() or transform() and cannot be parsed synchronously; use validateAsync(), parseAsync() or createAsyncValidator().
 ```
 
-The synchronous call did not return a failure result: it threw a plain `Error`, which a server would answer with 500. Use `validateAsync` or `parseAsync` for any schema with an asynchronous rule. And keep such checks out of schemas for writes that must be unique: between the check and the insert another request can take the name. The database's unique index is the real guarantee; the check only gives a friendlier message.
+The synchronous call did not return a failure result: it threw a `ConfigurationError` naming the fix, rather than the bare `Error` it used to throw — a clue instead of a mystery 500, though it is still your bug to fix, not the client's. Use `validateAsync` or `parseAsync` for any schema with an asynchronous rule. And keep such checks out of schemas for writes that must be unique: between the check and the insert another request can take the name. The database's unique index is the real guarantee; the check only gives a friendlier message.
 
 ## Validation errors
 
@@ -517,7 +517,7 @@ console.log(isValidationError(error));
 Output of `npx tsx errors.ts` and of the browser terminal
 
 ```ts
-ValidationError 400 true ERR_VALIDATION_FAILED
+ValidationError 400 true ERR_INVALID_INPUT
 password: Password must be at least 12 characters; email: Enter a valid email address
 [Object: null prototype] {
   password: 'Password must be at least 12 characters',
@@ -603,13 +603,13 @@ Output of `npx tsx depth-size.ts` and of the browser terminal
 
 ```ts
 3 0
-a estimate: 2013 real UTF-8 bytes: 1012
-₦ estimate: 2013 real UTF-8 bytes: 3012
-任 estimate: 2013 real UTF-8 bytes: 3012
-2,500-byte limit: passed
+a estimate: 1013 real UTF-8 bytes: 1012
+₦ estimate: 3013 real UTF-8 bytes: 3012
+任 estimate: 3013 real UTF-8 bytes: 3012
+Serialized payload too large: 3013 bytes (max: 2500)
 ```
 
-The size estimate counts two bytes per UTF-16 code unit. For plain ASCII that is about double the real size, but `₦` and most non-Latin scripts take three bytes in UTF-8, and there the estimate is too *low*: the 3,012-byte body passed a 2,500-byte limit. Treat the guard as a cheap check on the parsed structure, and keep the HTTP server's body limit (10 MB by default, set lower for a JSON API) as the hard limit on real bytes.
+The size estimate now counts real UTF-8 bytes, the same as `JSON.stringify` would put on the wire — within a byte of it here, for the one byte of quoting the key adds. Plain ASCII, `₦` and 任 all come out right, where the old estimate charged every string two bytes per UTF-16 code unit: correct for nothing in particular, roughly double the real size for ASCII, and *short* for `₦` and most non-Latin scripts, which take three bytes each in UTF-8 but only one UTF-16 code unit. That undercount is what let the 3,012-byte `₦` body pass a 2,500-byte limit before; now it is correctly refused. Treat the guard as a cheap check on the parsed structure, and keep the HTTP server's body limit (10 MB by default, set lower for a JSON API) as the authority on real bytes on the wire.
 
 ## Request validation and response validation
 
@@ -986,18 +986,18 @@ Output of `npx tsx src/check-rules.ts`
 POST "  Buy \t milk " 201 {"id":1,"title":"Buy milk","done":false,"priority":"normal","createdAt":"2026-09-25T09:00:00.000Z"}
 POST "BUY  MILK"      409 {"error":"A task called \"BUY MILK\" already exists","code":"ERR_CONFLICT"}
 POST "Ｂｕｙ milk"       409 {"error":"A task called \"Ｂｕｙ milk\" already exists","code":"ERR_CONFLICT"}
-POST "Pay rent\u0007" 400 {"error":"title: Title must not contain control characters","code":"ERR_VALIDATION_FAILED"}
-POST "🛒🛒"           400 {"error":"title: Value must contain between 3 and 100 characters.","code":"ERR_VALIDATION_FAILED"}
+POST "Pay rent\u0007" 400 {"error":"title: Title must not contain control characters","code":"ERR_INVALID_INPUT","issues":[{"path":["title"],"code":"control_character","message":"Title must not contain control characters"}]}
+POST "🛒🛒"           400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_small","message":"String must be at least 3 characters"}]}
 PATCH "Buy Milk"       200 {"id":1,"title":"Buy Milk","done":false,"priority":"normal","createdAt":"2026-09-25T09:00:00.000Z"}
-GET /tasks/99 500 {"error":"Internal Server Error"}
+GET /tasks/99 500 {"error":"Internal Server Error","code":"INTERNAL_SERVER_ERROR"}
 ```
 
 Read the answers:
 
 - The first title was stored clean: `Buy milk`, with the tab and the extra spaces gone.
 - `BUY  MILK` and the fullwidth spelling are now conflicts, 409, because their keys match. Renaming task 1 to `Buy Milk` is allowed: it is the same task.
-- The bell character and the two emoji were refused with 400, and the message says which rule failed. It is carried by the error's `message`, which every error handler sends.
-- The planted task with `done: "no"` got a plain 500: the client learns nothing about your data. With the error handler from [the next lesson](https://zudojs.oyinlola.site/learn/zudo-errors), that 500 is logged together with `taskId` and the failing fields.
+- The bell character was refused by `checkTitle`'s constraint, `ERR_INVALID_INPUT`, with an `issues` entry for `title`. The two emoji never reach `checkTitle` at all: `NewTaskSchema.title`'s own `min(3)` now counts code points too ([above](#why)), so it refuses a two-emoji title first, as `ERR_SCHEMA_VALIDATION`. Different package, different code, same shape of answer: both are exposed 400s with an `issues` array, because `@zudojs/errors` now attaches one to every exposed error that has one, whichever package built it.
+- The planted task with `done: "no"` got a 500 that names only its `code`, `INTERNAL_SERVER_ERROR`: the client learns nothing about your data. With the error handler from [the next lesson](https://zudojs.oyinlola.site/learn/zudo-errors), that 500 is logged together with `taskId` and the failing fields.
 
 Terminal on your computer
 
@@ -1017,6 +1017,14 @@ TRY IT YOURSELF
 Write a composer for hotel bookings `{ room, nights, guests, promoCode? }` using constraints: `nights` an integer from 1 to 30, `guests` from 1 to 4, and a promo code, when present, of 4 to 12 letters or digits. Report every problem at once, each with its field path.
 
 Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Add two more entries to the array, the same shape as `nights`: `field("guests", (guests) => checkConstraints([integer, between(1, 4)], guests, ["guests"]).issues ?? [])`.
+
+HINT 2
+
+For the optional field, return no issues when it is absent: `field("promoCode", (code) => code === undefined ? [] : (checkConstraints([lengthBetween(4, 12), matches(/^[A-Z0-9]+$/i, "Letters and digits only")], code, ["promoCode"]).issues ?? []))`.
 
 SOLUTION
 
@@ -1081,6 +1089,14 @@ Write `respond(schema, value)` for a Zod response schema: on success return the 
 
 Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
+HINT 1
+
+Guard on `result.success`, the same as `reply` above: when it is `false`, throw; when it is `true`, return `result.data`.
+
+HINT 2
+
+`if (!result.success) { throw new InternalServerError("Response failed its schema", { metadata: { failures: result.issues.map((i) => \`${i.path.join(".")}: ${i.code}\`) } }); } return result.data;`.
+
 SOLUTION
 
 respond.ts
@@ -1122,7 +1138,7 @@ The good record lost its `passwordHash` on the way out, and the broken one becam
 
 ## Recap
 
-- `@zudojs/schema` describes shapes; `@zudojs/validation` checks rules, normalizes, composes and guards. Both throw exposed 400s with `issues`, but `isSchemaValidationError` only recognises `@zudojs/schema`'s errors.
+- `@zudojs/schema` describes shapes; `@zudojs/validation` checks rules, normalizes, composes and guards. Both throw exposed 400s with `issues`; `isSchemaValidationError` recognises both packages' errors, but `isValidationError` only recognises `@zudojs/validation`'s own.
 - Constraints are named rules with a code and a message. `checkConstraints` reports every failure and never copies the rejected value into an issue. String lengths count code points.
 - Normalize before you check or compare: store a clean NFC form, compare an identifier key (NFKC plus case folding) for uniqueness.
 - Composers turn steps into reusable validators; `when` makes a rule conditional; `stopOnFirstError: false` collects independent problems.

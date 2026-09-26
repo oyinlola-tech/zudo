@@ -147,6 +147,8 @@ Generated from `css/site.css` by `pnpm site:theme`; do not edit the table by han
 | `--z-tint-green-4` | #F0FAF3 | #12291C |  |
 | `--z-tint-pink` | #FDF2F8 | #2E1A2A |  |
 | `--z-tint-purple` | #F3EBFA | #2B2140 |  |
+| `--z-diagram-green` flowchart shapes in Academy diagrams; labels use currentColor | #E3F4E8 | #163A24 |  |
+| `--z-diagram-yellow` | #F9E2AF | #4A3A12 |  |
 | Code |  |  |  |
 | `--z-code-bg` | #1E1E2E | same |  |
 | `--z-code-mantle` | #181825 | same |  |

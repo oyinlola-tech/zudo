@@ -132,13 +132,12 @@ TaskAlreadyDoneError [ERR_TASK_ALREADY_DONE]: Task 3 is already done
   code: 'ERR_TASK_ALREADY_DONE',
   message: 'Task 3 is already done',
   category: 'business',
-  statusCode: 409,
-  metadata: { taskId: 3 }
+  statusCode: 409
 }
 ```
 
 - The `code` is your own string. Prefix it (`ERR_`) and keep it stable: clients will write `if (body.error.code === "ERR_TASK_ALREADY_DONE")`.
-- `metadata` holds facts about the failure. It is copied and frozen, so nobody can change it later. Look at the last output: for an exposed error such as this 409, `serializePublicError` sends the metadata to the client. So only put there what a client may see. Facts for your logs only belong in the log line, or in the metadata of a 5xx error, which is never exposed. Never a password or a token.
+- `metadata` holds facts about the failure. It is copied and frozen, so nobody can change it later. Look at the last output: `metadata` is missing, even though this is an exposed 409. `expose` only says the *message* is safe; `serializePublicError` no longer assumes the metadata is too. To send `taskId` here, opt in with `serializePublicError(error, { publicMetadataKeys: ["taskId"] })`, or pass `exposeMetadata: true` to publish all of it (still redacted) on every exposed error. Until you opt in, metadata stays in your logs only. Never put a password or a token in it regardless.
 - `name` was set to the class name for you.
 - 409 Conflict fits: the request clashes with the current state of the task.
 
@@ -239,7 +238,7 @@ A request fails because the database refused a query. The error knows the failin
 - **The client** of a 500 gets a stable code and a generic message, nothing else. SQL, table names, hosts and stack traces are a map of your system for an attacker, and the client cannot act on them anyway.
 - **Your log** gets everything that helps you fix the bug: the real message, the SQL, the stack and the cause.
 - **Neither** gets the password: logs are copied and read widely, so secrets are redacted even there.
-- A **404** is different: the client made the mistake and needs to know which task was missing, so its message and a `taskId` in its metadata may be sent. That is why exposure depends on the status: 4xx errors are exposed, 5xx errors are not.
+- A **404** is different: the client made the mistake and needs to know which task was missing, so its message is sent. That is why exposure depends on the status: 4xx errors are exposed, 5xx errors are not. `expose` only covers the message, though: a `taskId` in the 404's metadata is sent only if you name it, with `publicMetadataKeys` or `exposeMetadata: true` — otherwise it stays server-side, exposed or not.
 
 `serializePublicError(error)` is for clients. `error.toJSON()` is for logs. Here both look at a database failure whose metadata holds the failing SQL and, by mistake, a password:
 
@@ -305,8 +304,7 @@ Output of `npx tsx error-handler.ts` and of the browser terminal
   code: 'ERR_RESOURCE_NOT_FOUND',
   message: 'Task 9 not found',
   statusCode: 404,
-  requestId: 'req-1',
-  details: { taskId: 9 }
+  requestId: 'req-1'
 }
 [report] ERR_INTERNAL_ERROR operational=false request=req-2
 {
@@ -317,7 +315,7 @@ Output of `npx tsx error-handler.ts` and of the browser terminal
 }
 ```
 
-The second error was a plain `Error` mentioning an internal address. The client body says nothing about it; the reporter saw it as a non-operational error, which is exactly the kind you want an alert for.
+The first body has no `details` for `taskId`, for the same reason as `custom.ts` above: `handlePublic` shares the same metadata policy as `serializePublicError`, so pass `publicMetadataKeys` or `exposeMetadata` to `ErrorHandler`'s constructor if you want it there. The second error was a plain `Error` mentioning an internal address. The client body says nothing about it; the reporter saw it as a non-operational error, which is exactly the kind you want an alert for.
 
 ## Errors in @zudojs/http
 
@@ -540,6 +538,14 @@ Add a `complete(id)` method to the `TaskService`: it throws `TaskAlreadyDoneErro
 
 Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
+HINT 1
+
+Guard in the same order as `cancel` above: missing task first, then already-done, then the update. `if (!task) throw new NotFoundError(...); if (task.done) throw new TaskAlreadyDoneError(id);`.
+
+HINT 2
+
+`const updated = { ...task, done: true }; tasks.set(id, updated); return updated;`, after the two guards.
+
 SOLUTION
 
 complete.ts
@@ -606,6 +612,14 @@ function leakyHandler(error: unknown) {
 ```
 
 Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look at each of the three fields in the response body separately, and ask what a `TypeError` or a database error's `message` and `stack` can contain that a stranger should never read.
+
+HINT 2
+
+The status code is fixed at 500 for everything, even a missing task. What does a real client need in order to tell "you made a mistake" from "we made a mistake"?
 
 SOLUTION
 
