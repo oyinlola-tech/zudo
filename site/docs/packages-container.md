@@ -154,7 +154,7 @@ A *provider* is the recipe that tells the container how to produce a value for a
 | --- | --- | --- |
 | `registerValue(token, value)` | Hands back the exact object you gave it. | Always SINGLETON, whatever scope you pass. Never disposed by the container (the value is yours). |
 | `registerClass(token, Class, { inject })` | Calls `new Class(...deps)`. | `inject` lists the tokens to pass, in constructor order. Omit it only for a constructor with no parameters, or only defaulted ones; since v1.2.1 resolving a class that needs arguments but has no `inject` throws `ProviderResolutionError`. |
-| `registerFactory(token, fn, inject)` | Calls your function and uses its return value. | Resolved `inject` tokens become the function's arguments. |
+| `registerFactory(token, fn, inject, options?)` | Calls your function and uses its return value. | Resolved `inject` tokens become the function's arguments. **TRANSIENT by default** — the function runs on every `resolve()` unless `options.scope` says otherwise. |
 | `registerExisting(token, otherToken)` | Makes `token` an alias for `otherToken`. | Both tokens resolve to the same instance. |
 
 The important idea is `inject`. There is no reflection or decorator magic: the container passes exactly the tokens you list, resolved in order. This example, taken from the package tests, uses all four methods.
@@ -365,7 +365,7 @@ console.log(container.has(FLAG));             // true
 console.log(container.resolveOptional(FLAG)); // true
 ```
 
-One convenience: with the default `autoRegisterClasses: true`, resolving a class that was never registered registers it on the fly as TRANSIENT and builds it with **no arguments**. Since v1.2.0 that only happens for a class whose constructor declares no required parameters (`Class.length === 0`; parameters with default values do not count). Resolving an unregistered class that expects dependencies throws `RegistrationNotFoundError` with a message that names the class and shows how to register it with an `inject` list; `canResolve()` returns `false` and `resolveOptional()` returns `undefined` for it. Before v1.2.0 such a class was built silently with every parameter `undefined`. Set the option to `false` if you prefer to require explicit registration for every class.
+One convenience: with the default `autoRegisterClasses: true`, resolving a class that was never registered registers it on the fly as TRANSIENT and builds it with **no arguments**. Since v1.2.0 that only happens for a class whose constructor declares no required parameters (`Class.length === 0`). Parameters with default values and rest parameters do not count: `constructor(deps: Deps = {})` has `length === 0`, so it *is* auto-registered and built with no arguments — the default applies and nothing is injected. Register such a class with an `inject` list when the container should supply those values; the container cannot tell "optional" from "please inject" at runtime. Resolving an unregistered class that expects dependencies throws `RegistrationNotFoundError` with a message that names the class and shows how to register it with an `inject` list; `canResolve()` returns `false` and `resolveOptional()` returns `undefined` for it. Before v1.2.0 such a class was built silently with every parameter `undefined`. Set the option to `false` if you prefer to require explicit registration for every class.
 
 > **Tip:** `resolveOptional()` only hides "not registered". A registered token whose factory throws, or whose dependency is missing, still throws so that real bugs are not swallowed.
 
@@ -401,7 +401,7 @@ console.log(container.name); // zudojs-container
 | `freezeRegistrations` | Locks the registration set once the container starts. | Default `false`. Remember the first `resolve()` starts the container. |
 | `registry.allowDuplicates` | Allow registering a token twice; the later one wins. | Default `false` (throws `DuplicateRegistrationError`). |
 | `lifecycle.failFast` | Stop disposal at the first failure instead of collecting them all. | Default `false`. |
-| `resolution.autoRegisterClasses` | Auto-register unregistered class tokens as TRANSIENT. | Default `true`. |
+| `resolution.autoRegisterClasses` | Auto-register unregistered class tokens as TRANSIENT. | Default `true`. Only zero-required-parameter constructors; defaulted/rest parameters count as zero and are not injected. |
 | `resolution.detectCircularDependencies` | Throw `CircularDependencyError` on loops. | Default `true`. When off, `maxResolutionDepth` still stops runaway chains. |
 | `resolution.maxResolutionDepth` | Longest allowed dependency chain. | Default `100`. Must be a positive integer. |
 
@@ -511,7 +511,7 @@ Everything below is exported from `@zudojs/container` unless a note says otherwi
 
 - **Listing `inject` tokens in the wrong order.** With typed tokens the compiler now catches a mismatch, but two dependencies of the same type (or string tokens, which are `unknown`) can still be swapped silently. Fix: keep the list in parameter order and prefer typed tokens from `createToken<T>()`.
 - **Calling `createToken("db")` in two files.** You get two unrelated tokens, and `resolve()` throws `RegistrationNotFoundError`. Fix: create each token once in a shared module and import it.
-- **Forgetting `inject` on a class with constructor arguments.** `registerClass(TOKEN, Service)` with no `inject` still registers, but since v1.2.1 `resolve(TOKEN)` throws `ProviderResolutionError`: `Cannot build class "Service" for token "service": its constructor declares 2 parameters and the registration has no inject list, so it would be built with undefined dependencies.` The same applies to `{ useClass }`, `classProvider` and `provideClass`. Up to v1.2.0 the class was built with every parameter `undefined` (only *auto*-registration refused it). Constructors with no parameters, or only defaulted ones, are unaffected. Fix: `registerClass(TOKEN, Service, { inject: [DEP_A, DEP_B] })` in constructor order.
+- **Forgetting `inject` on a class with constructor arguments.** `registerClass(TOKEN, Service)` with no `inject` still registers, but since v1.2.1 `resolve(TOKEN)` throws `ProviderResolutionError`: `Cannot build class "Service" for token "service": its constructor declares 2 parameters and the registration has no inject list, so it would be built with undefined dependencies.` The same applies to `{ useClass }`, `classProvider` and `provideClass`. Up to v1.2.0 the class was built with every parameter `undefined` (only *auto*-registration refused it). Constructors with no parameters, or only defaulted ones, are unaffected. Fix: `registerClass(TOKEN, Service, { inject: [DEP_A, DEP_B] })` in constructor order. Since v1.3.0 the compiler checks that list against the constructor for `registerClass`, `classProvider` and `provideClass`: a missing list, or two typed tokens in the wrong order, is a type error instead of a runtime `undefined` (string and symbol tokens are untyped and check nothing).
 - **Resolving a SCOPED token from the container.** `ScopedResolutionError`. Fix: `const scope = container.createScope()` and `scope.resolve(TOKEN)`, then `await scope.dispose()`.
 - **Expecting the default to be singleton.** The default is TRANSIENT, so a DB pool factory runs on every resolve. Fix: pass `{ scope: ContainerScope.SINGLETON }` for shared things.
 - **Returning a Promise from a singleton factory.** `AsyncProviderError`. Fix: `const db = await connect()` first, then `registerValue(DB, db)` — and close it yourself, since the container does not dispose registered values.
@@ -525,9 +525,9 @@ Everything below is exported from `@zudojs/container` unless a note says otherwi
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/container` exports from its package root at v1.2.3 — **133** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/container` exports from its package root at v1.3.0 — **135** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 133 exports**
+**Show all 135 exports**
 
 Classes (15)
 
@@ -541,9 +541,9 @@ Interfaces (30)
 
 `AsyncDisposableLike` `ClassProvider` `ClassRegistration` `Constructor` `ContainerLifecycleOptions` `ContainerLike` `ContainerOptions` `ContainerRegistration` `ContainerRegistryOptions` `ContainerScopeOptions` `CreateRegistrationOptions` `DisposableLike` `ExistingProvider` `ExistingRegistration` `FactoryProvider` `FactoryRegistration` `InjectionToken` `MutableRegistrationState` `RegisterClassOptions` `RegistrationMetadata` `RegistryChangeEvent` `ResolutionCache` `ResolutionOptions` `ResolutionResult` `ResolvedContainerOptions` `SymbolDisposableLike` `TokenProvider` `TrackedInstance` `ValueProvider` `ValueRegistration`
 
-Type aliases (19)
+Type aliases (21)
 
-`AsyncDisposable` `ContainerProvider` `ContainerResolutionOptions` `Disposable` `DisposableInstance` `InjectedDependencies` `InjectedFactory` `Provider` `ProviderToken` `RegistrationMap` `RegistrationToken` `RegistryListener` `RegistryToken` `ResolutionPath` `ResolvedToken` `ResolvedTokens` `Token` `TokenString` `TokenSymbol`
+`AsyncDisposable` `ContainerProvider` `ContainerResolutionOptions` `Disposable` `DisposableInstance` `InjectedConstructor` `InjectedConstructorArgs` `InjectedDependencies` `InjectedFactory` `Provider` `ProviderToken` `RegistrationMap` `RegistrationToken` `RegistryListener` `RegistryToken` `ResolutionPath` `ResolvedToken` `ResolvedTokens` `Token` `TokenString` `TokenSymbol`
 
 Constants (7)
 

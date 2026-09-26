@@ -535,7 +535,7 @@ The `LifecycleEventEmitter` emits typed events at each lifecycle phase, enabling
 | emit() | emit(type, data): void | Emit an event with timestamp. |
 | clear() | clear(): void | Remove all listeners. |
 
-### Enum: LifecycleEventType (16 event types)
+### Enum: LifecycleEventType (23 event types)
 
 ```ts
 type LifecycleEventType =
@@ -544,18 +544,27 @@ type LifecycleEventType =
   | "component:initialized"
   | "component:starting"
   | "component:started"
+  | "component:readying"
   | "component:ready"
+  | "component:retrying"
   | "component:stopping"
   | "component:stopped"
+  | "component:disposing"
+  | "component:disposed"
   | "component:failed"
   | "application:initializing"
   | "application:initialized"
   | "application:starting"
+  | "application:readying"
   | "application:ready"
   | "application:stopping"
+  | "application:shutdown-timeout"
   | "application:stopped"
+  | "application:disposing"
   | "application:disposed";
 ```
+
+Each phase has its own begin and end events: the ready phase emits `component:readying` / `component:ready`, and disposal emits `component:disposing` / `component:disposed`, so a `component:stopped` listener fires once per component. `component:retrying` carries `attempt`, `delay` and `error` before each retry, and `application:shutdown-timeout` fires once when `shutdown()` hits its deadline (the manager's `shutdownTimedOut` is then `true`).
 
 ### Event Payloads
 
@@ -804,9 +813,9 @@ manager.dispose();
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/lifecycle` exports from its package root at v1.2.3 — **36** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/lifecycle` exports from its package root at v1.3.0 — **39** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 36 exports**
+**Show all 39 exports**
 
 Classes (6)
 
@@ -816,9 +825,9 @@ Functions (11)
 
 `buildExecutionPlan` `createLifecycleContext` `createLifecycleManager` `getComponentMethod` `getPhaseHookName` `installSignalHandlers` `reverseTopologicalSort` `topologicalSort` `withAbort` `withConcurrency` `withTimeout`
 
-Interfaces (13)
+Interfaces (16)
 
-`ExecutionPlan` `ExecutionResult` `ExecutionStage` `LifecycleApplicationEvent` `LifecycleComponent` `LifecycleComponentEvent` `LifecycleContext` `LifecycleEvent` `LifecycleManagerOptions` `LifecycleRegistration` `LifecycleRegistrationOptions` `LifecycleRetryOptions` `SignalHandlerOptions`
+`DependencyGraphValidationOptions` `ExecutionPlan` `ExecutionResult` `ExecutionStage` `LifecycleApplicationEvent` `LifecycleComponent` `LifecycleComponentEvent` `LifecycleContext` `LifecycleEvent` `LifecycleExecutorOptions` `LifecycleManagerOptions` `LifecycleRegistration` `LifecycleRegistrationOptions` `LifecycleRetryNotice` `LifecycleRetryOptions` `SignalHandlerOptions`
 
 Type aliases (3)
 

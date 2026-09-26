@@ -1210,25 +1210,25 @@ console.log(explanation.steps);
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/permissions` exports from its package root at v1.4.3 — **150** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/permissions` exports from its package root at v1.5.0 — **152** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 150 exports**
+**Show all 152 exports**
 
 Classes (14)
 
 `AuthorizationAbortedError` `CircularRoleInheritanceError` `DuplicatePermissionError` `DuplicatePolicyError` `DuplicateRoleError` `InvalidPermissionError` `InvalidRoleError` `PermissionDeniedError` `PermissionError` `PermissionNotFoundError` `PermissionResolverError` `PolicyError` `PolicyTimeoutError` `RoleNotFoundError`
 
-Functions (68)
+Functions (69)
 
-`actorCacheDigest` `actorHasPermission` `actorHasRole` `allOf` `always` `anyOf` `assertNotAborted` `authorize` `buildPermission` `compileRules` `createAbility` `createActor` `createActorMiddleware` `createCacheKey` `createForbiddenResponse` `createJsonResponse` `createMemoryPermissionCache` `createMemoryPermissionResolver` `createMemoryRoleResolver` `createNotFoundResponse` `createPermissionActor` `createPermissionEngine` `createPermissionEventEmitter` `createPermissionRegistry` `createPolicyRegistry` `createRequirePermissionMiddleware` `createRequirePermissionsMiddleware` `createRoleRegistry` `createStaticPermissionResolver` `createStaticRoleResolver` `createUnauthorizedResponse` `evaluate` `evaluatePolicies` `evaluateRules` `evaluateRulesSync` `evaluateWithExplain` `evaluateWithTrace` `extractAction` `extractResource` `findMatchingRules` `formatPermission` `isOwner` `isSystemActor` `isValidPermission` `loadResource` `matches` `matchesPermission` `memoizeRoleLookup` `metadataEquals` `never` `not` `parsePermission` `parsePermissionSafe` `patternStrMatches` `permissionCacheKey` `permissionsOverlap` `policyGrants` `refuseMissingResource` `resolveActorGrants` `resolveActorPermissions` `resolveRolePermissions` `resourceEquals` `ruleMatches` `selectPolicies` `tenantIsolation` `toMetadataMap` `withObservability` `withTimeout`
+`actorCacheDigest` `actorHasPermission` `actorHasRole` `allOf` `always` `anyOf` `assertNotAborted` `authorize` `buildPermission` `compileRules` `createAbility` `createActor` `createActorMiddleware` `createCacheKey` `createForbiddenResponse` `createJsonResponse` `createMemoryPermissionCache` `createMemoryPermissionResolver` `createMemoryRoleResolver` `createNotFoundResponse` `createPermissionActor` `createPermissionEngine` `createPermissionEventEmitter` `createPermissionRegistry` `createPolicyRegistry` `createRequirePermissionMiddleware` `createRequirePermissionsMiddleware` `createRoleRegistry` `createStaticPermissionResolver` `createStaticRoleResolver` `createUnauthorizedResponse` `evaluate` `evaluatePolicies` `evaluateRules` `evaluateRulesSync` `evaluateWithExplain` `evaluateWithTrace` `extractAction` `extractResource` `findMatchingRules` `formatPermission` `isOwner` `isSystemActor` `isValidPermission` `loadResource` `matches` `matchesPermission` `memoizeRoleLookup` `metadataEquals` `never` `not` `parsePermission` `parsePermissionSafe` `patternStrMatches` `permissionCacheKey` `permissionsOverlap` `policyGrants` `refuseMissingResource` `resolveActorGrants` `resolveActorPermissions` `resolveRolePermissions` `resourceEquals` `ruleMatches` `selectPolicies` `tenantIsolation` `toMetadataMap` `toPermissionString` `withObservability` `withTimeout`
 
 Interfaces (48)
 
 `Ability` `ActorMiddlewareOptions` `AuthorizationOptions` `AuthorizeMiddlewareOptions` `DeniedResponseOptions` `EvaluatorOptions` `ExplainResult` `ExplainStep` `HttpMiddlewareContext` `HttpMiddlewareState` `HttpRequestContext` `HttpResponseContext` `MemoryPermissionCacheOptions` `MissingResourceOptions` `MissingResourceRefusal` `NotFoundResponseOptions` `Permission` `PermissionActor` `PermissionCache` `PermissionCheckEvent` `PermissionContext` `PermissionDecision` `PermissionEngine` `PermissionEngineOptions` `PermissionEventEmitter` `PermissionEventEmitterOptions` `PermissionPolicyDefinition` `PermissionRegistry` `PermissionRegistryOptions` `PermissionResolver` `PermissionRule` `PolicyOutcome` `PolicyRegistry` `PolicyRegistryOptions` `PolicySource` `RegisteredPermission` `RequirePermissionMiddlewareOptions` `RequirePermissionsMiddlewareOptions` `ResolvedGrants` `RoleDefinition` `RoleRegistry` `RoleRegistryOptions` `RoleResolution` `RoleResolutionOptions` `RoleResolver` `RoleSource` `RuleEvaluation` `RuleIndex`
 
-Type aliases (13)
+Type aliases (14)
 
-`HttpMiddleware` `HttpMiddlewareOutcome` `HttpRequestBag` `MissingResourceMode` `PermissionConditionFn` `PermissionEventHandler` `PermissionHttpResponse` `PermissionString` `PolicyEffect` `ResourceExtractor` `ResourceOutcome` `RuleCombiningAlgorithm` `RuleEffect`
+`HttpMiddleware` `HttpMiddlewareOutcome` `HttpRequestBag` `MissingResourceMode` `PermissionConditionFn` `PermissionEventHandler` `PermissionHttpResponse` `PermissionString` `PolicyEffect` `ResourceExtractor` `ResourceOutcome` `RuleCombiningAlgorithm` `RuleEffect` `TypedPermissionString`
 
 Constants (7)
 

@@ -496,7 +496,7 @@ All error classes live in `@zudojs/errors` and are re-exported here. Only the fi
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/messaging` exports from its package root at v1.2.3 — **69** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/messaging` exports from its package root at v1.2.4 — **69** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 69 exports**
 

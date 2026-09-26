@@ -564,17 +564,17 @@ Everything below is exported from `@zudojs/types`.
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/types` exports from its package root at v1.2.0 — **62** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/types` exports from its package root at v1.3.0 — **64** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 62 exports**
+**Show all 64 exports**
 
 Classes (2)
 
 `FixedClock` `SeededRandom`
 
-Functions (31)
+Functions (33)
 
-`camelToKebab` `camelToSnake` `defineSecureRandom` `formatCount` `isArrayOfType` `isDate` `isDefined` `isEmail` `isFiniteNumber` `isFunction` `isInteger` `isIsoDateString` `isIsoDateTimeString` `isNonEmptyString` `isNonNullObject` `isPlainObject` `isPositiveNumber` `isPromise` `isThenable` `isUrl` `isUuid` `isUuidV4` `kebabToCamel` `mapToObject` `objectToMap` `safeJsonParse` `snakeToCamel` `toArray` `toBoolean` `toNumber` `toString`
+`camelToKebab` `camelToSnake` `characterLength` `defineSecureRandom` `formatCount` `isArrayOfType` `isDate` `isDefined` `isEmail` `isFiniteNumber` `isFunction` `isInteger` `isIsoDateString` `isIsoDateTimeString` `isNonEmptyString` `isNonNullObject` `isPlainObject` `isPositiveNumber` `isPromise` `isThenable` `isUrl` `isUuid` `isUuidV4` `jsonStringByteLength` `kebabToCamel` `mapToObject` `objectToMap` `safeJsonParse` `snakeToCamel` `toArray` `toBoolean` `toNumber` `toString`
 
 Interfaces (4)
 

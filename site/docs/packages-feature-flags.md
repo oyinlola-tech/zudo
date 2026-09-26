@@ -952,17 +952,17 @@ Dependencies
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/feature-flags` exports from its package root at v1.4.2 — **55** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/feature-flags` exports from its package root at v1.5.0 — **56** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 55 exports**
+**Show all 56 exports**
 
 Classes (8)
 
 `FeatureFlagConfigurationError` `FeatureFlagDependencyError` `FeatureFlagError` `FeatureFlagEvaluationError` `FeatureFlagNotFoundError` `FeatureFlagProviderError` `FeatureFlagRuleError` `FeatureFlagTypeError`
 
-Functions (17)
+Functions (18)
 
-`createCachedProvider` `createCompositeProvider` `createEnvironmentProvider` `createFeatureFlagRegistry` `createFeatureFlags` `createMemoryProvider` `evaluateFlag` `evaluateRule` `getBucket` `hashString` `isInRollout` `isPlainObject` `matchAttribute` `mergeContext` `resolveDependencies` `resolvePath` `valuesEqual`
+`createCachedProvider` `createCompositeProvider` `createEnvironmentProvider` `createFeatureFlagRegistry` `createFeatureFlags` `createMemoryProvider` `evaluateFlag` `evaluateRule` `getBucket` `hashString` `isInRollout` `isPlainObject` `matchAttribute` `mergeContext` `resolveDependencies` `resolvePath` `resolveRolloutSubject` `valuesEqual`
 
 Interfaces (22)
 

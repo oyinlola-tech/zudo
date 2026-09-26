@@ -688,9 +688,9 @@ Every `RPCError` has a readonly `details`, which you can also pass as an option:
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/rpc` exports from its package root at v1.4.3 — **114** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/rpc` exports from its package root at v1.5.0 — **115** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 114 exports**
+**Show all 115 exports**
 
 Classes (22)
 
@@ -708,6 +708,6 @@ Type aliases (11)
 
 `RPCAuthContext` `RPCBackoff` `RPCBodyReadResult` `RPCFrameSerializer` `RPCHandler` `RPCHttpHeaders` `RPCJitter` `RPCMiddleware` `RPCProcedureName` `RPCSchema` `RPCStreamingHandler`
 
-Constants (14)
+Constants (15)
 
-`DEFAULT_RETRY_OPTIONS` `DEFAULT_RPC_HTTP_MAX_BODY_BYTES` `DEFAULT_RPC_TIMEOUT` `INTERNAL_ERROR_MESSAGE` `MAX_MIDDLEWARE` `MAX_PENDING_REQUESTS` `MAX_PROCEDURE_NAME_LENGTH` `MAX_PROCEDURES` `MAX_RPC_FRAME_DEPTH` `MAX_RPC_PAYLOAD_SIZE` `MAX_RPC_REQUEST_ID_LENGTH` `MAX_TIMER_DELAY` `PROCEDURE_NAME_PATTERN` `RPC_HTTP_STATUS`
+`DEFAULT_RETRY_OPTIONS` `DEFAULT_RPC_HTTP_MAX_BODY_BYTES` `DEFAULT_RPC_TIMEOUT` `INTERNAL_ERROR_MESSAGE` `MAX_MIDDLEWARE` `MAX_PENDING_REQUESTS` `MAX_PROCEDURE_NAME_LENGTH` `MAX_PROCEDURES` `MAX_RPC_FRAME_DEPTH` `MAX_RPC_PAYLOAD_SIZE` `MAX_RPC_REQUEST_ID_LENGTH` `MAX_TIMER_DELAY` `PROCEDURE_NAME_PATTERN` `RPC_HTTP_STATUS` `UNAVAILABLE_ERROR_MESSAGE`

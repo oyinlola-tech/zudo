@@ -523,9 +523,9 @@ Circular references are reported by the `@zudojs/validation` guard (`CircularRef
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/serialization` exports from its package root at v1.2.3 — **33** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/serialization` exports from its package root at v1.3.0 — **34** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 33 exports**
+**Show all 34 exports**
 
 Classes (3)
 
@@ -535,9 +535,9 @@ Functions (13)
 
 `assertValidEnvelope` `contentTypeForFormat` `createBuiltinTransformers` `createDefaultRegistry` `createEnvelope` `createSerializer` `decodeUtf8` `deserializeFromEnvelope` `encodeUtf8` `fromBase64` `serializeToEnvelope` `toBase64` `unwrapEnvelope`
 
-Interfaces (8)
+Interfaces (9)
 
-`CreateSerializerOptions` `DeserializeOptions` `JSONSerializerOptions` `SerializationMetadata` `SerializedEnvelope` `SerializeOptions` `Serializer` `TypeTransformer`
+`CreateSerializerOptions` `DeserializeOptions` `EnvelopeMetadataOptions` `JSONSerializerOptions` `SerializationMetadata` `SerializedEnvelope` `SerializeOptions` `Serializer` `TypeTransformer`
 
 Type aliases (2)
 

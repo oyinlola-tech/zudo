@@ -788,25 +788,25 @@ import {
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/adapters` exports from its package root at v1.2.3 — **56** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/adapters` exports from its package root at v1.3.0 — **63** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 56 exports**
+**Show all 63 exports**
 
 Classes (13)
 
 `AdapterAlreadyRegisteredError` `AdapterCapabilityMissingError` `AdapterConfigurationError` `AdapterConnectionError` `AdapterDisposeError` `AdapterError` `AdapterInitializationError` `AdapterNotFoundError` `AdapterNotSupportedError` `AdapterOperationError` `AdapterRegistry` `AdapterTimeoutError` `MockAdapterRegistry`
 
-Functions (8)
+Functions (13)
 
-`createAdapterError` `createDegradedHealth` `createHealthyHealth` `createMockAdapter` `createMockAdapterRegistry` `createMockHealth` `createUnhealthyHealth` `isAdapterError`
+`collectAdapterHealth` `configureAdapter` `createAdapterError` `createDegradedHealth` `createHealthyHealth` `createMockAdapter` `createMockAdapterRegistry` `createMockHealth` `createUnhealthyHealth` `isAdapterError` `runAdapterLifecycle` `toAdapterLifecycleError` `withRetry`
 
-Interfaces (31)
+Interfaces (32)
 
-`Adapter` `AdapterCapabilities` `AdapterErrorOptions` `AdapterHealth` `AdapterHealthReport` `AdapterMetadata` `AdapterOperationOptions` `CLIAdapter` `CLIOptions` `CLIResult` `HTTPAdapter` `HTTPListenOptions` `HTTPRequestAdapter` `HTTPRequestLike` `HTTPResponseAdapter` `HTTPResponseLike` `HTTPServerAdapter` `LifecycleAdapter` `MessageAdapter` `MockAdapter` `MockAdapterHealth` `QueueAdapter` `QueueStats` `RuntimeAdapter` `ScheduledJob` `ScheduledTask` `SchedulerAdapter` `StorageAdapter` `Subscription` `WebSocketAdapter` `WebSocketSession`
+`Adapter` `AdapterCapabilities` `AdapterErrorOptions` `AdapterHealth` `AdapterHealthReport` `AdapterMetadata` `AdapterOperationOptions` `CLIAdapter` `CLIOptions` `CLIResult` `HTTPAdapter` `HTTPListenOptions` `HTTPRequestAdapter` `HTTPRequestLike` `HTTPResponseAdapter` `HTTPResponseLike` `HTTPServerAdapter` `KnownAdapterCapabilities` `LifecycleAdapter` `MessageAdapter` `MockAdapter` `MockAdapterHealth` `QueueAdapter` `QueueStats` `RuntimeAdapter` `ScheduledJob` `ScheduledTask` `SchedulerAdapter` `StorageAdapter` `Subscription` `WebSocketAdapter` `WebSocketSession`
 
-Type aliases (3)
+Type aliases (4)
 
-`AdapterCapabilityName` `AdapterHealthStatus` `MessageHandler`
+`AdapterCapabilityName` `AdapterHealthStatus` `AdapterLifecycleOperation` `MessageHandler`
 
 Enums (1)
 

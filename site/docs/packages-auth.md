@@ -775,26 +775,26 @@ AuthErrorOptions is exported too, for constructing these yourself. AccountLocked
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/auth` exports from its package root at v1.3.3 — **69** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/auth` exports from its package root at v1.4.0 — **74** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 69 exports**
+**Show all 74 exports**
 
 Classes (11)
 
 `AccessDeniedError` `AccountDeactivatedError` `AccountLockedError` `AuthConfigurationError` `AuthError` `AuthRateLimitError` `InvalidCredentialsError` `SessionExpiredError` `TokenExpiredError` `TokenInvalidError` `TokenRevokedError`
 
-Functions (20)
+Functions (22)
 
-`createAuthService` `createMemoryLoginAttemptStore` `createMemorySessionStore` `createMemoryTokenRevocationStore` `createTokenPair` `extractUserId` `generateCsrfToken` `generateRandomToken` `hashPassword` `isTokenExpired` `needsRehash` `normalizeLoginIdentifier` `parseBearerToken` `parseCookies` `refreshAccessToken` `toSessionId` `toUserId` `verifyAccessToken` `verifyPassword` `verifyRefreshToken`
+`assertAtomicRevocationStore` `createAuthService` `createMemoryLoginAttemptStore` `createMemorySessionStore` `createMemoryTokenRevocationStore` `createTokenPair` `extractUserId` `generateCsrfToken` `generateRandomToken` `hashPassword` `isTokenExpired` `needsRehash` `normalizeLoginIdentifier` `parseBearerToken` `parseCookies` `refreshAccessToken` `sanitizeCustomClaims` `toSessionId` `toUserId` `verifyAccessToken` `verifyPassword` `verifyRefreshToken`
 
-Interfaces (24)
+Interfaces (25)
 
-`ApiKeyCredentials` `AuthErrorOptions` `AuthService` `AuthServiceConfig` `AuthSession` `AuthUser` `CreateSessionOptions` `ExternalSessionOptions` `ExternalSessionResult` `GuardContext` `GuardResult` `LoginAttemptRecord` `LoginAttemptStore` `LoginResult` `LoginThrottleConfig` `PasswordCredentials` `SessionStore` `TokenConfig` `TokenPair` `TokenPayload` `TokenRevocationStore` `TokenVerificationResult` `UserCredentials` `UserRegistration`
+`ApiKeyCredentials` `AuthErrorOptions` `AuthService` `AuthServiceConfig` `AuthSession` `AuthUser` `CreateSessionOptions` `CreateTokenPairOptions` `ExternalSessionOptions` `ExternalSessionResult` `GuardContext` `GuardResult` `LoginAttemptRecord` `LoginAttemptStore` `LoginResult` `LoginThrottleConfig` `PasswordCredentials` `SessionStore` `TokenConfig` `TokenPair` `TokenPayload` `TokenRevocationStore` `TokenVerificationResult` `UserCredentials` `UserRegistration`
 
 Type aliases (10)
 
 `JwtToken` `PasswordVerifier` `Permission` `Role` `SessionId` `ThrottleErrorOptions` `TokenId` `UserByIdLookup` `UserId` `UserLookup`
 
-Constants (4)
+Constants (6)
 
-`jwt` `MAX_PASSWORD_BYTES` `MAX_SALT_LENGTH` `MIN_SALT_LENGTH`
+`jwt` `MAX_PASSWORD_BYTES` `MAX_SALT_LENGTH` `MIN_SALT_LENGTH` `RACY_REVOCATION_WARNING_CODE` `RESERVED_JWT_CLAIMS`

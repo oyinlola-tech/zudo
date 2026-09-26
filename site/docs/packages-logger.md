@@ -271,9 +271,9 @@ Error: card declined
     at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
 ```
 
-The level methods keep a single signature, `logger.error(message, metadata?)`, so every custom `Logger` implementation and every structural logger type (`{ warn(message, context?) }`) still matches. JavaScript, or loosely typed TypeScript, often passes the caught error straight in as the second argument: `logger.error("payment failed", err)`. Since 1.4.0 that call logs `err` as the entry's `error`, stack included, exactly like the `log()` call above (minus the metadata). It used to be read as metadata, and because an `Error` has no enumerable fields it vanished from the log without a trace.
+The level methods keep a single signature, `logger.error(message, metadata?)`, so every custom `Logger` implementation and every structural logger type (`{ warn(message, context?) }`) still matches. JavaScript, or loosely typed TypeScript, often passes the caught error straight in as the second argument: `logger.error("payment failed", err)`. Since 1.4.0 that call logs `err` as the entry's `error`, stack included, exactly like the `log()` call above (minus the metadata). It used to be read as metadata, and because an `Error` has no enumerable fields it vanished from the log without a trace. The call still does not type-check (TS2345) — that is the price of the single signature — so in TypeScript use `log()` as below.
 
-> **Tip:** in TypeScript, prefer `log(LoggerLevel.ERROR, ..., { error, metadata })`. It type-checks, and it keeps the error and your metadata in one entry. Putting the error inside metadata (`{ err }`) also works, but then it is serialized as a metadata field (`{ name, message, stack }`) rather than recorded as the entry's `error`.
+> **Tip:** in TypeScript, prefer `log(LoggerLevel.ERROR, ..., { error, metadata })`. It type-checks, and it keeps the error and your metadata in one entry. Putting the error inside metadata (`{ err }`, `{ cause: err }`, nested anywhere) also works, but then it is a metadata field rather than the entry's `error`. Since v1.5.0 such an error is normalized when the entry is built into plain data — `{ name, message, stack, ...ownFields, cause }`, own fields redacted like any metadata — so a custom transport that stringifies `entry.metadata` sees the error instead of `"cause":{}`; `isLogErrorValue(value)` tells it apart from ordinary metadata, and `includeStackTrace: false` still leaves its stack out.
 
 ### Hiding stack traces
 
@@ -989,29 +989,29 @@ process.on("SIGTERM", async () => {
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/logger` exports from its package root at v1.4.3 — **153** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/logger` exports from its package root at v1.5.0 — **156** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 153 exports**
+**Show all 156 exports**
 
 Classes (15)
 
 `ContextLogger` `InvalidLoggerEntryError` `InvalidLoggerLevelError` `LoggerConfigurationError` `LoggerDisposedError` `LoggerError` `LoggerFactory` `LoggerFormatterError` `LoggerFormatterNotFoundError` `LoggerManager` `LoggerTimeoutError` `LoggerTransportClosedError` `LoggerTransportError` `LoggerTransportNotFoundError` `ZudojsLogger`
 
-Functions (97)
+Functions (98)
 
-`assertActive` `assertMutable` `childLogger` `closeLogger` `closeLoggerTransport` `createBufferedLoggerTransport` `createChildLogger` `createChildLoggerOptions` `createCompactLoggerFormatter` `createConditionalLoggerTransport` `createConsoleLoggerTransport` `createDefaultLogger` `createDefaultSecretFieldMatcher` `createDevelopmentLoggerFormatter` `createEntry` `createErrorLoggerEntry` `createFactoryLogger` `createJsonLoggerFormatter` `createLogger` `createLoggerContext` `createLoggerEntry` `createLoggerEntryId` `createLoggerFactory` `createLoggerFormatter` `createLoggerFormatterError` `createLoggerFormatterId` `createLoggerManager` `createLoggerManagerFromLogger` `createLoggerTransport` `createLoggerTransportError` `createLoggerTransportId` `createLogMethods` `createManagedDefaultLogger` `createMultiLoggerTransport` `createProductionLoggerFormatter` `createSecretMatcher` `createStructuredLoggerFormatter` `createTextLoggerFormatter` `disableLogger` `disableLoggerTransport` `dispatchEntry` `dispatchEntrySync` `enableLogger` `enableLoggerTransport` `escapeLogText` `flushLogger` `flushLoggerTransport` `formatLoggerEntry` `formatTransportLine` `getFactoryLogger` `getLoggerEnabled` `getLoggerErrorCause` `getLoggerLevel` `getLoggerLevelNames` `getLoggerLevels` `getLoggerName` `handleInfrastructureError` `hasLogControlCharacters` `initializeLoggerManager` `isLoggerContext` `isLoggerError` `isLoggerFormatter` `isLoggerFormatterFunction` `isLoggerFormatterObject` `isLoggerLevel` `isLoggerLevelName` `isLoggerTransport` `isLoggerTransportFunction` `isLoggerTransportObject` `levelOptions` `logAtLevel` `logError` `loggerLevelFromName` `loggerLevelNameFallback` `loggerLevelToName` `mergeLoggerContexts` `mergeLoggerOptions` `normalizeConfiguration` `normalizeLogMetadata` `redactLogValue` `resolveLoggerLevel` `resolveLoggerOptions` `resolveManagedLogger` `serializeLoggerEntry` `serializeLoggerError` `serializeLoggerValue` `serializeTransportEntry` `setLoggerLevel` `settleAllOrThrow` `shouldLog` `throwCollectedFailures` `toJsonLogLine` `toLoggerError` `validateLoggerOptions` `withContextLogger` `withLoggerContext` `writeLoggerTransport`
+`assertActive` `assertMutable` `childLogger` `closeLogger` `closeLoggerTransport` `createBufferedLoggerTransport` `createChildLogger` `createChildLoggerOptions` `createCompactLoggerFormatter` `createConditionalLoggerTransport` `createConsoleLoggerTransport` `createDefaultLogger` `createDefaultSecretFieldMatcher` `createDevelopmentLoggerFormatter` `createEntry` `createErrorLoggerEntry` `createFactoryLogger` `createJsonLoggerFormatter` `createLogger` `createLoggerContext` `createLoggerEntry` `createLoggerEntryId` `createLoggerFactory` `createLoggerFormatter` `createLoggerFormatterError` `createLoggerFormatterId` `createLoggerManager` `createLoggerManagerFromLogger` `createLoggerTransport` `createLoggerTransportError` `createLoggerTransportId` `createLogMethods` `createManagedDefaultLogger` `createMultiLoggerTransport` `createProductionLoggerFormatter` `createSecretMatcher` `createStructuredLoggerFormatter` `createTextLoggerFormatter` `disableLogger` `disableLoggerTransport` `dispatchEntry` `dispatchEntrySync` `enableLogger` `enableLoggerTransport` `escapeLogText` `flushLogger` `flushLoggerTransport` `formatLoggerEntry` `formatTransportLine` `getFactoryLogger` `getLoggerEnabled` `getLoggerErrorCause` `getLoggerLevel` `getLoggerLevelNames` `getLoggerLevels` `getLoggerName` `handleInfrastructureError` `hasLogControlCharacters` `initializeLoggerManager` `isLogErrorValue` `isLoggerContext` `isLoggerError` `isLoggerFormatter` `isLoggerFormatterFunction` `isLoggerFormatterObject` `isLoggerLevel` `isLoggerLevelName` `isLoggerTransport` `isLoggerTransportFunction` `isLoggerTransportObject` `levelOptions` `logAtLevel` `logError` `loggerLevelFromName` `loggerLevelNameFallback` `loggerLevelToName` `mergeLoggerContexts` `mergeLoggerOptions` `normalizeConfiguration` `normalizeLogMetadata` `redactLogValue` `resolveLoggerLevel` `resolveLoggerOptions` `resolveManagedLogger` `serializeLoggerEntry` `serializeLoggerError` `serializeLoggerValue` `serializeTransportEntry` `setLoggerLevel` `settleAllOrThrow` `shouldLog` `throwCollectedFailures` `toJsonLogLine` `toLoggerError` `validateLoggerOptions` `withContextLogger` `withLoggerContext` `writeLoggerTransport`
 
-Interfaces (26)
+Interfaces (27)
 
-`ChildLoggerOptions` `ChildLoggerOptionsInput` `JsonLoggerFormatterOptions` `Logger` `LoggerBufferedTransportOptions` `LoggerConfiguration` `LoggerContext` `LoggerContextData` `LoggerContextIdentifiers` `LoggerContextOptions` `LoggerEntry` `LoggerEntryContext` `LoggerEntryInput` `LoggerFormatter` `LoggerFormatterContext` `LoggerFormatterOptions` `LoggerOptions` `LoggerRedactionOptions` `LoggerSource` `LoggerTransport` `LoggerTransportContext` `LoggerTransportOptions` `LogOptions` `RegisteredLoggerTransport` `TextLoggerFormatterOptions` `ZudojsLoggerContext`
+`ChildLoggerOptions` `ChildLoggerOptionsInput` `JsonLoggerFormatterOptions` `LogErrorValue` `Logger` `LoggerBufferedTransportOptions` `LoggerConfiguration` `LoggerContext` `LoggerContextData` `LoggerContextIdentifiers` `LoggerContextOptions` `LoggerEntry` `LoggerEntryContext` `LoggerEntryInput` `LoggerFormatter` `LoggerFormatterContext` `LoggerFormatterOptions` `LoggerOptions` `LoggerRedactionOptions` `LoggerSource` `LoggerTransport` `LoggerTransportContext` `LoggerTransportOptions` `LogOptions` `RegisteredLoggerTransport` `TextLoggerFormatterOptions` `ZudojsLoggerContext`
 
 Type aliases (9)
 
 `LoggerFormattedOutput` `LoggerFormatterFunction` `LoggerFormatterLike` `LoggerLevelLike` `LoggerLevelName` `LoggerTransportFunction` `LoggerTransportLike` `LogMetadata` `LogValue`
 
-Constants (5)
+Constants (6)
 
-`DEFAULT_LOGGER_OPTIONS` `DEFAULT_LOGGER_SECRET_FIELDS` `DEFAULT_LOGGER_SECRET_PATTERN` `LOGGER_REDACTION_TOKEN` `LOGGER_UNREADABLE_TOKEN`
+`DEFAULT_LOGGER_OPTIONS` `DEFAULT_LOGGER_SECRET_FIELDS` `DEFAULT_LOGGER_SECRET_PATTERN` `LOGGER_ERROR_VALUE` `LOGGER_REDACTION_TOKEN` `LOGGER_UNREADABLE_TOKEN`
 
 Enums (1)
 

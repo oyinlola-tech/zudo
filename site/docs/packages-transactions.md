@@ -588,21 +588,21 @@ Everything below is exported from `@zudojs/transactions`. Most apps only need `c
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/transactions` exports from its package root at v1.2.2 — **58** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/transactions` exports from its package root at v1.3.0 — **60** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 58 exports**
+**Show all 60 exports**
 
 Classes (13)
 
 `SavepointError` `TransactionAdapterError` `TransactionCapabilityError` `TransactionCommitError` `TransactionError` `TransactionIsolationError` `TransactionPropagationError` `TransactionRequiredError` `TransactionRollbackError` `TransactionRollbackOnlyError` `TransactionStateError` `TransactionTimeoutError` `TransactionUnexpectedError`
 
-Functions (22)
+Functions (23)
 
-`asSavepointHandle` `canTransition` `createAdapter` `createEmitter` `createInMemoryAdapter` `createNonTransactional` `createParticipant` `createTransaction` `createTransactionContext` `createTransactionManager` `createTransactionRegistry` `createTransitionFunction` `currentTransactionHandle` `getDefaultContext` `getTransactionHandle` `isModifiable` `isTerminal` `isTerminalState` `mergeHooks` `raceSignal` `resetDefaultContext` `summarizeTransaction`
+`asSavepointHandle` `canTransition` `createAdapter` `createEmitter` `createInMemoryAdapter` `createNonTransactional` `createParticipant` `createTransaction` `createTransactionContext` `createTransactionManager` `createTransactionRegistry` `createTransitionFunction` `currentTransaction` `currentTransactionHandle` `getDefaultContext` `getTransactionHandle` `isModifiable` `isTerminal` `isTerminalState` `mergeHooks` `raceSignal` `resetDefaultContext` `summarizeTransaction`
 
-Interfaces (14)
+Interfaces (15)
 
-`SavepointHandle` `Transaction` `TransactionAdapter` `TransactionAdapterCapabilities` `TransactionContext` `TransactionErrorContext` `TransactionErrorOptions` `TransactionEvent` `TransactionHookContext` `TransactionHooks` `TransactionManagerOptions` `TransactionOptions` `TransactionRegistry` `TransactionRetryOptions`
+`SavepointHandle` `Transaction` `TransactionAdapter` `TransactionAdapterCapabilities` `TransactionContext` `TransactionErrorContext` `TransactionErrorOptions` `TransactionEvent` `TransactionHookContext` `TransactionHooks` `TransactionManager` `TransactionManagerOptions` `TransactionOptions` `TransactionRegistry` `TransactionRetryOptions`
 
 Type aliases (8)
 

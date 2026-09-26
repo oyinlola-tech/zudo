@@ -78,9 +78,9 @@ A read that finds the entry is a *hit*; one that does not is a *miss*. `get` nev
 
 A *key* is the name you store a value under. Before the key reaches the adapter, a *key builder* turns it into a full key of the form `prefix:namespace:key`. The default prefix is `zudojs` and the default separator is `:`, so `set("user.123", ...)` is stored as `zudojs:user.123`.
 
-Every part is checked. A part may only contain letters, digits, `.`, `_` and `-`, and it must not contain the separator. The full key may be at most 256 characters. A bad key throws a `CacheError` right away, with code `ERR_INVALID_INPUT` and `statusCode` 400. Since v1.2.0 that rejection is also counted in `getStats().errors` and emitted as a `cache.error` event, like an invalid TTL.
+Every part is checked. A part may only contain letters, digits, `.`, `_`, `-` and `:`, and it must not contain the active separator — so with the default `:` separator a part never contains `:`. The full key may be at most 256 characters. A bad key throws a `CacheError` right away, with code `ERR_INVALID_INPUT` and `statusCode` 400; since v1.2.4 its `operation` names the call that rejected it (`get`, `set`, `lock_acquire`, `clear`, …) instead of `unknown`, and the message explains the separator rule. Since v1.2.0 that rejection is also counted in `getStats().errors` and emitted as a `cache.error` event, like an invalid TTL.
 
-The separator is the only thing that marks where the namespace ends and your key begins. If your key could contain it, `set("admin:x")` would land inside the `admin` namespace. Rejecting the separator in each part closes that hole.
+The separator is the only thing that marks where the namespace ends and your key begins. If your key could contain it, `set("admin:x")` would land inside the `admin` namespace and `clear({ namespace: "admin" })` would delete it. Rejecting the separator in each part closes that hole. If your keys must contain `:` (keys built by another library, say), change the separator on both the service and the memory adapter — `createCacheService({ adapter: createMemoryCacheAdapter({ separator: "/" }), config: { separator: "/" } })` stores `set("tenant:kola:dashboard")` as `zudojs/tenant:kola:dashboard`, and `:` can no longer collide with the scope structure.
 
 You can see what the key builder produces by using it directly.
 
@@ -145,7 +145,7 @@ await tenantA.set("u1", { name: "Alice" }); // stored as zudojs:tenant-a:u1
 >
 > A namespace that comes from a request (a tenant id, a header) is safe to pass in: the cache validates it and throws rather than widening the operation. The one thing it cannot do is guess the right tenant for you. Always pass the namespace on every call, or use one service per tenant.
 
-**Common mistake:** building keys with a colon, such as `\`user:${id}\``. Use a dot or a dash inside a key and let the namespace carry the scope.
+**Common mistake:** building keys with a colon, such as `\`user:${id}\`` or a tenancy helper's `tenant:kola:dashboard`. Use a dot or a dash inside a key and let the `namespace` option carry the scope (`get("dashboard", { namespace: tenantId })`), or configure a different separator as shown above.
 
 ## TTL: HOW LONG AN ENTRY LIVES
 
@@ -505,7 +505,7 @@ Every error thrown by this package is a `CacheError` from `@zudojs/errors`, re-e
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/cache` exports from its package root at v1.2.3 — **104** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/cache` exports from its package root at v1.2.4 — **104** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 104 exports**
 

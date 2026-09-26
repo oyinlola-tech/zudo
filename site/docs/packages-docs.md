@@ -581,9 +581,9 @@ Navigation walkers stop at a depth of 64 and report deeper trees as `NAVIGATION_
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/docs` exports from its package root at v1.0.6 — **103** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/docs` exports from its package root at v1.1.0 — **104** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 103 exports**
+**Show all 104 exports**
 
 Classes (12)
 
@@ -593,9 +593,9 @@ Functions (42)
 
 `clampHeadingLevel` `createDocument` `createDocumentationError` `createDocumentRegistry` `createMarkdownDocument` `createStructuredDocument` `deepFreeze` `deepFreezeClone` `documentIdFromPath` `exampleToJSON` `extractHeadings` `extractTitleFromMarkdown` `fenceFor` `findNavigationItem` `flattenNavigation` `generateIndex` `generateJSON` `generateMarkdown` `getAdjacent` `getBreadcrumbs` `getSiblings` `isDocumentationError` `isValidDocumentId` `matchesVisibility` `nodesToMarkdown` `normalizeDocumentId` `parseFrontmatter` `renderExampleMarkdown` `resolveDocumentLink` `sanitizeLanguage` `serializeFrontmatter` `stripFencedCodeBlocks` `stripLinkDecorations` `stripMarkdown` `tableCell` `toValidationResult` `validateAll` `validateDocument` `validateExample` `validateLinks` `validateNavigation` `validateNoDuplicateIds`
 
-Interfaces (39)
+Interfaces (40)
 
-`APIExample` `APIParameter` `APISymbol` `CalloutNode` `CodeNode` `DocumentationBreadcrumb` `DocumentationDocument` `DocumentationErrorOptions` `DocumentationExample` `DocumentationMetadata` `DocumentationNavigationItem` `DocumentationProvider` `DocumentationSanitizer` `DocumentationSourceLoader` `DocumentationVersion` `DocumentBuilderOptions` `ExampleValidationResult` `FrontmatterMetadata` `GetAllOptions` `HeadingNode` `HTMLContent` `IndexGeneratorOptions` `LinkNode` `ListNode` `MarkdownContent` `MarkdownGeneratorOptions` `MDXContent` `ParagraphNode` `ParsedFrontmatter` `QuoteNode` `SearchDocument` `SearchResult` `SourceLocation` `StructuredContent` `TableNode` `ValidateAllOptions` `ValidateLinksOptions` `ValidationIssue` `ValidationResult`
+`APIExample` `APIParameter` `APISymbol` `CalloutNode` `CodeNode` `DocumentationBreadcrumb` `DocumentationDocument` `DocumentationErrorOptions` `DocumentationExample` `DocumentationMetadata` `DocumentationNavigationItem` `DocumentationProvider` `DocumentationSanitizer` `DocumentationSourceLoader` `DocumentationVersion` `DocumentBuilderOptions` `ExampleValidationResult` `FrontmatterMetadata` `GetAdjacentOptions` `GetAllOptions` `HeadingNode` `HTMLContent` `IndexGeneratorOptions` `LinkNode` `ListNode` `MarkdownContent` `MarkdownGeneratorOptions` `MDXContent` `ParagraphNode` `ParsedFrontmatter` `QuoteNode` `SearchDocument` `SearchResult` `SourceLocation` `StructuredContent` `TableNode` `ValidateAllOptions` `ValidateLinksOptions` `ValidationIssue` `ValidationResult`
 
 Type aliases (9)
 

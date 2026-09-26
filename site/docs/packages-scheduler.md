@@ -598,26 +598,26 @@ Everything below is exported from `@zudojs/scheduler`. Most applications only ne
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/scheduler` exports from its package root at v1.2.2 — **68** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/scheduler` exports from its package root at v1.3.0 — **74** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 68 exports**
+**Show all 74 exports**
 
 Classes (22)
 
 `CronParseError` `CronTrigger` `DateTrigger` `DelayTrigger` `IntervalTrigger` `InvalidDurationError` `InvalidJobError` `InvalidScheduleError` `JobExecutor` `JobRegistry` `PriorityQueue` `ScheduleHandleImpl` `Scheduler` `SchedulerAlreadyStartedError` `SchedulerError` `SchedulerJobAlreadyExistsError` `SchedulerJobCancelledError` `SchedulerJobExecutionError` `SchedulerJobNotFoundError` `SchedulerJobTimeoutError` `SchedulerStoppedError` `SystemClock`
 
-Functions (10)
+Functions (12)
 
-`createJobContext` `createJobDefinition` `createSchedule` `createSchedulerError` `createSystemClock` `isSchedulerError` `nextCronDate` `parseCron` `parseDuration` `retryDelay`
+`createIntlZone` `createJobContext` `createJobDefinition` `createSchedule` `createSchedulerError` `createSystemClock` `isSchedulerError` `nextCronDate` `parseCron` `parseDuration` `resolveCronZone` `retryDelay`
 
-Interfaces (16)
+Interfaces (18)
 
-`Clock` `JobContext` `JobDefinition` `JobExecution` `JobExecutionResult` `JobOptions` `ParsedCron` `RetryPolicy` `Schedule` `ScheduleHandle` `ScheduleHandleBinding` `ScheduleOptions` `SchedulerErrorEvent` `SchedulerErrorOptions` `SchedulerOptions` `Trigger`
+`Clock` `CronWallClock` `CronZone` `JobContext` `JobDefinition` `JobExecution` `JobExecutionResult` `JobOptions` `ParsedCron` `RetryPolicy` `Schedule` `ScheduleHandle` `ScheduleHandleBinding` `ScheduleOptions` `SchedulerErrorEvent` `SchedulerErrorOptions` `SchedulerOptions` `Trigger`
 
 Type aliases (10)
 
 `ExecutionId` `JobHandler` `JobState` `MisfirePolicy` `OverlapPolicy` `RetryStrategy` `ScheduleId` `SchedulerJobId` `ScheduleState` `ScheduleType`
 
-Constants (10)
+Constants (12)
 
-`DEFAULT_JOB_TIMEOUT` `DEFAULT_MAX_CONCURRENCY` `DEFAULT_MAX_RETRIES` `DEFAULT_MISFIRE_POLICY` `DEFAULT_OVERLAP_POLICY` `DEFAULT_RETRY_DELAY` `MAX_EXECUTION_HISTORY` `MAX_JOBS` `MAX_SCHEDULES` `MAX_TIMER_DELAY`
+`DEFAULT_JOB_TIMEOUT` `DEFAULT_MAX_CONCURRENCY` `DEFAULT_MAX_RETRIES` `DEFAULT_MISFIRE_POLICY` `DEFAULT_OVERLAP_POLICY` `DEFAULT_RETRY_DELAY` `LOCAL_ZONE` `MAX_EXECUTION_HISTORY` `MAX_JOBS` `MAX_SCHEDULES` `MAX_TIMER_DELAY` `UTC_ZONE`

@@ -551,17 +551,17 @@ Everything below is exported from `"@zudojs/constants"`. Constant maps are liste
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/constants` exports from its package root at v1.1.4 — **124** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/constants` exports from its package root at v1.2.0 — **125** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 124 exports**
+**Show all 125 exports**
 
 Classes (2)
 
 `ConstantContextError` `InvalidConstantError`
 
-Functions (32)
+Functions (33)
 
-`buildCacheControl` `buildContentType` `comparePriority` `createBase64String` `createCorrelationId` `createEmailAddress` `createEventId` `createHexString` `createJsonString` `createMessageCausationId` `createMessageId` `createMockClock` `createMockRandom` `createRequestId` `createSessionId` `createTenantId` `createTimestamp` `createTokenId` `createUrl` `createUserId` `formatDuration` `isClientError` `isDevelopment` `isErrorStatus` `isProduction` `isRedirectStatus` `isServerError` `isSuccessStatus` `isTest` `isValidEnvironment` `resolveEnvironment` `toMilliseconds`
+`assertIdentifier` `buildCacheControl` `buildContentType` `comparePriority` `createBase64String` `createCorrelationId` `createEmailAddress` `createEventId` `createHexString` `createJsonString` `createMessageCausationId` `createMessageId` `createMockClock` `createMockRandom` `createRequestId` `createSessionId` `createTenantId` `createTimestamp` `createTokenId` `createUrl` `createUserId` `formatDuration` `isClientError` `isDevelopment` `isErrorStatus` `isProduction` `isRedirectStatus` `isServerError` `isSuccessStatus` `isTest` `isValidEnvironment` `resolveEnvironment` `toMilliseconds`
 
 Interfaces (7)
 

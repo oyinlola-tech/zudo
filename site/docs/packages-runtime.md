@@ -359,6 +359,14 @@ console.log(runtime.health.state);  // "healthy"
 console.log(runtime.readiness.checks.get("database")?.durationMs); // e.g. 0
 ```
 
+A check that should be visible in health but must not take the process out of rotation, such as a cache, is registered as non-critical. A check that returns `false` reports the message `"Check returned false."`, and `readiness.reason` names the failing critical checks.
+
+```ts
+runtime.registerReadinessCheck("cache", () => cacheConnected, { critical: false });
+```
+
+Once `stop()` begins, the runtime stays not-ready (`shutting_down`) even if every check passes again, so a load balancer stops sending traffic for good. A manual `markNotReady()` also holds until `markReady()`: re-running the checks does not undo it.
+
 > **Watch out:** registering a check does not run it. A new check starts out failing, so registering one on a running runtime makes it not-ready until `runReadinessChecks()` passes it. That is deliberate — a check nobody has evaluated is not evidence of anything.
 
 `runtime.health` is derived, never stored. While the runtime is running it is `healthy` if every check passes and `degraded` if any fails; every other lifecycle state maps straight onto a health state.
@@ -603,7 +611,7 @@ await runtime.stop();
 | health | Derived health, with per-check results. | Always `unknown` when `trackHealth` is off. |
 | ready | Whether every readiness check passes. | Boolean. |
 | readiness | Readiness state plus a map of check results. | Each result carries `ready`, `message`, `durationMs`. |
-| registerReadinessCheck(name, check) | Adds a named check. | Starts out failing until first run. |
+| registerReadinessCheck(name, check, { critical? }) | Adds a named check. | Starts out failing until first run. `critical: false` reports the check without making the runtime not-ready. |
 | removeReadinessCheck(name) | Removes a check. | Returns whether one existed. |
 | runReadinessChecks() | Re-evaluates every check. | Each check is bounded by a 5-second timeout. |
 
@@ -712,9 +720,9 @@ await runtime.stop();
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/runtime` exports from its package root at v1.3.3 — **91** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/runtime` exports from its package root at v1.4.0 — **93** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 91 exports**
+**Show all 93 exports**
 
 Classes (14)
 
@@ -724,9 +732,9 @@ Functions (31)
 
 `assertTransition` `buildDependencyGraph` `canStart` `canStop` `canTransition` `computeRuntimeHealth` `createCorrelationId` `createFailureEventPayload` `createHealthEventPayload` `createModuleEventPayload` `createReadinessEventPayload` `createRequestId` `createRuntime` `createRuntimeContext` `createRuntimeEventPayload` `createRuntimeId` `createRuntimeOptions` `createStatus` `executeShutdown` `executeStartup` `hasFailed` `isRunning` `isTerminalState` `publishRuntimeEvent` `resolveDependencies` `resolveRuntimeOptions` `rollbackStartup` `toRuntimeError` `validateDependencies` `validateRuntimeOptions` `withRuntimeContextState`
 
-Interfaces (30)
+Interfaces (32)
 
-`CircularDependencyInfo` `DependencyGraph` `DependencyNode` `DependencyResolutionResult` `LifecycleContext` `LifecycleFailure` `LifecycleManagerOptions` `LifecycleResult` `ManagedModule` `ModuleContextServices` `ReadinessCheck` `ReadinessOptions` `ReadinessTrackerState` `ResolvedRuntimeOptions` `Runtime` `RuntimeContext` `RuntimeContextDependencies` `RuntimeContextState` `RuntimeDependencies` `RuntimeEventMap` `RuntimeEventPayload` `RuntimeFailureEventPayload` `RuntimeHealth` `RuntimeHealthCheck` `RuntimeHealthEventPayload` `RuntimeModuleEventPayload` `RuntimeOptions` `RuntimeReadinessEventPayload` `RuntimeShutdownFailure` `RuntimeStatus`
+`CircularDependencyInfo` `DependencyGraph` `DependencyNode` `DependencyResolutionResult` `LifecycleContext` `LifecycleFailure` `LifecycleManagerOptions` `LifecycleResult` `ManagedModule` `ModuleContextServices` `ReadinessCheck` `ReadinessCheckOptions` `ReadinessInitialCheck` `ReadinessOptions` `ReadinessTrackerState` `ResolvedRuntimeOptions` `Runtime` `RuntimeContext` `RuntimeContextDependencies` `RuntimeContextState` `RuntimeDependencies` `RuntimeEventMap` `RuntimeEventPayload` `RuntimeFailureEventPayload` `RuntimeHealth` `RuntimeHealthCheck` `RuntimeHealthEventPayload` `RuntimeModuleEventPayload` `RuntimeOptions` `RuntimeReadinessEventPayload` `RuntimeShutdownFailure` `RuntimeStatus`
 
 Type aliases (10)
 

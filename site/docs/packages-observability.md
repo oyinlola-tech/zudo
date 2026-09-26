@@ -337,7 +337,7 @@ await obs.shutdown();
 
 Passing a request ID down through twelve function calls is miserable. *Propagation* stores it once, at the top, and every function underneath can read it without being handed it — including across `await`. Node's `AsyncLocalStorage` does the work.
 
-The stored value is a `PropagationContext`: `traceId`, `spanId`, and optional `parentSpanId`, `requestId`, `correlationId`, `userId`, `service`, `traceFlags` and `baggage`.
+The stored value is a `PropagationContext`: `traceId`, `spanId`, and optional `parentSpanId`, `requestId`, `correlationId`, `userId`, `service`, `traceFlags` and `baggage`. Since v1.3.0 every log record written inside the scope carries the context's `requestId` and `correlationId` next to `traceId`/`spanId`, so a request's lines can be joined without re-attaching the ids by hand.
 
 This runs a handler inside a context and shows the logger picking it up automatically.
 
@@ -666,7 +666,7 @@ Everything below is exported from `@zudojs/observability`. Most applications onl
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/observability` exports from its package root at v1.2.3 — **142** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/observability` exports from its package root at v1.3.0 — **142** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 142 exports**
 

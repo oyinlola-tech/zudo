@@ -682,26 +682,26 @@ All extend `TenantError`, which extends `AuthorizationError` from [@zudojs/error
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/tenancy` exports from its package root at v1.3.3 — **99** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/tenancy` exports from its package root at v1.4.0 — **105** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 99 exports**
+**Show all 105 exports**
 
 Classes (11)
 
 `InvalidTenantIdError` `TenantAccessDeniedError` `TenantAlreadyExistsError` `TenantContextMissingError` `TenantError` `TenantIsolationError` `TenantNotFoundError` `TenantResolutionConflictError` `TenantResolutionError` `TenantTrustLevelError` `TenantUnavailableError`
 
-Functions (40)
+Functions (42)
 
-`assertSameTenant` `assertTenantOwnership` `assertTenantUsable` `assertTrustLevel` `createBadRequest` `createContextManager` `createDomainRegistry` `createDomainResolver` `createForbidden` `createHeaderResolver` `createHttpResolverContext` `createJsonErrorResponse` `createJsonResponse` `createJwtResolver` `createMemoryTenantRepository` `createNotFound` `createPathResolver` `createRequireTenantMiddleware` `createResolverChain` `createResolveTenantMiddleware` `createSubdomainResolver` `createTenantCacheKey` `createTenantContextStorage` `createTenantGuardMiddleware` `createTenantId` `createTenantManager` `createTenantPropagationMiddleware` `createUnauthorized` `getDefaultStorage` `getDefaultTrust` `isTenantActive` `isValidTenantId` `meetsTrustLevel` `readRequestHeader` `resetDefaultStorage` `sameTenant` `summarizeContext` `summarizeTenant` `tenantKey` `tryCreateTenantId`
+`assertSameTenant` `assertTenantOwnership` `assertTenantUsable` `assertTrustLevel` `createBadRequest` `createContextManager` `createDomainRegistry` `createDomainResolver` `createForbidden` `createHeaderResolver` `createHttpResolverContext` `createJsonErrorResponse` `createJsonResponse` `createJwtResolver` `createMemoryTenantRepository` `createNotFound` `createPathResolver` `createRequireTenantMiddleware` `createResolverChain` `createResolveTenantMiddleware` `createSubdomainResolver` `createTenantCacheKey` `createTenantCacheNamespace` `createTenantCacheScope` `createTenantContextStorage` `createTenantGuardMiddleware` `createTenantId` `createTenantManager` `createTenantPropagationMiddleware` `createUnauthorized` `getDefaultStorage` `getDefaultTrust` `isTenantActive` `isValidTenantId` `meetsTrustLevel` `readRequestHeader` `resetDefaultStorage` `sameTenant` `summarizeContext` `summarizeTenant` `tenantKey` `tryCreateTenantId`
 
-Interfaces (33)
+Interfaces (34)
 
-`ContextManagerOptions` `DomainContext` `DomainResolverOptions` `HeaderContext` `HeaderResolverOptions` `HttpResolverContext` `JwtContext` `JwtResolverOptions` `MemoryTenantRepository` `PathContext` `PathResolverOptions` `RequireTenantMiddlewareOptions` `ResolverChainOptions` `ResolveTenantMiddlewareOptions` `SubdomainContext` `SubdomainResolverOptions` `SystemContext` `Tenant` `TenantCache` `TenantClaims` `TenantContext` `TenantContextStorage` `TenantDomain` `TenantExecutionContext` `TenantGuardMiddlewareOptions` `TenantManagerOptions` `TenantRepository` `TenantResolution` `TenantResolutionResult` `TenantResolver` `TenantResolverChain` `TenantResource` `TenantWithDomains`
+`ContextManagerOptions` `DomainContext` `DomainResolverOptions` `HeaderContext` `HeaderResolverOptions` `HttpResolverContext` `JwtContext` `JwtResolverOptions` `MemoryTenantRepository` `PathContext` `PathResolverOptions` `RequireTenantMiddlewareOptions` `ResolverChainOptions` `ResolveTenantMiddlewareOptions` `SubdomainContext` `SubdomainResolverOptions` `SystemContext` `Tenant` `TenantCache` `TenantCacheScope` `TenantClaims` `TenantContext` `TenantContextStorage` `TenantDomain` `TenantExecutionContext` `TenantGuardMiddlewareOptions` `TenantManagerOptions` `TenantRepository` `TenantResolution` `TenantResolutionResult` `TenantResolver` `TenantResolverChain` `TenantResource` `TenantWithDomains`
 
-Type aliases (9)
+Type aliases (10)
 
-`ExecutionTenantContext` `ResolverChainContext` `TenantClaimsReader` `TenantId` `TenantRequirement` `TenantResolutionSource` `TenantResolverSource` `TenantStatus` `TenantTrustLevel`
+`ExecutionTenantContext` `ResolverChainContext` `TenancyResponseCode` `TenantClaimsReader` `TenantId` `TenantRequirement` `TenantResolutionSource` `TenantResolverSource` `TenantStatus` `TenantTrustLevel`
 
-Constants (6)
+Constants (8)
 
-`DEFAULT_TENANT_CACHE_TTL_MS` `MAX_TENANT_ID_LENGTH` `TENANT_CLAIMS_STATE_KEY` `TENANT_CONTEXT_STATE_KEY` `TENANT_ID_PATTERN` `TENANT_STATE_KEY`
+`DEFAULT_TENANT_CACHE_TTL_MS` `MAX_TENANT_ID_LENGTH` `TENANCY_RESPONSE_CODE` `TENANT_CACHE_PART_PATTERN` `TENANT_CLAIMS_STATE_KEY` `TENANT_CONTEXT_STATE_KEY` `TENANT_ID_PATTERN` `TENANT_STATE_KEY`

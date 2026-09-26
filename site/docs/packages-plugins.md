@@ -523,17 +523,17 @@ All error classes come from `@zudojs/errors` and are re-exported here. Every one
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/plugins` exports from its package root at v1.3.3 — **64** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/plugins` exports from its package root at v1.4.0 — **65** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 64 exports**
+**Show all 65 exports**
 
 Classes (17)
 
 `DependencyResolver` `LifecycleController` `PluginAlreadyRegisteredError` `PluginDependencyCycleError` `PluginDependencyError` `PluginDependencyVersionError` `PluginDisposeError` `PluginError` `PluginInitializationError` `PluginManager` `PluginNotFoundError` `PluginRegistrationError` `PluginRegistryImpl` `PluginStartError` `PluginStateError` `PluginStopError` `PluginTimeoutError`
 
-Functions (17)
+Functions (18)
 
-`assertDependencyVersions` `assertResolutionValid` `buildDiagnosticReport` `compareVersions` `createDegradedHealth` `createHealthyHealth` `createOwnedPluginContext` `createPluginContext` `createPluginError` `createPluginLifecycleEvent` `createUnhealthyHealth` `isPluginError` `isPluginEventBus` `isValidTransition` `parseVersion` `satisfiesVersion` `toPluginEvents`
+`assertDependencyVersions` `assertResolutionValid` `buildDiagnosticReport` `compareVersions` `createDegradedHealth` `createHealthyHealth` `createOwnedPluginContext` `createPluginContext` `createPluginError` `createPluginLifecycleEvent` `createUnhealthyHealth` `isPluginError` `isPluginEventBus` `isValidTransition` `parseVersion` `resolvePluginHealth` `satisfiesVersion` `toPluginEvents`
 
 Interfaces (25)
 

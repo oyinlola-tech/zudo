@@ -576,21 +576,21 @@ try {
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/storage` exports from its package root at v1.2.3 — **51** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/storage` exports from its package root at v1.3.0 — **53** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 51 exports**
+**Show all 53 exports**
 
 Classes (7)
 
 `BaseRepository` `ConnectionPool` `HealthChecker` `InMemoryLockManager` `JsonSerializer` `LocalObjectStorage` `StorageLifecycleManager`
 
-Functions (4)
+Functions (5)
 
-`assertIdentifier` `assertIdentifiers` `assertRowBound` `assertSortDirection`
+`assertIdentifier` `assertIdentifiers` `assertRowBound` `assertSortDirection` `mapRepositoryError`
 
-Interfaces (30)
+Interfaces (31)
 
-`BaseRepositoryOptions` `ComponentHealth` `Connection` `ConnectionPoolOptions` `Database` `ExecuteResult` `FieldInfo` `FindAllOptions` `ListObjectsResult` `ListOptions` `LocalObjectStorageOptions` `Lock` `LockManager` `LockOptions` `ObjectAttributes` `ObjectData` `ObjectMetadata` `ObjectPutOptions` `ObjectStorage` `PoolStats` `Query` `QueryResult` `Repository` `Serializer` `StorageContext` `StorageHealth` `StorageHealthReport` `StorageLifecycle` `Transaction` `TransactionOptions`
+`BaseRepositoryOptions` `ComponentHealth` `Connection` `ConnectionPoolOptions` `Database` `ExecuteResult` `FieldInfo` `FindAllOptions` `ListObjectsResult` `ListOptions` `LocalObjectStorageOptions` `Lock` `LockManager` `LockOptions` `ObjectAttributes` `ObjectData` `ObjectMetadata` `ObjectPutOptions` `ObjectStorage` `PoolStats` `Query` `QueryResult` `Repository` `RepositoryErrorContext` `Serializer` `StorageContext` `StorageHealth` `StorageHealthReport` `StorageLifecycle` `Transaction` `TransactionOptions`
 
 Type aliases (7)
 
