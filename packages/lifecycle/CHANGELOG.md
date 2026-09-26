@@ -1,5 +1,49 @@
 # @zudojs/lifecycle
 
+## 1.3.0
+
+### Minor Changes
+
+- Round 12: fixes for the core, lifecycle and runtime findings reported by the academy lessons.
+
+  **Security default changed — `@zudojs/core` `ConsoleLogger` now redacts by default.** `password`, `secret`, `token`, `apiKey`, `authorization` and the other keys `createLogRedactor()` recognises are replaced with `"[REDACTED]"` in context and error details unless you pass `redact: false` (new) or your own hook. Until now a `ConsoleLogger` (including the one `createApplication` builds) logged them in clear unless `redact: createLogRedactor()` was passed by hand. If you relied on seeing those values in local logs, opt out explicitly.
+
+  **@zudojs/core**
+
+  - Rollback and shutdown no longer call `onDestroy` on a module that never had `onInitialize` invoked. A dependent of a module whose `onInitialize` threw stayed `created`, yet the runtime's teardown destroyed it (and a failed `start()` destroyed modules it never reached). Touched modules are still destroyed in reverse dependency order.
+  - After a startup timeout, `stop()` no longer waits behind the hook that is still running — it used to wait the whole `shutdown.timeoutMs` (30 s by default) when that hook never settled. The module lifecycle manager now detaches an operation whose signal was aborted; the stuck module stays in its active phase (which teardown skips), and if its hook settles later the module is stopped and destroyed then, best-effort. `startup.timeoutMs` still defaults to `0` (no deadline) and is now documented as such; set one in production.
+  - An `Application` now follows a stop its runtime started on its own. After a `SIGTERM` handled through `signalTarget` the runtime reported `stopped` while `app.state` stayed `running` and the application's lifecycle participants were never stopped; a fatal error left it `running` behind a `failed` runtime. The `Runtime` contract gains an optional `onStateChange(listener)` (implemented by `DefaultRuntime`; new exported type `RuntimeStateListener`), the application subscribes to it, moves through `stopping` to `stopped` (or `failed`) and stops its participants. `Application.stop()` is now single-flight: a second call while stopping joins the first instead of throwing `InvalidStateError`.
+  - `RuntimeSignalTarget` accepts `process` and `EventEmitter` without a cast. Its listeners were typed `(...args: never[]) => void`, which current `@types/node` rejects; they are `(...args: unknown[]) => void` now.
+  - `MissingModuleDependencyError` distinguishes a dependency that is registered but not loaded (`Module "orders" depends on "payments", which is registered but not loaded (state: "registered"). …`) from one that is not registered (`… requires missing module …`). New optional constructor context `{ dependencyState }` and property `dependencyState`.
+  - `ContextValues.require()` throws the new `ContextValueNotFoundError` (`CORE_CONTEXT_VALUE_NOT_FOUND`, `details.key`) instead of a bare `Error`; `createContextKey("")` throws `InvalidArgumentError`.
+  - Runtime diagnostics: `environment` in bootstrap/shutdown log entries is now the runtime mode (development/test/production) — it was the JavaScript engine (`"node"`), which now appears as `engine` — and the "started" entries log the phase about to run instead of the pipeline's resting `"created"`.
+  - `Logger.error(message, …)` / `fatal` accept the `@zudojs/logger` convention too: a plain object in the second position with no third argument is logged as context rather than as the error. Pass a third argument to log a plain object as the error.
+  - New Core-prefixed aliases for names that collide with sibling packages: `CoreLifecycleState`, `CoreLifecycle`, `CoreLifecycleManager`, `createCoreRuntime`, `CoreContainer`, `CoreConfigurationManager`. Nothing is renamed; `LifecycleState`'s JSDoc now explains how it differs from `@zudojs/constants`' `LifecycleState` and `@zudojs/runtime`'s `RuntimeState`.
+
+  **@zudojs/lifecycle**
+
+  - A component `timeout` now bounds `start()`. Each hook invocation gets its own `context.signal`, derived from the run signal and aborted when the timeout elapses, so a hook that honours it unwinds at the timeout instead of at its own pace. A hook that ignores it is tracked per component: that component's `stop()`/`dispose()` waits for it — a `stop()` that overran its timeout is a drain and is waited for until the shutdown deadline, a startup hook that ignored its timeout only for one more `timeout` — so one hung `start()` no longer holds every other component's teardown until the global deadline (a never-settling `start()` used to hold `start()` for the full `shutdownTimeout`). `ExecutionResult` gains `timedOut`.
+  - Shutdown deadline expiry is reported instead of passing silently: every component whose hook was still running is marked `FAILED` with a `LifecycleTimeoutError` result and a `component:failed` event, one `application:shutdown-timeout` event is emitted with the timeout as `error`, `LifecycleManager.shutdownTimedOut` reads `true`, and results that arrive after `shutdown()` resolved are no longer recorded or emitted. `shutdown()` still resolves.
+  - `stop()` is no longer called on a component whose `start()` threw (a failed non-critical component, or the failing component during rollback); it runs only when `start` completed or timed out. `dispose()` still runs for every component whose `initialize` was invoked.
+  - The ready and dispose phases have their own event names: `component:readying`/`application:readying` (were `component:starting`/`application:starting`) and `component:disposing`/`component:disposed`/`application:disposing` (were `component:stopping`/`component:stopped`). A listener that counted `component:stopped` per component now sees one event, not two.
+  - New `component:retrying` event with `component.attempt` (1-based), `component.delay` and `component.error`, so backoff no longer has to be inferred from wall-clock timing. `LifecycleExecutor` takes `{ onRetry }` (new exported types `LifecycleExecutorOptions`, `LifecycleRetryNotice`).
+  - Retry semantics are documented: `attempts` counts retries after the first call (`attempts: 3` = up to four calls), `backoff` defaults to `"exponential"`, `delay` to 500 ms, `maxDelay` to 10 000 ms.
+  - `topologicalSort` on a cyclic graph names the actual loop (`config -> http -> database -> config`) instead of every node that was still blocked, and runs in O(V + E) — a 20 000-component chain took 7 s to order and now takes milliseconds. `DependencyGraph.validate()` and the new `findCycle()` search iteratively, so deep graphs cannot overflow the stack.
+  - `DependencyGraph.addEdge` still creates its endpoints (existing callers rely on it); the new `getUndeclaredNodes()` lists nodes never passed to `addNode`, and `validate({ requireDeclared: true })` rejects them (new `DependencyGraphValidationOptions`). The registry keeps rejecting an unknown `dependsOn` at `start()` by name.
+  - `dist/` no longer ends every file with a `sourceMappingURL` comment pointing at `.map` files that were never shipped (source maps are off for this package, `@zudojs/core` and `@zudojs/runtime`). The `lifecycleInternal` re-exports (`DependencyGraph`, the sorts, `withTimeout`, `withAbort`, `withConcurrency`) are documented as a supported part of the public API.
+
+  **@zudojs/runtime**
+
+  - Readiness never flips back to `true` during or after `stop()`. `runReadinessChecks()` with passing checks used to set `runtime.ready` to `true` while the state was `stopping`/`stopped`, so a `/ready` probe sent traffic to an instance that was going away; the same `runChecks()` overwrote `setState("shutting_down")` and a manual `markNotReady()`. `shutting_down` is now sticky (only `setState()` leaves it; `markReady()` is ignored in it) and `markNotReady()` holds until `markReady()`.
+  - Optional readiness checks: `registerReadinessCheck(name, check, { critical: false })` (also on `ReadinessTracker.registerCheck` and `initialChecks`) is evaluated and reported — health shows it as `degraded` — but never gates `ready`. `ReadinessCheck` gains `critical` (new types `ReadinessCheckOptions`, `ReadinessInitialCheck`). A check that returns `false` now carries the message `"Check returned false."`, and `readiness.reason` names the failing critical checks (`"Readiness checks failing: search."`), including on a runtime that was never ready.
+  - The timer that bounds a readiness check is no longer `unref`'d: in a short script, `await runtime.runReadinessChecks()` on a hanging check exited Node with "unsettled top-level await" (code 13) instead of recording the timeout. The shutdown timeout timer had the same defect for `await runtime.stop()` on a hanging `onShutdown` and is fixed the same way; both timers are cleared as soon as the race settles, so a healthy process is not held open.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.4.0
+  - @zudojs/constants@1.2.0
+
 ## 1.2.3
 
 ### Patch Changes

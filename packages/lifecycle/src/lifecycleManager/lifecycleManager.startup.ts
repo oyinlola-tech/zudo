@@ -17,7 +17,7 @@ import {
   markAttempted,
   recordResult,
 } from "./lifecycleManager.context.js";
-import type { ExecutionResult } from "../lifecycleExecutor/lifecycleExecutor.core.js";
+import type { ExecutionResult } from "../lifecycleExecutor/lifecycleExecutor.type.js";
 import { performShutdown } from "./lifecycleManager.shutdown.js";
 import type { LifecycleEventType } from "../lifecycleEvents/lifecycleEvents.core.js";
 
@@ -63,7 +63,7 @@ const PHASE_EVENTS: Record<
     end: "component:started",
   },
   [LifecyclePhase.READY]: {
-    begin: "component:starting",
+    begin: "component:readying",
     end: "component:ready",
   },
 };
@@ -72,7 +72,7 @@ const PHASE_EVENTS: Record<
 const PHASE_APPLICATION_EVENT: Record<StartupPhase, LifecycleEventType> = {
   [LifecyclePhase.INITIALIZE]: "application:initializing",
   [LifecyclePhase.START]: "application:starting",
-  [LifecyclePhase.READY]: "application:starting",
+  [LifecyclePhase.READY]: "application:readying",
 };
 
 /**
@@ -278,7 +278,6 @@ async function executePhase(
     );
 
     for (const reg of runnable) {
-      markAttempted(ctx, reg.id, phase);
       ctx.events.emit(events.begin, {
         component: { componentId: reg.id },
       });
@@ -301,6 +300,19 @@ async function executePhase(
 
     for (const result of results) {
       recordResult(ctx, result);
+
+      // A phase counts as reached when its hook completed or timed out
+      // (still running, outcome unknown). `initialize` counts even when
+      // it threw: a half-initialised component may hold resources that
+      // only dispose() releases. A thrown start() does NOT count, so
+      // stop() is never called on a component that never started.
+      if (
+        result.success ||
+        result.timedOut === true ||
+        phase === LifecyclePhase.INITIALIZE
+      ) {
+        markAttempted(ctx, result.id, phase);
+      }
 
       if (!result.success) {
         transitionComponent(ctx, result.id, LifecycleState.FAILED);

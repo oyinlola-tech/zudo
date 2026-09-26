@@ -5,6 +5,7 @@
  */
 
 export { DependencyGraph } from "./dependencyGraph.core.js";
+export type { DependencyGraphValidationOptions } from "./dependencyGraph.core.js";
 export {
   topologicalSort,
   reverseTopologicalSort,

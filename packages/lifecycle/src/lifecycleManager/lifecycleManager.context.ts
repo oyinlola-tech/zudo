@@ -11,7 +11,7 @@ import type { LifecycleStateMachine } from "../lifecycleState/lifecycleState.mac
 import type { LifecycleRegistry } from "../lifecycleRegistry/lifecycleRegistry.core.js";
 import type { LifecycleExecutor } from "../lifecycleExecutor/lifecycleExecutor.core.js";
 import type { LifecycleEventEmitter } from "../lifecycleEvents/lifecycleEvents.core.js";
-import type { ExecutionResult } from "../lifecycleExecutor/lifecycleExecutor.core.js";
+import type { ExecutionResult } from "../lifecycleExecutor/lifecycleExecutor.type.js";
 
 /** Internal context passed to startup/shutdown orchestration functions. */
 export interface LifecycleManagerContext {
@@ -25,16 +25,27 @@ export interface LifecycleManagerContext {
   readonly results: Map<string, ExecutionResult[]>;
 
   /**
-   * Startup phases that were actually run for each component.
+   * Startup phases each component reached.
    *
    * Shutdown consults this so `stop()` is only invoked on components
-   * whose `start` phase ran and `dispose()` only on components whose
-   * `initialize` phase ran. Rollback after an early failure used to
-   * call `stop()` on components that had never started, which for a
-   * real server throws and was then reported as a component failure.
+   * whose `start` completed or timed out, and `dispose()` only on
+   * components whose `initialize` was invoked. Rollback after an early
+   * failure used to call `stop()` on components that had never
+   * started, which for a real server throws and was then reported as
+   * a component failure.
    */
   readonly attempted: Map<string, Set<LifecyclePhase>>;
   startTime: number;
+
+  /** Whether the shutdown deadline expired during the current teardown. */
+  shutdownTimedOut: boolean;
+
+  /**
+   * Components whose shutdown hook is executing right now, with the
+   * time the stage began. The deadline handler fails exactly these
+   * when it expires.
+   */
+  shutdownInFlight?: Map<string, number>;
 
   /**
    * Cancellation source for the current run.

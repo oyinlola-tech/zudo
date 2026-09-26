@@ -5,10 +5,7 @@
  */
 
 import type { LifecyclePhase } from "@zudojs/constants";
-import type {
-  LifecycleRegistration,
-  LifecycleRetryOptions,
-} from "../lifecycleComponent/lifecycleComponent.type.js";
+import type { LifecycleRegistration } from "../lifecycleComponent/lifecycleComponent.type.js";
 import type { LifecycleContext } from "../lifecycleContext/lifecycleContext.type.js";
 import { withTimeout, withConcurrency } from "../lifecycleInternal/index.js";
 import { getComponentMethod } from "../lifecyclePhase/index.js";
@@ -16,38 +13,46 @@ import {
   LifecycleComponentError,
   LifecycleTimeoutError,
 } from "@zudojs/errors";
+import type {
+  ExecutionResult,
+  LifecycleExecutorOptions,
+  LifecycleRetryNotice,
+} from "./lifecycleExecutor.type.js";
+import {
+  AbandonedHooks,
+  isShutdownPhase,
+  isStartupPhase,
+} from "./lifecycleExecutor.abandoned.js";
+import { calculateDelay, groupByPriority, sleep } from "./lifecycleExecutor.retry.js";
 
-/** Result of executing a component hook. */
-export interface ExecutionResult {
-  /** Component ID. */
-  readonly id: string;
-  /** The phase that was executed. */
-  readonly phase: LifecyclePhase;
-  /** Duration in ms. */
-  readonly duration: number;
-  /** Error if the hook failed. */
-  readonly error?: unknown;
-  /** Whether the operation succeeded. */
-  readonly success: boolean;
-}
+type Hook = (context: LifecycleContext) => Promise<void> | void;
 
 /**
  * Executes lifecycle component hooks with timeout, retry, and concurrency support.
+ *
+ * Every invocation gets its own AbortSignal, derived from the run
+ * signal and aborted when the component's `timeout` elapses, so a hook
+ * that honours `context.signal` unwinds promptly. One that ignores it
+ * keeps running and is tracked per component: before that component's
+ * `stop()`/`dispose()` the executor waits for it — a drain that overran
+ * its stop timeout is waited for until the global deadline, a startup
+ * hook that ignored its timeout only for one more `timeout` — so hooks
+ * of one component never overlap.
  */
 export class LifecycleExecutor {
-  /** Hook invocations still running after their timeout fired. */
-  private readonly abandoned = new Set<Promise<unknown>>();
+  private readonly abandoned = new AbandonedHooks();
+  private readonly onRetry: ((notice: LifecycleRetryNotice) => void) | undefined;
+
+  constructor(options: LifecycleExecutorOptions = {}) {
+    this.onRetry = options.onRetry;
+  }
 
   /**
-   * Resolves once every hook abandoned by a timeout has settled.
-   *
-   * Shutdown waits on this before stopping components, so `stop()`
-   * never overlaps a `start()` that is still running.
+   * Resolves once every hook abandoned by a timeout has settled — those
+   * of one component when `id` is given, otherwise all of them.
    */
-  public async settleAbandoned(): Promise<void> {
-    while (this.abandoned.size > 0) {
-      await Promise.allSettled([...this.abandoned]);
-    }
+  public settleAbandoned(id?: string): Promise<void> {
+    return this.abandoned.settle(id);
   }
 
   /**
@@ -58,95 +63,76 @@ export class LifecycleExecutor {
     phase: LifecyclePhase,
     context: LifecycleContext,
   ): Promise<ExecutionResult> {
-    const methodName = getComponentMethod(phase);
+    const { id } = registration;
     const hook = (registration.component as unknown as Record<string, unknown>)[
-      methodName
+      getComponentMethod(phase)
     ];
 
     if (typeof hook !== "function") {
-      return {
-        id: registration.id,
-        phase,
-        duration: 0,
-        success: true,
-      };
+      return { id, phase, duration: 0, success: true };
+    }
+
+    if (isShutdownPhase(phase)) {
+      await this.abandoned.settle(id, isShutdownPhase, context.signal);
     }
 
     const startTime = Date.now();
+    const maxAttempts = 1 + (registration.retry.attempts ?? 0);
     let lastError: unknown;
-
-    const retryConfig = registration.retry;
-    const maxAttempts = 1 + (retryConfig.attempts ?? 0);
+    let timedOut = false;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      // A hook must not be retried (or even started) once the run has
-      // been cancelled — the context signal is aborted by the shutdown
-      // deadline and by startup rollback.
       if (context.signal.aborted) {
-        lastError ??= new LifecycleComponentError(
-          registration.id,
-          phase,
-          context.signal.reason,
-        );
+        lastError ??= new LifecycleComponentError(id, phase, context.signal.reason);
         break;
       }
 
+      const controller = new AbortController();
       let invocation: Promise<void> | undefined;
 
       try {
         await withTimeout(
           () => {
-            invocation = (async () => {
-              await (
-                hook as (ctx: LifecycleContext) => Promise<void> | void
-              ).call(registration.component, context);
-            })();
+            invocation = this.invoke(registration, phase, hook as Hook, {
+              ...context,
+              signal: AbortSignal.any([context.signal, controller.signal]),
+            });
             return invocation;
           },
           registration.timeout,
-          registration.id,
+          id,
           phase,
         );
 
-        return {
-          id: registration.id,
-          phase,
-          duration: Date.now() - startTime,
-          success: true,
-        };
+        return { id, phase, duration: Date.now() - startTime, success: true };
       } catch (error) {
         lastError = error;
 
-        // A timed-out hook is still running; withTimeout cannot cancel
-        // it. Retrying would run the same start() concurrently (three
-        // listen() calls on one port), so a timeout is final and the
-        // abandoned invocation is tracked for shutdown to wait on.
         if (error instanceof LifecycleTimeoutError && invocation) {
-          const abandoned = invocation.catch(() => undefined);
-          this.abandoned.add(abandoned);
-          void abandoned.finally(() => this.abandoned.delete(abandoned));
+          timedOut = true;
+          controller.abort(error);
+          this.abandoned.track(id, phase, invocation);
           break;
         }
 
         if (attempt < maxAttempts - 1) {
-          const delay = calculateDelay(retryConfig, attempt);
+          const delay = calculateDelay(registration.retry, attempt);
+          this.notifyRetry({ id, phase, attempt: attempt + 1, delay, error });
           await sleep(delay, context.signal);
         }
       }
     }
 
     return {
-      id: registration.id,
+      id,
       phase,
       duration: Date.now() - startTime,
-      // LifecycleComponentError was imported but never constructed, so
-      // callers received a bare hook error with no indication of which
-      // component or phase produced it.
       error:
         lastError instanceof LifecycleComponentError
           ? lastError
-          : new LifecycleComponentError(registration.id, phase, lastError),
+          : new LifecycleComponentError(id, phase, lastError),
       success: false,
+      ...(timedOut && { timedOut: true }),
     };
   }
 
@@ -156,10 +142,7 @@ export class LifecycleExecutor {
    * The stage arrives already ordered by priority (descending for
    * startup, ascending for shutdown). Components sharing a priority run
    * together, limited by `concurrency`; the next priority group only
-   * begins once the previous one has settled. Launching the whole stage
-   * concurrently made `priority` observable only at `concurrency: 1`,
-   * so a `priority: 100` component documented as starting first lost
-   * the race to any sibling with a faster hook.
+   * begins once the previous one has settled.
    */
   public async executeStage(
     registrations: readonly LifecycleRegistration[],
@@ -171,80 +154,39 @@ export class LifecycleExecutor {
 
     for (const batch of groupByPriority(registrations)) {
       await withConcurrency(batch, concurrency, async (reg) => {
-        const result = await this.execute(reg, phase, context);
-        results.push(result);
+        results.push(await this.execute(reg, phase, context));
       });
     }
 
     return results;
   }
-}
 
-/**
- * Splits an already-ordered stage into runs of equal priority.
- *
- * Consecutive grouping preserves whatever order the execution plan
- * produced, so a caller that does not care about priority (every
- * component at the default 0) still gets a single fully concurrent
- * batch.
- */
-function groupByPriority(
-  registrations: readonly LifecycleRegistration[],
-): readonly (readonly LifecycleRegistration[])[] {
-  const batches: LifecycleRegistration[][] = [];
-  let current: LifecycleRegistration[] | undefined;
-  let currentPriority: number | undefined;
+  private async invoke(
+    registration: LifecycleRegistration,
+    phase: LifecyclePhase,
+    hook: Hook,
+    context: LifecycleContext,
+  ): Promise<void> {
+    if (isShutdownPhase(phase)) {
+      await this.abandoned.settle(registration.id, isStartupPhase, context.signal);
 
-  for (const reg of registrations) {
-    if (current === undefined || reg.priority !== currentPriority) {
-      current = [];
-      currentPriority = reg.priority;
-      batches.push(current);
+      // The wait was cut short by the component timeout (or the run
+      // deadline): the earlier hook is still running, so this one must
+      // not start on top of it.
+      if (context.signal.aborted) {
+        throw context.signal.reason instanceof Error
+          ? context.signal.reason
+          : new LifecycleComponentError(registration.id, phase, context.signal.reason);
+      }
     }
-    current.push(reg);
+    await hook.call(registration.component, context);
   }
 
-  return batches;
-}
-
-/** Calculates retry delay with backoff. */
-function calculateDelay(
-  config: LifecycleRetryOptions,
-  attempt: number,
-): number {
-  const base = config.delay ?? 500;
-  const max = config.maxDelay ?? 10_000;
-  const backoff = config.backoff ?? "exponential";
-
-  if (backoff === "exponential") {
-    return Math.min(base * 2 ** attempt, max);
+  private notifyRetry(notice: LifecycleRetryNotice): void {
+    try {
+      this.onRetry?.(notice);
+    } catch {
+      // A listener must not break the retry loop.
+    }
   }
-  return base;
-}
-
-/**
- * Sleeps for the given duration, waking early when the run is aborted.
- *
- * An unconditional timer would keep the process alive for a full retry
- * backoff after shutdown had already been requested.
- */
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-
-    function onAbort(): void {
-      clearTimeout(timer);
-      resolve();
-    }
-
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
 }

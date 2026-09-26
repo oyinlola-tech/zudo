@@ -1,8 +1,13 @@
 /**
  * @zudojs/lifecycle/executor
  *
- * Lifecycle executor — runs component hooks with timeout, retry, and concurrency.
+ * Runs component hooks with timeout, retry, per-invocation
+ * cancellation, and priority-aware concurrency.
  */
 
 export { LifecycleExecutor } from "./lifecycleExecutor.core.js";
-export type { ExecutionResult } from "./lifecycleExecutor.core.js";
+export type {
+  ExecutionResult,
+  LifecycleExecutorOptions,
+  LifecycleRetryNotice,
+} from "./lifecycleExecutor.type.js";

@@ -7,17 +7,38 @@
 import { LifecyclePhase, LifecycleState } from "@zudojs/constants";
 import { buildExecutionPlan } from "../lifecyclePlan/lifecyclePlan.core.js";
 import { createLifecycleContext } from "../lifecycleContext/lifecycleContext.type.js";
+import type { LifecycleEventType } from "../lifecycleEvents/lifecycleEvents.core.js";
 import type { LifecycleManagerContext } from "./lifecycleManager.context.js";
-import { isBounded, toTimerDelay } from "../lifecycleInternal/index.js";
 import {
   emitComponentFailed,
   recordResult,
   transitionComponent,
   wasAttempted,
 } from "./lifecycleManager.context.js";
+import { expireShutdown, raceDeadline } from "./lifecycleManager.deadline.js";
 
 /** Shutdown phases in execution order. */
 const SHUTDOWN_PHASES = [LifecyclePhase.STOP, LifecyclePhase.DISPOSE] as const;
+
+type ShutdownPhase = (typeof SHUTDOWN_PHASES)[number];
+
+/**
+ * Per-phase component events. Dispose used to reuse the stop pair, so
+ * a listener saw every component "stopped" twice.
+ */
+const PHASE_EVENTS: Record<
+  ShutdownPhase,
+  { readonly begin: LifecycleEventType; readonly end: LifecycleEventType }
+> = {
+  [LifecyclePhase.STOP]: {
+    begin: "component:stopping",
+    end: "component:stopped",
+  },
+  [LifecyclePhase.DISPOSE]: {
+    begin: "component:disposing",
+    end: "component:disposed",
+  },
+};
 
 /**
  * Performs the full shutdown sequence: stop → dispose.
@@ -49,6 +70,7 @@ async function runShutdown(ctx: LifecycleManagerContext): Promise<void> {
       ctx.state.forceState(LifecycleState.STOPPING);
     }
   }
+  ctx.shutdownTimedOut = false;
   ctx.events.emit("application:stopping", {});
 
   const deadline = Date.now() + ctx.shutdownTimeout;
@@ -56,10 +78,18 @@ async function runShutdown(ctx: LifecycleManagerContext): Promise<void> {
   // A startup stage still executing must settle before its components
   // are stopped, otherwise `stop()` overlaps the component's own
   // `start()`. Startup itself refuses to launch further stages once
-  // `shutdownPromise` is set, so this wait is bounded by one stage.
+  // `shutdownPromise` is set, and each hook in the stage is bounded by
+  // its component timeout, so this wait is bounded by one stage.
+  //
+  // Hooks abandoned by a component timeout are NOT waited for here:
+  // the executor makes each component's stop()/dispose() wait for that
+  // component's own abandoned hook, bounded by its timeout, so one
+  // hung start() no longer holds every other component's teardown
+  // until the global deadline.
   if (ctx.inFlight !== undefined) {
     await raceDeadline(
       ctx,
+      LifecyclePhase.STOP,
       ctx.inFlight.then(
         () => undefined,
         () => undefined,
@@ -68,49 +98,26 @@ async function runShutdown(ctx: LifecycleManagerContext): Promise<void> {
     );
   }
 
-  // Hooks abandoned by a component timeout are still running; stopping
-  // their component now would overlap its own start().
-  await raceDeadline(
-    ctx,
-    ctx.executor.settleAbandoned(),
-    Math.max(deadline - Date.now(), 1),
-  );
-
-  // The shutdown deadline used to be checked only BETWEEN the two
-  // phases, so a single hook that never settled hung shutdown (and the
-  // process) forever. Race the whole phase against the remaining
-  // budget and abort the run's signal when it expires, so hooks that
-  // honour cancellation stop and the rest are abandoned.
+  // The whole phase is raced against the remaining budget; expiry is
+  // recorded by expireShutdown (components FAILED, event emitted,
+  // signal aborted) rather than passing silently.
   for (const phase of SHUTDOWN_PHASES) {
     const remaining = deadline - Date.now();
 
-    if (remaining <= 0) {
-      ctx.controller.abort(
-        new Error(
-          `Lifecycle shutdown exceeded its ${ctx.shutdownTimeout}ms deadline.`,
-        ),
-      );
+    if (ctx.shutdownTimedOut || remaining <= 0) {
+      expireShutdown(ctx, phase);
       break;
     }
 
+    if (phase === LifecyclePhase.DISPOSE) {
+      ctx.events.emit("application:disposing", {});
+    }
+
     try {
-      await raceDeadline(ctx, executeShutdownPhase(ctx, phase), remaining);
+      await raceDeadline(ctx, phase, executeShutdownPhase(ctx, phase), remaining);
     } catch {
       // Shutdown must continue even if individual components fail.
     }
-
-    // A stop()/dispose() hook that blew its own component timeout joins
-    // the abandoned set DURING this phase, so the pre-phase settle above
-    // cannot have covered it. Without this wait, DISPOSE ran on top of a
-    // stop() that was still draining and shutdown() resolved (reporting
-    // DISPOSED) while the hook kept running — the exact overlap the
-    // pre-phase settle was added to prevent. Still bounded by the global
-    // shutdown deadline.
-    await raceDeadline(
-      ctx,
-      ctx.executor.settleAbandoned(),
-      Math.max(deadline - Date.now(), 1),
-    );
   }
 
   ctx.state.forceState(LifecycleState.DISPOSED);
@@ -123,64 +130,20 @@ async function runShutdown(ctx: LifecycleManagerContext): Promise<void> {
 }
 
 /**
- * Resolves when the phase finishes or the shutdown budget runs out.
- *
- * On expiry the run's AbortController is aborted so in-flight hooks
- * observing `context.signal` unwind, and the timer is always cleared
- * so it can never hold the event loop open.
- */
-async function raceDeadline(
-  ctx: LifecycleManagerContext,
-  phase: Promise<void>,
-  remainingMs: number,
-): Promise<void> {
-  // An unbounded budget (shutdownTimeout: Infinity) waits for the phase.
-  // Handing Infinity to setTimeout fired after 1 ms and abandoned every
-  // stop()/dispose() while reporting the application DISPOSED.
-  if (!isBounded(remainingMs)) {
-    await phase.catch(() => {});
-    return;
-  }
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  const expiry = new Promise<void>((resolve) => {
-    timer = setTimeout(() => {
-      ctx.controller.abort(
-        new Error(
-          `Lifecycle shutdown exceeded its ${ctx.shutdownTimeout}ms deadline.`,
-        ),
-      );
-      resolve();
-    }, toTimerDelay(remainingMs));
-  });
-
-  try {
-    await Promise.race([phase, expiry]);
-  } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
-  }
-
-  // The abandoned phase promise must never surface as an unhandled
-  // rejection once the race has been decided.
-  void phase.catch(() => {});
-}
-
-/**
  * Executes a single shutdown phase across all registered components.
  *
  * A hook only runs for components that reached the matching startup
- * phase: `stop()` when `start` ran, `dispose()` when `initialize` ran.
- * Rollback after an early failure — and `shutdown()` on a manager that
- * was never started — used to call `stop()` on components that had
- * never started; a real server's `close()` throws in that situation
- * and the phantom failure was then recorded against the component.
+ * phase: `stop()` when `start` completed (or timed out, so its outcome
+ * is unknown), `dispose()` when `initialize` was invoked at all — a
+ * failed initialize may still hold resources. Rollback used to call
+ * `stop()` on a component whose own `start()` had just thrown, and on
+ * non-critical components that never came up; a real server's
+ * `close()` throws in that situation and the phantom failure was then
+ * recorded against the component.
  */
 async function executeShutdownPhase(
   ctx: LifecycleManagerContext,
-  phase: LifecyclePhase,
+  phase: ShutdownPhase,
 ): Promise<void> {
   const plan = buildExecutionPlan(ctx.registry.getAll(), phase);
   const context = createLifecycleContext(
@@ -196,8 +159,11 @@ async function executeShutdownPhase(
   const successState = isStop
     ? LifecycleState.STOPPED
     : LifecycleState.DISPOSED;
+  const events = PHASE_EVENTS[phase];
 
   for (const stage of plan.stages) {
+    if (ctx.shutdownTimedOut) return;
+
     const stageRegs = stage.components
       .map((id) => ctx.registry.get(id))
       .filter((r): r is NonNullable<typeof r> => r !== undefined);
@@ -224,30 +190,39 @@ async function executeShutdownPhase(
       if (isStop) {
         transitionComponent(ctx, reg.id, LifecycleState.STOPPING);
       }
-      ctx.events.emit("component:stopping", {
+      ctx.events.emit(events.begin, {
         component: { componentId: reg.id },
       });
     }
 
     if (runnable.length === 0) continue;
 
-    const results = await ctx.executor.executeStage(
-      runnable,
-      phase,
-      context,
-      ctx.concurrency,
-    );
+    const startedAt = Date.now();
+    ctx.shutdownInFlight = new Map(runnable.map((reg) => [reg.id, startedAt]));
 
-    // Shutdown results used to be discarded entirely: a component whose
-    // stop() or dispose() threw was still reported as cleanly STOPPED,
-    // its failure never reached getStatus() or the event stream, and
-    // operators had no way to learn a resource had leaked.
+    let results;
+    try {
+      results = await ctx.executor.executeStage(
+        runnable,
+        phase,
+        context,
+        ctx.concurrency,
+      );
+    } finally {
+      ctx.shutdownInFlight = undefined;
+    }
+
+    // Results arriving after the deadline expired belong to hooks the
+    // deadline already reported as timed out. Recording them would emit
+    // events after shutdown() has resolved and overwrite that verdict.
+    if (ctx.shutdownTimedOut) return;
+
     for (const result of results) {
       recordResult(ctx, result);
 
       if (result.success) {
         transitionComponent(ctx, result.id, successState);
-        ctx.events.emit("component:stopped", {
+        ctx.events.emit(events.end, {
           component: { componentId: result.id, duration: result.duration },
         });
         continue;

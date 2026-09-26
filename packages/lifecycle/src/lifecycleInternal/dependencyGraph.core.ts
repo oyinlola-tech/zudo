@@ -4,34 +4,54 @@
  * Directed acyclic graph for component dependency tracking.
  */
 
-import { LifecycleDependencyError } from "@zudojs/errors";
+import {
+  ErrorCode,
+  LifecycleDependencyError,
+  LifecycleError,
+} from "@zudojs/errors";
+import { findDependencyCycle } from "./dependencyGraph.cycle.js";
+
+/** Options for {@link DependencyGraph.validate}. */
+export interface DependencyGraphValidationOptions {
+  /**
+   * Also reject nodes that only appear as an edge endpoint and were
+   * never passed to `addNode`. Off by default, because `addEdge` has
+   * always created its endpoints; turn it on when the node set is
+   * known up front (the registry does its own equivalent check on
+   * `dependsOn` and names the missing registration).
+   */
+  readonly requireDeclared?: boolean;
+}
 
 /**
  * A directed acyclic graph of component dependencies.
+ *
+ * `addEdge` creates any endpoint it has not seen, so an undeclared
+ * node (a typo in a dependency id, say) sorts as a leaf in the first
+ * stage. The graph remembers which nodes were declared with `addNode`:
+ * inspect them with `getUndeclaredNodes()` or reject them with
+ * `validate({ requireDeclared: true })`.
  */
 export class DependencyGraph {
   private readonly _edges = new Map<string, Set<string>>();
   private readonly _reverseEdges = new Map<string, Set<string>>();
+  private readonly _declared = new Set<string>();
 
-  /** Adds a node to the graph. */
+  /** Declares a node in the graph. */
   public addNode(id: string): void {
-    if (!this._edges.has(id)) {
-      this._edges.set(id, new Set());
-    }
-    if (!this._reverseEdges.has(id)) {
-      this._reverseEdges.set(id, new Set());
-    }
+    this._declared.add(id);
+    this.ensureNode(id);
   }
 
   /** Adds a directed edge: from depends on to. */
   public addEdge(from: string, to: string): void {
-    this.addNode(from);
-    this.addNode(to);
+    this.ensureNode(from);
+    this.ensureNode(to);
     this._edges.get(from)!.add(to);
     this._reverseEdges.get(to)!.add(from);
   }
 
-  /** Returns all nodes. */
+  /** Returns all nodes, declared or not, in insertion order. */
   public getNodes(): readonly string[] {
     return [...this._edges.keys()];
   }
@@ -46,45 +66,59 @@ export class DependencyGraph {
     return [...(this._reverseEdges.get(id) ?? [])];
   }
 
-  /**
-   * Validates that the graph has no circular dependencies.
-   * Throws LifecycleDependencyError with the cycle path if found.
-   */
-  public validate(): void {
-    const visited = new Set<string>();
-    const inStack = new Set<string>();
-    const path: string[] = [];
+  /** Returns the nodes referenced by an edge but never passed to `addNode`. */
+  public getUndeclaredNodes(): readonly string[] {
+    return this.getNodes().filter((id) => !this._declared.has(id));
+  }
 
-    for (const node of this._edges.keys()) {
-      if (!visited.has(node)) {
-        this._detectCycle(node, visited, inStack, path);
-      }
+  /**
+   * Validates that the graph has no circular dependencies, throwing
+   * LifecycleDependencyError with the cycle path if one is found. With
+   * `requireDeclared` it first throws LifecycleError
+   * (LIFECYCLE_DEPENDENCY) for an edge to a node that was never added.
+   */
+  public validate(options: DependencyGraphValidationOptions = {}): void {
+    if (options.requireDeclared === true) {
+      this.assertDeclared();
+    }
+
+    const cycle = this.findCycle();
+    if (cycle !== undefined) {
+      throw new LifecycleDependencyError(cycle);
     }
   }
 
-  private _detectCycle(
-    node: string,
-    visited: Set<string>,
-    inStack: Set<string>,
-    path: string[],
-  ): void {
-    visited.add(node);
-    inStack.add(node);
-    path.push(node);
+  /**
+   * Returns one dependency cycle as a closed path (first id repeated
+   * last), or undefined when the graph is acyclic.
+   */
+  public findCycle(): readonly string[] | undefined {
+    return findDependencyCycle(this);
+  }
 
-    const deps = this._edges.get(node) ?? new Set();
-    for (const dep of deps) {
-      if (inStack.has(dep)) {
-        const cycleStart = path.indexOf(dep);
-        const cycle = [...path.slice(cycleStart), dep];
-        throw new LifecycleDependencyError(cycle);
-      }
-      if (!visited.has(dep)) {
-        this._detectCycle(dep, visited, inStack, path);
-      }
+  private ensureNode(id: string): void {
+    if (!this._edges.has(id)) {
+      this._edges.set(id, new Set());
     }
+    if (!this._reverseEdges.has(id)) {
+      this._reverseEdges.set(id, new Set());
+    }
+  }
 
-    path.pop();
-    inStack.delete(node);
+  private assertDeclared(): void {
+    const undeclared = this.getUndeclaredNodes();
+    const missing = undeclared[0];
+    if (missing === undefined) return;
+
+    const dependent = this.getDependents(missing)[0];
+
+    throw new LifecycleError(
+      `Component "${dependent ?? missing}" depends on "${missing}" which was never added to the graph.`,
+      {
+        code: ErrorCode.LIFECYCLE_DEPENDENCY,
+        componentId: dependent,
+        metadata: { dependency: missing, undeclared },
+      },
+    );
   }
 }

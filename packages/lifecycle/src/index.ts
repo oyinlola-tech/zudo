@@ -38,6 +38,14 @@ export type {
 export type { LifecycleContext } from "./lifecycleContext/index.js";
 export { createLifecycleContext } from "./lifecycleContext/index.js";
 export { LifecycleRegistry } from "./lifecycleRegistry/index.js";
+
+/*
+ * Graph and async utilities. These live in the `lifecycleInternal`
+ * folder because the manager is their first consumer, but they are a
+ * supported part of the public API: `DependencyGraph` and the sorts
+ * are what `buildExecutionPlan` is built on, and `withTimeout` /
+ * `withAbort` / `withConcurrency` are reusable outside the manager.
+ */
 export {
   DependencyGraph,
   topologicalSort,
@@ -46,11 +54,18 @@ export {
   withAbort,
   withConcurrency,
 } from "./lifecycleInternal/index.js";
-export type { TopologicalStage } from "./lifecycleInternal/index.js";
+export type {
+  DependencyGraphValidationOptions,
+  TopologicalStage,
+} from "./lifecycleInternal/index.js";
 export { buildExecutionPlan } from "./lifecyclePlan/index.js";
 export type { ExecutionStage, ExecutionPlan } from "./lifecyclePlan/index.js";
 export { LifecycleExecutor } from "./lifecycleExecutor/index.js";
-export type { ExecutionResult } from "./lifecycleExecutor/index.js";
+export type {
+  ExecutionResult,
+  LifecycleExecutorOptions,
+  LifecycleRetryNotice,
+} from "./lifecycleExecutor/index.js";
 export {
   LifecycleManager,
   createLifecycleManager,

@@ -52,8 +52,15 @@ export interface LifecycleRegistrationOptions {
   readonly critical?: boolean;
 
   /**
-   * Timeout in ms for individual component operations. `Infinity` means
-   * no bound; NaN and negative values are rejected at registration.
+   * Timeout in ms for each hook invocation. Defaults to
+   * `LIFECYCLE_DEFAULT_TIMEOUT` (30 s). `Infinity` means no bound; NaN
+   * and negative values are rejected at registration.
+   *
+   * When it elapses the hook's `context.signal` is aborted, the hook is
+   * recorded as failed with `timedOut: true` and is never retried, and
+   * startup rolls back. The same budget bounds the wait, before this
+   * component's `stop()`/`dispose()`, for an earlier hook of this
+   * component that is still running after its own timeout.
    */
   readonly timeout?: number;
 
@@ -61,18 +68,31 @@ export interface LifecycleRegistrationOptions {
   readonly retry?: LifecycleRetryOptions;
 }
 
-/** Retry options for component operations. */
+/**
+ * Retry options for component operations.
+ *
+ * Retries apply to every phase hook. A hook that threw (or rejected)
+ * is retried after a delay; a hook that exceeded `timeout` is never
+ * retried, because it is still running and cannot be cancelled. Each
+ * retry is announced through the `component:retrying` event.
+ */
 export interface LifecycleRetryOptions {
-  /** Maximum number of retry attempts. */
+  /**
+   * Number of retries after the first call, not the total number of
+   * calls: `attempts: 3` allows up to four invocations. Defaults to 0.
+   */
   readonly attempts?: number;
 
-  /** Delay between retries in ms. */
+  /** Delay before the first retry in ms. Defaults to 500. */
   readonly delay?: number;
 
-  /** Maximum delay between retries in ms. */
+  /** Cap on the delay between retries in ms. Defaults to 10 000. */
   readonly maxDelay?: number;
 
-  /** Backoff strategy. */
+  /**
+   * Backoff strategy. `"exponential"` (the default) doubles `delay` on
+   * every retry up to `maxDelay`; `"fixed"` waits `delay` each time.
+   */
   readonly backoff?: "fixed" | "exponential";
 }
 

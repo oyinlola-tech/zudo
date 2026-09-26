@@ -13,46 +13,65 @@ export type TopologicalStage = readonly string[];
 /**
  * Performs topological sort on a dependency graph,
  * grouping independent components into parallel stages.
- * Components within the same stage are ordered by priority (higher first).
+ * Components within the same stage are ordered by priority (higher
+ * first) and then by the order they were added to the graph.
+ *
+ * Runs in O(V + E) — each node is queued once when its last dependency
+ * is placed. A rescan of every remaining node per stage made a long
+ * chain quadratic (a 20 000-component chain took seconds to order).
+ *
+ * Throws LifecycleDependencyError, naming the actual loop, when the
+ * graph is cyclic. The error used to list every node that was still
+ * blocked, which for one three-node loop meant naming the whole
+ * application. Undeclared nodes (see `DependencyGraph.validate`) sort
+ * as leaves.
  */
 export function topologicalSort(
   graph: DependencyGraph,
   priorities?: ReadonlyMap<string, number>,
 ): readonly TopologicalStage[] {
   const nodes = graph.getNodes();
+  const position = new Map<string, number>();
   const inDegree = new Map<string, number>();
+  let ready: string[] = [];
 
-  for (const node of nodes) {
-    const deps = graph.getDependencies(node);
-    inDegree.set(node, deps.length);
-  }
+  nodes.forEach((node, index) => {
+    position.set(node, index);
+    const degree = graph.getDependencies(node).length;
+    inDegree.set(node, degree);
+    if (degree === 0) ready.push(node);
+  });
+
+  const byPriorityThenPosition = (a: string, b: string): number => {
+    const pa = priorities?.get(a) ?? 0;
+    const pb = priorities?.get(b) ?? 0;
+    return pb - pa || position.get(a)! - position.get(b)!;
+  };
 
   const stages: TopologicalStage[] = [];
-  const remaining = new Set(nodes);
+  let placed = 0;
 
-  while (remaining.size > 0) {
-    const ready = [...remaining].filter((node) => inDegree.get(node) === 0);
-
-    if (ready.length === 0 && remaining.size > 0) {
-      throw new LifecycleDependencyError([...remaining]);
-    }
-
-    ready.sort((a, b) => {
-      const pa = priorities?.get(a) ?? 0;
-      const pb = priorities?.get(b) ?? 0;
-      return pb - pa;
-    });
-
+  while (ready.length > 0) {
+    ready.sort(byPriorityThenPosition);
     stages.push(Object.freeze(ready));
+    placed += ready.length;
 
+    const next: string[] = [];
     for (const node of ready) {
-      remaining.delete(node);
-      const dependents = graph.getDependents(node);
-      for (const dep of dependents) {
-        const current = inDegree.get(dep) ?? 0;
-        inDegree.set(dep, current - 1);
+      for (const dependent of graph.getDependents(node)) {
+        const remaining = (inDegree.get(dependent) ?? 0) - 1;
+        inDegree.set(dependent, remaining);
+        if (remaining === 0) next.push(dependent);
       }
     }
+    ready = next;
+  }
+
+  if (placed < nodes.length) {
+    const cycle = graph.findCycle();
+    throw new LifecycleDependencyError(
+      cycle ?? nodes.filter((node) => (inDegree.get(node) ?? 0) > 0),
+    );
   }
 
   return stages;

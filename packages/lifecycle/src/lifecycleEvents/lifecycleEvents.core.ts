@@ -4,23 +4,38 @@
  * Lifecycle event emitter — emits typed events for observability integration.
  */
 
-/** Lifecycle event types. */
+/**
+ * Lifecycle event types.
+ *
+ * Every phase has its own begin/end pair: the ready phase emits
+ * `component:readying` / `component:ready` and the dispose phase
+ * `component:disposing` / `component:disposed`. They used to reuse
+ * `component:starting` and `component:stopping`/`component:stopped`,
+ * so a listener could not tell the phases apart.
+ */
 export type LifecycleEventType =
   | "component:registered"
   | "component:initializing"
   | "component:initialized"
   | "component:starting"
   | "component:started"
+  | "component:readying"
   | "component:ready"
+  | "component:retrying"
   | "component:stopping"
   | "component:stopped"
+  | "component:disposing"
+  | "component:disposed"
   | "component:failed"
   | "application:initializing"
   | "application:initialized"
   | "application:starting"
+  | "application:readying"
   | "application:ready"
   | "application:stopping"
+  | "application:shutdown-timeout"
   | "application:stopped"
+  | "application:disposing"
   | "application:disposed";
 
 /** Event payload for component events. */
@@ -29,8 +44,12 @@ export interface LifecycleComponentEvent {
   readonly componentId: string;
   /** Duration in ms (for completion events). */
   readonly duration?: number;
-  /** Error if the event represents a failure. */
+  /** Error if the event represents a failure (or the error being retried). */
   readonly error?: unknown;
+  /** 1-based retry number (`component:retrying` only). */
+  readonly attempt?: number;
+  /** Milliseconds until that retry runs (`component:retrying` only). */
+  readonly delay?: number;
 }
 
 /** Event payload for application events. */
@@ -49,7 +68,11 @@ export interface LifecycleEvent {
   readonly component?: LifecycleComponentEvent;
   /** Duration in ms (for completion events). */
   readonly duration?: number;
-  /** Error if the event represents a failure. */
+  /**
+   * Error if the event represents a failure. For
+   * `application:shutdown-timeout` this is the LifecycleTimeoutError
+   * describing the expired deadline.
+   */
   readonly error?: unknown;
   /** Timestamp. */
   readonly timestamp: number;

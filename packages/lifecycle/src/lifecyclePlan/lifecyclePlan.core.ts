@@ -70,7 +70,6 @@ function buildGraphForPhase(
   for (const reg of registrations) {
     graph.addNode(reg.id);
     for (const dep of reg.dependsOn) {
-      graph.addNode(dep);
       graph.addEdge(reg.id, dep);
     }
   }

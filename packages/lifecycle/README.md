@@ -60,9 +60,11 @@ components that `dependsOn` it are not started either: they are marked
 `FAILED` with a `LifecycleComponentError` naming the failed dependency,
 and their own `critical` flag decides whether startup aborts.
 
-Rollback only undoes phases that ran: `stop()` is called on components
-whose `start` phase ran, and `dispose()` on components whose
-`initialize` phase ran.
+Rollback only undoes phases that were reached: `stop()` is called on
+components whose `start` completed (or timed out, so its outcome is
+unknown) — never on one whose `start()` threw — and `dispose()` on
+components whose `initialize` was invoked, even if it failed, because a
+half-initialised component may still hold resources.
 
 Calling `shutdown()` while `start()` is in flight waits for the
 executing stage to settle, tears down, and makes `start()` reject with a
@@ -78,7 +80,11 @@ failing startup and the process signal handler, all await the same run.
 whole sequence. When it expires the lifecycle context's `AbortSignal` is
 aborted so hooks that observe it can unwind, and shutdown completes
 regardless. A component that ignores the signal is abandoned, not
-awaited forever.
+awaited forever. Expiry is never silent: every component whose hook was
+still running is marked `FAILED` with a `LifecycleTimeoutError` result,
+one `application:shutdown-timeout` event is emitted (its `error` is the
+timeout), `manager.shutdownTimedOut` reads `true`, and nothing is
+emitted after `shutdown()` has resolved.
 
 Failing `stop()`/`dispose()` hooks are recorded: the component is marked
 `FAILED`, a `component:failed` event is emitted, and the result appears
@@ -86,9 +92,11 @@ in `getStatus()`.
 
 ## Cancellation
 
-Every hook receives a `LifecycleContext` whose `signal` is shared by the
-whole run and is aborted when the shutdown deadline expires. Long-running
-hooks should honour it:
+Every hook invocation receives a `LifecycleContext` whose `signal` is
+derived from the run: it is aborted when that component's `timeout`
+elapses and when the shutdown deadline expires. Long-running hooks
+should honour it — a `start()` that does is what lets `start()` reject
+at the component timeout instead of at the hook's own pace:
 
 ```typescript
 async stop(context) {
@@ -101,11 +109,19 @@ async stop(context) {
 `manager.events.on(type, listener)` subscribes to:
 
 - `component:registered`, `component:initializing`, `component:initialized`,
-  `component:starting`, `component:started`, `component:ready`,
-  `component:stopping`, `component:stopped`, `component:failed`
+  `component:starting`, `component:started`, `component:readying`,
+  `component:ready`, `component:retrying`, `component:stopping`,
+  `component:stopped`, `component:disposing`, `component:disposed`,
+  `component:failed`
 - `application:initializing`, `application:initialized`,
-  `application:starting`, `application:ready`, `application:stopping`,
-  `application:stopped`, `application:disposed`
+  `application:starting`, `application:readying`, `application:ready`,
+  `application:stopping`, `application:shutdown-timeout`,
+  `application:stopped`, `application:disposing`, `application:disposed`
+
+Every phase has its own begin/end pair (the ready and dispose phases
+used to reuse `starting` and `stopping`/`stopped`). `component:retrying`
+carries `component.attempt` (1-based), `component.delay` (ms) and the
+`component.error` being retried.
 
 Listener exceptions are swallowed so observability never breaks the
 lifecycle.
@@ -134,10 +150,23 @@ stops first and the highest stops last.
 `timeout` and `shutdownTimeout` accept `Infinity` for "no bound"; NaN and
 negative values throw a `RangeError` when registered or constructed, and
 finite values above 2^31-1 ms are clamped to the largest timer delay.
-`retry` covers hooks that fail; a hook that times out is not retried,
-because it is still running and a second call would overlap it.
-`shutdown()` waits (within its deadline) for such an abandoned hook to
-settle before calling `stop()`.
+`retry.attempts` is the number of retries after the first call, not the
+total (`attempts: 3` allows four invocations); `delay` defaults to 500 ms,
+`maxDelay` to 10 000 ms and `backoff` to `"exponential"` (doubling per
+retry, capped at `maxDelay`). `retry` covers hooks that throw; a hook that
+times out is not retried, because it is still running and a second call
+would overlap it. Its `context.signal` is aborted and it is tracked per
+component: before that component's `stop()`/`dispose()` the executor
+waits for it — a `stop()` that overran its timeout is a drain and is
+waited for until the shutdown deadline, a startup hook that ignored its
+timeout only for one more `timeout` — so hooks of one component never
+overlap and one hung `start()` no longer delays every other component's
+teardown.
+
+`DependencyGraph.addEdge` creates its endpoints, so a typo in a
+dependency id sorts as a leaf. `getUndeclaredNodes()` lists such nodes
+and `validate({ requireDeclared: true })` rejects them; the manager's
+registry already rejects an unknown `dependsOn` at `start()`.
 
 With `handleSignals`, SIGINT/SIGTERM listeners are installed by `start()`,
 not by the constructor, and removed once shutdown finishes. A second

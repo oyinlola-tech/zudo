@@ -668,8 +668,14 @@ describe("LIFECYCLE-04: the lifecycle context signal is wired", () => {
     manager.dispose();
   });
 
-  it("hands the same signal to every hook", async () => {
-    const manager = new LifecycleManager({ handleSignals: false });
+  it("hands every hook a live signal that follows the run", async () => {
+    // Since round 12 each invocation gets its own signal (so a component
+    // timeout can abort just that hook); every one of them is derived
+    // from the run signal and aborts with it.
+    const manager = new LifecycleManager({
+      handleSignals: false,
+      shutdownTimeout: 50,
+    });
     const signals: AbortSignal[] = [];
 
     manager.register({
@@ -680,13 +686,17 @@ describe("LIFECYCLE-04: the lifecycle context signal is wired", () => {
       ready: async (context) => {
         signals.push(context.signal);
       },
+      stop: () => new Promise<void>(() => undefined),
     });
 
     await manager.start();
 
     expect(signals).toHaveLength(2);
-    expect(signals[0]).toBe(signals[1]);
-    expect(signals[0]?.aborted).toBe(false);
+    expect(signals.every((signal) => !signal.aborted)).toBe(true);
+
+    await manager.shutdown();
+
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
     manager.dispose();
   });
 });

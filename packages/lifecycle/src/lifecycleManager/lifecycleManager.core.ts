@@ -17,7 +17,7 @@ import type {
 import { LifecycleRegistry } from "../lifecycleRegistry/lifecycleRegistry.core.js";
 import { LifecycleStateMachine } from "../lifecycleState/lifecycleState.machine.js";
 import { LifecycleExecutor } from "../lifecycleExecutor/lifecycleExecutor.core.js";
-import type { ExecutionResult } from "../lifecycleExecutor/lifecycleExecutor.core.js";
+import type { ExecutionResult } from "../lifecycleExecutor/lifecycleExecutor.type.js";
 import { LifecycleEventEmitter } from "../lifecycleEvents/lifecycleEvents.core.js";
 import { installSignalHandlers } from "../lifecycleSignal/lifecycleSignal.handler.js";
 import { performStartup } from "./lifecycleManager.startup.js";
@@ -69,11 +69,26 @@ export class LifecycleManager {
       assertTimeoutBudget("shutdownTimeout", options.shutdownTimeout);
     }
 
+    const events = new LifecycleEventEmitter();
+
     this._ctx = {
       registry: new LifecycleRegistry(),
       state: new LifecycleStateMachine("application"),
-      executor: new LifecycleExecutor(),
-      events: new LifecycleEventEmitter(),
+      executor: new LifecycleExecutor({
+        // Retries used to be invisible: a backoff delay could only be
+        // inferred from wall-clock timing.
+        onRetry: (notice) => {
+          events.emit("component:retrying", {
+            component: {
+              componentId: notice.id,
+              attempt: notice.attempt,
+              delay: notice.delay,
+              error: notice.error,
+            },
+          });
+        },
+      }),
+      events,
       concurrency: options.concurrency ?? LIFECYCLE_DEFAULT_CONCURRENCY,
       shutdownTimeout:
         options.shutdownTimeout ?? LIFECYCLE_DEFAULT_SHUTDOWN_TIMEOUT,
@@ -81,6 +96,7 @@ export class LifecycleManager {
       results: new Map(),
       attempted: new Map(),
       startTime: 0,
+      shutdownTimedOut: false,
       controller: new AbortController(),
     };
 
@@ -136,6 +152,12 @@ export class LifecycleManager {
   /**
    * Shuts down the application lifecycle.
    * Idempotent — returns the same promise if called multiple times.
+   *
+   * Always resolves, even when `shutdownTimeout` expires: a signal
+   * handler awaiting it must not crash the process. Expiry is reported
+   * through {@link shutdownTimedOut}, the `application:shutdown-timeout`
+   * event, and a FAILED status (with a LifecycleTimeoutError result)
+   * for every component whose hook was still running.
    */
   public async shutdown(): Promise<void> {
     // performShutdown is itself single-flight, so a shutdown started by
@@ -155,6 +177,14 @@ export class LifecycleManager {
   /** Returns the current application state. */
   public get state(): LifecycleState {
     return this._ctx.state.state;
+  }
+
+  /**
+   * Whether the last (or current) shutdown ran out of `shutdownTimeout`
+   * before every component was stopped and disposed.
+   */
+  public get shutdownTimedOut(): boolean {
+    return this._ctx.shutdownTimedOut;
   }
 
   /** Returns the event emitter for lifecycle events. */

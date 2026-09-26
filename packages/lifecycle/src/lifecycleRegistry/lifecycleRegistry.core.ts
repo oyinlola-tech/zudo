@@ -68,8 +68,10 @@ export class LifecycleRegistry {
     this._registrations.set(id, registration);
     this._graph.addNode(id);
 
+    // Dependencies are NOT declared here: the graph tracks them as
+    // undeclared until the dependency itself registers, so a typo in
+    // `dependsOn` is caught by the graph as well as by validate().
     for (const dep of registration.dependsOn) {
-      this._graph.addNode(dep);
       this._graph.addEdge(id, dep);
     }
   }
