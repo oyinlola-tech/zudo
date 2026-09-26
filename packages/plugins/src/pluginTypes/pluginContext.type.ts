@@ -2,9 +2,18 @@ import type { PluginMetadata } from "./pluginMetadata.type.js";
 
 /**
  * Minimal container interface for plugin context.
+ *
+ * `register` is all the plugin system itself needs. `resolve` and `has`
+ * are declared optional so a plugin can read from a real container
+ * (`@zudojs/container`'s satisfies this shape) without casting; a host
+ * that passes a register-only object leaves them `undefined`.
  */
 export interface PluginContainer {
   register(token: unknown, provider: unknown): void;
+
+  resolve?<T = unknown>(token: unknown): T;
+
+  has?(token: unknown): boolean;
 }
 
 /**
@@ -75,6 +84,13 @@ export interface PluginDisposable {
  */
 export interface PluginContext {
   readonly plugin: PluginMetadata;
+
+  /**
+   * Metadata of the host application — the `plugin` metadata of the
+   * context handed to `PluginManager.start()`. Absent on a context built
+   * directly with `createPluginContext` and no `host` option.
+   */
+  readonly host?: PluginMetadata;
 
   readonly container?: PluginContainer;
 

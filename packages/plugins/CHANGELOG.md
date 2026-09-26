@@ -1,5 +1,52 @@
 # @zudojs/plugins
 
+## 1.4.0
+
+### Minor Changes
+
+- Round 12 platform fixes (findings 94–101, 104–106, 125, 132, 134 from the academy lessons).
+
+  **@zudojs/docs**
+
+  - Security: `validateLinks` now scans every link form a renderer turns into a live link and applies the URL-scheme allow-list to each. `[x](javascript:alert(1))` (parentheses in the target), `[x](<javascript:…>)`, titled targets, reference definitions `[x]: javascript:…`, raw `<a href="…">` in any quoting and `<scheme:…>` autolinks are all reported as `UNSAFE_LINK`; each was previously missed. Every scanner is linear on hostile input.
+  - `validateAll` / `validateLinks` take `brokenLinkSeverity` and `validateAll` takes `orphanSeverity` (`"error" | "warning"`, default `"warning"`), so a documentation set with dead links or unreachable documents can be made to fail validation. Defaults are unchanged.
+  - `createDocument({ …, strict: true })` rejects an unknown `category`, `status` or `visibility` at creation; without it the builder accepts them as before. Built documents no longer carry explicit `undefined` keys for options that were not supplied.
+  - `getAdjacent(id, nav, { scope: "tree" })` walks previous/next across section boundaries in reading order. `SearchDocument`, `SearchResult`, `DocumentationSourceLoader` and `DocumentationVersion` are documented as contracts the package does not implement.
+
+  **@zudojs/plugins**
+
+  - The hook-timeout timer is no longer `unref`'d. A `start()` that never settles, in a process where nothing else holds the event loop, used to exit Node with code 13 before the timeout could fire — no `PluginTimeoutError`, no rollback. It now times out, is rolled back and rejects `start()`.
+  - Lifecycle failures name the plugin: a hook's error that is not already a `PluginError` is thrown as `PluginInitializationError` (install/initialize), `PluginStartError` (start) or `PluginStopError` (stop), with `pluginName` set, the original as `cause` and its message quoted (`Plugin "x" failed to start: boom`). Typed plugin errors (`PluginTimeoutError`, `PluginStateError`, …) propagate unchanged. `diagnostics()` and the `failed` event keep the hook's own error.
+  - `PluginManager.register(plugin, options)` types `options` from `Plugin<TOptions>`. `PluginContext.host` carries the host application's metadata (the `plugin` of the context passed to `start()`), and `createPluginContext` takes a `host` option. `PluginContainer` declares optional `resolve()` and `has()`, so a real container is accepted without casting.
+  - Behaviour change in `diagnostics()`: a plugin that is idle — `registered`, or cleanly `stopped` or `disposed` — is now `healthy` instead of `degraded` (every plugin read `degraded` after a clean `stop()`); a plugin part-way through boot or a transition is `degraded`; a `started` plugin may report its own health through a new optional `Plugin.health()`. New export `resolvePluginHealth`.
+
+  **@zudojs/adapters**
+
+  - Behaviour change: `stopAll()` and `disposeAll()` now run in reverse registration order (the mirror of `initializeAll()`/`startAll()`), as the lifecycle and cleanup managers do.
+  - `initializeAll()`, `startAll()` and `stopAll()` take `AdapterOperationOptions` (`timeout`, `retry`, `signal`) like `healthAll()`. The `AggregateError` they throw now holds typed per-adapter errors — `AdapterInitializationError`, `AdapterOperationError` (operation `"start"`/`"stop"`) or `AdapterTimeoutError` — naming the adapter, with the hook's own error as `cause`; previously each entry was the bare error and nothing said which adapter had failed. `disposeAll()`/`removeAndDispose()` still rethrow the hooks' own errors. Code that read `errors[i].message` from `initializeAll()`/`startAll()`/`stopAll()` should read `errors[i].cause` instead.
+  - `AdapterCapabilities` is open: any capability name (`refunds`) can be declared and looked up with `findByCapability`, `supports` and `requireCapability`; the well-known keys live in the new `KnownAdapterCapabilities`.
+  - `healthAll().adapters` keys are in registration order regardless of which check finished first. `withRetry`, `collectAdapterHealth`, `configureAdapter`, `runAdapterLifecycle` and `toAdapterLifecycleError` are exported from the package root.
+  - Not changed here (needs `@zudojs/errors`): `AdapterTimeoutError` and `AdapterConnectionError` still carry `statusCode: 500`.
+
+  **@zudojs/testing**
+
+  - `createMockFn` gains `mockReturnValueOnce`, `mockResolvedValueOnce`, `mockRejectedValueOnce` and `mockImplementationOnce`. One-shot results are consumed in order before the persistent mode; `mockReset` drops them, `mockClear` keeps them.
+
+  **@zudojs/rpc**
+
+  - An `RPCTransportError`, or an `RPCTimeoutError` naming a different procedure, thrown inside a handler or middleware — what an `RPCClient` raises when a downstream call cannot be reached or times out — is now answered with `RPC_UNAVAILABLE` and the new `UNAVAILABLE_ERROR_MESSAGE`, instead of `RPC_INTERNAL_ERROR` (transport) or this procedure's own `RPC_TIMEOUT` (timeout). The dispatcher wraps it in an `RPCUnavailableError` with the original as `cause`, which the server hands to `onInternalError`. A timeout about the procedure itself — the dispatcher's own, a cooperative handler rethrowing `context.signal.reason`, or a handler throwing an `RPCTimeoutError` under its own procedure name — still maps to `RPC_TIMEOUT`. `mapRPCError` applies the same rule to a bare `RPCTransportError`.
+  - Documented: `retry()`'s `attempts` counts calls, not retries (`attempts: 3` = three calls); `@zudojs/lifecycle` counts the other way.
+
+  **@zudojs/openapi**
+
+  - New `implicitLimits` option (default `true`) on `createOpenAPIManager`, `createOpenAPIDocumentFromRoutes`, `convertSchema`, `resolveSchemaInput` and the route scanner. The emitted `maxLength: 255` / `maxItems: 1000` on strings and arrays without their own `.max()` reflect the ceilings `@zudojs/schema` actually enforces, so the default is kept; `implicitLimits: false` emits only explicitly declared bounds.
+  - Not changed here (lives in `@zudojs/http`): `mountOpenAPI` still serves `/docs` by default in every environment; pass `docsPath: false` to disable it.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.4.0
+
 ## 1.3.3
 
 ### Patch Changes

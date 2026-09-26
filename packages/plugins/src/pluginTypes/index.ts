@@ -18,4 +18,5 @@ export type {
   PluginDisposable,
 } from "./pluginContext.type.js";
 export type { Plugin } from "./plugin.type.js";
+export type { PluginHealth, PluginHealthStatus } from "./plugin.type.js";
 export type { PluginErrorOptions } from "@zudojs/errors";

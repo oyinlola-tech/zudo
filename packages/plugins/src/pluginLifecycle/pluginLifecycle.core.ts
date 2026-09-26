@@ -13,6 +13,7 @@ import {
   createPluginLifecycleEvent,
 } from "../pluginEvents/pluginEvent.core.js";
 import { AbandonedHooks } from "./pluginLifecycle.abandoned.js";
+import { toPhaseError } from "./pluginLifecycle.phaseError.js";
 import { reportPluginFailure } from "./pluginLifecycle.report.js";
 import { deliverPluginEvent } from "../pluginEvents/pluginEvent.deliver.js";
 
@@ -81,6 +82,11 @@ export class LifecycleController {
   /**
    * Runs a hook under the configured timeout, clearing the timer either
    * way so a completed hook never leaves one armed.
+   *
+   * The timer is deliberately ref'd: it guards pending work, and an
+   * unref'd one let Node exit (code 13, "unsettled top-level await")
+   * when a `start()` hook hung before anything else held the event
+   * loop, so no `PluginTimeoutError` was raised and nothing rolled back.
    */
   private async runHook(
     pluginName: string,
@@ -115,8 +121,6 @@ export class LifecycleController {
               }),
             );
           }, Math.min(timeout, MAX_TIMER_DELAY));
-
-          timer.unref?.();
         }),
       ]);
     } finally {
@@ -216,6 +220,8 @@ export class LifecycleController {
       registered.setState(settled);
       emitLifecycleEvent(context, endEvent, metadata, settled, transient);
     } catch (error) {
+      // Diagnostics and the `failed` event keep what the hook threw; the
+      // caller gets it wrapped in the phase's error, naming the plugin.
       registered.setError(error);
       this.transitionToFailed(registered);
       emitLifecycleEvent(
@@ -226,7 +232,7 @@ export class LifecycleController {
         transient,
         error,
       );
-      throw error;
+      throw toPhaseError(transient, metadata.name, error);
     }
   }
 

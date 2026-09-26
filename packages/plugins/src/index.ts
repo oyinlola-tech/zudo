@@ -86,6 +86,7 @@ export {
 
 export {
   buildDiagnosticReport,
+  resolvePluginHealth,
   createHealthyHealth,
   createDegradedHealth,
   createUnhealthyHealth,

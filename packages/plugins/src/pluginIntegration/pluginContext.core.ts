@@ -38,6 +38,13 @@ export interface CreatePluginContextOptions {
    * one it aborts on shutdown so plugins are told to stop.
    */
   readonly abortController?: AbortController;
+
+  /**
+   * Metadata of the host application, exposed to the plugin as
+   * `context.host`. The manager fills it from the `plugin` metadata of
+   * the context passed to `start()`/`stop()`.
+   */
+  readonly host?: PluginMetadata;
 }
 
 /**
@@ -67,6 +74,7 @@ export function createOwnedPluginContext(
 
   const context: PluginContext = {
     plugin,
+    ...(options.host !== undefined ? { host: options.host } : {}),
     signal: abortController.signal,
     container: options.container,
     config: options.config,

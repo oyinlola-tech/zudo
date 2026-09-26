@@ -15,4 +15,5 @@ export {
   createDegradedHealth,
   createUnhealthyHealth,
   buildDiagnosticReport,
+  resolvePluginHealth,
 } from "./pluginDiagnostic.core.js";

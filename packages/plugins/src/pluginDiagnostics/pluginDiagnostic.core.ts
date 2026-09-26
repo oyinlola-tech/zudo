@@ -1,20 +1,25 @@
 import type { Plugin } from "../pluginTypes/plugin.type.js";
+import type {
+  PluginHealth,
+  PluginHealthStatus,
+} from "../pluginTypes/plugin.type.js";
 import type { PluginMetadata } from "../pluginTypes/pluginMetadata.type.js";
 import type { PluginState } from "../pluginTypes/pluginState.type.js";
 
-/**
- * Plugin health status.
- */
-export type PluginHealthStatus = "healthy" | "degraded" | "unhealthy";
+import {
+  createDegradedHealth,
+  createHealthyHealth,
+  createUnhealthyHealth,
+  resolvePluginHealth,
+} from "./pluginDiagnostic.health.js";
 
-/**
- * Plugin health information.
- */
-export interface PluginHealth {
-  readonly status: PluginHealthStatus;
-
-  readonly details?: unknown;
-}
+export type { PluginHealth, PluginHealthStatus };
+export {
+  createDegradedHealth,
+  createHealthyHealth,
+  createUnhealthyHealth,
+  resolvePluginHealth,
+};
 
 /**
  * Individual plugin diagnostic information.
@@ -52,27 +57,6 @@ export interface PluginDiagnosticReport {
 }
 
 /**
- * Creates a default healthy status for a plugin.
- */
-export function createHealthyHealth(): PluginHealth {
-  return { status: "healthy" };
-}
-
-/**
- * Creates a degraded health status for a plugin.
- */
-export function createDegradedHealth(details?: unknown): PluginHealth {
-  return { status: "degraded", ...(details !== undefined ? { details } : {}) };
-}
-
-/**
- * Creates an unhealthy health status for a plugin.
- */
-export function createUnhealthyHealth(details?: unknown): PluginHealth {
-  return { status: "unhealthy", ...(details !== undefined ? { details } : {}) };
-}
-
-/**
  * Builds a diagnostic report from registered plugins.
  */
 export function buildDiagnosticReport(
@@ -96,13 +80,7 @@ export function buildDiagnosticReport(
         plugin: plugin.metadata,
         state,
         failed: hasFailed,
-        health: hasFailed
-          ? createUnhealthyHealth(
-              error instanceof Error ? error.message : error,
-            )
-          : state === "started"
-            ? createHealthyHealth()
-            : createDegradedHealth(),
+        health: resolvePluginHealth(plugin, state, hasFailed, error),
         dependencies: plugin.dependencies?.map((d) => d.name) ?? [],
         optionalDependencies:
           plugin.optionalDependencies?.map((d) => d.name) ?? [],

@@ -151,12 +151,17 @@ export class PluginManager {
   /**
    * Registers a plugin.
    *
+   * `options` is typed from the plugin: for a `Plugin<TOptions>` (a
+   * plugin whose `install(context, options)` declares its options type)
+   * it must be a `TOptions`, so a mistyped options object is a compile
+   * error rather than a runtime surprise in `install`.
+   *
    * @throws {PluginAlreadyRegisteredError} when the name is taken, so
    * callers can implement idempotent registration.
    */
-  public register<TPlugin extends Plugin>(
-    plugin: TPlugin,
-    options?: unknown,
+  public register<TOptions = unknown>(
+    plugin: Plugin<TOptions>,
+    options?: TOptions,
   ): void {
     if (
       typeof plugin?.metadata?.name !== "string" ||
@@ -184,8 +189,8 @@ export class PluginManager {
     }
 
     try {
-      this.registry.register(plugin, options as never);
-      this.plugins.set(plugin.metadata.name, plugin);
+      this.registry.register(plugin as Plugin, options as never);
+      this.plugins.set(plugin.metadata.name, plugin as Plugin);
       this.emitRegistered(plugin);
     } catch (error) {
       // Typed plugin errors already say what went wrong and let callers
@@ -462,6 +467,10 @@ export class PluginManager {
       logger: base.logger,
       events: base.events,
       disposables: registered.disposables,
+      // The host's own metadata used to be dropped here: every plugin saw
+      // only itself under `context.plugin` and had no way to learn which
+      // application was hosting it.
+      host: base.host ?? base.plugin,
     });
 
     this.contexts.set(name, { context: owned.context, abort: owned.abort });
