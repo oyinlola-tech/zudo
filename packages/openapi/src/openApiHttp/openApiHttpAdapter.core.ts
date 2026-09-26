@@ -73,6 +73,14 @@ export interface OpenAPIManagerOptions {
   /** Supplies the clock, for tests. */
   readonly now?: () => number;
   /**
+   * Whether `@zudojs/schema`'s implicit ceilings — 255 characters for a
+   * string and 1000 items for an array without their own `.max()` — are
+   * written into the document as `maxLength` / `maxItems`. Default: true,
+   * because the parser enforces them, so the document states what the API
+   * accepts. Set `false` to emit only explicitly declared bounds.
+   */
+  readonly implicitLimits?: boolean;
+  /**
    * Logo written to `info["x-logo"]` so viewers such as ReDoc and Scalar
    * show it, and used by {@link OpenAPIManager.toUIResponse}.
    * Default: the Zudo mark. Pass `false` to emit no logo, or an
@@ -118,6 +126,7 @@ export class OpenAPIManager {
     | ((name: string, warnings: readonly string[]) => void)
     | undefined;
   private readonly onRouteWarning: ((message: string) => void) | undefined;
+  private readonly implicitLimits: boolean | undefined;
   private lastRouteWarnings: readonly string[] = [];
 
   private cachedDocument?: OpenAPIDocument;
@@ -139,7 +148,9 @@ export class OpenAPIManager {
     this.schemas = new SchemaRegistryImpl({
       version: options.version ?? DEFAULT_OPENAPI_VERSION,
       onWarning: options.onSchemaWarning,
+      implicitLimits: options.implicitLimits,
     });
+    this.implicitLimits = options.implicitLimits;
     this.onSchemaWarning = options.onSchemaWarning;
     this.onRouteWarning = options.onRouteWarning;
     this.cacheTtlMs = options.cacheTtlMs ?? DOCUMENT_CACHE_TTL_MS;
@@ -274,6 +285,7 @@ export class OpenAPIManager {
     const routeWarnings: string[] = [];
     const scanned = this.scanner.scan({
       version: this.registry.version,
+      implicitLimits: this.implicitLimits,
       onWarning: (message) => {
         routeWarnings.push(message);
         this.onRouteWarning?.(message);

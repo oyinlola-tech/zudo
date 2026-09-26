@@ -14,6 +14,12 @@ export interface SchemaInputOptions {
   readonly version?: string;
   /** Receives everything a conversion could not express exactly. */
   readonly onWarning?: (message: string) => void;
+  /**
+   * Whether the parser's implicit string and array ceilings are emitted as
+   * `maxLength` / `maxItems`. Default: true. See
+   * `SchemaConversionOptions.implicitLimits`.
+   */
+  readonly implicitLimits?: boolean;
 }
 
 /** True when `value` is a `@zudojs/schema` schema (it carries a string `_type`). */
@@ -41,7 +47,10 @@ export function resolveSchemaInput(
   options: SchemaInputOptions = {},
 ): OpenAPISchema {
   if (isSchemaDefinition(input)) {
-    const result = convertSchema(input, { version: options.version });
+    const result = convertSchema(input, {
+      version: options.version,
+      implicitLimits: options.implicitLimits,
+    });
     for (const warning of result.warnings) {
       options.onWarning?.(`${context}: ${warning}`);
     }

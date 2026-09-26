@@ -301,7 +301,11 @@ items unless the schema sets its own `.max()`. The emitted `maxLength` /
 `maxItems` carry that effective limit (read from `@zudojs/constants`'
 `SCHEMA_DEFAULT_MAX_STRING_LENGTH` / `SCHEMA_DEFAULT_MAX_ARRAY_LENGTH`, the same
 constants the parser uses), so a client generated from the document is never
-told it may send a payload the server rejects.
+told it may send a payload the server rejects. To emit only the bounds a
+schema declares explicitly, pass `implicitLimits: false` — to
+`createOpenAPIManager`, `createOpenAPIDocumentFromRoutes`, `convertSchema` or
+`resolveSchemaInput`; a string with its own `.max(40)` keeps `maxLength: 40`
+either way.
 
 A property is listed in `required` exactly when the object parser rejects
 its absence: fields wrapped in `optional`, fields with a `default`, and

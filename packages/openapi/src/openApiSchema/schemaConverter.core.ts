@@ -61,6 +61,17 @@ export interface SchemaConversionOptions {
    * schema whose `lazy` wrapper resolves to itself. Default: 32.
    */
   readonly maxDepth?: number;
+  /**
+   * Whether the parser's implicit ceilings are written into the document.
+   *
+   * `@zudojs/schema` rejects a string longer than
+   * `SCHEMA_DEFAULT_MAX_STRING_LENGTH` (255) and an array longer than
+   * `SCHEMA_DEFAULT_MAX_ARRAY_LENGTH` (1000) unless the schema sets its own
+   * `.max()`, so by default (`true`) the emitted `maxLength` / `maxItems`
+   * states what the API actually accepts. Set `false` to emit only the
+   * bounds the schema declares explicitly.
+   */
+  readonly implicitLimits?: boolean;
 }
 
 interface ConversionState {
@@ -68,6 +79,7 @@ interface ConversionState {
   readonly visited: Set<object>;
   readonly version: string;
   readonly maxDepth: number;
+  readonly implicitLimits: boolean;
   depth: number;
 }
 
@@ -84,6 +96,20 @@ interface SchemaLike {
   readonly _type: string;
   readonly _metadata?: SchemaMetadata;
   readonly [key: string]: unknown;
+}
+
+/**
+ * An upper bound to emit: the schema's own when it declares one, else the
+ * parser's implicit ceiling when `implicitLimits` is on, else nothing.
+ */
+function bound(
+  keyword: "maxLength" | "maxItems",
+  declared: number | undefined,
+  implicit: number,
+  state: ConversionState,
+): Partial<Record<"maxLength" | "maxItems", number>> {
+  if (declared !== undefined) return { [keyword]: declared };
+  return state.implicitLimits ? { [keyword]: implicit } : {};
 }
 
 /** Maps `@zudojs/schema` string formats onto OpenAPI `format` values. */
@@ -272,7 +298,12 @@ function convertString(
       ? { minLength: exact, maxLength: exact }
       : {
           ...(num(c["min"]) !== undefined ? { minLength: num(c["min"]) } : {}),
-          maxLength: num(c["max"]) ?? SCHEMA_DEFAULT_MAX_STRING_LENGTH,
+          ...bound(
+            "maxLength",
+            num(c["max"]),
+            SCHEMA_DEFAULT_MAX_STRING_LENGTH,
+            state,
+          ),
         }),
     ...(pattern instanceof RegExp
       ? { pattern: pattern.source }
@@ -503,7 +534,12 @@ function convertSchemaNode(
               ...(num(c["min"]) !== undefined
                 ? { minItems: num(c["min"]) }
                 : {}),
-              maxItems: num(c["max"]) ?? SCHEMA_DEFAULT_MAX_ARRAY_LENGTH,
+              ...bound(
+                "maxItems",
+                num(c["max"]),
+                SCHEMA_DEFAULT_MAX_ARRAY_LENGTH,
+                state,
+              ),
             }),
       };
     }
@@ -741,6 +777,7 @@ export function convertSchema(
     visited: new Set<object>(),
     version: options?.version ?? DEFAULT_OPENAPI_VERSION,
     maxDepth: options?.maxDepth ?? 32,
+    implicitLimits: options?.implicitLimits ?? true,
     depth: 0,
   };
 
