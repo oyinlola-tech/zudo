@@ -784,6 +784,44 @@ Error: expected 3333.3333333333335 to be a whole, non-negative number of kobo
 <h2 id="practice">Practice</h2>
 <exercise title="Test the refusal of bad amounts">
 <p>Add a check to <code>splitKobo</code> that throws a <code>RangeError</code> for a non-integer total, a negative total, or a number of parts below 1. Then write assertions that each bad input throws a <code>RangeError</code>, and that a good input still splits correctly.</p>
+<starter file="split.ts">
+// Example to learn from: the same table-of-bad-inputs assertion, for a
+// chunking helper instead of splitting money.
+//
+//   import { expect } from "vitest";
+//
+//   function chunk<T>(items: readonly T[], size: number): T[][] {
+//     if (!Number.isInteger(size) || size < 1) throw new RangeError(`Bad chunk size: ${size}`);
+//     const out: T[][] = [];
+//     for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+//     return out;
+//   }
+//
+//   for (const size of [0, -1, 1.5]) {
+//     expect(() => chunk([1, 2, 3], size)).toThrow(RangeError);
+//   }
+//   expect(chunk([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+//
+// Now add the same kind of checks to splitKobo below.
+
+import { expect } from "vitest";
+
+function splitKobo(totalKobo: number, parts: number): number[] {
+  // Add: throw RangeError for a non-integer or negative totalKobo, and
+  // for a non-integer parts below 1.
+  const base = Math.floor(totalKobo / parts);
+  const remainder = totalKobo - base * parts;
+  return Array.from({ length: parts }, (_, i) => base + (i < remainder ? 1 : 0));
+}
+
+for (const [total, parts] of [[10.5, 2], [-100, 2], [100, 0], [100, 1.5]]) {
+  expect(() => splitKobo(total, parts)).toThrow(RangeError);
+}
+expect(splitKobo(10_000, 3)).toEqual([3334, 3333, 3333]);
+console.log("all split checks passed");
+</starter>
+<hint><p>Two checks at the top of <code>splitKobo</code>: <code>if (!Number.isSafeInteger(totalKobo) || totalKobo &lt; 0) throw new RangeError(...)</code>, and the same shape for <code>parts &lt; 1</code>.</p></hint>
+<hint><p>Loop over the four bad pairs the same way the worked example loops over sizes: <code>for (const [total, parts] of [[10.5, 2], [-100, 2], [100, 0], [100, 1.5]]) expect(() =&gt; splitKobo(total, parts)).toThrow(RangeError);</code></p></hint>
 <solution>
 <example file="split.ts" project="ex-split" browser="no">
 import { expect } from "vitest";
@@ -811,6 +849,44 @@ all split checks passed
 <exercise title="Pin a generic's types">
 <p>Here is a typed <code>indexBy</code>, which builds a lookup table from a list. Write type tests: the result for orders keyed by <code>id</code> is <code>Record&lt;string, Order&gt;</code>; the key function receives an <code>Order</code>; and a key function returning an object must not compile.</p>
 <pre><code>export function indexBy&lt;T, K extends PropertyKey&gt;(items: readonly T[], keyOf: (item: T) =&gt; K): Record&lt;K, T&gt;</code></pre>
+<starter file="index-by.types.ts">
+// Example to learn from: the same three kinds of type test (a whole call's
+// type, one parameter's type, and a refused call), for a different generic.
+//
+//   export function pluck<T, K extends keyof T>(items: readonly T[], key: K): T[K][] {
+//     return items.map((item) => item[key]);
+//   }
+//
+//   interface Product { sku: string; priceKobo: number }
+//   declare const products: Product[];
+//
+//   expectTypeOf(pluck(products, "priceKobo")).toEqualTypeOf<number[]>();
+//   expectTypeOf(pluck<Product, "sku">).parameter(0).toEqualTypeOf<readonly Product[]>();
+//   // @ts-expect-error: "weight" is not a key of Product
+//   pluck(products, "weight");
+//
+// Now write the same three kinds of test for indexBy, below.
+
+import { expectTypeOf } from "vitest";
+
+export function indexBy<T, K extends PropertyKey>(items: readonly T[], keyOf: (item: T) => K): Record<K, T> {
+  const index = {} as Record<K, T>;
+  for (const item of items) index[keyOf(item)] = item;
+  return index;
+}
+
+interface Order {
+  id: string;
+  status: "pending" | "paid";
+}
+declare const orders: Order[];
+
+// 1. expectTypeOf(indexBy(orders, (o) => o.id)) ... the whole result's type.
+// 2. expectTypeOf(indexBy<Order, string>) ... the key function's parameter.
+// 3. A @ts-expect-error call where the key function returns an object.
+</starter>
+<hint><p>For the result: <code>expectTypeOf(indexBy(orders, (o) =&gt; o.id)).toEqualTypeOf&lt;Record&lt;string, Order&gt;&gt;();</code>.</p></hint>
+<hint><p>For the parameter: <code>expectTypeOf(indexBy&lt;Order, string&gt;).parameter(1).parameter(0).toEqualTypeOf&lt;Order&gt;();</code> walks into the key function, then its first parameter. For the refusal: <code>// @ts-expect-error: an object cannot be a key</code> above <code>indexBy(orders, (o) =&gt; ({ id: o.id }))</code>.</p></hint>
 <solution>
 <example file="index-by.types.ts" project="ex-index" browser="no">
 import { expectTypeOf } from "vitest";
@@ -840,6 +916,8 @@ export function refusals(): void {
 </exercise>
 <exercise title="Catch the untyped mock">
 <p><code>RateClient.fetchRate</code> changes to return <code>Promise&lt;{ rate: number; fetchedAt: string }&gt;</code>, and <code>toKobo</code> is updated to read <code>.rate</code>. A test still has <code>const fetchRate = vi.fn().mockResolvedValue(1530)</code>. What happens when the test runs, what happens under <code>tsc</code>, and how do you make the compiler find this test?</p>
+<hint><p><code>vi.fn()</code> without a type argument has no idea what it is mocking. Give it the real signature, the same way a typed double was built earlier in this lesson.</p></hint>
+<hint><p><code>vi.fn&lt;RateClient["fetchRate"]&gt;()</code> types both the arguments <code>mockResolvedValue</code> accepts and what calling the mock returns.</p></hint>
 <solution>
 <p>At runtime the mock resolves to <code>1530</code>, so <code>(1530).rate</code> is <code>undefined</code>. <code>toKobo</code> then refuses it as a nonsense rate, and the "converts at the rate" test fails with a confusing message, far from the real cause. <code>tsc</code> says nothing, because <code>vi.fn()</code> without a type argument accepts any implementation and any resolved value.</p>
 <p>Give the mock its type from the interface: <code>vi.fn&lt;RateClient["fetchRate"]&gt;()</code>. Now <code>mockResolvedValue(1530)</code> is a compile error (<code>number</code> is not assignable to <code>{ rate: number; fetchedAt: string }</code>), the moment the interface changes, pointing at the exact line to update. Typed doubles turn interface changes into compile errors in the tests, which is where you want to find them.</p>

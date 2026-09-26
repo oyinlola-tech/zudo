@@ -619,6 +619,37 @@ PASS PATCH /orders/ORD-1 admin 404
 <h2 id="practice">Practice</h2>
 <exercise title="Fix the pair">
 <p><code>pair(150_000, "NGN")</code> fails because both arguments share one type parameter. Rewrite <code>pair</code> so it accepts two different types and returns a tuple of exactly those types, then check that <code>pair(150_000, "NGN")</code> is <code>[number, string]</code>.</p>
+<starter file="pair.ts">
+// Example to learn from: two independent type parameters, one per
+// argument, instead of one shared parameter that forces them to agree.
+//
+//   function labelValue<L, V>(label: L, value: V): { label: L; value: V } {
+//     return { label, value };
+//   }
+//
+//   const stat = labelValue("orders", 42);
+//   type S1 = Expect<Equal<typeof stat, { label: string; value: number }>>;
+//   console.log(stat);   // { label: 'orders', value: 42 }
+//
+// Now fix pair the same way, below.
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+// Broken: one shared type parameter forces both arguments into the same
+// type. Give first and second their own type parameters.
+function pair<T>(first: T, second: T): [T, T] {
+  return [first, second];
+}
+
+const price = pair(150_000, "NGN");
+type P1 = Expect<Equal<typeof price, [number, string]>>;
+
+// Once pair takes two independent type parameters (and P1 is really true), add:
+// console.log(price);
+</starter>
+<hint><p>Give <code>first</code> and <code>second</code> their own type parameters, <code>&lt;A, B&gt;</code>, instead of sharing one <code>T</code>.</p></hint>
+<hint><p><code>function pair&lt;A, B&gt;(first: A, second: B): [A, B] { return [first, second]; }</code></p></hint>
 <solution>
 <example file="pair.ts" project="ex-pair">
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -640,6 +671,49 @@ console.log(price);
 </exercise>
 <exercise title="A checked settings table">
 <p>Write the shop's settings as one object: <code>currency</code> (one of <code>"NGN" | "USD"</code>), <code>vatPercent</code> (a number), and <code>paymentMethods</code> (a list of <code>"card" | "transfer" | "ussd"</code>). Make it checked, deeply read-only, and precise enough that <code>(typeof settings)["paymentMethods"][number]</code> is exactly the methods you listed.</p>
+<starter file="settings.ts">
+// Example to learn from: the same checked, read-only, as-const-satisfies
+// table, for a feature-flag config instead of shop settings.
+//
+//   interface FeatureConfig {
+//     readonly environment: "dev" | "prod";
+//     readonly rolloutPercent: number;
+//     readonly enabledFlags: readonly ("newCheckout" | "darkMode" | "betaSearch")[];
+//   }
+//
+//   const config = {
+//     environment: "prod",
+//     rolloutPercent: 25,
+//     enabledFlags: ["newCheckout", "darkMode"],
+//   } as const satisfies FeatureConfig;
+//
+//   type Enabled = (typeof config)["enabledFlags"][number];
+//   type C1 = Expect<Equal<Enabled, "newCheckout" | "darkMode">>;
+//   console.log(config.enabledFlags.join(", "));   // newCheckout, darkMode
+//
+// Now do the same for the shop's settings below.
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+// Write the interface: readonly currency, vatPercent, paymentMethods.
+interface Settings {
+  readonly currency: "NGN" | "USD";
+}
+
+// Write settings as const satisfies Settings, then derive Enabled from it.
+const settings = { currency: "NGN" } as const satisfies Settings;
+
+type Enabled = never; // your code here: (typeof settings)["paymentMethods"][number]
+type S1 = Expect<Equal<Enabled, "card" | "transfer">>;
+type S2 = Expect<Equal<typeof settings.vatPercent, 7.5>>;
+
+// Once Settings, settings and Enabled are all right (and S1, S2 are really
+// true), add:
+// console.log(settings.paymentMethods.join(" and "), settings.currency);
+</starter>
+<hint><p><code>Settings</code> needs three <code>readonly</code> fields: <code>currency: "NGN" | "USD"</code>, <code>vatPercent: number</code>, and <code>paymentMethods: readonly ("card" | "transfer" | "ussd")[]</code>.</p></hint>
+<hint><p><code>const settings = { currency: "NGN", vatPercent: 7.5, paymentMethods: ["card", "transfer"] } as const satisfies Settings;</code> then <code>type Enabled = (typeof settings)["paymentMethods"][number];</code>.</p></hint>
 <solution>
 <example file="settings.ts" project="ex-settings">
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -671,6 +745,53 @@ card and transfer NGN
 </exercise>
 <exercise title="defineRoutes">
 <p>Callers of the route module keep forgetting <code>satisfies Record&lt;string, RouteDef&gt;</code>. Write a helper <code>defineRoutes</code> that checks a table and returns it with its precise type, so that <code>const routes = defineRoutes({ … })</code> has the same inferred type as the <code>satisfies</code> version. Prove it with a type test on one path.</p>
+<starter file="define-routes.ts">
+// Example to learn from: a generic identity function that both checks and
+// keeps the literal type of a different table, of commands instead of routes.
+//
+//   interface CommandDef {
+//     readonly description: string;
+//     readonly run: () => string;
+//   }
+//
+//   function defineCommands<const T extends Record<string, CommandDef>>(commands: T): T {
+//     return commands;
+//   }
+//
+//   const commands = defineCommands({ ping: { description: "health check", run: () => "pong" } });
+//   type P1 = Expect<Equal<(typeof commands)["ping"]["description"], "health check">>;
+//   console.log(commands.ping.run());   // pong
+//
+// Now do the same for routes below.
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+interface RouteDef {
+  readonly method: "GET" | "POST";
+  readonly path: `/${string}`;
+  readonly handler: (params: Readonly<Record<string, string>>) => string;
+}
+
+// A generic identity function: the constraint checks the argument, and
+// `const T` keeps its literal type, like `satisfies` on a variable.
+function defineRoutes<T>(routes: T): T {
+  return routes;
+}
+
+const routes = defineRoutes({
+  listProducts: { method: "GET", path: "/products", handler: () => "2 products" },
+  getOrder: { method: "GET", path: "/orders/:orderId", handler: (params: Record<string, string>) => `order ${params.orderId}` },
+});
+
+type D1 = Expect<Equal<(typeof routes)["getOrder"]["path"], "/orders/:orderId">>;
+type D2 = Expect<Equal<keyof typeof routes, "listProducts" | "getOrder">>;
+
+// Once defineRoutes has the right constraint (and D1, D2 are really true), add:
+// console.log(routes.getOrder.handler({ orderId: "ORD-9" }));
+</starter>
+<hint><p>Constrain the type parameter to the shape you are checking: <code>&lt;T extends Record&lt;string, RouteDef&gt;&gt;</code>. That alone gives you the checking that <code>satisfies</code> gives a variable.</p></hint>
+<hint><p>Add <code>const</code> before the type parameter, <code>&lt;const T extends Record&lt;string, RouteDef&gt;&gt;</code>, so object and array literals passed in keep their literal types instead of being widened.</p></hint>
 <solution>
 <example file="define-routes.ts" project="ex-define">
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;

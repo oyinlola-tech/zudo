@@ -481,6 +481,50 @@ $ curl http://localhost:3000/nothing
 <h2 id="practice">Practice</h2>
 <exercise title="Delete a task">
 <p>Add <code>DELETE /tasks/:id</code> to a server: answer <strong>204</strong> with no body when the task existed, and 404 otherwise. Test it by deleting the same task twice.</p>
+<starter file="delete.js">
+// Example to learn from: finding then removing a matching item, and
+// answering 204 (nothing to send back) instead of 200.
+//
+//   function removeItem(cart, sku) {
+//     const index = cart.findIndex((item) => item.sku === sku);
+//     if (index === -1) return { status: 404 };
+//     cart.splice(index, 1);
+//     return { status: 204 };
+//   }
+//   console.log(removeItem([{ sku: "A" }], "A")); // { status: 204 }
+//   console.log(removeItem([], "A"));              // { status: 404 }
+//
+// Now do the same idea inside a real DELETE route below.
+
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const tasks = [{ id: 1, title: "Buy milk", done: false }];
+
+const server = createServer((req, res) => {
+  const match = req.url.match(/^\/tasks\/([1-9][0-9]{0,8})$/);
+  // if match and req.method === "DELETE":
+  //   1. find the task's index with tasks.findIndex
+  //   2. if found (index !== -1): tasks.splice(index, 1), then
+  //      res.statusCode = 204; return res.end();
+  //   (otherwise, or when there's no match, fall through to the 404 below)
+  res.statusCode = 404;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify({ error: "Not Found" }));
+});
+
+server.listen(0);
+await once(server, "listening");
+const url = `http://localhost:${server.address().port}/tasks/1`;
+
+for (let i = 0; i < 2; i++) {
+  const response = await fetch(url, { method: "DELETE" });
+  console.log(response.status, JSON.stringify(await response.text()));
+}
+server.close();
+</starter>
+<hint><p><code>tasks.findIndex((t) =&gt; t.id === Number(match[1]))</code> gives you <code>-1</code> when nothing matches. <code>res.end()</code> with no argument sends an empty body.</p></hint>
+<hint><p><code>if (match &amp;&amp; req.method === "DELETE") { const index = tasks.findIndex((t) =&gt; t.id === Number(match[1])); if (index !== -1) { tasks.splice(index, 1); res.statusCode = 204; return res.end(); } }</code></p></hint>
 <solution>
 <example file="delete.js" browser="no">
 import { once } from "node:events";
@@ -522,6 +566,36 @@ server.close();
 </exercise>
 <exercise title="Limit and offset">
 <p>Write <code>readPaging(searchParams)</code> that reads <code>limit</code> (default 10, at most 50) and <code>offset</code> (default 0) from a query string, and returns an error message for anything that is not a whole number in range.</p>
+<starter file="paging.js">
+// Example to learn from: validating a text query value before trusting it,
+// with its own range check.
+//
+//   function readPage(searchParams) {
+//     const text = searchParams.get("page") ?? "1";
+//     if (!/^[0-9]{1,6}$/.test(text)) return { error: "page must be a whole number" };
+//     const page = Number(text);
+//     if (page < 1) return { error: "page must be at least 1" };
+//     return { page };
+//   }
+//
+// Now validate limit and offset together, with limit capped at 50, below.
+
+function readPaging(searchParams) {
+  const limitText = searchParams.get("limit") ?? "10";
+  const offsetText = searchParams.get("offset") ?? "0";
+  // 1. if either text is not 1-6 digits (/^[0-9]{1,6}$/), return
+  //    { error: "limit and offset must be whole numbers" }
+  // 2. convert limitText to a number; if it is below 1 or above 50, return
+  //    { error: "limit must be between 1 and 50" }
+  // 3. otherwise return { limit, offset: Number(offsetText) }
+}
+
+for (const query of ["", "?limit=5&offset=10", "?limit=500", "?offset=-1"]) {
+  console.log(query || "(none)", readPaging(new URL("/tasks" + query, "http://localhost").searchParams));
+}
+</starter>
+<hint><p>Test both texts against <code>/^[0-9]{1,6}$/</code> before converting either one. Only after that check passes does the range check on <code>limit</code> make sense.</p></hint>
+<hint><p><code>if (!/^[0-9]{1,6}$/.test(limitText) || !/^[0-9]{1,6}$/.test(offsetText)) return { error: "limit and offset must be whole numbers" }; const limit = Number(limitText); if (limit &lt; 1 || limit &gt; 50) return { error: "limit must be between 1 and 50" }; return { limit, offset: Number(offsetText) };</code></p></hint>
 <solution>
 <example file="paging.js">
 function readPaging(searchParams) {

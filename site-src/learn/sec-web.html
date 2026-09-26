@@ -786,6 +786,8 @@ test("every response has a fresh nonce that matches its own script tag", async (
   res.writeHead(200, { "content-type": "text/html" });
   res.end(`&lt;p&gt;Goodbye ${url.searchParams.get("name")}&lt;/p&gt;`);
 }</code></pre>
+<hint><p>Which HTTP method is this handler reacting to, and what does that mean for a link or an <code>&lt;img&gt;</code> tag on someone else's page?</p></hint>
+<hint><p>Look at what happens to <code>url.searchParams.get("name")</code> between reading it and writing it into the response. Is there a step missing?</p></hint>
 <solution>
 <ul>
 <li>It changes state on <code>GET</code>. A link or an image tag on any site can close the account, and <code>SameSite=Lax</code> still sends the cookie on top-level <code>GET</code> navigation. Make it a <code>POST</code> behind the origin check and the CSRF token (CSRF section).</li>
@@ -797,6 +799,31 @@ test("every response has a fresh nonce that matches its own script tag", async (
 
 <exercise title="Allow a second origin, safely">
 <p>Write <code>isTrustedOrigin(origin)</code> that reads its list from a comma-separated setting such as <code>"https://wallet.example, https://mobile.wallet.example"</code>, trims spaces, ignores empty entries, and accepts only exact matches. Show that <code>https://wallet.example.evil.test</code>, <code>null</code> and an empty string are refused.</p>
+<starter file="trusted-origins.js">
+// Example to learn from: the same "parse a comma list, trim, drop empty
+// entries, then match exactly" shape, for a different setting.
+//
+//   function loadAllowedRoles(setting) {
+//     return new Set(setting.split(",").map((s) => s.trim()).filter((s) => s !== ""));
+//   }
+//   const allowedRoles = loadAllowedRoles("admin, editor,");
+//   console.log(allowedRoles.has("editor"), allowedRoles.has(""));
+//
+// Now do the same for trusted origins below.
+
+function loadTrustedOrigins(setting) {
+  return new Set(setting.split(",").map((s) => s.trim()).filter((s) => s !== ""));
+}
+
+const trusted = loadTrustedOrigins("https://wallet.example, https://mobile.wallet.example,");
+const isTrustedOrigin = (origin) => true; // is origin exactly one of `trusted`?
+
+for (const origin of ["https://mobile.wallet.example", "https://wallet.example.evil.test", "null", ""]) {
+  console.log(JSON.stringify(origin), isTrustedOrigin(origin));
+}
+</starter>
+<hint><p><code>loadTrustedOrigins</code> already does the parsing; <code>isTrustedOrigin</code> only needs to ask the resulting <code>Set</code> one question.</p></hint>
+<hint><p><code>const isTrustedOrigin = (origin) =&gt; trusted.has(origin);</code></p></hint>
 <solution>
 <example file="trusted-origins.js">
 function loadTrustedOrigins(setting) {
@@ -822,6 +849,29 @@ for (const origin of ["https://mobile.wallet.example", "https://wallet.example.e
 
 <exercise title="Encode for an attribute">
 <p>A task list shows each task as <code>&lt;input value="…"&gt;</code> so it can be edited in place. Use the <code>html</code> template from this lesson and prove that the title <code>Buy "fresh" bread</code> cannot close the attribute early.</p>
+<starter file="attribute.js">
+// Example to learn from: the html template escaping a quote inside a
+// different attribute.
+//
+//   const note = 'Say "hi" to Ada';
+//   const label = html`<label data-note="${note}">Note</label>`.toString();
+//   console.log(label);
+//   console.log("closes early:", !label.includes('data-note="Say'));
+//
+// Now build an <input value="…"> for `title` below, the same way.
+
+import { html } from "./html.js";
+
+const title = 'Buy "fresh" bread';
+// build field with the html tagged template: an <input> whose name is
+// "title" and whose value is title
+const field = "";
+console.log(field);
+const value = field.slice(field.indexOf('value="') + 7, field.lastIndexOf('"'));
+console.log("quotes inside the value:", value.includes('"'));
+</starter>
+<hint><p>Tag a template literal with <code>html</code>, exactly as the worked example does, with <code>title</code> interpolated inside the quoted <code>value</code> attribute, then call <code>.toString()</code> on the result.</p></hint>
+<hint><p><code>const field = html`&lt;input name="title" value="${title}"&gt;`.toString();</code></p></hint>
 <solution>
 <example file="attribute.js" project="shop">
 import { html } from "./html.js";

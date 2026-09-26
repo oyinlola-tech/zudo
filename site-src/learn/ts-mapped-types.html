@@ -645,6 +645,54 @@ PASS variable names
 <h2 id="practice">Practice</h2>
 <exercise title="Setters from a type">
 <p>Write <code>Setters&lt;T&gt;</code> that turns <code>{ name: string; priceKobo: number }</code> into <code>{ setName(value: string): void; setPriceKobo(value: number): void }</code>, and a runtime <code>createSetters</code> that updates a target object. Test the type with <code>Equal</code>.</p>
+<starter file="setters.ts">
+// Example to learn from: the same key-renaming mapped type, building getters
+// instead of setters.
+//
+//   type Getters<T> = { [K in keyof T as `get${Capitalize<K & string>}`]: () => T[K] };
+//
+//   interface Coordinates { lat: number; lng: number }
+//
+//   function createGetters<T extends object>(source: T): Getters<T> {
+//     const getters: Record<string, () => unknown> = {};
+//     for (const key of Object.keys(source) as (keyof T & string)[]) {
+//       getters[`get${key[0]!.toUpperCase()}${key.slice(1)}`] = () => source[key];
+//     }
+//     return getters as Getters<T>;
+//   }
+//
+//   const point: Coordinates = { lat: 6.5, lng: 3.4 };
+//   console.log(createGetters(point).getLat());   // 6.5
+//
+// Now write setters instead of getters, below.
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+// Rename each key K to `set${Capitalize<K>}`, and give it a (value: T[K]) => void signature.
+type Setters<T> = unknown; // your code here
+
+interface Product {
+  name: string;
+  priceKobo: number;
+}
+
+type S1 = Expect<Equal<Setters<Product>, { setName: (value: string) => void; setPriceKobo: (value: number) => void }>>;
+
+function createSetters<T extends object>(target: T): Setters<T> {
+  // For each key of target, add a `set${Capitalized key}` function that
+  // assigns its argument onto target[key].
+  return {} as Setters<T>;
+}
+
+const tote: Product = { name: "Tote bag", priceKobo: 450_000 };
+const edit = createSetters(tote);
+edit.setName("Ankara tote bag");
+edit.setPriceKobo(399_000);
+console.log(tote);
+</starter>
+<hint><p>Loop with <code>for (const key of Object.keys(target) as (keyof T &amp; string)[])</code>, and build each setter's name the same way the getter example does: <code>`set${key[0]!.toUpperCase()}${key.slice(1)}`</code>.</p></hint>
+<hint><p>Each setter is <code>(value) =&gt; { target[key] = value as T[typeof key]; }</code>. Store it in a <code>Record&lt;string, (value: unknown) =&gt; void&gt;</code> and return it <code>as Setters&lt;T&gt;</code> at the end; that one cast is where the string-building meets the type.</p></hint>
 <solution>
 <example file="setters.ts" project="ex-setters">
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -683,6 +731,37 @@ console.log(tote);
 </exercise>
 <exercise title="Pick the money fields">
 <p>Using <code>KeysOfType</code>, write <code>moneyFields&lt;T&gt;(item: T, keys: readonly KeysOfType&lt;T, number&gt;[]): Record&lt;string, string&gt;</code> that formats each chosen numeric field as naira. Show that passing a string field does not compile, with <code>@ts-expect-error</code>.</p>
+<starter file="money.ts">
+// Example to learn from: filtering keys by value type, to list which fields
+// of a settings object are turned on.
+//
+//   type KeysOfType<T, V> = keyof { [K in keyof T as T[K] extends V ? K : never]: T[K] };
+//
+//   function enabledFlags<T>(item: T, keys: readonly KeysOfType<T, boolean>[]): string[] {
+//     return keys.filter((key) => item[key] === true).map(String);
+//   }
+//
+//   const settings = { darkMode: true, betaFeatures: false, name: "Ada" };
+//   console.log(enabledFlags(settings, ["darkMode", "betaFeatures"]));   // [ 'darkMode' ]
+//
+// Now do the same for money fields below.
+
+type KeysOfType<T, V> = keyof { [K in keyof T as T[K] extends V ? K : never]: T[K] };
+
+function moneyFields<T>(item: T, keys: readonly KeysOfType<T, number>[]): Record<string, string> {
+  // For each key, format item[key] (a kobo amount) as naira:
+  // `₦${(kobo / 100).toLocaleString("en-NG")}`, keyed by String(key).
+  return {};
+}
+
+const invoice = { number: "INV-0042", subtotalKobo: 1_000_000, vatKobo: 75_000, customer: "Ada Stores" };
+console.log(moneyFields(invoice, ["subtotalKobo", "vatKobo"]));
+
+// @ts-expect-error: customer is a string field
+moneyFields(invoice, ["customer"]);
+</starter>
+<hint><p>Loop over <code>keys</code> with a plain <code>for</code> loop, building an <code>out: Record&lt;string, string&gt;</code> as you go, the same way <code>enabledFlags</code> loops over its keys.</p></hint>
+<hint><p><code>out[String(key)] = `₦${((item[key] as number) / 100).toLocaleString("en-NG")}`;</code> then return <code>out</code>.</p></hint>
 <solution>
 <example file="money.ts" project="ex-money">
 type KeysOfType<T, V> = keyof { [K in keyof T as T[K] extends V ? K : never]: T[K] };
@@ -707,6 +786,61 @@ moneyFields(invoice, ["customer"]);
 </exercise>
 <exercise title="Deep overrides for tests">
 <p>Write <code>DeepPartial&lt;T&gt;</code> and <code>withOverrides&lt;T&gt;(base: T, overrides: DeepPartial&lt;T&gt;): T</code> that merges nested plain objects, so a test can change one nested config value. Use it to change only <code>paystack.timeoutMs</code>.</p>
+<starter file="overrides.ts">
+// Example to learn from: the same recursive-optional technique, patching a
+// nested preferences object instead of a config.
+//
+//   type DeepPartial<T> = T extends (...args: any[]) => any ? T : { [K in keyof T]?: DeepPartial<T[K]> };
+//
+//   function isPlainObject(value: unknown): value is Record<string, unknown> {
+//     return typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype;
+//   }
+//
+//   function mergeDeep(base: unknown, changes: unknown): unknown {
+//     if (changes === undefined) return base;
+//     if (!isPlainObject(base) || !isPlainObject(changes)) return changes;
+//     const result: Record<string, unknown> = { ...base };
+//     for (const [key, value] of Object.entries(changes)) result[key] = mergeDeep(base[key], value);
+//     return result;
+//   }
+//
+//   function patch<T>(base: T, changes: DeepPartial<T>): T {
+//     return mergeDeep(base, changes) as T;
+//   }
+//
+//   const prefs = { theme: { mode: "light", accent: "blue" }, notifications: true };
+//   console.log(patch(prefs, { theme: { mode: "dark" } }).theme);   // { mode: 'dark', accent: 'blue' }
+//
+// Now do the same for the config below.
+
+// Every key at every level becomes optional (functions are left alone).
+type DeepPartial<T> = T extends (...args: any[]) => any ? T : unknown; // your code here
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function merge(base: unknown, overrides: unknown): unknown {
+  // undefined override: keep base. Two plain objects: merge key by key,
+  // recursively. Anything else: the override replaces the base entirely.
+  return base;
+}
+
+function withOverrides<T>(base: T, overrides: DeepPartial<T>): T {
+  return merge(base, overrides) as T;
+}
+
+const config = {
+  port: 8080,
+  paystack: { secretKey: "sk_test_123", timeoutMs: 5000 },
+  features: { newCheckout: false },
+};
+
+const testConfig = withOverrides(config, { paystack: { timeoutMs: 50 } });
+console.log(testConfig.paystack, config.paystack.timeoutMs);
+</starter>
+<hint><p>If <code>overrides</code> is <code>undefined</code>, return <code>base</code> unchanged. If either side is not a plain object (use <code>isPlainObject</code>), the override simply replaces the base.</p></hint>
+<hint><p>Otherwise, copy <code>base</code> with <code>{ ...base }</code>, then for each <code>[key, value]</code> of <code>Object.entries(overrides)</code>, set <code>result[key] = merge(base[key], value)</code> — the recursive call is what makes it <em>deep</em>.</p></hint>
 <solution>
 <example file="overrides.ts" project="ex-overrides">
 type DeepPartial<T> = T extends (...args: any[]) => any ? T : { [K in keyof T]?: DeepPartial<T[K]> };

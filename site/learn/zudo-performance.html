@@ -534,7 +534,7 @@ npx autocannon -c 20 -d 10 http://localhost:3100/api/v1/tasks"><span class="lx-c
 <p>From about 42 to about 1,100 requests a second, median from 424 ms to 16 ms, and the event-loop delay p99 in terminal 1 dropped to 38 ms. A client asking for 1,000 items gets a 400 instead of a slow response. Nothing else changed: no cache, no new server.</p>
 <h3>The next hot spot was the test</h3>
 <p>Profile again after a fix, because the ranking changes. With the list fixed, the top of the profile looked like this, and then like this after restarting with the production limit of 300:</p>
-<figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Profiles after the fix (example output)</span></figcaption>
+<figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Profiles after the fix (example output, before a later @zudojs/security release)</span></figcaption>
 <pre class="lx-shell-body" data-copy="node top-functions.mjs profiles/*.cpuprofile        # RATE_LIMIT_MAX=1000000
 node top-functions.mjs profiles/*.cpuprofile        # RATE_LIMIT_MAX=300"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>node top-functions.mjs profiles/*.cpuprofile        # RATE_LIMIT_MAX=1000000</span>
 <span class="lx-res"> 21.5%  check rateLimit.core.js:143</span>
@@ -548,7 +548,7 @@ node top-functions.mjs profiles/*.cpuprofile        # RATE_LIMIT_MAX=300"><span 
 <span class="lx-res">  3.6%  (program)</span>
 <span class="lx-res">  2.9%  check rateLimit.core.js:143</span>
 <span class="lx-res">…</span></pre></figure>
-<p>The rate limiter from <code>@zudojs/security</code> keeps a list of timestamps per client (a <strong>sliding log</strong>) and copies that list on every check, so each check costs time proportional to the requests that client made in the window. With a limit of 300 the list never grows past 300; with a limit of a million and every request coming from one load tester, it grows with the test:</p>
+<p>At the time, the rate limiter from <code>@zudojs/security</code> kept a list of timestamps per client (a <strong>sliding log</strong>) and copied that list on every check, so each check cost time proportional to the requests that client made in the window. With a limit of 300 the list never grew past 300; with a limit of a million and every request coming from one load tester, it grew with the test, which is exactly the bug the measurement below was written to catch:</p>
 <figure class="lx-example" data-index="6" data-file="rate-limiter-cost.ts">
 <figcaption class="lx-bar"><span class="lx-file">rate-limiter-cost.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createRateLimiter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/security"</span><span class="t-pn">;</span>
@@ -567,8 +567,8 @@ node top-functions.mjs profiles/*.cpuprofile        # RATE_LIMIT_MAX=300"><span 
 <span class="t-kw">const</span> production <span class="t-op">=</span> <span class="t-fn">best</span><span class="t-pn">(</span><span class="t-num">300</span><span class="t-pn">,</span> <span class="t-num">8_000</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> productionLater <span class="t-op">=</span> <span class="t-fn">best</span><span class="t-pn">(</span><span class="t-num">300</span><span class="t-pn">,</span> <span class="t-num">16_000</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> loadTest <span class="t-op">=</span> <span class="t-fn">best</span><span class="t-pn">(</span><span class="t-num">1_000_000</span><span class="t-pn">,</span> <span class="t-num">8_000</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"after 8,000 checks from one client, a limit of 1,000,000 costs at least 5x a limit of 300:"</span><span class="t-pn">,</span> loadTest <span class="t-op">&gt;</span> <span class="t-num">5</span> <span class="t-op">*</span> production<span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"with a limit of 300, the cost after 16,000 checks is still below the high limit's after 8,000:"</span><span class="t-pn">,</span> productionLater <span class="t-op">&lt;</span> loadTest<span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"a limit of 1,000,000 no longer costs meaningfully more than a limit of 300:"</span><span class="t-pn">,</span> loadTest <span class="t-op">&lt;</span> <span class="t-num">5</span> <span class="t-op">*</span> production<span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"the cost barely grows with more checks under the same limit:"</span><span class="t-pn">,</span> productionLater <span class="t-op">&lt;</span> <span class="t-num">5</span> <span class="t-op">*</span> production<span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createRateLimiter } from "@zudojs/security";
 
@@ -586,12 +586,12 @@ const best = (max: number, checks: number) => Math.min(...[1, 2, 3].map(() => la
 const production = best(300, 8_000);
 const productionLater = best(300, 16_000);
 const loadTest = best(1_000_000, 8_000);
-console.log("after 8,000 checks from one client, a limit of 1,000,000 costs at least 5x a limit of 300:", loadTest > 5 * production);
-console.log("with a limit of 300, the cost after 16,000 checks is still below the high limit's after 8,000:", productionLater < loadTest);</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx rate-limiter-cost.ts</code></div><pre class="lx-no-copy">after 8,000 checks from one client, a limit of 1,000,000 costs at least 5x a limit of 300: true
-with a limit of 300, the cost after 16,000 checks is still below the high limit's after 8,000: true</pre></div>
+console.log("a limit of 1,000,000 no longer costs meaningfully more than a limit of 300:", loadTest < 5 * production);
+console.log("the cost barely grows with more checks under the same limit:", productionLater < 5 * production);</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx rate-limiter-cost.ts</code></div><pre class="lx-no-copy">a limit of 1,000,000 no longer costs meaningfully more than a limit of 300: true
+the cost barely grows with more checks under the same limit: true</pre></div>
 </figure>
-<p>So the second hot spot was produced by the test setup, not by production traffic, where thousands of clients each stay under 300. Two lessons: make the load test look like production (many client addresses, production settings), and know your tools' cost model. If you ever need a high per-client limit, such as for a trusted internal client, prefer a counter-based limiter (a fixed window or token bucket in Redis, from <a href="/learn/api-rate-limiting">the rate limiting lesson</a>) over a sliding log.</p>
+<p><code>@zudojs/security</code> has since replaced the sliding log with a structure that checks in time proportional to the log of the window's size, not its size, so this specific hot spot is gone: a check now costs about the same whether <code>max</code> is 300 or a million. The lesson underneath does not change. Two things are still worth knowing: make a load test look like production (many client addresses, production settings) so it measures your traffic and not the tool's, and know your dependencies' cost model, because the next one might not have been fixed yet. If you ever need a very high per-client limit, such as for a trusted internal client, a counter-based limiter (a fixed window or token bucket in Redis, from <a href="/learn/api-rate-limiting">the rate limiting lesson</a>) is simpler to reason about than any sliding log, however it is implemented.</p>
 </section>
 
 <section>
@@ -1352,7 +1352,43 @@ PASS  the last page has no next cursor</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="any-query.ts" data-command="npx tsx any-query.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Fix an N+1 without a join</h3><p>The board sometimes needs assignees from a different service's table, so a join is not possible. Rewrite <code>boardOneByOne</code> from the database section so it makes exactly 2 queries: one for the tasks, and one for all their assignees using <code>WHERE id = ANY($1)</code>.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="any-query.ts">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="any-query.ts" data-command="npx tsx any-query.ts" data-title="Fix an N+1 without a join"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Fix an N+1 without a join</h3><div class="lx-ex-task"><p>The board sometimes needs assignees from a different service's table, so a join is not possible. Rewrite <code>boardOneByOne</code> from the database section so it makes exactly 2 queries: one for the tasks, and one for all their assignees using <code>WHERE id = ANY($1)</code>.</p></div><script type="text/plain" class="lx-ex-starter" data-file="any-query.ts">// Example to learn from: batching a lookup with ANY($1) instead of one
+// query per row.
+//
+//   async function ordersWithNames(query) {
+//     const orders = await query("SELECT id, customer_id, total FROM orders ORDER BY id LIMIT 5");
+//     const ids = [...new Set(orders.rows.map((o) => o.customer_id))];
+//     const customers = await query("SELECT id, name FROM customers WHERE id = ANY($1)", [ids]);
+//     const names = new Map(customers.rows.map((c) => [c.id, c.name]));
+//     return orders.rows.map((o) => ({ id: o.id, total: o.total, customer: names.get(o.customer_id) }));
+//   }
+//
+// Now write boardTwoQueries(ownerId) the same way: one query for the
+// tasks, one query for every distinct assignee, using ANY($1).
+
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+  CREATE TABLE tasks (id SERIAL PRIMARY KEY, owner_id TEXT NOT NULL, assignee_id TEXT NOT NULL, title TEXT NOT NULL);
+  INSERT INTO users SELECT 'u-' || g, 'User ' || g FROM generate_series(1, 200) g;
+  INSERT INTO tasks (owner_id, assignee_id, title) SELECT 'u-1', 'u-' || (1 + g % 200), 'Task ' || g FROM generate_series(1, 5000) g;
+`);
+let queries = 0;
+function query<T>(sql: string, params: unknown[] = []) {
+  queries += 1;
+  return db.query<T>(sql, params);
+}
+
+async function boardTwoQueries(ownerId: string) {
+  // your code here: one query for the tasks (owner_id = $1, ordered, limit 50),
+  // one query for the distinct assignee ids with ANY($1), then join them in memory
+}
+
+const board = await boardTwoQueries("u-1");
+console.log(board.length, "tasks,", queries, "queries; first:", board[0]);
+await db.close();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Collect the distinct assignee ids from the tasks with <code>[...new Set(...)]</code>, then fetch them all in one query with <code>WHERE id = ANY($1)</code>, and join in memory with a <code>Map</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const ids = [...new Set(tasks.rows.map((task) =&gt; task.assignee_id))]; const users = await query("SELECT id, name FROM users WHERE id = ANY($1)", [ids]);</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="any-query.ts">
 <figcaption class="lx-bar"><span class="lx-file">any-query.ts</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">PGlite</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@electric-sql/pglite"</span><span class="t-pn">;</span>
 
@@ -1413,7 +1449,25 @@ await db.close();</script>
 </figure>
 <p>The second query takes the whole list of ids as one array parameter. Deduplicating the ids first keeps the parameter small when many tasks share an assignee. The same pattern works for another service's API: one batch call instead of one call per row.</p></div></div>
 
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="top-keys.js"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Top keys from an access log</h3><p>Your shared cache has no hot-key statistics, but you have an access log: one key per line. Write <code>topKeys(lines, n)</code> that returns the <code>n</code> most frequent keys with their share of all reads in whole percent, most frequent first, and ties in alphabetical order.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="19" data-file="top-keys.js">
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="top-keys.js" data-title="Top keys from an access log"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Top keys from an access log</h3><div class="lx-ex-task"><p>Your shared cache has no hot-key statistics, but you have an access log: one key per line. Write <code>topKeys(lines, n)</code> that returns the <code>n</code> most frequent keys with their share of all reads in whole percent, most frequent first, and ties in alphabetical order.</p></div><script type="text/plain" class="lx-ex-starter" data-file="top-keys.js">// Example to learn from: counting occurrences, then sorting by count.
+//
+//   function topWords(words, n) {
+//     const counts = new Map();
+//     for (const w of words) counts.set(w, (counts.get(w) ?? 0) + 1);
+//     return [...counts].sort((a, b) => b[1] - a[1]).slice(0, n).map(([w, c]) => `${w}:${c}`);
+//   }
+//   console.log(topWords(["a", "b", "a", "a", "c", "b"], 2));
+//
+// Now write topKeys(lines, n): the n most frequent keys, with their share
+// of all reads in whole percent, most frequent first, ties alphabetical.
+
+function topKeys(lines, n) {
+  // your code here
+}
+
+const log = [];
+for (let i = 0; i < 1_000; i++) log.push(i % 4 === 0 ? `tasks.u-${i % 7}` : i % 10 < 6 ? "board.launch-week" : "board.support");
+console.log(topKeys(log, 3));</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Count with a <code>Map</code> in one pass, then sort the entries by count descending, breaking ties with <code>localeCompare</code> on the key.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>[...counts].sort((a, b) =&gt; b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, n).map(([key, count]) =&gt; `${key} ${Math.round((count / lines.length) * 100)}%`)</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="19" data-file="top-keys.js">
 <figcaption class="lx-bar"><span class="lx-file">top-keys.js</span><button type="button" class="lx-edit" data-index="19" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="19"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">function</span> <span class="t-fn">topKeys</span><span class="t-pn">(</span>lines<span class="t-pn">,</span> n<span class="t-pn">)</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> counts <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Map</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -1444,7 +1498,7 @@ console.log(topKeys(log, 3));</script>
 </figure>
 <p>Counting is one pass; sorting all distinct keys is fine for a log sample. For a live stream with millions of distinct keys, keep counts only for a bounded set of candidates (a "heavy hitters" sketch), which is what <code>getHotKeys</code> does with its bounded tracking set.</p></div></div>
 
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Which bottleneck?</h3><p>For each report, name the kind of slowness (CPU, I/O, or queueing) and the first thing you would measure: (a) all routes are slow at 14:00 every day, event-loop delay p99 is 800 ms, CPU is at 100% on one core; a nightly report export was moved to 14:00. (b) only <code>POST /tasks</code> is slow; event-loop delay is 2 ms; the database CPU is at 10%; the pool's waiting count is 30. (c) <code>GET /tasks/:id</code> p95 doubled after a release; the query count per request went from 1 to 3.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Which bottleneck?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Which bottleneck?</h3><div class="lx-ex-task"><p>For each report, name the kind of slowness (CPU, I/O, or queueing) and the first thing you would measure: (a) all routes are slow at 14:00 every day, event-loop delay p99 is 800 ms, CPU is at 100% on one core; a nightly report export was moved to 14:00. (b) only <code>POST /tasks</code> is slow; event-loop delay is 2 ms; the database CPU is at 10%; the pool's waiting count is 30. (c) <code>GET /tasks/:id</code> p95 doubled after a release; the query count per request went from 1 to 3.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Read the event-loop delay first: high delay points at CPU work shared by every route; low delay with a slow single route points at I/O or a queue further down.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>For (b), notice which two numbers are both low (loop delay, database CPU) while a third is high (waiting count): the bottleneck sits between those two measurements, not inside either one.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
 <li>(a) <strong>CPU.</strong> The export runs on the same event loop as the API. Profile one process during the export to confirm; then move the export to a worker (a queue job or a worker thread, see <a href="/learn/node-events-processes#workers">worker threads</a>) or stream it in chunks.</li>
 <li>(b) <strong>Queueing.</strong> The database is idle and the loop is idle, but 30 requests wait for a connection: something holds connections too long. Measure how long each connection is held in <code>POST /tasks</code>; the usual culprit is a transaction left open while calling another service. Shorten the transaction before you touch the pool size.</li>
 <li>(c) <strong>I/O</strong>, from extra queries. Compare the release's diff for new queries in that path (a new relation loaded per item, a permission check that queries) and restore the budget of one query, then add the budget test so it cannot come back unnoticed.</li>

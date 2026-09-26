@@ -758,6 +758,8 @@ transfer.js 7:1 -> transfer.ts 14:1
 <h2 id="practice">Practice</h2>
 <exercise title="Plan a debugging session">
 <p>A loop applies a discount to 20,000 orders, and one order ends up with a negative total. Write down, in <code>node inspect</code> commands, the session you would run: where the breakpoint goes, its condition, and the two things you would evaluate once it pauses. Assume the loop body is on line 42 of <code>discounts.js</code> and each order has <code>id</code>, <code>totalKobo</code> and <code>discountKobo</code>.</p>
+<hint><p>A plain breakpoint on line 42 would pause 20,000 times. Re-read <a href="#node-inspect">Conditional breakpoints</a>: the condition should come straight from your hypothesis about what makes the total go negative.</p></hint>
+<hint><p><code>sb('discounts.js', 42, '<condition>')</code> sets it, <code>c</code> continues to it, and once paused, <code>exec</code> is how you look at any expression, including <code>typeof</code> a value you suspect is the wrong type.</p></hint>
 <solution>
 <p>Pause just before the subtraction, only for the order that goes wrong, and look at both inputs:</p>
 <pre><code>$ node inspect discounts.js
@@ -771,6 +773,44 @@ debug&gt; bt</code></pre>
 </exercise>
 <exercise title="Redact before you log">
 <p>A <code>Customer</code> class has <code>name</code>, <code>email</code> and <code>cardNumber</code>. Give it a custom inspect method so that <code>console.log</code> shows the name, the email and only the last four digits of the card.</p>
+<starter file="customer-redact.js">
+// Example to learn from: a custom inspect method that shows most fields
+// plainly but partially masks one sensitive one.
+//
+//   class ApiKey {
+//     constructor(owner, secret) {
+//       this.owner = owner;
+//       this.secret = secret;
+//     }
+//     [inspect.custom]() {
+//       return `ApiKey { owner: '${this.owner}', secret: '${this.secret.slice(0, 4)}...' }`;
+//     }
+//   }
+//   console.log(new ApiKey("Ada", "sk_live_51H8xQ2abcdef"));
+//
+// Now do the same idea for a customer's card number, showing only the
+// last four digits, below.
+
+import { inspect } from "node:util";
+
+class Customer {
+  constructor(name, email, cardNumber) {
+    this.name = name;
+    this.email = email;
+    this.cardNumber = cardNumber;
+  }
+
+  [inspect.custom]() {
+    // return a string like:
+    //   Customer { name: '<name>', email: '<email>', card: '**** <last 4 digits>' }
+    // this.cardNumber.slice(-4) gives you the last four digits
+  }
+}
+
+console.log(new Customer("Chidi", "chidi@example.com", "4242424242424242"));
+</starter>
+<hint><p>Build the string with a template literal, the same shape as the worked example, but keep <code>name</code> and <code>email</code> in full and mask only the card.</p></hint>
+<hint><p><code>return `Customer { name: '${this.name}', email: '${this.email}', card: '**** ${this.cardNumber.slice(-4)}' }`;</code></p></hint>
 <solution>
 <example file="customer-redact.js" browser="no">
 import { inspect } from "node:util";
@@ -797,6 +837,36 @@ Customer { name: 'Chidi', email: 'chidi@example.com', card: '**** 4242' }
 </exercise>
 <exercise title="Read the response first">
 <p>A page shows "SyntaxError: Unexpected end of JSON input" when it saves a task. In the Network panel the <code>POST /api/tasks</code> request has status <code>204 No Content</code>. What is the bug, and how should the client code change?</p>
+<starter file="no-content.js">
+// Example to learn from: checking one thing about a response before
+// trusting its body.
+//
+//   async function readText(res) {
+//     if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+//     return res.text();
+//   }
+//
+// Now add two more checks for readJson: fail loudly on a bad status, and
+// treat an empty (204) body as "nothing to parse", below.
+
+async function readJson(res) {
+  // 1. if !res.ok, throw new Error(`Request failed: ${res.status}`)
+  // 2. if res.status === 204 (no body), return null
+  // 3. otherwise return res.json()
+}
+
+const saved = await readJson(new Response(null, { status: 204 }));
+console.log(saved);
+const task = await readJson(new Response('{"id":7,"title":"Pay rent"}', { status: 201 }));
+console.log(task);
+try {
+  await new Response(null, { status: 204 }).json();
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</starter>
+<hint><p>Order matters: check <code>res.ok</code> first (a failed request needs no further reading), then the special case of an empty body, before falling through to the normal case.</p></hint>
+<hint><p><code>if (!res.ok) throw new Error(`Request failed: ${res.status}`); if (res.status === 204) return null; return res.json();</code></p></hint>
 <solution>
 <p>204 means "success, and there is no body". The client calls <code>res.json()</code> on an empty body, which throws "Unexpected end of JSON input". The request worked; the client's assumption did not. Check the status (and <code>content-type</code>) before parsing:</p>
 <example file="no-content.js" browser="no">

@@ -773,6 +773,46 @@ runs: 12, crashes that happened: 7, inconsistent: 0
 <h2 id="practice">Practice</h2>
 <exercise title="Reserve before you charge">
 <p>Reorder ShopFlow's steps to reserve, charge, ship. Using plain JavaScript, simulate 100 orders where 20% fail at the stock check and 5% have their card declined, and count how many refunds each order of steps causes. Use a seeded sequence so the result is the same every run.</p>
+<starter file="step-order.js">
+// Example to learn from: the same "try steps in order, count what must be
+// undone" simulation, for a smaller two-step process (validate, then save).
+//
+//   let seed = 3;
+//   const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+//   const jobs = Array.from({ length: 10 }, () => ({ invalid: rand() < 0.3 }));
+//   function tryOrder(steps) {
+//     let undone = 0;
+//     for (const job of jobs) {
+//       const done = [];
+//       for (const step of steps) {
+//         if (step === "validate" && job.invalid) { if (done.includes("save")) undone++; break; }
+//         done.push(step);
+//       }
+//     }
+//     return undone;
+//   }
+//   console.log(tryOrder(["save", "validate"]), tryOrder(["validate", "save"]));
+//
+// Now do the same for ShopFlow's reserve/charge/ship steps below.
+
+let seed = 7;
+const random = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+
+const orders = Array.from({ length: 100 }, () => ({ outOfStock: random() < 0.2, declined: random() < 0.05 }));
+
+function run(steps) {
+  // For each order, walk the given steps in order. If a step fails (out of
+  // stock at "reserve", a declined card at "charge"), count a refund for
+  // every earlier "charge" already done, and a release for every earlier
+  // "reserve" already done, then stop this order's steps.
+  return `${steps.join(" -> ")}: 0 refunds, 0 releases`;
+}
+
+console.log(run(["charge", "reserve", "ship"]));
+console.log(run(["reserve", "charge", "ship"]));
+</starter>
+<hint><p>Walk the steps for one order with a <code>done</code> list, the same as the validate/save example. When a step fails, look at what's already in <code>done</code> to decide what needs undoing.</p></hint>
+<hint><p><code>if (done.includes("charge")) refunds++; if (done.includes("reserve")) releases++; break;</code> — otherwise push the step onto <code>done</code> and keep going.</p></hint>
 <solution>
 <example file="step-order.js">
 let seed = 7;
@@ -810,6 +850,46 @@ reserve -> charge -> ship: 0 refunds, 3 releases
 </exercise>
 <exercise title="The inbox race in plain JavaScript">
 <p>PGlite cannot run two deliveries at once, but JavaScript can show the race. Write a consumer that checks <code>seen.has(id)</code>, then awaits a 10 ms "database call", then adds the id and charges. Deliver the same message twice at the same time and count the charges. Then fix it by claiming the id <em>before</em> the await, the way <code>INSERT … ON CONFLICT DO NOTHING</code> claims it in one step.</p>
+<starter file="inbox-race.js">
+// Example to learn from: the same race — check, then (after an await) act —
+// for reserving a seat instead of charging a card.
+//
+//   async function run(label, reserveSeat) {
+//     const state = { taken: new Set(), reservations: 0 };
+//     await Promise.all([reserveSeat(state, "A1"), reserveSeat(state, "A1")]);
+//     console.log(`${label}: ${state.reservations} reservation(s)`);
+//   }
+//   await run("check, then act", async (state, seat) => {
+//     if (state.taken.has(seat)) return;
+//     await sleep(10);
+//     state.taken.add(seat);
+//     state.reservations++;
+//   });
+//   // check, then act: 2 reservation(s) — both passed the check first
+//
+// Now write both versions for the inbox below (check-then-act, and
+// claim-first).
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function run(label, consume) {
+  const state = { seen: new Set(), charges: 0 };
+  await Promise.all([consume(state, "msg-1"), consume(state, "msg-1")]);
+  console.log(`${label}: ${state.charges} charge(s)`);
+}
+
+await run("check, then act", async (state, id) => {
+  // Check state.seen.has(id) first; if not seen, await sleep(10), THEN
+  // mark it seen and charge. (This is the version with the race.)
+});
+
+await run("claim first", async (state, id) => {
+  // Same, but mark state.seen BEFORE the await, so the second delivery
+  // sees it immediately and returns without charging.
+});
+</starter>
+<hint><p>Both versions start with <code>if (state.seen.has(id)) return;</code>. The difference is only where <code>state.seen.add(id)</code> goes relative to <code>await sleep(10)</code>.</p></hint>
+<hint><p>Check-then-act: <code>await sleep(10); state.seen.add(id); state.charges++;</code> — claim-first: <code>state.seen.add(id); await sleep(10); state.charges++;</code></p></hint>
 <solution>
 <example file="inbox-race.js">
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -843,6 +923,8 @@ claim first: 1 charge(s)
 </exercise>
 <exercise title="Find the stuck sagas">
 <p>Add an <code>updated_at timestamptz</code> column to <code>orders.sagas</code> (set by <code>save</code>), and write the query an alert would run: every saga still <code>running</code> or <code>compensating</code> whose last update is older than 10 minutes, oldest first, with its step. Which index helps it?</p>
+<hint><p>The <code>WHERE</code> clause needs two conditions joined together: the status is one of the active ones (<code>IN (...)</code>), and <code>updated_at</code> is older than the cutoff. "Oldest first" says what to put in <code>ORDER BY</code>.</p></hint>
+<hint><p>A plain index on <code>updated_at</code> would also index thousands of finished sagas. A <strong>partial</strong> index, with a <code>WHERE</code> clause of its own, only covers the rows the alert actually reads.</p></hint>
 <solution>
 <p>The query: <code>SELECT id, status, step, now() - updated_at AS stuck_for FROM orders.sagas WHERE status IN ('running', 'compensating') AND updated_at &lt; now() - interval '10 minutes' ORDER BY updated_at</code>. A partial index keeps it cheap however many completed sagas pile up: <code>CREATE INDEX sagas_active ON orders.sagas (updated_at) WHERE status IN ('running', 'compensating')</code>. It only contains the few active sagas, which is exactly what the alert reads. <code>save</code> sets <code>updated_at = now()</code> in the same <code>UPDATE</code> as the step, so the timestamp always describes the last real progress.</p>
 </solution>

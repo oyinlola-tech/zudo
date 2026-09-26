@@ -846,6 +846,51 @@ PASS wrapped error keeps its cause -> "root"
 <h2 id="practice">Practice</h2>
 <exercise title="Find the root cause">
 <p>Write <code>rootCause(error)</code> that follows <code>.cause</code> links to the deepest error and returns it, and <code>findInChain(error, predicate)</code> that returns the first error in the chain for which <code>predicate</code> is true (or <code>undefined</code>). Both must stop on a chain that loops back on itself.</p>
+<starter file="root-cause.js">
+// Example to learn from: a lazy generator walking a linked chain with loop
+// protection, for a management chain instead of an error's .cause chain.
+//
+//   function* chainOf(node, key) {
+//     const seen = new Set();
+//     for (let current = node; current && !seen.has(current); current = current[key]) {
+//       seen.add(current);
+//       yield current;
+//     }
+//   }
+//   const ceo = { name: "Ada" };
+//   const vp = { name: "Bola", manager: ceo };
+//   const lead = { name: "Chidi", manager: vp };
+//   const topManager = (person) => [...chainOf(person, "manager")].at(-1);
+//   console.log(topManager(lead).name); // "Ada"
+//
+// Now do the same walk-with-loop-protection idea for chainOf below, always
+// following .cause.
+
+function* chainOf(error) {
+  // your code here: walk `current` starting at error, following
+  // current.cause each step, stopping when current is not an Error instance
+  // or has already been seen (a Set remembers visited errors and breaks a
+  // loop); yield each error along the way.
+}
+
+const rootCause = (error) => [...chainOf(error)].at(-1);
+const findInChain = (error, predicate) => chainOf(error).find(predicate);
+
+const network = Object.assign(new Error("ECONNRESET"), { code: "ECONNRESET" });
+const gateway = new Error("gateway unreachable", { cause: network });
+const payment = new Error("payment failed", { cause: gateway });
+
+console.log(rootCause(payment)?.message);
+console.log(findInChain(payment, (e) => e.code === "ECONNRESET")?.message);
+console.log(findInChain(payment, (e) => e.code === "E_NOPE"));
+
+const loopA = new Error("A");
+const loopB = new Error("B", { cause: loopA });
+loopA.cause = loopB;
+console.log(rootCause(loopA)?.message);
+</starter>
+<hint><p>The loop condition needs two checks: <code>current instanceof Error</code> (so it stops at a non-error <code>cause</code>, including <code>undefined</code>) and <code>!seen.has(current)</code> (so a chain that loops back on itself stops instead of running forever).</p></hint>
+<hint><p><code>for (let current = error; current instanceof Error &amp;&amp; !seen.has(current); current = current.cause) { seen.add(current); yield current; }</code></p></hint>
 <solution>
 <example file="root-cause.js">
 function* chainOf(error) {
@@ -883,6 +928,53 @@ B
 </exercise>
 <exercise title="Validate a whole form at once">
 <p>A registration form has <code>email</code>, <code>phone</code> (11 digits for a Nigerian number) and <code>password</code> (at least 10 characters). Write <code>validateSignup(form)</code> that throws one <code>AggregateError</code> listing every invalid field, where each inner error has a <code>field</code> property, and returns the form if everything is valid.</p>
+<starter file="signup.js">
+// Example to learn from: collecting every problem into one AggregateError,
+// for a product listing instead of a signup form.
+//
+//   function validateProduct(product) {
+//     const problems = [];
+//     if (!(product.priceKobo > 0)) problems.push(new FieldError("priceKobo", "must be greater than zero"));
+//     if (!(product.stock >= 0)) problems.push(new FieldError("stock", "must not be negative"));
+//     if (problems.length) throw new AggregateError(problems, "product has errors");
+//     return product;
+//   }
+//   try {
+//     validateProduct({ priceKobo: -100, stock: 5 });
+//   } catch (error) {
+//     console.log(Object.fromEntries(error.errors.map((e) => [e.field, e.message])));
+//   }
+//
+// Now do the same collect-everything shape for validateSignup below.
+
+class FieldError extends Error {
+  name = "FieldError";
+  constructor(field, message) {
+    super(message);
+    this.field = field;
+  }
+}
+
+function validateSignup(form) {
+  const problems = [];
+  // your code here: push a FieldError onto problems for each invalid field —
+  // email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/ against (form.email ?? "")
+  // phone: /^0\d{10}$/ against (form.phone ?? "") — 11 digits starting with 0
+  // password: (form.password ?? "").length must be at least 10
+  // then, if problems is non-empty, throw new AggregateError(problems, "signup form has errors")
+  return form;
+}
+
+try {
+  validateSignup({ email: "ada@shop", phone: "0803123456", password: "short" });
+} catch (error) {
+  console.log(error.message);
+  console.log(Object.fromEntries(error.errors.map((e) => [e.field, e.message])));
+}
+console.log(validateSignup({ email: "ada@shop.ng", phone: "08031234567", password: "long enough pw" }).email);
+</starter>
+<hint><p>Test each field and <code>push</code> a <code>new FieldError(fieldName, message)</code> for every one that fails — do not stop at the first failure, since the whole point is to report all of them together.</p></hint>
+<hint><p><code>if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email ?? "")) problems.push(new FieldError("email", "enter a valid email address"));</code> — the same shape for <code>phone</code> and <code>password</code>, then <code>if (problems.length) throw new AggregateError(problems, "signup form has errors");</code>.</p></hint>
 <solution>
 <example file="signup.js">
 class FieldError extends Error {
@@ -941,6 +1033,54 @@ console.log(await refundOrder(gateway, { id: "ORD-7", chargeId: "ch_881" }));
 <output>
 refunded
 </output>
+<starter file="good-refund.js">
+// Example to learn from: awaiting the risky call and wrapping its failure
+// with context, for cancelling a subscription instead of refunding an order.
+//
+//   async function cancelSubscription(billing, sub) {
+//     try {
+//       await billing.cancel(sub.id);
+//       return "cancelled";
+//     } catch (error) {
+//       throw new Error(`cancel for ${sub.id} failed`, { cause: error });
+//     }
+//   }
+//   const billing = { cancel: async () => { throw new Error("gateway timeout"); } };
+//   try {
+//     await cancelSubscription(billing, { id: "SUB-3" });
+//   } catch (error) {
+//     console.log(error.message, "<-", error.cause.message);
+//   }
+//
+// Now find and fix the same three problems in refundOrder below (see the
+// buggy version above): the missing await, the silencing .catch, and the
+// return inside finally.
+
+async function refundOrder(gateway, order) {
+  // your code here: fix three problems —
+  // 1. await gateway.refund(order.chargeId) instead of leaving it unawaited
+  // 2. drop the swallowing .catch(() => {})
+  // 3. drop the finally and its return; on success, return "refunded" from
+  //    inside the try; in catch, throw a new Error with context and
+  //    { cause: error } instead of just logging
+  try {
+    gateway.refund(order.chargeId).catch(() => {});
+  } catch (error) {
+    console.log(`refund failed: ${error.message}`);
+  } finally {
+    return "refunded";
+  }
+}
+
+const gateway = { refund: async () => { throw new Error("refund window closed"); } };
+try {
+  await refundOrder(gateway, { id: "ORD-7", chargeId: "ch_881" });
+} catch (error) {
+  console.log(error.message, "<-", error.cause.message);
+}
+</starter>
+<hint><p>All three problems point the same way: let the failure travel. <code>await</code> the call so its rejection can reach a <code>catch</code>, do not swallow it there, and remove the <code>finally</code> that would paper over any error with a hardcoded success.</p></hint>
+<hint><p><code>try { await gateway.refund(order.chargeId); return "refunded"; } catch (error) { throw new Error(`refund for ${order.id} (${order.chargeId}) failed`, { cause: error }); }</code> — no <code>finally</code> needed at all.</p></hint>
 <solution>
 <p>Three problems: the promise from <code>gateway.refund</code> is not awaited, so its rejection can never reach the <code>catch</code> block; <code>.catch(() =&gt; {})</code> throws the rejection away (someone added it to silence an "unhandled rejection" warning, which was the one signal that something was wrong); and the <code>return</code> in <code>finally</code> would override any error anyway. Await the call, drop the swallowing, and wrap with context:</p>
 <example file="good-refund.js">

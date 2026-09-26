@@ -738,6 +738,37 @@ describe("parseMultipart", () => {
 <h2 id="practice">Practice</h2>
 <exercise title="Add PDFs, as downloads only">
 <p>Sellers also need to upload price lists as PDF. Write <code>sniffDocument(head)</code> that recognises a PDF (<code>%PDF-</code>) and returns the headers to serve it with: its type, and <code>Content-Disposition: attachment</code> so the browser downloads it instead of opening it inside your site.</p>
+<starter file="sniff-pdf.ts">
+// Example to learn from: reading a magic number and choosing headers from
+// it, for a different format.
+//
+//   function sniffImage(head: Uint8Array): Serving | undefined {
+//     const isPng = Buffer.from(head.subarray(0, 8)).toString("latin1") === "\x89PNG\r\n\x1a\n";
+//     if (!isPng) return undefined;
+//     return { contentType: "image/png", disposition: "inline" };
+//   }
+//
+// A PNG is safe to display inline; now do the same for a PDF below, which
+// should always download instead.
+
+interface Serving {
+  readonly contentType: string;
+  readonly disposition: string;
+}
+
+function sniffDocument(head: Uint8Array, displayName: string): Serving | undefined {
+  // read the first 5 bytes as latin1 and compare with "%PDF-"
+  // not a match: return undefined
+  // a match: return { contentType: "application/pdf",
+  //   disposition: `attachment; filename="${displayName}"` }
+  return undefined;
+}
+
+console.log(sniffDocument(Buffer.from("%PDF-1.7\n..."), "price-list.pdf"));
+console.log(sniffDocument(Buffer.from("<html><body>price list</body></html>"), "price-list.pdf"));
+</starter>
+<hint><p><code>Buffer.from(head.subarray(0, 5)).toString("latin1") === "%PDF-"</code> tests the magic number, exactly as the PNG example does with 8 bytes.</p></hint>
+<hint><p>On a match: <code>return { contentType: "application/pdf", disposition: `attachment; filename="${displayName}"` };</code>.</p></hint>
 <solution>
 <example file="sniff-pdf.ts" project="files" browser="no">
 interface Serving {
@@ -766,6 +797,49 @@ undefined
 </exercise>
 <exercise title="Signed uploads">
 <p>Extend the signed-URL idea to uploads: a link that allows exactly one <code>PUT</code> of one key, until an expiry time. Sign the method, the key and the expiry together, and show that a link issued for <code>GET</code> cannot be used for <code>PUT</code>.</p>
+<starter file="signed-put.ts">
+// Example to learn from: signing several fields together, so changing any
+// one of them invalidates the signature.
+//
+//   const signCoupon = (customerId: number, sku: string) =>
+//     createHmac("sha256", secret).update(`${customerId}\n${sku}`).digest("base64url");
+//
+//   function couponValid(customerId: number, sku: string, sig: string): boolean {
+//     const expected = Buffer.from(signCoupon(customerId, sku));
+//     const given = Buffer.from(sig);
+//     return given.length === expected.length && timingSafeEqual(given, expected);
+//   }
+//
+// A signature made for one customer or SKU fails for any other.
+// Now sign method, key and expiry together for uploads below.
+
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+
+const secret = randomBytes(32).toString("hex");
+const sign = (method: string, key: string, expires: number) =>
+  // join method, key and expires (e.g. with "\n") before hashing, so all
+  // three are covered by the signature
+  createHmac("sha256", secret).update(method).digest("base64url");
+
+function allowed(method: string, key: string, expires: number, sig: string, now: number): boolean {
+  // recompute the expected signature with sign(method, key, expires),
+  // compare it with sig using timingSafeEqual (check the lengths match
+  // first), and also require now < expires
+  return true;
+}
+
+const now = 1_790_251_200;
+const key = "products/7/5f0c2e4e.jpg";
+const putSig = sign("PUT", key, now + 300);
+const getSig = sign("GET", key, now + 300);
+
+console.log("PUT with the PUT link:", allowed("PUT", key, now + 300, putSig, now));
+console.log("PUT with a GET link:  ", allowed("PUT", key, now + 300, getSig, now));
+console.log("PUT another key:      ", allowed("PUT", "products/8/x.jpg", now + 300, putSig, now));
+console.log("PUT after expiry:     ", allowed("PUT", key, now + 300, putSig, now + 301));
+</starter>
+<hint><p><code>sign</code> should hash all three: <code>createHmac("sha256", secret).update(`${method}\n${key}\n${expires}`).digest("base64url")</code>.</p></hint>
+<hint><p>In <code>allowed</code>: <code>const expected = Buffer.from(sign(method, key, expires)); const given = Buffer.from(sig); return now &lt; expires &amp;&amp; given.length === expected.length &amp;&amp; timingSafeEqual(given, expected);</code>.</p></hint>
 <solution>
 <example file="signed-put.ts" project="files" browser="no">
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -801,6 +875,8 @@ PUT after expiry:      false
 </exercise>
 <exercise title="Where should the check go?">
 <p>For each rule, say whether it belongs in the upload request, in a background job, or in the download request: (a) the file is at most 5 MB; (b) the file is a real JPEG, PNG or WebP; (c) the image has no hidden payload and no GPS data; (d) only the product's seller may upload its photos; (e) an invoice link works for 10 minutes.</p>
+<hint><p>Which of these checks are cheap enough to do before or while streaming the bytes in, and which need real processing time?</p></hint>
+<hint><p>(d) is about who is allowed to spend your bandwidth at all; when should that be decided, relative to reading the body?</p></hint>
 <solution>
 <p>(a) Upload request, while streaming (and also at the proxy). (b) Upload request: the magic number is in the first bytes, so it costs nothing. (c) Background job: re-encoding is slow and risky, so the photo stays pending until the job passes it. (d) Upload request, before reading the body: an unauthorised upload should not cost you bandwidth. (e) Download request: the signed URL's expiry is checked when the link is used.</p>
 </solution>

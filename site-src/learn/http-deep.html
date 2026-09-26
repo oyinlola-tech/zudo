@@ -480,6 +480,44 @@ for (const code of common) {
 <h2 id="practice">Practice</h2>
 <exercise title="Allow only GET and POST">
 <p>Write a server for <code>/tasks</code> that answers <code>GET</code> with 200 and a JSON list, and any other method except <code>POST</code> with <strong>405</strong>, an <code>Allow: GET, POST</code> header and a JSON error. Test it with <code>fetch</code> for <code>GET</code> and <code>DELETE</code>, then close the server.</p>
+<starter file="allow.js">
+// Example to learn from: branching on the method for a health check route.
+//
+//   function handlePing(req, res) {
+//     if (req.method === "GET") {
+//       res.writeHead(200, { "Content-Type": "text/plain" });
+//       return res.end("pong");
+//     }
+//     res.writeHead(405, { Allow: "GET" });        // wrong method: say what is allowed
+//     res.end();
+//   }
+//
+// Now do the same for tasks below.
+
+import http from "node:http";
+
+const server = http.createServer((req, res) => {
+  // GET: res.writeHead(200, { "Content-Type": "application/json" }) then
+  //   res.end(JSON.stringify([]))
+  // POST: res.writeHead(201).end()
+  // anything else: res.writeHead(405, { "Content-Type": "application/json",
+  //   Allow: "GET, POST" }) then
+  //   res.end(JSON.stringify({ error: `${req.method} is not allowed here` }))
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({}));
+});
+
+server.listen(0, async () => {
+  const url = `http://localhost:${server.address().port}/tasks`;
+  for (const method of ["GET", "DELETE"]) {
+    const res = await fetch(url, { method });
+    console.log(method, res.status, res.headers.get("allow"), await res.json());
+  }
+  server.close();
+});
+</starter>
+<hint><p>Check <code>req.method</code>: handle <code>"GET"</code> first, then treat everything that is not <code>"POST"</code> as not allowed.</p></hint>
+<hint><p>The 405 branch needs both the header and a JSON body: <code>res.writeHead(405, { "Content-Type": "application/json", Allow: "GET, POST" })</code>, then <code>res.end(JSON.stringify({ error: `${req.method} is not allowed here` }))</code>.</p></hint>
 <solution>
 <example file="allow.js" browser="no">
 import http from "node:http";
@@ -514,6 +552,35 @@ DELETE 405 GET, POST { error: 'DELETE is not allowed here' }
 
 <exercise title="A session cookie builder">
 <p>Write <code>sessionCookie(id)</code> that returns a <code>Set-Cookie</code> value for a cookie named <code>sid</code>, valid for 7 days, with all the safe attributes from this lesson. Then write <code>clearSessionCookie()</code> that logs the user out. Hint: a cookie with <code>Max-Age=0</code> is deleted at once.</p>
+<starter file="session-cookie.js">
+// Example to learn from: building a Cache-Control header value from parts.
+//
+//   function cacheControl(maxAgeSeconds, { immutable = false } = {}) {
+//     const parts = [`max-age=${maxAgeSeconds}`, "public"];
+//     if (immutable) parts.push("immutable");
+//     return parts.join(", ");
+//   }
+//
+//   console.log(cacheControl(3600, { immutable: true }));
+//
+// Now do the same for the cookie strings below.
+
+const DAY = 24 * 60 * 60;
+
+function sessionCookie(id) {
+  // Return "sid=<id, URL-encoded>; Path=/; Max-Age=<7 days in seconds>;
+  // HttpOnly; Secure; SameSite=Lax"
+}
+
+function clearSessionCookie() {
+  // Same cookie name and attributes, but no value and Max-Age=0.
+}
+
+console.log(sessionCookie("3f9c2a"));
+console.log(clearSessionCookie());
+</starter>
+<hint><p>Build the string with a template literal: start with <code>sid=</code>, then <code>encodeURIComponent(id)</code>, then the shared attributes joined with <code>; </code>.</p></hint>
+<hint><p><code>Max-Age</code> is in seconds: <code>7 * DAY</code> for the session, <code>0</code> to clear it. Keep <code>Path=/; HttpOnly; Secure; SameSite=Lax</code> the same in both functions.</p></hint>
 <solution>
 <example file="session-cookie.js">
 const DAY = 24 * 60 * 60;
@@ -539,6 +606,9 @@ sid=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax
 
 <exercise title="Which status code?">
 <p>For each situation, pick a status code: (a) a task was created; (b) <code>DELETE /tasks/9</code> worked and there is nothing to return; (c) the client is logged in but tries to delete another user's task; (d) the client sent <code>{"title": ""}</code>; (e) the database is down.</p>
+<hint><p>Which of these responses carries a body, and which is deliberately empty?</p></hint>
+<hint><p>For (c), consider whether telling an attacker "that task exists, but it isn't yours" is safe, or whether hiding its existence is better.</p></hint>
+<hint><p>Re-read the <a href="#status">Status codes</a> section above for the 2xx, 4xx and 5xx ranges before you commit to an answer.</p></hint>
 <solution>
 <p>(a) 201 Created, with a <code>Location</code> header. (b) 204 No Content. (c) 403 Forbidden, or 404 Not Found if you do not want to reveal that the task exists. (d) 400 Bad Request (or 422, if that is your API's style). (e) 503 Service Unavailable, or 500.</p>
 </solution>

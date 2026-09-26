@@ -518,7 +518,7 @@ await server.stop();
    https://app.example.com: 200 allow-origin = https://app.example.com
    https://evil.example: 200 allow-origin = null
 3. A 50 KB task title
-   413 {"error":"Payload Too Large"}
+   413 {"error":"Payload Too Large","code":"PAYLOAD_TOO_LARGE"}
 4. SSRF through the preview feature
    400 {"error":"That URL cannot be previewed","code":"BAD_REQUEST"}
    400 {"error":"That URL cannot be previewed","code":"BAD_REQUEST"}
@@ -526,7 +526,7 @@ await server.stop();
 5. Headers on every response
    x-frame-options: DENY
    x-content-type-options: nosniff
-   strict-transport-security: max-age=31536000; includeSubDomains; preload
+   strict-transport-security: max-age=63072000; includeSubDomains; preload
 </output>
 <p>Every attack was stopped by a different layer:</p>
 <ol>
@@ -536,7 +536,7 @@ await server.stop();
 <li>The metadata address and the IPv6 form of a private address got <code>400</code>. A public URL was accepted.</li>
 <li>The security middleware added its headers to every response.</li>
 </ol>
-<warn title="THAT HEADER CHECK ONLY ASKED A 200">Step 5 above only asks a plain <code>200</code> response for its headers. In the published <code>@zudojs/http</code> 1.4.4, a response built outside the normal route return — the <code>401</code> from a thrown <code>unauthorized()</code>, the adapter's own <code>413</code> for an oversized body, or an uncaught <code>500</code> — comes back without <code>createSecurityMiddleware()</code>'s headers, because the pipeline never gets to run on it. <a href="/learn/zudo-production-security">A production security review</a> covers checking every status code a route can return, not just its happy path.</warn>
+<warn title="ERROR RESPONSES GET HEADERS TOO">Step 5 above only checked a plain <code>200</code> response, but the <code>401</code> and <code>413</code> above carry the same headers. Since <code>@zudojs/http</code> 1.5.0, every response the adapter builds itself — the request guard's refusal, the adapter's own <code>413</code>, an uncaught <code>500</code>, or a thrown <code>HttpError</code> such as the <code>401</code> from <code>unauthorized()</code> — gets the default security headers filled in even though it never reached <code>createSecurityMiddleware()</code> in the pipeline. (Before 1.5.0, only a response built inside the pipeline got them; an error thrown before or around it came back bare.) The adapter's new <code>securityHeaders</code> option controls this (default <code>true</code>) and only fills in header names a response does not already set. Still check every status code a route can return, not just its happy path: a custom <code>errorHandler</code> or a header your own code sets can leave a gap a happy-path test never sees. <a href="/learn/zudo-production-security">A production security review</a> covers that in depth.</warn>
 <p>Run it on your computer. Both files go in the same folder:</p>
 <shell title="Terminal on your computer">
 $ npx tsc --noEmit
@@ -549,6 +549,29 @@ $ npx tsx attack.ts
 <h2 id="practice">Practice</h2>
 <exercise title="A second limiter for the whole API">
 <p>Besides the strict login limit, add a generous limit for every route: 3 requests per minute for this exercise (use something like 300 in real life). Build it with <code>createRateLimiter</code> from @zudojs/security and check it for one IP, four times.</p>
+<starter file="api-limit.ts">
+// Example to learn from: the same check loop for a different limit.
+//
+//   const previewLimiter = createRateLimiter({ windowMs: 60_000, max: 1 });
+//   for (let request = 1; request <= 2; request++) {
+//     const result = previewLimiter.check({ ip: "203.0.113.9" });
+//     console.log(request, result.allowed ? "ok" : "429");
+//   }
+//   previewLimiter.destroy();
+//
+// Now build a limiter of 3 requests per minute, and check it 4 times.
+
+import { createRateLimiter } from "@zudojs/security";
+
+const apiLimiter = createRateLimiter({ windowMs: 60_000, max: 3 });
+for (let request = 1; request <= 4; request++) {
+  // Check apiLimiter.check({ ip: "203.0.113.7" }) and log the attempt
+  // number, "ok" or "429" from result.allowed, and result.remaining.
+}
+apiLimiter.destroy();
+</starter>
+<hint><p><code>createRateLimiter({ windowMs: 60_000, max: 3 })</code> is the limiter. Each loop iteration calls <code>apiLimiter.check({ ip: "203.0.113.7" })</code> and reads <code>result.allowed</code> and <code>result.remaining</code> off what it returns.</p></hint>
+<hint><p><code>const result = apiLimiter.check({ ip: "203.0.113.7" }); console.log(request, result.allowed ? "ok" : "429", "remaining:", result.remaining);</code>.</p></hint>
 <solution>
 <example file="api-limit.ts" project="api-limit" browser="no">
 import { createRateLimiter } from "@zudojs/security";
@@ -572,6 +595,27 @@ apiLimiter.destroy();
 
 <exercise title="Allow a staging app">
 <p>Your team also runs a staging copy of the web app at <code>https://staging.app.example.com</code>. Change the CORS configuration so it is allowed too, and prove that <code>https://staging.app.example.com.evil.example</code> is still refused.</p>
+<starter file="staging.ts">
+// Example to learn from: adding one more exact origin to a different allow-list.
+//
+//   const config = { origin: ["https://shop.example.com", "https://admin.example.com"], credentials: true };
+//   console.log(isOriginAllowed("https://admin.example.com", config));
+//
+// Now add the staging origin to config below.
+
+import { isOriginAllowed } from "@zudojs/security";
+
+const config = {
+  origin: ["https://app.example.com"],
+  // Add "https://staging.app.example.com" to this array.
+  credentials: true,
+};
+for (const origin of ["https://staging.app.example.com", "https://staging.app.example.com.evil.example"]) {
+  console.log(origin, isOriginAllowed(origin, config) ?? "refused");
+}
+</starter>
+<hint><p><code>origin</code> takes an array of exact strings. Add the new one next to the existing entry, rather than replacing it.</p></hint>
+<hint><p><code>origin: ["https://app.example.com", "https://staging.app.example.com"]</code>. The look-alike domain still fails, because it is a different, longer string that only starts with the allowed one.</p></hint>
 <solution>
 <example file="staging.ts" project="staging" browser="no">
 import { isOriginAllowed } from "@zudojs/security";
@@ -594,6 +638,8 @@ https://staging.app.example.com.evil.example refused
 
 <exercise title="Which layer stops it?">
 <p>For each attack, name the layer that stops it: (a) a script on <code>evil.example</code> reads a user's tasks with <code>fetch</code>; (b) a hidden form on <code>evil.example</code> posts to the API using the user's session cookie; (c) a user sets their avatar URL to <code>http://localhost:6379/</code>; (d) a task title contains <code>&lt;script&gt;</code>.</p>
+<hint><p>(a) and (b) both involve a browser and another site, but one is a plain <code>fetch</code> that only needs to <em>read</em> the response, and the other is a form <code>POST</code> that only needs to be <em>sent</em>. Which layer stops a read; which stops a write that carries cookies?</p></hint>
+<hint><p>(c) is a URL your server would fetch on the user's behalf, pointing inside your own network. (d) is text that ends up shown back to other users. Look at the table in <a href="#layers">defense in depth</a> for the layer named for each.</p></hint>
 <solution>
 <p>(a) CORS: the browser hides the response because the origin is not on the allow-list. (b) CSRF protection: the form cannot send the token, and a <code>SameSite</code> cookie is not sent at all. (c) SSRF checks: <code>isSafeUrl</code> refuses <code>localhost</code>, and the DNS check refuses names that point to private addresses. (d) Output encoding: <code>escapeHtml</code> (or your frontend framework) shows it as text, and the CSP stops injected scripts from running. A detector may log it, but it is not the defence.</p>
 </solution>

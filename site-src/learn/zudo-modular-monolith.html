@@ -442,6 +442,53 @@ catalog: stopped
 <h2 id="practice">Practice</h2>
 <exercise title="Add a stock-level query to the catalog">
 <p>Give <code>CatalogApi</code> a third method, <code>inStock(sku): boolean</code>. Use it in <code>createOrders</code> so <code>placeOrder</code> refuses a sold-out product before calling <code>reserve</code>. Why is it still important that <code>reserve</code> checks the stock itself?</p>
+<starter file="stock.ts">
+// Example to learn from: a quick availability check next to the method
+// that actually changes state, for a different resource.
+//
+//   function createTheatre() {
+//     const seats = new Map([["A1", true]]);
+//     return {
+//       isAvailable: (seat) => seats.get(seat) === true,
+//       book(seat) {
+//         if (seats.get(seat) !== true) throw new Error(`Seat ${seat} is not available`);
+//         seats.set(seat, false);
+//       },
+//     };
+//   }
+//
+// Now add the same kind of check, inStock, to the catalog below.
+
+interface CatalogApi {
+  inStock(sku: string): boolean;
+  reserve(sku: string, quantity: number): void;
+}
+
+function createCatalog(): CatalogApi {
+  const stock = new Map([["mug", 1]]);
+  return {
+    // true when the sku has more than 0 units left
+    inStock: (sku) => false,
+    reserve(sku, quantity) {
+      const left = stock.get(sku) ?? 0;
+      if (quantity > left) throw new Error(`Only ${left} ${sku} left`);
+      stock.set(sku, left - quantity);
+    },
+  };
+}
+
+const catalog = createCatalog();
+for (const quantity of [1, 1]) {
+  if (!catalog.inStock("mug")) {
+    console.log("sold out");
+    continue;
+  }
+  catalog.reserve("mug", quantity);
+  console.log("reserved", quantity);
+}
+</starter>
+<hint><p><code>inStock</code> reads the same <code>stock</code> map that <code>reserve</code> does: <code>(stock.get(sku) ?? 0) &gt; 0</code>.</p></hint>
+<hint><p>Between the check and the reservation, another request could reserve the last unit; that is why <code>reserve</code> must repeat the check itself instead of trusting <code>inStock</code>'s earlier answer.</p></hint>
 <solution>
 <example file="stock.ts">
 interface CatalogApi {
@@ -480,6 +527,39 @@ sold out
 </exercise>
 <exercise title="Write a boundary check">
 <p>Write a function <code>checkImport(fromModule, specifier)</code> that returns an error message when code in one module imports a file from inside another module, and <code>null</code> when the import is allowed. Allowed: anything inside the same module, and another module's <code>index.js</code>. Test it with the three imports below.</p>
+<starter file="boundaries.js">
+// Example to learn from: matching a path shape with a regular expression,
+// then deciding from the captured groups.
+//
+//   function checkLayer(fromLayer, specifier) {
+//     const match = specifier.match(/layers\/([^/]+)\//);
+//     if (!match) return null;
+//     const target = match[1];
+//     if (fromLayer === "controllers" && target === "repositories") {
+//       return `${fromLayer} may not import ${target} directly: go through services`;
+//     }
+//     return null;
+//   }
+//
+// Now write checkImport below: same idea, a different rule (same module,
+// or another module's index.js, are both allowed).
+
+function checkImport(fromModule, specifier) {
+  // match specifier against /modules\/([^/]+)\/(.+)$/; no match at all
+  // means it is not a cross-module import: return null
+  // allowed: target === fromModule (same module), or rest === "index.js"
+  // (another module's public entry point): return null
+  // otherwise, return
+  //   `${fromModule} may not import ${target}/${rest}: use ${target}/index.js`
+  return null;
+}
+
+console.log(checkImport("orders", "../../modules/catalog/index.js"));
+console.log(checkImport("orders", "../../modules/catalog/features/catalog.feature.js"));
+console.log(checkImport("orders", "../../modules/orders/features/orders.feature.js"));
+</starter>
+<hint><p><code>const match = specifier.match(/modules\/([^/]+)\/(.+)$/); if (!match) return null; const [, target, rest] = match;</code> gives you the module name and the rest of the path.</p></hint>
+<hint><p><code>if (target === fromModule || rest === "index.js") return null; return `${fromModule} may not import ${target}/${rest}: use ${target}/index.js`;</code></p></hint>
 <solution>
 <example file="boundaries.js">
 function checkImport(fromModule, specifier) {
@@ -504,6 +584,41 @@ null
 </exercise>
 <exercise title="Subscribe a loyalty module">
 <p>Add a <code>loyalty</code> subscriber to the events example that gives one point per unit bought, and prints the running total for the customer. Do not change the orders code.</p>
+<starter file="loyalty.ts">
+// Example to learn from: defining an event, subscribing to it, and
+// accumulating a running total from its payload.
+//
+//   interface PageViewed { readonly path: string; }
+//   const PageViewedEvent = defineEvent<"page.viewed", PageViewed>("page.viewed");
+//   const views = new Map<string, number>();
+//   bus.on<Event<PageViewed>>(PageViewedEvent.type, (event) => {
+//     const { path } = event.payload;
+//     views.set(path, (views.get(path) ?? 0) + 1);
+//     console.log(`views: ${path} has ${views.get(path)}`);
+//   });
+//
+// Now do the same for order.placed and loyalty points below.
+
+import { createEventBus, defineEvent, type Event } from "@zudojs/events";
+
+interface OrderPlaced {
+  readonly email: string;
+  readonly quantity: number;
+}
+const OrderPlacedEvent = defineEvent<"order.placed", OrderPlaced>("order.placed");
+
+const bus = createEventBus();
+const points = new Map<string, number>();
+
+// subscribe to OrderPlacedEvent.type: add event.payload.quantity to
+// points.get(email) (default 0), then log
+// `loyalty: ${email} has ${points.get(email)} points`
+
+await bus.publish(OrderPlacedEvent.create({ email: "ada@example.com", quantity: 2 }));
+await bus.publish(OrderPlacedEvent.create({ email: "ada@example.com", quantity: 3 }));
+</starter>
+<hint><p><code>bus.on&lt;Event&lt;OrderPlaced&gt;&gt;(OrderPlacedEvent.type, (event) =&gt; { ... })</code>, exactly as the worked example subscribes to <code>page.viewed</code>.</p></hint>
+<hint><p>Inside the handler: <code>const { email, quantity } = event.payload; points.set(email, (points.get(email) ?? 0) + quantity); console.log(...)</code>.</p></hint>
 <solution>
 <example file="loyalty.ts">
 import { createEventBus, defineEvent, type Event } from "@zudojs/events";

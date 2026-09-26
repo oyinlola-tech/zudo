@@ -876,6 +876,37 @@ const d: (p: DiscountedProduct) => string = (p: Product) => p.sku;
 const e: { sku: string } = { sku: "RICE-5", priceKobo: 850000 };
 const f: () => void = () => 42;
 </example>
+<starter file="predict-answers.ts">
+// Example to learn from: the same four predictions (array covariance,
+// function parameter contravariance, and the fresh-literal excess-property
+// check), on a different pair of types.
+//
+//   interface Fruit { readonly name: string }
+//   interface Citrus extends Fruit { readonly acidity: number }
+//
+//   declare const citrusList: Citrus[];
+//   const fruits: Fruit[] = citrusList;                          // ok: covariant (unsound)
+//   const describeFruit: (f: Citrus) => string = (f: Fruit) => f.name;  // ok: handles any fruit
+//   const bad: { name: string } = { name: "Lime", acidity: 2 };  // error: excess property
+//
+// Now write your prediction for each line below, then run
+// `npx tsc --noEmit` on your computer and paste what it prints.
+
+interface Product { readonly sku: string; readonly priceKobo: number }
+interface DiscountedProduct extends Product { readonly discountKobo: number }
+
+declare const products: DiscountedProduct[];
+declare const readonlyProducts: readonly DiscountedProduct[];
+
+const a: Product[] = products;
+const b: DiscountedProduct[] = readonlyProducts;
+const c: (p: Product) => string = (p: DiscountedProduct) => p.sku;
+const d: (p: DiscountedProduct) => string = (p: Product) => p.sku;
+const e: { sku: string } = { sku: "RICE-5", priceKobo: 850000 };
+const f: () => void = () => 42;
+</starter>
+<hint><p>Arrays and function returns are usually forgiving (covariant); function <em>parameters</em> are checked the other way round (contravariant); and a <em>fresh</em> object literal is checked for extra properties, but a variable holding the same value is not.</p></hint>
+<hint><p>Only <code>b</code>, <code>c</code> and <code>e</code> fail: a <code>readonly</code> array cannot become mutable, <code>c</code>'s function would need <code>discountKobo</code> it might not get, and <code>e</code>'s literal has a property <code>{ sku: string }</code> does not mention.</p></hint>
 <solution>
 <example file="predict-answers.ts" check="tsc-error">
 interface Product { readonly sku: string; readonly priceKobo: number }
@@ -949,6 +980,50 @@ const b: Importer<Order> = paidImporter;
 const c: Importer<PaidOrder> = orderImporter;
 const d: PriceCache<string, Order> = paidCache;
 </example>
+<starter file="annotate-answer.ts">
+// Example to learn from: the same three variance annotations, on a
+// read-only box, a write-only sink, and a two-way cache of fruit instead
+// of orders.
+//
+//   interface Fruit { readonly name: string }
+//   interface Citrus extends Fruit { readonly acidity: number }
+//
+//   interface Box<out T> { readonly get: () => T }
+//   interface Sink<in T> { readonly put: (value: T) => void }
+//
+//   declare const citrusBox: Box<Citrus>;
+//   declare const fruitSink: Sink<Fruit>;
+//
+//   const fruitBox: Box<Fruit> = citrusBox;        // ok: out is covariant
+//   const citrusSink: Sink<Citrus> = fruitSink;     // ok: in is contravariant
+//
+// Now annotate the interfaces below the same way, then predict a, b, c, d.
+
+interface Order { readonly id: string }
+interface PaidOrder extends Order { readonly paidAt: string }
+
+// Add in, out or in out to each type parameter, based on how it is used
+// in the interface's members below.
+interface Report<T> { readonly rows: () => readonly T[] }
+interface Importer<T> { readonly accept: (row: T) => void }
+interface PriceCache<K, V> {
+  readonly get: (key: K) => V | undefined;
+  readonly set: (key: K, value: V) => void;
+}
+
+declare const paidReport: Report<PaidOrder>;
+declare const paidImporter: Importer<PaidOrder>;
+declare const orderImporter: Importer<Order>;
+declare const paidCache: PriceCache<string, PaidOrder>;
+
+const a: Report<Order> = paidReport;
+const b: Importer<Order> = paidImporter;
+const c: Importer<PaidOrder> = orderImporter;
+const d: PriceCache<string, Order> = paidCache;
+</starter>
+<hint><p>A type only ever handed <em>out</em> (as a return value) is <code>out</code>. A type only ever taken <em>in</em> (as a parameter) is <code>in</code>. A type used both ways, like a cache's value, is <code>in out</code>.</p></hint>
+<hint><p><code>Report&lt;out T&gt;</code>, <code>Importer&lt;in T&gt;</code>, <code>PriceCache&lt;in K, in out V&gt;</code>. With those, <code>a</code> and <code>c</code> compile; <code>b</code> and <code>d</code> do not.</p></hint>
+<solution>
 <solution>
 <example file="annotate-answer.ts" check="tsc-error">
 interface Order { readonly id: string }
@@ -1007,6 +1082,55 @@ Found 2 errors in the same file, starting at: annotate-answer.ts:17
 </exercise>
 <exercise title="Replace a clever type with a test">
 <p>The <code>Reachable</code> type found the unreachable <code>"archived"</code> status. Write the same check as a plain runtime function, <code>unreachable(flow, start)</code>, that walks the table and returns the statuses never visited. Which version would you keep in a shop's codebase, and why?</p>
+<starter file="unreachable.ts">
+// Example to learn from: the same breadth-first reachability walk, over a
+// subscription's states instead of an order's.
+//
+//   const SUBSCRIPTION_FLOW = {
+//     trial: ["active", "expired"],
+//     active: ["cancelled", "expired"],
+//     cancelled: [],
+//     expired: [],
+//     archived: [],
+//   } as const satisfies Record<string, readonly string[]>;
+//
+//   function unreachableFrom(flow: Readonly<Record<string, readonly string[]>>, start: string): string[] {
+//     const seen = new Set<string>();
+//     const queue = [start];
+//     while (queue.length > 0) {
+//       const state = queue.shift();
+//       if (state === undefined || seen.has(state)) continue;
+//       seen.add(state);
+//       queue.push(...(flow[state] ?? []));
+//     }
+//     return Object.keys(flow).filter((s) => !seen.has(s));
+//   }
+//
+//   console.log(unreachableFrom(SUBSCRIPTION_FLOW, "trial"));   // [ 'archived' ]
+//
+// Now do the same for the order flow below.
+
+const ORDER_FLOW = {
+  pending: ["paid", "cancelled"],
+  paid: ["shipped", "refunded"],
+  shipped: ["delivered", "returned"],
+  returned: ["refunded"],
+  delivered: [],
+  cancelled: [],
+  refunded: [],
+  archived: [],
+} as const satisfies Record<string, readonly string[]>;
+
+function unreachable(flow: Readonly<Record<string, readonly string[]>>, start: string): string[] {
+  // Breadth-first walk from `start`, following flow[status] each time.
+  // Return every key of `flow` that the walk never reached.
+  return [];
+}
+
+console.log(unreachable(ORDER_FLOW, "pending"));
+</starter>
+<hint><p>Keep a <code>Set&lt;string&gt;</code> of statuses already seen, and a queue starting with <code>[start]</code>. While the queue is not empty, take one out, skip it if already seen, otherwise mark it seen and push its <code>flow[status]</code> onto the queue.</p></hint>
+<hint><p>At the end, <code>Object.keys(flow).filter((status) =&gt; !seen.has(status))</code> is every status the walk never reached.</p></hint>
 <solution>
 <example file="unreachable.ts">
 const ORDER_FLOW = {

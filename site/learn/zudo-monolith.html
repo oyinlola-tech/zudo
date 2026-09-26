@@ -1718,7 +1718,54 @@ services/notifications.service.ts      notifications</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="cancel.ts" data-project="shop" data-command="npx tsx cancel.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Cancel an order</h3><p>Write <code>cancelOrder(db, orderId)</code>: in one transaction, put every line's quantity back into stock and mark the order <code>cancelled</code>. Refuse to cancel an order that is already cancelled. Check it with a paid order, then cancel it twice.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="23" data-file="cancel.ts" data-project="shop">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="cancel.ts" data-project="shop" data-command="npx tsx cancel.ts" data-title="Cancel an order"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Cancel an order</h3><div class="lx-ex-task"><p>Write <code>cancelOrder(db, orderId)</code>: in one transaction, put every line's quantity back into stock and mark the order <code>cancelled</code>. Refuse to cancel an order that is already cancelled. Check it with a paid order, then cancel it twice.</p></div><script type="text/plain" class="lx-ex-starter" data-file="cancel.ts">// Example to learn from: locking a row before checking it, so a second
+// concurrent call cannot slip past the same check.
+//
+//   async function redeemCoupon(db: Database, code: string): Promise<void> {
+//     await db.transaction(async (tx) => {
+//       const { rows } = await tx.query<{ redeemed: boolean }>("SELECT redeemed FROM coupons WHERE code = $1 FOR UPDATE", [code]);
+//       if (rows[0] === undefined) throw new NotFoundError(`Coupon ${code} not found`);
+//       if (rows[0].redeemed) throw new ConflictError(`Coupon ${code} was already redeemed`);
+//       await tx.query("UPDATE coupons SET redeemed = true WHERE code = $1", [code]);
+//     });
+//   }
+//
+// Now do the same shape for cancelling an order below.
+
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+import { createEventBus } from "@zudojs/events";
+import type { Database } from "./src/db.js";
+import { OrdersRepository } from "./src/repositories/orders.repository.js";
+import { ProductsRepository } from "./src/repositories/products.repository.js";
+import { createCheckout } from "./src/services/checkout.service.js";
+import { createFakeGateway } from "./src/services/payments.service.js";
+import { shopDatabase } from "./shop-db.js";
+
+async function cancelOrder(db: Database, orderId: number): Promise<void> {
+  await db.transaction(async (tx) => {
+    // read the order's status with "... FOR UPDATE" so a second, concurrent
+    // cancel cannot pass the check before this one finishes
+    // missing: throw new NotFoundError(`Order ${orderId} not found`)
+    // already "cancelled": throw new ConflictError(`Order ${orderId} is already cancelled`)
+    // otherwise: put every line's quantity back into stock (orders.lines +
+    // products.changeStock for each), then orders.setStatus(orderId, "cancelled")
+  });
+}
+
+const db = await shopDatabase();
+const checkout = createCheckout(db, createFakeGateway(), createEventBus());
+const stock = async () => (await db.query<{ stock: number }>("SELECT stock FROM products WHERE sku = 'RICE-5KG'")).rows[0]!.stock;
+
+const { orderId } = await checkout.checkout(1, [{ sku: "RICE-5KG", quantity: 2 }], "tok_visa");
+console.log("after checkout:", await stock());
+await cancelOrder(db, orderId);
+console.log("after cancel:", await stock());
+try {
+  await cancelOrder(db, orderId);
+} catch (error) {
+  console.log((error as Error).name, (error as Error).message, "- stock:", await stock());
+}
+await db.close();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Start with <code>const { rows } = await tx.query&lt;{ status: string }&gt;("SELECT status FROM orders WHERE id = $1 FOR UPDATE", [orderId]);</code>, then the two guard <code>if</code>s with their <code>throw</code>s.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>for (const line of await orders.lines(orderId)) await products.changeStock(line.sku, line.quantity);</code> then <code>await orders.setStatus(orderId, "cancelled");</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="23" data-file="cancel.ts" data-project="shop">
 <figcaption class="lx-bar"><span class="lx-file">cancel.ts</span><button type="button" class="lx-edit" data-index="23" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConflictError</span><span class="t-pn">,</span> <span class="t-ty">NotFoundError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createEventBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/events"</span><span class="t-pn">;</span>
@@ -1796,7 +1843,37 @@ after cancel: 3
 ConflictError Order 1 is already cancelled - stock: 3</pre></div>
 </figure>
 <p>The status is read with <code>FOR UPDATE</code>, so two cancel requests for the same order cannot both pass the check and put the stock back twice. A real shop would also refund the payment; that is a network call, so it happens after the transaction, like the charge in checkout.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="ownership.js"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Draw the ownership map</h3><p>Decide which area owns each table: users own <code>users</code>, products own <code>products</code>, orders own <code>orders</code>, <code>order_lines</code> and <code>payments</code>, notifications own <code>notifications</code>. Extend the "who uses what" idea: for a list of files with their area and the tables they touch, print every use of a table owned by <em>another</em> area.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="24" data-file="ownership.js">
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="ownership.js" data-title="Draw the ownership map"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Draw the ownership map</h3><div class="lx-ex-task"><p>Decide which area owns each table: users own <code>users</code>, products own <code>products</code>, orders own <code>orders</code>, <code>order_lines</code> and <code>payments</code>, notifications own <code>notifications</code>. Extend the "who uses what" idea: for a list of files with their area and the tables they touch, print every use of a table owned by <em>another</em> area.</p></div><script type="text/plain" class="lx-ex-starter" data-file="ownership.js">// Example to learn from: the same "who owns this, who is actually
+// touching it" check, for a smaller set of areas.
+//
+//   const owner = { posts: "blog", comments: "blog", authors: "authors" };
+//   const modules = [
+//     { file: "blog/posts.ts", area: "blog", tables: ["posts", "authors"] },
+//     { file: "authors/profile.ts", area: "authors", tables: ["authors"] },
+//   ];
+//   for (const { file, area, tables } of modules) {
+//     for (const table of tables) {
+//       if (owner[table] !== area) console.log(`${file} (${area}) reaches into ${table}, owned by ${owner[table]}`);
+//     }
+//   }
+//
+// Now do the same for the shop's files below.
+
+const owner = {
+  users: "users", products: "products",
+  orders: "orders", order_lines: "orders", payments: "orders",
+  notifications: "notifications",
+};
+const files = [
+  { file: "repositories/orders.repository.ts", area: "orders", tables: ["products", "orders", "order_lines", "payments"] },
+  { file: "repositories/products.repository.ts", area: "products", tables: ["products"] },
+  { file: "repositories/users.repository.ts", area: "users", tables: ["users"] },
+  { file: "routes/index.ts", area: "http", tables: ["notifications"] },
+  { file: "services/notifications.service.ts", area: "notifications", tables: ["notifications"] },
+];
+
+// for each file, for each table it touches: when owner[table] is not that
+// file's own area, log `${file} (${area}) uses ${table}, owned by ${owner[table]}`</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Two nested loops: <code>for (const { file, area, tables } of files) { for (const table of tables) { ... } }</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Inside both loops: <code>if (owner[table] !== area) console.log(`${file} (${area}) uses ${table}, owned by ${owner[table]}`);</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="24" data-file="ownership.js">
 <figcaption class="lx-bar"><span class="lx-file">ownership.js</span><button type="button" class="lx-edit" data-index="24" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="24"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">const</span> owner <span class="t-op">=</span> <span class="t-pn">{</span>
   users<span class="t-op">:</span> <span class="t-str">"users"</span><span class="t-pn">,</span> products<span class="t-op">:</span> <span class="t-str">"products"</span><span class="t-pn">,</span>
@@ -1839,7 +1916,7 @@ for (const { file, area, tables } of files) {
 routes/index.ts (http) uses notifications, owned by notifications</pre></div>
 </figure>
 <p>Each line is a dependency between areas that the code does not declare anywhere. The next lesson removes both: the orders module asks the catalog through its public API instead of joining its table, and the notifications route goes through its own module.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Split it or not?</h3><p>For each situation, choose: keep the monolith, make it a modular monolith, or extract a service. (a) Three developers, 200 orders a day, weekly releases. (b) The catalog is slow on sale days because product pages are read constantly. (c) Five teams, 40 developers; releases wait for each other and teams break each other's tables. (d) A new fraud-checking feature needs a different language and must keep running even when the shop is being deployed.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ol type="a">
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Split it or not?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Split it or not?</h3><div class="lx-ex-task"><p>For each situation, choose: keep the monolith, make it a modular monolith, or extract a service. (a) Three developers, 200 orders a day, weekly releases. (b) The catalog is slow on sale days because product pages are read constantly. (c) Five teams, 40 developers; releases wait for each other and teams break each other's tables. (d) A new fraud-checking feature needs a different language and must keep running even when the shop is being deployed.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Is the strain about people (teams blocking each other), about one hot path being slow, or about something a monolith genuinely cannot do at all (a different language, independent uptime)?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>A modular monolith fixes boundaries inside one codebase; it does not, by itself, give a component its own language or its own deploy schedule. When do you actually need that?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ol type="a">
 <li><strong>Keep the monolith.</strong> None of the strains exists yet; splitting would add work and no benefit.</li>
 <li><strong>Keep it, and cache.</strong> Slow reads are fixed with an index, a cache (<a href="/learn/zudo-cache">the cache lesson</a>) or a read replica long before they need a separate service.</li>
 <li><strong>Modular monolith first.</strong> The problem is boundaries between teams inside the code and the data. Modules with public APIs and a schema each fix that; extract services later, one at a time, only where teams still block each other.</li>

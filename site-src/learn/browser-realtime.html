@@ -697,6 +697,49 @@ timeline: [ 'paid', 'packed', 'out for delivery', 'delivered' ]
 <h2 id="practice">Practice</h2>
 <exercise title="Parse one event block">
 <p>Write <code>parseEvent(block)</code> for a single SSE event block (the text between two blank lines). It returns <code>{ event, id, data, retry }</code>, joins several <code>data</code> lines with <code>"\n"</code>, removes one space after the colon, ignores comments, and returns <code>null</code> when there is no data.</p>
+<starter file="parse-event.js">
+// Example to learn from: splitting lines into a field and a value at the
+// first colon, and building up a result as you go.
+//
+//   function parseHeaders(text) {
+//     const headers = {};
+//     for (const line of text.split("\n")) {
+//       if (line === "") continue;
+//       const colon = line.indexOf(":");
+//       const name = line.slice(0, colon).toLowerCase();
+//       const value = line.slice(colon + 1).replace(/^ /, "");
+//       headers[name] = value;
+//     }
+//     return headers;
+//   }
+//   console.log(parseHeaders("Content-Type: text/plain\nX-Id: 7"));
+//
+// Now do the same idea for one SSE event block, with its several field
+// names and a data array, below.
+
+function parseEvent(block) {
+  const result = { event: "message", id: undefined, data: [], retry: undefined };
+  for (const line of block.split("\n")) {
+    // 1. skip blank lines and comments (lines starting with ":")
+    // 2. split at the first colon into a field and a value (no colon: the
+    //    whole line is the field, value is "")
+    // 3. strip one leading space from the value
+    // 4. "data": push the value onto result.data
+    //    "event": set result.event
+    //    "id": set result.id
+    //    "retry", only when the value is all digits: set result.retry to Number(value)
+  }
+  // return null when result.data is empty; otherwise the result, with
+  // data joined by "\n"
+}
+
+console.log(parseEvent('id: 7\nevent: status\ndata: {"status":"packed"}'));
+console.log(parseEvent("data: line one\ndata:line two\n: a comment"));
+console.log(parseEvent("retry: 3000"));
+console.log(parseEvent("data:  two spaces"));
+</starter>
+<hint><p>Reuse the worked example's colon-splitting almost exactly, but branch on the field name into four cases instead of one, and keep <code>data</code> as an array until the very end.</p></hint>
+<hint><p><code>if (field === "data") result.data.push(value); else if (field === "event") result.event = value; else if (field === "id") result.id = value; else if (field === "retry" &amp;&amp; /^[0-9]+$/.test(value)) result.retry = Number(value);</code> then <code>return result.data.length === 0 ? null : { ...result, data: result.data.join("\n") };</code></p></hint>
 <solution>
 <example file="parse-event.js">
 function parseEvent(block) {
@@ -745,6 +788,30 @@ null
 </exercise>
 <exercise title="Reconnect with backoff and jitter">
 <p>A browser <code>WebSocket</code> does not reconnect by itself. Write <code>reconnectDelay(attempt, random)</code>: the base delay doubles from 500 ms for attempt 1, is capped at 30 seconds, and the actual delay is a random amount between half the base and the full base. <code>random</code> is a function returning a number from 0 to 1, so tests can control it.</p>
+<starter file="backoff.js">
+// Example to learn from: a value that doubles each round but never passes
+// a cap, then adding randomness within a range.
+//
+//   function cooldownMs(strikes, random = Math.random) {
+//     const base = Math.min(10_000, 200 * 2 ** (strikes - 1));
+//     return Math.round(base / 2 + random() * (base / 2));
+//   }
+//   console.log(cooldownMs(1, () => 0), cooldownMs(1, () => 1));
+//
+// Now do the same shape, with different numbers, for reconnect attempts below.
+
+function reconnectDelay(attempt, random = Math.random) {
+  // 1. base = 500 * 2 ** (attempt - 1), capped at 30000 with Math.min
+  // 2. return a value between base / 2 and base:
+  //    Math.round(base / 2 + random() * (base / 2))
+}
+
+for (const attempt of [1, 2, 3, 6, 7, 20]) {
+  console.log(attempt, reconnectDelay(attempt, () => 0), reconnectDelay(attempt, () => 1));
+}
+</starter>
+<hint><p><code>Math.min(cap, base)</code> is the same shape as the worked example's cap; only the starting value (500 instead of 200) and the cap (30,000 instead of 10,000) differ.</p></hint>
+<hint><p><code>const base = Math.min(30_000, 500 * 2 ** (attempt - 1)); return Math.round(base / 2 + random() * (base / 2));</code></p></hint>
 <solution>
 <example file="backoff.js">
 function reconnectDelay(attempt, random = Math.random) {
@@ -769,6 +836,47 @@ for (const attempt of [1, 2, 3, 6, 7, 20]) {
 </exercise>
 <exercise title="Batch fast updates for the screen">
 <p>The courier's location arrives up to 20 times a second, but redrawing the map more often than the screen refreshes is wasted work. Write <code>latestPerFrame(render)</code>: it returns a function that stores each new value and makes sure <code>render</code> runs at most once per animation frame, with the latest value.</p>
+<starter file="per-frame.js">
+// Example to learn from: coalescing many quick updates into one write per
+// animation frame, keeping only the newest value.
+//
+//   let latestScroll;
+//   let frameQueued = false;
+//   function onScroll(top) {
+//     latestScroll = top;
+//     if (frameQueued) return;
+//     frameQueued = true;
+//     requestAnimationFrame(() => {
+//       frameQueued = false;
+//       label.textContent = `scrolled to ${latestScroll}px`;
+//     });
+//   }
+//
+// Now wrap the same idea into a reusable function that takes any render
+// callback, below.
+
+function latestPerFrame(render) {
+  let latest;
+  let scheduled = false;
+  return (value) => {
+    latest = value;
+    // 1. if a frame is already scheduled, stop here: this value will be
+    //    picked up when it runs
+    // 2. otherwise, mark one as scheduled, and requestAnimationFrame a
+    //    callback that un-marks `scheduled` and calls render(latest)
+    render(latest); // placeholder: renders every call instead of once per frame
+  };
+}
+
+const renders = [];
+const showLocation = latestPerFrame((point) => renders.push(point));
+for (let update = 1; update <= 5; update++) showLocation({ update, lat: 6.5244, lng: 3.3792 });
+await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+console.log("updates received: 5, renders:", renders.length);
+console.log("rendered update", renders[0].update);
+</starter>
+<hint><p>Guard with the <code>scheduled</code> flag before requesting a frame, the same way the worked example guards with <code>frameQueued</code>, and reset it inside the frame callback, before calling <code>render</code>.</p></hint>
+<hint><p><code>if (scheduled) return; scheduled = true; requestAnimationFrame(() =&gt; { scheduled = false; render(latest); });</code> (remove the placeholder <code>render(latest);</code> call above it)</p></hint>
 <solution>
 <example file="per-frame.js" project="live" runtime="dom">
 function latestPerFrame(render) {

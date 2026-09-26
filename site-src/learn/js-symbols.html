@@ -704,6 +704,46 @@ PASS log protocol -> ₦1,500.50
 <h2 id="practice">Practice</h2>
 <exercise title="A Duration that prints and subtracts">
 <p>Write a <code>Duration</code> class holding whole seconds. In text it should read like <code>1h 05m 09s</code>. Unlike money, durations may be used as numbers (seconds) for comparisons and arithmetic, but a binary <code>+</code> with a string must still produce readable text. Use <code>Symbol.toPrimitive</code> to make <code>"number"</code> return seconds and both <code>"string"</code> and <code>"default"</code> return the text.</p>
+<starter file="duration.js">
+// Example to learn from: the same policy (a meaningful "number" hint, text
+// otherwise) for a weight instead of a duration.
+//
+//   class Weight {
+//     constructor(grams) { this.grams = grams; }
+//     [Symbol.toPrimitive](hint) {
+//       if (hint === "number") return this.grams;
+//       return `${Math.floor(this.grams / 1000)}kg ${String(this.grams % 1000).padStart(3, "0")}g`;
+//     }
+//   }
+//   const rice = new Weight(5250);
+//   console.log(`Rice: ${rice}`);         // "Rice: 5kg 250g"
+//   console.log(rice - new Weight(900));  // 4350, arithmetic uses grams
+//
+// Now do the same idea for Duration below.
+
+class Duration {
+  constructor(seconds) {
+    if (!Number.isInteger(seconds) || seconds < 0) throw new RangeError("seconds must be a whole number >= 0");
+    this.seconds = seconds;
+  }
+  [Symbol.toPrimitive](hint) {
+    // your code here:
+    // 1. when hint === "number", return this.seconds
+    // 2. otherwise, build "1h 05m 09s" style text: h = Math.floor(seconds / 3600),
+    //    m = Math.floor((seconds % 3600) / 60), s = seconds % 60, with m and s
+    //    each padded to 2 digits with String(...).padStart(2, "0")
+  }
+}
+
+const delivery = new Duration(3909);
+const pickup = new Duration(1200);
+
+console.log(`Delivery takes ${delivery}`);
+console.log("Pickup: " + pickup);
+console.log(delivery > pickup, delivery - pickup, Math.max(delivery, pickup));
+</starter>
+<hint><p>The <code>hint</code> argument is <code>"number"</code>, <code>"string"</code> or <code>"default"</code>. Only <code>"number"</code> needs special handling here — everything else falls into the same text branch.</p></hint>
+<hint><p><code>if (hint === "number") return this.seconds; const h = Math.floor(this.seconds / 3600); const m = Math.floor((this.seconds % 3600) / 60); const s = this.seconds % 60; return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;</code></p></hint>
 <solution>
 <example file="duration.js">
 class Duration {
@@ -737,6 +777,39 @@ true 2709 3909
 </exercise>
 <exercise title="A plugin marker across packages">
 <p>A shop platform loads plugins from separate packages. A plugin is any object marked with the registry symbol <code>Symbol.for("shop.plugin")</code> whose value is <code>{ name, version }</code>. Write <code>loadPlugins(candidates)</code> that returns the names and versions of the marked objects and ignores the rest, including an object with a <em>string</em> key <code>"shop.plugin"</code>.</p>
+<starter file="plugins.js">
+// Example to learn from: a shared registry symbol used to mark objects
+// for serialization instead of marking plugins.
+//
+//   const SERIALIZABLE = Symbol.for("app.serializable");
+//   function serializableNames(candidates) {
+//     return candidates
+//       .filter((value) => typeof value === "object" && value !== null && typeof value[SERIALIZABLE] === "object")
+//       .map((item) => item[SERIALIZABLE].type);
+//   }
+//   const dateBox = { [Symbol.for("app.serializable")]: { type: "date" } };
+//   const fake = { "app.serializable": { type: "fake" } };
+//   console.log(serializableNames([dateBox, fake, 42])); // [ 'date' ]
+//
+// Now do the same idea for loadPlugins below.
+
+const PLUGIN = Symbol.for("shop.plugin");
+
+function loadPlugins(candidates) {
+  // your code here: keep only objects (typeof === "object", not null) whose
+  // value at the PLUGIN key is itself an object, then map each to
+  // `${plugin[PLUGIN].name}@${plugin[PLUGIN].version}`
+  return [];
+}
+
+const paystackPlugin = { [Symbol.for("shop.plugin")]: { name: "paystack", version: "2.1.0" }, pay() {} };
+const smsPlugin = { [Symbol.for("shop.plugin")]: { name: "sms", version: "1.0.3" } };
+const lookalike = { "shop.plugin": { name: "fake", version: "0.0.0" } };
+
+console.log(loadPlugins([paystackPlugin, lookalike, null, smsPlugin, "text"]));
+</starter>
+<hint><p><code>typeof value === "object" &amp;&amp; value !== null</code> guards against <code>null</code> and primitives like <code>"text"</code> before you read <code>value[PLUGIN]</code>. The string key <code>"shop.plugin"</code> is a completely different key from the symbol, so <code>lookalike[PLUGIN]</code> is <code>undefined</code>.</p></hint>
+<hint><p><code>candidates.filter((value) =&gt; typeof value === "object" &amp;&amp; value !== null &amp;&amp; typeof value[PLUGIN] === "object").map((plugin) =&gt; `${plugin[PLUGIN].name}@${plugin[PLUGIN].version}`)</code></p></hint>
 <solution>
 <example file="plugins.js">
 const PLUGIN = Symbol.for("shop.plugin");
@@ -761,6 +834,48 @@ console.log(loadPlugins([paystackPlugin, lookalike, null, smsPlugin, "text"]));
 </exercise>
 <exercise title="An iterable, async-iterable order log">
 <p>Write an <code>OrderLog</code> class with <code>add(event)</code>. Make it iterable with <code>Symbol.iterator</code> (events in order) and async-iterable with <code>Symbol.asyncIterator</code> (the same events, one per tick, as if streamed from a server). Give it the tag <code>OrderLog</code>.</p>
+<starter file="order-log.js">
+// Example to learn from: the same three well-known symbols on a class that
+// computes its values instead of replaying a stored list.
+//
+//   class Countdown {
+//     constructor(from) { this.from = from; }
+//     *[Symbol.iterator]() { for (let n = this.from; n >= 0; n--) yield n; }
+//     async *[Symbol.asyncIterator]() {
+//       for (let n = this.from; n >= 0; n--) { await null; yield n; }
+//     }
+//     get [Symbol.toStringTag]() { return "Countdown"; }
+//   }
+//   const countdown = new Countdown(3);
+//   console.log([...countdown]);                          // [3, 2, 1, 0]
+//   console.log(Object.prototype.toString.call(countdown)); // [object Countdown]
+//   for await (const n of countdown) console.log("tick:", n);
+//
+// Now do the same three symbols for OrderLog below, replaying stored events.
+
+class OrderLog {
+  #events = [];
+  add(event) {
+    this.#events.push(event);
+    return this;
+  }
+  *[Symbol.iterator]() {
+    // your code here: yield* this.#events;
+  }
+  async *[Symbol.asyncIterator]() {
+    // your code here: for (const event of this.#events) { await null; yield event; }
+  }
+  // your code here: get [Symbol.toStringTag]() { return "OrderLog"; }
+}
+
+const log = new OrderLog().add("created").add("paid").add("shipped");
+console.log([...log].join(" -> "));
+console.log(Object.prototype.toString.call(log));
+
+for await (const event of log) console.log("stream:", event);
+</starter>
+<hint><p><code>yield*</code> delegates to another iterable in one line: <code>yield* this.#events;</code> yields everything <code>this.#events</code> would yield, in order.</p></hint>
+<hint><p><code>*[Symbol.iterator]() { yield* this.#events; }</code>, <code>async *[Symbol.asyncIterator]() { for (const event of this.#events) { await null; yield event; } }</code>, and <code>get [Symbol.toStringTag]() { return "OrderLog"; }</code>.</p></hint>
 <solution>
 <example file="order-log.js">
 class OrderLog {

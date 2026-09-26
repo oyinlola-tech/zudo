@@ -352,7 +352,7 @@ end: user 1: 11000, user 2: 0</pre></div>
 
 <section>
 <h2 id="identify">Step 1: name the problems</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Write the list</h3><p>Before you change any code, write down every problem you can find in <code>server.ts</code>, including ones the script did not show. Sort them into <strong>security</strong>, <strong>correctness</strong>, <strong>architecture</strong> and <strong>operations</strong>. Aim for at least ten.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><div class="lx-table-wrap"><table>
+<div class="lx-exercise" data-exercise="1" data-mode="think" data-title="Write the list"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Write the list</h3><div class="lx-ex-task"><p>Before you change any code, write down every problem you can find in <code>server.ts</code>, including ones the script did not show. Sort them into <strong>security</strong>, <strong>correctness</strong>, <strong>architecture</strong> and <strong>operations</strong>. Aim for at least ten.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Read every line that builds a SQL string, every place a value comes out of <code>ctx.params</code>, <code>ctx.query</code> or the body, and every write that is not wrapped in anything. Each is a different category, but the same handful of lines cause most of them.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Then look for what is simply <em>missing</em> rather than wrong: things the six-attack script never had a reason to try, like tests, logs, a health check, or a schema for the body.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><div class="lx-table-wrap"><table>
 <thead><tr><th>Kind</th><th>Problem</th></tr></thead>
 <tbody>
 <tr><td>Security</td><td>SQL built by string concatenation in every query: injection (incident 2), and worse ones are possible, such as <code>'; DROP TABLE …</code> through <code>/wallets/:userId</code>.</td></tr>
@@ -395,7 +395,7 @@ end: user 1: 11000, user 2: 0</pre></div>
 
 <section>
 <h2 id="fix-core">Step 3: fix security and data</h2>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="2" data-file="try-again.ts" data-project="challenge" data-command="npx tsx try-again.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Validation, SQL, authentication and transactions</h3><p>Move the rules out of the route handlers into a <code>wallets.ts</code> module with four operations: <code>authenticate</code>, <code>card</code> (look up one code), <code>redeem</code> and <code>transfer</code>. Then write a new, thin HTTP layer on top of it. When you are done, run the same six attacks again: each must be refused with the right status, and the money must add up.</p>
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="2" data-file="try-again.ts" data-project="challenge" data-command="npx tsx try-again.ts" data-title="Validation, SQL, authentication and transactions"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Validation, SQL, authentication and transactions</h3><div class="lx-ex-task"><p>Move the rules out of the route handlers into a <code>wallets.ts</code> module with four operations: <code>authenticate</code>, <code>card</code> (look up one code), <code>redeem</code> and <code>transfer</code>. Then write a new, thin HTTP layer on top of it. When you are done, run the same six attacks again: each must be refused with the right status, and the money must add up.</p>
 <p>Hints:</p>
 <ul>
 <li>A gift code has a known shape. A schema with a regular expression refuses anything else before SQL ever sees it. Parameters (<code>$1</code>) are still required: validation is one wall, parameters are the second.</li>
@@ -403,7 +403,108 @@ end: user 1: 11000, user 2: 0</pre></div>
 <li>Replace "<code>SELECT</code>, then <code>UPDATE</code>" with one <code>UPDATE … WHERE code = $1 AND redeemed_by IS NULL RETURNING …</code>. It checks and claims the card in one step, so the race disappears.</li>
 <li>For a transfer, debit with <code>AND balance_cents &gt;= $1</code>, then credit, inside <code>db.transaction</code>. Check <code>affectedRows</code> after each <code>UPDATE</code> and throw if it is 0: the throw rolls back the whole transaction.</li>
 <li>Throw errors from <code>@zudojs/errors</code>. <code>@zudojs/http</code> turns them into 400, 401, 404 and 409 answers for you.</li>
-</ul><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>The rules, in one module with no HTTP in it:</p>
+</ul></div><script type="text/plain" class="lx-ex-starter" data-file="wallets.ts">// Example to learn from: the same "check and claim in one UPDATE" fix, for
+// a raffle ticket instead of a gift card.
+//
+//   const TicketCode = schema.string().trim().regex(/^RAFFLE-[A-Z0-9]{6}$/);
+//   async function claimTicket(db: PGlite, userId: number, input: unknown) {
+//     const { code } = schema.object({ code: TicketCode }).parse(input);
+//     const { rows } = await db.query<{ prize_cents: number }>(
+//       "UPDATE tickets SET claimed_by = $1 WHERE code = $2 AND claimed_by IS NULL RETURNING prize_cents",
+//       [userId, code],
+//     );
+//     if (!rows[0]) throw new NotFoundError("No unclaimed ticket with that code");
+//     return rows[0].prize_cents;
+//   }
+//
+// Now do the same shape of fix for gift cards and wallet transfers below.
+
+import type { PGlite } from "@electric-sql/pglite";
+import { hashToken } from "@zudojs/crypto";
+import { AuthenticationError, ConflictError, NotFoundError, ValidationError } from "@zudojs/errors";
+import { schema } from "@zudojs/schema";
+
+const Code = schema.string().trim().regex(/^GIFT-[A-Z0-9-]{4,40}$/);
+const Redeem = schema.object({ code: Code });
+const Transfer = schema.object({ to: schema.number().int().positive(), amountCents: schema.number().int().min(1).max(100_000) });
+
+export function createWallets(db: PGlite) {
+  return {
+    async authenticate(authorization: string | undefined): Promise<number> {
+      // Take the token after "Bearer " (undefined if the header is missing
+      // or the wrong shape). Hash it with hashToken and look up
+      // SELECT id FROM users WHERE token_hash = $1. No row: AuthenticationError.
+      throw new AuthenticationError("Log in first");
+    },
+
+    async card(code: unknown) {
+      // Parse `code` with Code.parse first — this is what turns the SQL
+      // injection string into a 400 before it ever reaches the database.
+      // Then SELECT amount_cents AS "amountCents", redeemed_by IS NOT NULL
+      // AS redeemed FROM gift_cards WHERE code = $1. No row: NotFoundError.
+      return { amountCents: 0, redeemed: false };
+    },
+
+    async balance(userId: number): Promise<number> {
+      // SELECT balance_cents FROM wallets WHERE user_id = $1; 0 if no row.
+      return 0;
+    },
+
+    async redeem(userId: number, input: unknown): Promise<number> {
+      // Parse `input` with Redeem, then inside db.transaction:
+      // UPDATE gift_cards SET redeemed_by = $1 WHERE code = $2
+      //   AND redeemed_by IS NULL RETURNING amount_cents
+      // No row: NotFoundError. Otherwise credit the wallet the same amount
+      // and return it — see the raffle example for the exact shape.
+      return db.transaction(async () => 0);
+    },
+
+    async transfer(fromUserId: number, input: unknown): Promise<void> {
+      // Parse `input` with Transfer; refuse to === fromUserId with
+      // ValidationError. Inside db.transaction: debit with
+      // "... WHERE user_id = $2 AND balance_cents >= $1", throw
+      // ConflictError if affectedRows is 0; then credit `to`, throw
+      // NotFoundError if that affectedRows is 0.
+      await db.transaction(async () => {});
+    },
+  };
+}</script><script type="text/plain" class="lx-ex-starter" data-file="fixed-server.ts">import { ValidationError } from "@zudojs/errors";
+import {
+  createHttpServer,
+  createNodeHttpAdapter,
+  createResponseContext,
+  createRouter,
+  type HttpRequestContext,
+  type HttpRouterContext,
+} from "@zudojs/http";
+import type { createWallets } from "./wallets.js";
+
+function body(ctx: HttpRouterContext): unknown {
+  try {
+    return JSON.parse(new TextDecoder().decode(ctx.request.body as Uint8Array));
+  } catch {
+    throw new ValidationError("The body must be JSON");
+  }
+}
+
+export function createFixedServer(wallets: ReturnType<typeof createWallets>) {
+  const router = createRouter();
+  // `me` is the only place a caller's identity comes from: the bearer
+  // token, through wallets.authenticate. No route may take a user id from
+  // the request instead.
+  const me = (ctx: HttpRouterContext) => wallets.authenticate(ctx.request.getHeader("authorization"));
+
+  // Register four routes: GET /giftcards/:code, GET /wallets/me,
+  // POST /giftcards/redeem, POST /wallets/transfer. Each one calls `me(ctx)`
+  // for identity where the original called nothing, and delegates the rest
+  // to the matching wallets.* method, wrapping the result in
+  // createResponseContext().json(...).
+
+  return createHttpServer({
+    adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+    handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  });
+}</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The fix for the race is one statement: <code>UPDATE gift_cards SET redeemed_by = $1 WHERE code = $2 AND redeemed_by IS NULL RETURNING amount_cents</code>. It both checks and claims the card, so a second, simultaneous <code>UPDATE</code> finds no matching row instead of a stale "unused" answer.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>authenticate</code> is the only function that ever reads <code>authorization</code>; every route calls <code>me(ctx)</code> for identity and never <code>ctx.params</code> or the body for who the caller is.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 3</p><p>In <code>transfer</code>, the debit's <code>WHERE ... AND balance_cents &gt;= $1</code> makes "not enough money" impossible to write past; check <code>affectedRows</code> after <em>both</em> updates and throw inside the <code>db.transaction</code> callback, since a throw there rolls back everything already written.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>The rules, in one module with no HTTP in it:</p>
 <figure class="lx-example" data-index="3" data-file="wallets.ts" data-project="challenge">
 <figcaption class="lx-bar"><span class="lx-file">wallets.ts</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">PGlite</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@electric-sql/pglite"</span><span class="t-pn">;</span>
@@ -681,9 +782,9 @@ await server.stop();
 await db.close();</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx try-again.ts</code></div><pre class="lx-no-copy">start: user 1: 1000, user 2: 1000
 1. 200 {"creditedCents":5000}
-2. 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+2. 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":[],"code":"invalid_format","message":"String does not match pattern"}]}
 3. 401 {"error":"Log in first","code":"ERR_AUTHENTICATION_FAILED"}
-4. 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+4. 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["amountCents"],"code":"too_small","message":"Expected &gt;= 1, received -3000"}]}
 5. 404 {"error":"No wallet for user 99","code":"ERR_RESOURCE_NOT_FOUND"}
 6. 401 {"error":"Log in first","code":"ERR_AUTHENTICATION_FAILED"}
 7. 404 {"error":"No unused gift card with that code","code":"ERR_RESOURCE_NOT_FOUND"}
@@ -705,7 +806,56 @@ end: user 1: 6000, user 2: 1000</pre></div>
 
 <section>
 <h2 id="tests">Step 4: prove it with tests</h2>
-<div class="lx-exercise" data-exercise="3" data-mode="open"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>One test per incident</h3><p>Write Vitest tests for the wallet module. Give every test a fresh database, so tests cannot affect each other. Include the race: redeem the same card twice <em>at the same time</em> with <code>Promise.allSettled</code>, and require exactly one success.</p><p class="lx-ex-how">Write it in the editor and run it. Hints and the solution open up once you have tried.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="6" data-file="wallets.test.ts" data-project="challenge">
+<div class="lx-exercise" data-exercise="3" data-mode="open" data-title="One test per incident"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>One test per incident</h3><div class="lx-ex-task"><p>Write Vitest tests for the wallet module. Give every test a fresh database, so tests cannot affect each other. Include the race: redeem the same card twice <em>at the same time</em> with <code>Promise.allSettled</code>, and require exactly one success.</p></div><script type="text/plain" class="lx-ex-starter" data-file="wallets.test.ts">// Example to learn from: firing two of the same write at once and requiring
+// exactly one to win, for a seat-booking function instead of a gift card.
+//
+//   it("books a seat once, even booked twice at the same time", async () => {
+//     const results = await Promise.allSettled([bookSeat(1, "12A"), bookSeat(1, "12A")]);
+//     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+//   });
+//
+// Now write the five wallet tests below, one per incident.
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { PGlite } from "@electric-sql/pglite";
+import { createDatabase } from "./db.js";
+import { createWallets } from "./wallets.js";
+
+let db: PGlite;
+let wallets: ReturnType<typeof createWallets>;
+
+beforeEach(async () => {
+  ({ db } = await createDatabase());
+  wallets = createWallets(db);
+});
+afterEach(() => db.close());
+
+describe("wallets", () => {
+  it("credits a gift card once, even when it is redeemed twice at the same time", async () => {
+    // Promise.allSettled two identical wallets.redeem(1, { code: "GIFT-ADA-5000" })
+    // calls; exactly one result should be "fulfilled", and wallets.balance(1)
+    // should end at 6000 (1000 starting + the 5000 card), not 11000.
+  });
+
+  it("keeps the sender's money when the receiver does not exist", async () => {
+    // wallets.transfer(2, { to: 99, amountCents: 1000 }) should reject with
+    // "No wallet for user 99", and wallets.balance(2) should still be 1000.
+  });
+
+  it("refuses negative and oversized amounts", async () => {
+    // A transfer of -3000 should reject with "Validation failed"; a transfer
+    // of 5000 (more than the sender has) should reject with "Not enough money".
+  });
+
+  it("treats SQL in a gift card code as an invalid code", async () => {
+    // wallets.card("x' OR '1'='1") should reject with "Validation failed".
+  });
+
+  it("rejects a missing or unknown session token", async () => {
+    // wallets.authenticate(undefined) and wallets.authenticate("Bearer not-a-real-token")
+    // should both reject with "Log in first".
+  });
+});</script><p class="lx-ex-how">Write it in the editor and run it. Hints and the solution open up once you have tried.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>expect(promise).rejects.toThrow("message")</code> checks both that it rejects and what it says, in one line; <code>Promise.allSettled([...]).then((results) =&gt; results.filter((r) =&gt; r.status === "fulfilled"))</code> is how you count successes without one rejection failing the whole test.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Every test starts from the same seed data (Step "The code you inherit"): user 1 (Ada) and user 2 (Linus) each start with 1000 cents, and <code>GIFT-ADA-5000</code> is worth 5000.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="6" data-file="wallets.test.ts" data-project="challenge">
 <figcaption class="lx-bar"><span class="lx-file">wallets.test.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> afterEach<span class="t-pn">,</span> beforeEach<span class="t-pn">,</span> describe<span class="t-pn">,</span> expect<span class="t-pn">,</span> it <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"vitest"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">PGlite</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@electric-sql/pglite"</span><span class="t-pn">;</span>
@@ -816,19 +966,19 @@ describe("wallets", () => {
 <section>
 <h2 id="finish">Step 5: make it production-ready</h2>
 <p>The rest of the checklist uses what you built in the capstone and the production lessons. Each exercise lists what "done" means and where to look; the solutions describe the approach rather than giving code.</p>
-<div class="lx-exercise" data-exercise="4" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Events, queues, caching and abuse protection</h3><p>After a successful redemption or transfer, publish <code>wallet.credited</code> and queue a confirmation e-mail. Rate-limit the code endpoints. Decide what, if anything, to cache.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
+<div class="lx-exercise" data-exercise="4" data-mode="think" data-title="Events, queues, caching and abuse protection"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Events, queues, caching and abuse protection</h3><div class="lx-ex-task"><p>After a successful redemption or transfer, publish <code>wallet.credited</code> and queue a confirmation e-mail. Rate-limit the code endpoints. Decide what, if anything, to cache.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Where exactly does <code>order.placed</code> get published in the capstone, relative to the transaction that changed the order — before it opens, inside it, or after it closes? Publishing at the wrong point either loses the event or publishes one for a change that got rolled back.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Two different limits protect two different things: one keyed by IP, one keyed by the account being attacked. Which incident from Step 1 does each one stop?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 3</p><p>For caching, ask what happens to a customer who is told their balance is one thing and then finds it is another. Is a card lookup's staleness the same kind of problem?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
 <li>Publish from the HTTP layer or the module <em>after</em> <code>db.transaction</code> returns, never inside it, exactly like <code>order.placed</code> in the capstone. For no lost events, write an outbox row inside the transaction instead.</li>
 <li>A subscriber adds a <code>send-confirmation</code> job with <code>attempts</code> and exponential <code>backoff</code>. The job carries ids and amounts only, never the gift code.</li>
 <li>Use two <code>createRateLimiter</code> instances, keyed by IP and by user id. Count failed redemptions per user and refuse further attempts for 15 minutes after ten.</li>
 <li>Do not cache balances: they must always be exact, and the query is a primary-key lookup that is already fast. Caching card lookups would mostly help attackers who guess codes.</li>
 </ul></div></div>
-<div class="lx-exercise" data-exercise="5" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Observability, audit and OpenAPI</h3><p>Make every money movement traceable and every route documented.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
+<div class="lx-exercise" data-exercise="5" data-mode="think" data-title="Observability, audit and OpenAPI"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Observability, audit and OpenAPI</h3><div class="lx-ex-task"><p>Make every money movement traceable and every route documented.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>An audit row and the balance update it explains must never be able to disagree. What does that tell you about which transaction the audit insert belongs in?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>The logger's default redaction looks for field names like <code>password</code> or <code>token</code>. Would it know that a field called <code>code</code> holds a secret in this app?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 3</p><p>If the OpenAPI document is written by hand, separately from the schemas the routes actually parse with, what happens the day someone changes a schema and forgets the document?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
 <li>Add a <code>ledger</code> table (who, what, amount, related card or user, time) and insert one row per movement <em>inside</em> the same transaction. A ledger that can disagree with the balances is worse than none.</li>
 <li>Log one JSON line per request with the request id, route, status and duration. Log user ids, never tokens or gift codes: the logger's redaction does not know that <code>code</code> is secret here, so leave it out yourself.</li>
 <li>Count <code>wallet.redeemed</code>, <code>wallet.transfer</code> and <code>wallet.failed</code> (labelled with the error code, not the user) and record transfer latency in a histogram.</li>
 <li>Describe the routes with the router's <code>openapi</code> option or <code>@zudojs/openapi</code>, reusing the same schemas the routes parse with, so the document cannot drift from the code.</li>
 </ul></div></div>
-<div class="lx-exercise" data-exercise="6" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Configure, deploy, monitor and handle failures</h3><p>Ship it, and decide what happens when things go wrong at 3 a.m.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
+<div class="lx-exercise" data-exercise="6" data-mode="think" data-title="Configure, deploy, monitor and handle failures"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Configure, deploy, monitor and handle failures</h3><div class="lx-ex-task"><p>Ship it, and decide what happens when things go wrong at 3 a.m.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>PGlite hid a race in this exact code once already, in the reasoning section above. What else might it be hiding, and against which database must the parallel-redemption test also run before you trust it?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>For each alert you would set, ask: what does the person who gets paged at 3 a.m. do in the first five minutes? If the answer is not written down anywhere, the alert is not finished yet.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
 <li>Swap PGlite for a <code>pg</code> pool from <code>DATABASE_URL</code>, checked at startup. Turn the table definitions into numbered migrations, run by <code>docker compose run --rm app node dist/migrate.js</code> before each release.</li>
 <li>Add <code>/health</code> and <code>/ready</code> (database check), graceful shutdown and statement timeouts. Run with Docker Compose behind Caddy, with the readiness check wired to the proxy's health checks, and a nightly backup that you have restored once.</li>
 <li>Alert when <code>wallet.failed</code> rises above its normal rate, when p95 latency of transfers exceeds 500 ms, and when <code>/ready</code> fails. Each alert links to a short runbook: what it means, how to check, how to fix.</li>

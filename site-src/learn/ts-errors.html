@@ -998,6 +998,37 @@ card_declined internal_error object function
 <h2 id="practice">Practice</h2>
 <exercise title="A safe message for anything">
 <p>Write <code>messageOf(value: unknown): string</code> that returns the <code>message</code> of an <code>Error</code>, the string itself for a string, the <code>message</code> property of an object that has a string <code>message</code> (some SDKs throw such objects), and <code>"unknown error"</code> otherwise. Use no <code>as</code> and no <code>any</code>.</p>
+<starter file="message-of.ts">
+// Example to learn from: a chain of narrowing checks that reads one field
+// from several possible shapes.
+//
+//   function codeOf(value: unknown): string {
+//     if (value instanceof Error && "code" in value && typeof value.code === "string") return value.code;
+//     if (typeof value === "object" && value !== null && "code" in value && typeof value.code === "string") {
+//       return value.code;
+//     }
+//     return "UNKNOWN";
+//   }
+//
+// messageOf is the same idea, for "message" instead of "code", plus a plain
+// string case.
+
+function messageOf(value: unknown): string {
+  // Error -> value.message
+  // string -> value itself
+  // object with a string "message" property -> that property
+  // anything else -> "unknown error"
+  return "unknown error";
+}
+
+console.log(messageOf(new RangeError("amount out of range")));
+console.log(messageOf("gateway timeout"));
+console.log(messageOf({ message: "card expired", code: 54 }));
+console.log(messageOf({ message: 42 }));
+console.log(messageOf(null));
+</starter>
+<hint><p>Check <code>value instanceof Error</code> first, then <code>typeof value === "string"</code>. Both return immediately.</p></hint>
+<hint><p>For the object case: <code>typeof value === "object" &amp;&amp; value !== null &amp;&amp; "message" in value &amp;&amp; typeof value.message === "string"</code>, then return <code>value.message</code>. Otherwise fall through to <code>"unknown error"</code>.</p></hint>
 <solution>
 <example file="message-of.ts" project="ex-message">
 function messageOf(value: unknown): string {
@@ -1027,6 +1058,70 @@ unknown error
 </exercise>
 <exercise title="Add a refund failure">
 <p>Add a <code>RefundWindowClosedError</code> to the payments system: code <code>"refund_window_closed"</code>, HTTP status 422, and a <code>closedOn</code> date string in its details. Which files must change, and how do you know you found them all?</p>
+<starter file="refund.ts">
+// Example to learn from: adding a new AppError subclass, its status and its
+// details case.
+//
+//   class NotFoundError extends AppError { readonly code = "not_found"; ... }
+//   class RateLimitedError extends AppError {
+//     readonly code = "rate_limited";
+//     readonly retryAfterSeconds: number;
+//     constructor(retryAfterSeconds: number) {
+//       super(`too many requests, retry in ${retryAfterSeconds}s`);
+//       this.retryAfterSeconds = retryAfterSeconds;
+//     }
+//   }
+//   type ApiError = NotFoundError | RateLimitedError;
+//   const STATUS = { not_found: 404, rate_limited: 429 } as const satisfies Record<ApiError["code"], number>;
+//   function details(error: ApiError): Record<string, unknown> {
+//     switch (error.code) {
+//       case "not_found": return {};
+//       case "rate_limited": return { retryAfterSeconds: error.retryAfterSeconds };
+//     }
+//   }
+//
+// Now add RefundWindowClosedError to the payments system below, the same way.
+
+abstract class AppError extends Error {
+  abstract readonly code: string;
+  readonly expose: boolean = true;
+}
+
+class CardDeclinedError extends AppError {
+  override readonly name = "CardDeclinedError";
+  readonly code = "card_declined";
+}
+
+// add: class RefundWindowClosedError extends AppError {
+//   override readonly name = "RefundWindowClosedError";
+//   readonly code = "refund_window_closed";
+//   readonly closedOn: string;
+//   constructor(closedOn: string) {
+//     super(`refunds for this payment closed on ${closedOn}`);
+//     this.closedOn = closedOn;
+//   }
+// }
+
+type PaymentError = CardDeclinedError; // add: | RefundWindowClosedError
+
+const STATUS = {
+  card_declined: 402,
+  // add: refund_window_closed: 422,
+} as const satisfies Record<PaymentError["code"], number>;
+
+function details(error: PaymentError): Record<string, unknown> {
+  switch (error.code) {
+    case "card_declined":
+      return {};
+    // add: case "refund_window_closed": return { closedOn: error.closedOn };
+  }
+}
+
+const error = new RefundWindowClosedError("2026-09-01");
+console.log(STATUS[error.code], error.message, details(error));
+</starter>
+<hint><p>Uncomment the <code>RefundWindowClosedError</code> class, add it to the <code>PaymentError</code> union with <code>|</code>, and add its entry to <code>STATUS</code>.</p></hint>
+<hint><p>Add a matching <code>case "refund_window_closed":</code> to <code>details</code>, returning <code>{ closedOn: error.closedOn }</code>. Each of the three files (the class, the status table, the details switch) refuses to compile until it accounts for the new code, which is how you know you found them all.</p></hint>
 <solution>
 <example file="refund.ts" project="ex-refund">
 abstract class AppError extends Error {
@@ -1093,10 +1188,43 @@ async function requestRefund(paymentId: string): Promise<string> {
 process.on("unhandledRejection", (reason) => console.log("escaped:", String(reason)));
 console.log(await requestRefund("PAY-X1"));
 </example>
-<output>
-refund queued
-escaped: Error: cannot refund PAY-X1
-</output>
+<starter file="refund-queue.ts">
+// Example to learn from: awaiting inside try, and narrowing the caught
+// value before building a message.
+//
+//   async function writeAuditLog(entry: string): Promise<void> {
+//     if (entry === "") throw new Error("audit entry must not be empty");
+//   }
+//   async function recordAction(entry: string): Promise<string> {
+//     try {
+//       await writeAuditLog(entry);
+//       return "recorded";
+//     } catch (error) {
+//       return `not recorded: ${error instanceof Error ? error.message : String(error)}`;
+//     }
+//   }
+//
+// requestRefund has the same two bugs. Fix it the same way.
+
+async function queueRefund(paymentId: string): Promise<void> {
+  if (paymentId.startsWith("PAY-X")) throw new Error(`cannot refund ${paymentId}`);
+}
+
+async function requestRefund(paymentId: string): Promise<string> {
+  try {
+    queueRefund(paymentId);
+    return "refund queued";
+  } catch (error) {
+    return `refund failed: ${error}`;
+  }
+}
+
+process.on("unhandledRejection", (reason) => console.log("escaped:", String(reason)));
+console.log(await requestRefund("PAY-X1"));
+console.log(await requestRefund("PAY-1001"));
+</starter>
+<hint><p>Add <code>await</code> before <code>queueRefund(paymentId)</code>, the way <code>recordAction</code> awaits <code>writeAuditLog</code>. Without it, the function returns before the rejection happens.</p></hint>
+<hint><p>Replace <code>\`refund failed: ${error}\`</code> with a narrowed version: <code>\`refund failed: ${error instanceof Error ? error.message : String(error)}\`</code>.</p></hint>
 <solution>
 <example file="refund-queue.ts" project="ex-escape">
 async function queueRefund(paymentId: string): Promise<void> {

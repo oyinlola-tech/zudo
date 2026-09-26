@@ -1312,7 +1312,48 @@ all schema tests passed</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="reviews.js" data-project="shop" data-command="node reviews.js"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>One review per customer per product</h3><p>Customers can review products they bought: a rating from 1 to 5 and an optional text. A customer may review each product at most once, and deleting a product deletes its reviews. Add the table to the shop and show that a second review of the same product by the same customer is refused.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="reviews.js" data-project="shop">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="reviews.js" data-project="shop" data-command="node reviews.js" data-title="One review per customer per product"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>One review per customer per product</h3><div class="lx-ex-task"><p>Customers can review products they bought: a rating from 1 to 5 and an optional text. A customer may review each product at most once, and deleting a product deletes its reviews. Add the table to the shop and show that a second review of the same product by the same customer is refused.</p></div><script type="text/plain" class="lx-ex-starter" data-file="reviews.js">// Example to learn from: a composite primary key stopping a duplicate pair,
+// for one RSVP per person per event instead of one review per customer
+// per product.
+//
+//   create table events (id integer generated always as identity primary key, name text not null);
+//   create table rsvps (
+//     event_id integer not null references events (id) on delete cascade,
+//     person_email text not null,
+//     going boolean not null,
+//     primary key (event_id, person_email)
+//   );
+//   insert into events (name) values ('Launch party');
+//   insert into rsvps values (1, 'ada@x.com', true);
+//   insert into rsvps values (1, 'ada@x.com', false);
+//   -- fails: 23505, Key (event_id, person_email)=(1, ada@x.com) already exists.
+//
+// Now do the same idea for reviews below: one row per (customer, product).
+
+import { openShop } from "./shop.js";
+
+const db = await openShop();
+await db.exec(`
+  create table reviews (
+    id integer generated always as identity primary key
+    -- your code here: instead of (or alongside) this stub column, add
+    --   customer_id integer not null references customers (id),
+    --   product_id integer not null references products (id) on delete cascade,
+    --   rating integer not null check (rating between 1 and 5),
+    --   body text check (length(body) <= 2000),
+    --   primary key (customer_id, product_id)
+    -- so a customer can review each product at most once.
+  );
+`);
+
+try {
+  await db.exec("insert into reviews (customer_id, product_id, rating, body) values (1, 1, 5, 'Clean rice, no stones')");
+  await db.exec("insert into reviews (customer_id, product_id, rating, body) values (1, 1, 1, 'Changed my mind')");
+  console.log("both inserts succeeded — add the primary key above to stop the second one");
+} catch (error) {
+  console.log(error.code, error.detail);
+}
+await db.close();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>A composite primary key names <em>two or more</em> columns together: <code>primary key (customer_id, product_id)</code> means that pair, not either column alone, must be unique.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>customer_id integer not null references customers (id), product_id integer not null references products (id) on delete cascade, rating integer not null check (rating between 1 and 5), body text check (length(body) &lt;= 2000), primary key (customer_id, product_id)</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="reviews.js" data-project="shop">
 <figcaption class="lx-bar"><span class="lx-file">reviews.js</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> openShop <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./shop.js"</span><span class="t-pn">;</span>
 
@@ -1357,9 +1398,44 @@ await db.close();</script>
 </figure>
 <p>A composite primary key <code>(customer_id, product_id)</code> is the rule "at most once per pair". To let customers change their mind, the application updates the existing row (<code>insert … on conflict (customer_id, product_id) do update</code>) instead of inserting a second one. "Only customers who bought it" spans tables, so it belongs in application code or a trigger.</p></div></div>
 
-<div class="lx-exercise" data-exercise="2" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Is it normalised?</h3><p>Name the normal form each table breaks, and fix it: (a) <code>products (id, name, supplier_id, supplier_phone)</code>; (b) <code>order_lines (order_id, product_id, quantity, product_name)</code> with key <code>(order_id, product_id)</code>; (c) <code>customers (id, name, phone1, phone2, phone3)</code>.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) 3NF: <code>supplier_phone</code> depends on <code>supplier_id</code>, not on the product. Move it into <code>suppliers (id, phone)</code>. (b) 2NF: <code>product_name</code> depends on only part of the key, <code>product_id</code>. Drop it and join to <code>products</code>. (Keeping <code>unit_price_kobo</code> would be fine, because the price <em>at the time of sale</em> depends on the whole key.) (c) 1NF: a repeating group. Use <code>customer_phones (customer_id, phone, label)</code>, which also removes the arbitrary limit of three.</p></div></div>
+<div class="lx-exercise" data-exercise="2" data-mode="think" data-title="Is it normalised?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Is it normalised?</h3><div class="lx-ex-task"><p>Name the normal form each table breaks, and fix it: (a) <code>products (id, name, supplier_id, supplier_phone)</code>; (b) <code>order_lines (order_id, product_id, quantity, product_name)</code> with key <code>(order_id, product_id)</code>; (c) <code>customers (id, name, phone1, phone2, phone3)</code>.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>For each column, ask: does it depend on the <em>whole</em> key, on only <em>part</em> of a multi-column key, or on something that is not a key at all? And does any group of columns look like the same kind of value repeated under different names?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(a) <code>supplier_phone</code> would be the same for every product from that supplier — it depends on <code>supplier_id</code>, not on the product. (b) the key is the pair <code>(order_id, product_id)</code>; <code>product_name</code> only needs <code>product_id</code>. (c) <code>phone1</code>/<code>phone2</code>/<code>phone3</code> are the same kind of fact, repeated as separate columns instead of separate rows.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) 3NF: <code>supplier_phone</code> depends on <code>supplier_id</code>, not on the product. Move it into <code>suppliers (id, phone)</code>. (b) 2NF: <code>product_name</code> depends on only part of the key, <code>product_id</code>. Drop it and join to <code>products</code>. (Keeping <code>unit_price_kobo</code> would be fine, because the price <em>at the time of sale</em> depends on the whole key.) (c) 1NF: a repeating group. Use <code>customer_phones (customer_id, phone, label)</code>, which also removes the arbitrary limit of three.</p></div></div>
 
-<div class="lx-exercise" data-exercise="3" data-mode="paste" data-target="0" data-file="category-counts.js" data-project="shop" data-command="node category-counts.js"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Category sizes including subcategories</h3><p>For every category, count the distinct products in it or in any category below it. Hint: build a recursive CTE of <code>(ancestor_id, descendant_id)</code> pairs, where every category is its own descendant at the start.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="19" data-file="category-counts.js" data-project="shop">
+<div class="lx-exercise" data-exercise="3" data-mode="paste" data-target="0" data-file="category-counts.js" data-project="shop" data-command="node category-counts.js" data-title="Category sizes including subcategories"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Category sizes including subcategories</h3><div class="lx-ex-task"><p>For every category, count the distinct products in it or in any category below it. Hint: build a recursive CTE of <code>(ancestor_id, descendant_id)</code> pairs, where every category is its own descendant at the start.</p></div><script type="text/plain" class="lx-ex-starter" data-file="category-counts.js">// Example to learn from: the same "every node is its own descendant at the
+// start" recursive CTE, counting a manager's whole team instead of a
+// category's whole product count.
+//
+//   create table employees (id integer primary key, manager_id integer references employees(id), name text);
+//   insert into employees values (1, null, 'Ada'), (2, 1, 'Bola'), (3, 1, 'Chidi'), (4, 2, 'Dupe');
+//
+//   with recursive reports as (
+//     select id as manager_id, id as report_id from employees
+//     union all
+//     select r.manager_id, e.id
+//     from reports r join employees e on e.manager_id = r.report_id
+//   )
+//   select m.name, (count(*) - 1)::int as team_size
+//   from employees m
+//   join reports r on r.manager_id = m.id
+//   group by m.id, m.name
+//   order by team_size desc, m.name;
+//   -- Ada: 3, Bola: 1, Chidi: 0, Dupe: 0
+//
+// Now do the same shape of recursive CTE for category-counts below.
+
+import { openShop } from "./shop.js";
+
+const db = await openShop();
+const { rows } = await db.query(`
+  -- your code here: a recursive CTE "pairs" of (ancestor_id, descendant_id),
+  -- starting with "select id as ancestor_id, id as descendant_id from categories",
+  -- then unioning in every (p.ancestor_id, c.id) where c.parent_id = p.descendant_id.
+  -- Then, for each category, count(distinct pc.product_id) across every
+  -- descendant, left joining product_categories so empty categories show 0.
+  select c.name, 0 as products
+  from categories c
+  order by c.name`);
+console.log(rows.map((r) => `${r.name}: ${r.products}`).join("\n"));
+await db.close();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The base case of the recursive CTE is every category paired with <em>itself</em> — that is what makes a category count its own direct products, not only its subcategories'. The recursive case adds one more level each time, following <code>parent_id</code> down.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>with recursive pairs as (select id as ancestor_id, id as descendant_id from categories union all select p.ancestor_id, c.id from pairs p join categories c on c.parent_id = p.descendant_id) select c.name, count(distinct pc.product_id)::int as products from categories c join pairs p on p.ancestor_id = c.id left join product_categories pc on pc.category_id = p.descendant_id group by c.id, c.name order by products desc, c.name</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="19" data-file="category-counts.js" data-project="shop">
 <figcaption class="lx-bar"><span class="lx-file">category-counts.js</span><button type="button" class="lx-edit" data-index="19" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> openShop <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./shop.js"</span><span class="t-pn">;</span>
 

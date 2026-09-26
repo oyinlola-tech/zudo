@@ -605,6 +605,59 @@ await testContainer.dispose();
 <h2 id="practice">Practice</h2>
 <exercise title="Launch South Africa">
 <p>The shop launches in South Africa with a new provider, Ozow. Change the factory's types and tables so <code>providerFor("ZA")</code> works and refunds go to Ozow. What does the compiler force you to update, and what does it not catch?</p>
+<starter file="launch-za.ts">
+// Example to learn from: extending a Record-keyed table without touching the
+// entries that already work.
+//
+//   type Tier = "free" | "pro"; // add "enterprise" here
+//   const seatLimits: Record<Tier, number> = { free: 1, pro: 5 /* add enterprise: 50 */ };
+//   console.log(seatLimits.pro);
+//
+// Now do the same for South Africa below: extend both unions, then the
+// keys, builders and routes tables that are Records over them.
+
+type Country = "NG" | "GH" | "KE"; // 1. add "ZA" here
+type ProviderName = "paystack" | "flutterwave" | "mpesa"; // 2. add "ozow" here
+
+interface PaymentProvider {
+  readonly name: ProviderName;
+  refund(chargeId: string): string;
+}
+
+const make = (name: ProviderName, key: string | undefined): PaymentProvider => {
+  if (!key) throw new Error(`missing secret key for ${name}`);
+  return { name, refund: (chargeId) => `${name} refunded ${chargeId}` };
+};
+
+const keys: Record<ProviderName, string | undefined> = {
+  paystack: "k1",
+  flutterwave: "k2",
+  mpesa: "k3",
+  // 3. add ozow: "k4"
+};
+const builders: Record<ProviderName, () => PaymentProvider> = {
+  paystack: () => make("paystack", keys.paystack),
+  flutterwave: () => make("flutterwave", keys.flutterwave),
+  mpesa: () => make("mpesa", keys.mpesa),
+  // 4. add an ozow builder: () => make("ozow", keys.ozow)
+};
+const routes: Record<Country, ProviderName> = {
+  NG: "paystack",
+  GH: "flutterwave",
+  KE: "mpesa",
+  // 5. add ZA: "ozow"
+};
+
+try {
+  const provider = builders[routes["ZA"]]();
+  console.log(provider.name, provider.refund("OZ-1"));
+} catch (error) {
+  console.log("not wired up yet:", (error as Error).message);
+}
+console.log(Object.keys(routes).map((country) => builders[routes[country as Country]]().name));
+</starter>
+<hint><p>Five small additions, in this order: add <code>"ZA"</code> to <code>Country</code>, add <code>"ozow"</code> to <code>ProviderName</code>, add <code>ozow: "k4"</code> to <code>keys</code>, add an <code>ozow</code> entry to <code>builders</code> shaped like the others, and add <code>ZA: "ozow"</code> to <code>routes</code>.</p></hint>
+<hint><p>The <code>ozow</code> builder is <code>() =&gt; make("ozow", keys.ozow)</code>, and the route is <code>ZA: "ozow"</code>, matching the shape of the entries already there.</p></hint>
 <solution>
 <example file="launch-za.ts">
 type Country = "NG" | "GH" | "KE" | "ZA";
@@ -643,6 +696,65 @@ ozow ozow refunded OZ-1
 
 <exercise title="Extend the query builder">
 <p>Add <code>placedBetween(from, to)</code> to <code>OrderQuery</code> as a new builder in your own file: it should add two filters, <code>placed_at &gt;= $n</code> and <code>placed_at &lt; $n</code>, and refuse a range where <code>from</code> is not before <code>to</code>. Show that a shared base query is not changed.</p>
+<starter file="between.ts">
+// Example to learn from: adding a new filter method to an immutable builder,
+// without changing the methods that already work.
+//
+//   type Filter = { readonly sql: string; readonly value: string | number };
+//   class ProductSearch {
+//     private constructor(private readonly filters: readonly Filter[]) {}
+//     static all(): ProductSearch { return new ProductSearch([]); }
+//     inStock(): ProductSearch {
+//       return new ProductSearch([...this.filters, { sql: "stock > ?", value: 0 }]);
+//     }
+//   }
+//   console.log(ProductSearch.all().inStock());
+//
+// Now add placedBetween to the order search below.
+
+type Filter = { readonly sql: string; readonly value: string | number };
+
+class OrderSearch {
+  private constructor(private readonly filters: readonly Filter[]) {}
+
+  static all(): OrderSearch {
+    return new OrderSearch([]);
+  }
+
+  status(status: string): OrderSearch {
+    return new OrderSearch([...this.filters, { sql: "status = ?", value: status }]);
+  }
+
+  placedBetween(from: string, to: string): OrderSearch {
+    // Refuse the range (throw an Error with message
+    // `empty date range: ${from} to ${to}`) when `from` is not strictly
+    // before `to`. Compare with Date.parse, not string comparison.
+    // Otherwise return a new OrderSearch with two more filters added:
+    //   { sql: "placed_at >= ?", value: from }
+    //   { sql: "placed_at < ?", value: to }
+    // your code here
+    return this;
+  }
+
+  build(): { text: string; values: (string | number)[] } {
+    const where = this.filters.map((f, i) => f.sql.replace("?", `$${i + 1}`)).join(" AND ");
+    return { text: `SELECT * FROM orders${where ? ` WHERE ${where}` : ""}`, values: this.filters.map((f) => f.value) };
+  }
+}
+
+const paid = OrderSearch.all().status("paid");
+const march = paid.placedBetween("2026-03-01T00:00:00Z", "2026-04-01T00:00:00Z");
+
+console.log(march.build());
+console.log(paid.build().text);
+try {
+  paid.placedBetween("2026-04-01T00:00:00Z", "2026-03-01T00:00:00Z");
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<hint><p>Guard first: <code>if (!(Date.parse(from) &lt; Date.parse(to))) throw new Error(...)</code>. <code>!(a &lt; b)</code> also catches unparseable dates, since any comparison with <code>NaN</code> is false.</p></hint>
+<hint><p>Return <code>new OrderSearch([...this.filters, { sql: "placed_at &gt;= ?", value: from }, { sql: "placed_at &lt; ?", value: to }])</code>, the same pattern <code>status</code> uses.</p></hint>
 <solution>
 <example file="between.ts">
 type Filter = { readonly sql: string; readonly value: string | number };
@@ -694,6 +806,41 @@ empty date range: 2026-04-01T00:00:00Z to 2026-03-01T00:00:00Z
 
 <exercise title="Remove a singleton">
 <p>A <code>Clock</code> singleton makes invoice tests depend on the real date. Replace it: <code>isOverdue</code> should receive a clock object, production passes one that reads the real time, and a test passes a fixed one. Test an invoice due on 1 March against 28 February and 2 March.</p>
+<starter file="clock.ts">
+// Example to learn from: a hidden dependency (Math.random) turned into a
+// parameter, so a test can control it.
+//
+//   interface Dice { roll(): number; }
+//   const realDice: Dice = { roll: () => Math.floor(Math.random() * 6) + 1 };
+//   const fixedDice = (value: number): Dice => ({ roll: () => value });
+//   function isCriticalHit(dice: Dice): boolean {
+//     return dice.roll() === 6;
+//   }
+//   console.log(isCriticalHit(fixedDice(6)));
+//
+// Now do the same for the clock below.
+
+interface Clock {
+  now(): Date;
+}
+
+const systemClock: Clock = { now: () => new Date() };
+const fixedClock = (iso: string): Clock => ({ now: () => new Date(iso) });
+
+function isOverdue(invoice: { dueAt: string }, clock: Clock): boolean {
+  // true when clock.now() is after invoice.dueAt (compare with Date.parse
+  // and getTime(), not string comparison)
+  // your code here
+  return false;
+}
+
+const invoice = { dueAt: "2026-03-01T00:00:00Z" };
+console.log("before:", isOverdue(invoice, fixedClock("2026-02-28T12:00:00Z")));
+console.log("after:", isOverdue(invoice, fixedClock("2026-03-02T00:00:00Z")));
+console.log("system clock is a Clock:", typeof systemClock.now().getTime() === "number");
+</starter>
+<hint><p><code>clock.now()</code> gives you a <code>Date</code>; compare its <code>.getTime()</code> with <code>Date.parse(invoice.dueAt)</code> using <code>&gt;</code>.</p></hint>
+<hint><p><code>return clock.now().getTime() &gt; Date.parse(invoice.dueAt);</code></p></hint>
 <solution>
 <example file="clock.ts">
 interface Clock {

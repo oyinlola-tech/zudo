@@ -1393,7 +1393,7 @@ await server.stop();
 => POST /books 409 {"error":"\"Purple Hibiscus\" is already in the catalog","code":"ERR_CONFLICT"}
 => POST /books 400 {"error":"validation_failed","details":["title: String must be at least 1 character","priceKobo: Expected >= 100, received 5","(body): Unknown key: isbn"]}
 => POST /books 401 {"error":"Send a valid X-Api-Key header","code":"ERR_HTTP_UNAUTHORIZED"}
-=> DELETE /books/b1 405 {"error":"Method Not Allowed","method":"DELETE","path":"/books/b1","allowed":["GET"]}
+=> DELETE /books/b1 405 {"error":"Method Not Allowed","code":"METHOD_NOT_ALLOWED","method":"DELETE","path":"/books/b1","allowed":["GET","HEAD","OPTIONS"]}
 => GET /books/b9 404 {"error":"Book b9 was not found","code":"ERR_RESOURCE_NOT_FOUND"}
 </output>
 <p>The same statuses for the same requests, from the same ideas. The differences are instructive:</p>
@@ -1428,6 +1428,66 @@ await server.stop();
 <h2 id="practice">Practice</h2>
 <exercise title="A rate-limiting middleware">
 <p>Write <code>rateLimit(max, windowMs, now)</code>: at most <code>max</code> requests per API key per fixed window; the next ones get 429 with a <code>Retry-After</code> header in seconds. Take the clock as a parameter and test it with <code>compose</code>, without a server.</p>
+<starter file="rate-limit.ts">
+// Example to learn from: a fixed-window counter keyed by id, using an
+// injected clock so it can be tested without waiting.
+//
+//   function attemptsAllowed(max: number, windowMs: number, now: () => number) {
+//     const windows = new Map<string, { start: number; count: number }>();
+//     return (id: string): boolean => {
+//       const time = now();
+//       let w = windows.get(id);
+//       if (w === undefined || time - w.start >= windowMs) {
+//         w = { start: time, count: 0 };
+//         windows.set(id, w);
+//       }
+//       w.count++;
+//       return w.count <= max;
+//     };
+//   }
+//   let clock = 0;
+//   const allowed = attemptsAllowed(2, 1000, () => clock);
+//   console.log(allowed("ada"), allowed("ada"), allowed("ada"));
+//
+// Now do the same as a middleware below.
+
+import { compose } from "./mini/http/pipeline.js";
+import type { HttpContext, Middleware } from "./mini/http/types.js";
+import { json } from "./mini/http/types.js";
+
+function rateLimit(max: number, windowMs: number, now: () => number): Middleware {
+  const windows = new Map<string, { start: number; count: number }>();
+  return async (ctx, next) => {
+    // 1. key = ctx.headers["x-api-key"] ?? "anonymous"; time = now()
+    // 2. get or start a window for `key`: { start: time, count: 0 } when
+    //    missing, or when windowMs has elapsed since window.start
+    // 3. increment window.count
+    // 4. over `max`: return json(429, { error: "too_many_requests" },
+    //    { "retry-after": String(secondsLeft) }), where secondsLeft is
+    //    Math.ceil((window.start + windowMs - time) / 1000)
+    // 5. otherwise: return next()
+    // your code here
+    return next();
+  };
+}
+
+let clock = 0;
+const handler = compose([rateLimit(3, 60_000, () => clock)], () => json(200, "ok"));
+const request = (key: string) => ({ headers: { "x-api-key": key } }) as unknown as HttpContext;
+
+const seen: string[] = [];
+for (let i = 1; i <= 5; i++) {
+  const response = await handler(request("ada"));
+  seen.push(`${response.status}${response.headers?.["retry-after"] ? ` (retry after ${response.headers["retry-after"]}s)` : ""}`);
+  clock += 10_000;
+}
+console.log("ada:", seen.join(", "));
+console.log("tunde:", (await handler(request("tunde"))).status);
+clock = 60_000;
+console.log("ada, a minute later:", (await handler(request("ada"))).status);
+</starter>
+<hint><p>Start or reset the window: <code>let window = windows.get(key); if (window === undefined || time - window.start &gt;= windowMs) { window = { start: time, count: 0 }; windows.set(key, window); }</code>, then <code>window.count++;</code>.</p></hint>
+<hint><p><code>if (window.count &gt; max) { const retryAfter = Math.ceil((window.start + windowMs - time) / 1000); return json(429, { error: "too_many_requests" }, { "retry-after": String(retryAfter) }); } return next();</code>.</p></hint>
 <solution>
 <example file="rate-limit.ts" project="fwh">
 import { compose } from "./mini/http/pipeline.js";
@@ -1478,6 +1538,62 @@ ada, a minute later: 200
 </exercise>
 <exercise title="Lists in the schema builder">
 <p>Add <code>array(item, max)</code> to the validation builder, as a separate function that returns a <code>Schema&lt;T[]&gt;</code>. Issues inside the list must carry their index, like <code>body.items[1].quantity</code>.</p>
+<starter file="array-schema.ts">
+// Example to learn from: validating a list, keeping each item's position in
+// its error message.
+//
+//   function positiveNumbers(max: number) {
+//     return (input: unknown): string[] => {
+//       if (!Array.isArray(input)) return ["must be a list"];
+//       if (input.length > max) return [`must have at most ${max} items`];
+//       return input.flatMap((value, index) => (typeof value === "number" && value > 0 ? [] : [`[${index}] must be a positive number`]));
+//     };
+//   }
+//   console.log(positiveNumbers(3)([1, -2, "x"]));
+//
+// Now do the same as a Schema<T[]> below, delegating each item to its own
+// schema instead of a typeof check.
+
+import type { Issue, Schema } from "./mini/http/validation.js";
+import { s } from "./mini/http/validation.js";
+
+function array<T>(item: Schema<T>, max: number): Schema<T[]> {
+  const schema: Schema<T[]> = {
+    parse(input, path = "body") {
+      // 1. not an array: return { ok: false, issues: [{ path, message: "must be a list" }] }
+      // 2. longer than max: return { ok: false, issues: [{ path, message: `must have at most ${max} items` }] }
+      // 3. otherwise call item.parse(element, `${path}[${index}]`) for each
+      //    element; collect ok values into `value`, collect every issue
+      //    from a failed one into `issues`
+      // 4. any issues collected: return { ok: false, issues }; otherwise
+      //    { ok: true, value }
+      // your code here
+      return { ok: true, value: [] };
+    },
+    optional() {
+      return {
+        parse: (input, path) => (input === undefined ? { ok: true, value: undefined } : schema.parse(input, path)),
+        optional() {
+          return this;
+        },
+      };
+    },
+  };
+  return schema;
+}
+
+const Cart = s.object({ items: array(s.object({ bookId: s.string(2, 10), quantity: s.integer(1, 5) }), 3) });
+for (const input of [
+  { items: [{ bookId: "b1", quantity: 2 }] },
+  { items: [{ bookId: "b1", quantity: 2 }, { bookId: "", quantity: 9 }] },
+  { items: [1, 2, 3, 4] },
+]) {
+  const result = Cart.parse(input);
+  console.log(result.ok ? JSON.stringify(result.value) : result.issues.map((i) => `${i.path} ${i.message}`).join("; "));
+}
+</starter>
+<hint><p>Guard first, in order: <code>if (!Array.isArray(input)) return { ok: false, issues: [{ path, message: "must be a list" }] }; if (input.length &gt; max) return { ok: false, issues: [{ path, message: `must have at most ${max} items` }] };</code>.</p></hint>
+<hint><p>Then walk the array: <code>input.forEach((element, index) =&gt; { const result = item.parse(element, `${path}[${index}]`); if (result.ok) value.push(result.value); else issues.push(...result.issues); });</code>, and return based on whether <code>issues</code> collected anything.</p></hint>
 <solution>
 <example file="array-schema.ts" project="fwh">
 import type { Issue, Schema } from "./mini/http/validation.js";
@@ -1529,6 +1645,8 @@ body.items must have at most 3 items
 </exercise>
 <exercise title="Where does it belong?">
 <p>For each requirement, choose router, global middleware, route middleware, controller, service or event listener: (1) every response gets an <code>X-Request-Id</code> header; (2) only staff may add books; (3) a book's price may not drop more than 50% at once; (4) <code>/books/:id</code> answers 400 for an id that is not <code>b</code> followed by digits; (5) the sales dashboard counts new books; (6) requests over 100 per minute get 429.</p>
+<hint><p>Ask: does this apply to every route or one route, is it about HTTP shapes or business rules, and could something outside HTTP (a CLI, a bulk import) need the same rule?</p></hint>
+<hint><p>(3) and (5) are not about requests or responses at all; re-read <a href="/learn/arch-clean">Clean architecture</a> for where a rule that must hold everywhere, and a fact other features react to, each belong.</p></hint>
 <solution>
 <ol>
 <li><strong>Framework or global middleware</strong>: it is the same for every route. Your adapter already does it.</li>

@@ -735,6 +735,40 @@ a,b
 <h2 id="practice">Practice</h2>
 <exercise title="The payload of an event handler">
 <p>An event system stores handlers such as <code>(event: { orderId: string; amountKobo: number }) =&gt; void</code>. Write <code>PayloadOf&lt;H&gt;</code> that gives the event type of a handler, and <code>never</code> for anything that is not a one-argument function. Prove it with <code>Expect</code> lines, including a non-function.</p>
+<starter file="payload.ts">
+// Example to learn from: infer pulling a value out of a different shape,
+// distributing over a union of loader functions.
+//
+//   type Resolved<F> = F extends (...args: any[]) => Promise<infer R> ? R : never;
+//
+//   type LoadUser = () => Promise<{ id: string; name: string }>;
+//   type LoadStock = () => Promise<{ sku: string; left: number }>;
+//
+//   type R1 = Expect<Equal<Resolved<LoadUser>, { id: string; name: string }>>;
+//   type R2 = Expect<Equal<Resolved<LoadUser | LoadStock>, { id: string; name: string } | { sku: string; left: number }>>;
+//   type R3 = Expect<Equal<Resolved<string>, never>>;
+//
+// Now do the same for event handlers below.
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+// H extends a one-argument function returning void: infer its argument type.
+// Anything else: never.
+type PayloadOf<H> = never; // your code here
+
+type OrderPaid = (event: { orderId: string; amountKobo: number }) => void;
+type StockLow = (event: { sku: string; left: number }) => void;
+
+type P1 = Expect<Equal<PayloadOf<OrderPaid>, { orderId: string; amountKobo: number }>>;
+type P2 = Expect<Equal<PayloadOf<OrderPaid | StockLow>, { orderId: string; amountKobo: number } | { sku: string; left: number }>>;
+type P3 = Expect<Equal<PayloadOf<string>, never>>;
+
+// Once PayloadOf is right (and all three lines are really true), add:
+// console.log("PayloadOf works");
+</starter>
+<hint><p>Match the shape with <code>infer</code>: <code>H extends (event: infer E) =&gt; void ? E : never</code>.</p></hint>
+<hint><p>Written on a bare type parameter like <code>H</code>, a conditional type distributes automatically over a union, which is exactly what <code>P2</code> needs: no extra work required.</p></hint>
 <solution>
 <example file="payload.ts" project="ex-payload">
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -759,6 +793,35 @@ PayloadOf works
 </exercise>
 <exercise title="Fix IsNullable">
 <p>A teammate wrote <code>type IsNullable&lt;T&gt; = T extends null | undefined ? true : false</code> to check whether a field may be empty. <code>IsNullable&lt;string | null&gt;</code> gives <code>boolean</code>. Explain why, and fix it so it answers <code>true</code> when any member is <code>null</code> or <code>undefined</code>, and <code>false</code> otherwise.</p>
+<starter file="nullable.ts">
+// Example to learn from: the same wrap-in-brackets fix, for a check that
+// only cares about undefined, not null.
+//
+//   type HasUndefined<T> = [Extract<T, undefined>] extends [never] ? false : true;
+//
+//   type H1 = Expect<Equal<HasUndefined<string | undefined>, true>>;
+//   type H2 = Expect<Equal<HasUndefined<string>, false>>;
+//   type H3 = Expect<Equal<HasUndefined<string | null>, false>>;
+//
+// Now fix IsNullable the same way, below.
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+// Broken: distributes over the union, so IsNullable<string | null> is boolean,
+// not true. Fix it so the whole union is asked about at once.
+type IsNullable<T> = T extends null | undefined ? true : false;
+
+type N1 = Expect<Equal<IsNullable<string | null>, true>>;
+type N2 = Expect<Equal<IsNullable<string | undefined>, true>>;
+type N3 = Expect<Equal<IsNullable<string>, false>>;
+type N4 = Expect<Equal<IsNullable<{ email?: string }["email"]>, true>>;
+
+// Once all four lines are really true, add:
+// console.log("IsNullable fixed");
+</starter>
+<hint><p>The problem is distribution: a conditional type written on a bare type parameter checks each union member separately. Stop it by wrapping both sides of <code>extends</code> in a one-element tuple, <code>[...]</code>.</p></hint>
+<hint><p><code>type IsNullable&lt;T&gt; = [Extract&lt;T, null | undefined&gt;] extends [never] ? false : true;</code> — <code>Extract</code> first keeps only the empty members, then one non-distributive check asks whether anything is left.</p></hint>
 <solution>
 <example file="nullable.ts" project="ex-nullable">
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -781,6 +844,43 @@ IsNullable fixed
 </exercise>
 <exercise title="Deeply unwrap a loader">
 <p>Some loaders return a promise of an array of promises, such as <code>Promise&lt;Promise&lt;Invoice&gt;[]&gt;</code>. Write <code>Settled&lt;T&gt;</code> that unwraps promises and, if the result is an array, unwraps its elements too, so that type becomes <code>Invoice[]</code>. Then use it on a real function with <code>Promise.all</code>.</p>
+<starter file="settled.ts">
+// Example to learn from: the same recursive unwrap, over nested arrays
+// instead of promises.
+//
+//   type Flatten<T> = T extends readonly (infer E)[] ? Flatten<E> : T;
+//
+//   type F1 = Expect<Equal<Flatten<number[][]>, number>>;
+//   type F2 = Expect<Equal<Flatten<string>, string>>;
+//
+// Now write Settled below: it recurses through promises first, then arrays.
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+// A promise: unwrap and recurse. Then an array: unwrap its element and
+// recurse. Anything else: T itself, the base case.
+type Settled<T> = T; // your code here
+
+interface Invoice {
+  number: string;
+  totalKobo: number;
+}
+
+async function loadInvoices(): Promise<Promise<Invoice>[]> {
+  return ["INV-001", "INV-002"].map(async (number, i) => ({ number, totalKobo: (i + 1) * 500_000 }));
+}
+
+type S1 = Expect<Equal<Settled<ReturnType<typeof loadInvoices>>, Invoice[]>>;
+type S2 = Expect<Equal<Settled<Promise<number[][]>>, number[][]>>;
+
+const invoices: Settled<ReturnType<typeof loadInvoices>> = await Promise.all(await loadInvoices());
+
+// Once Settled is right (and both lines are really true), add:
+// console.log(invoices.map((invoice) => `${invoice.number}: ${invoice.totalKobo}`).join(", "));
+</starter>
+<hint><p>Two conditional branches, tried in order: first <code>T extends PromiseLike&lt;infer V&gt; ? Settled&lt;V&gt; : ...</code>, then <code>T extends readonly (infer E)[] ? Settled&lt;E&gt;[] : T</code>.</p></hint>
+<hint><p>The promise branch must come first: put the array branch first and a promise of an array would be unwrapped as an array of promises instead, which is wrong.</p></hint>
 <solution>
 <example file="settled.ts" project="ex-settled">
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;

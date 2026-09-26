@@ -725,6 +725,65 @@ true 1
 <h2 id="practice">Practice</h2>
 <exercise title="Close the leak">
 <p>Change the wallet's <code>ledger</code> getter so that the leak shown in the encapsulation section can no longer corrupt the wallet, and show what the same attack does now.</p>
+<starter file="safe-wallet.ts">
+// Example to learn from: the same "hand out a frozen copy" fix, for a
+// basket instead of a wallet.
+//
+//   class Basket {
+//     #items: string[] = [];
+//     add(item: string): void { this.#items.push(item); }
+//     get items(): readonly string[] {
+//       return Object.freeze([...this.#items]);
+//     }
+//   }
+//
+//   const basket = new Basket();
+//   basket.add("bread");
+//   try {
+//     (basket.items as string[]).push("stolen");
+//   } catch (error) {
+//     console.log(String(error));   // TypeError: Cannot add property 1, object is not extensible
+//   }
+//   console.log(basket.items.length);   // 1
+//
+// Now fix the wallet's ledger getter the same way.
+
+interface LedgerEntry {
+  readonly kind: "deposit" | "withdrawal";
+  readonly amountKobo: number;
+}
+
+class Wallet {
+  #balanceKobo = 0;
+  readonly #ledger: LedgerEntry[] = [];
+
+  get balanceKobo(): number {
+    return this.#balanceKobo;
+  }
+
+  // This getter hands out the real internal array: a cast lets outside
+  // code push onto it. Return a frozen copy instead.
+  get ledger(): readonly LedgerEntry[] {
+    return this.#ledger;
+  }
+
+  deposit(amountKobo: number): void {
+    this.#balanceKobo += amountKobo;
+    this.#ledger.push(Object.freeze({ kind: "deposit", amountKobo }));
+  }
+}
+
+const wallet = new Wallet();
+wallet.deposit(500_000);
+try {
+  (wallet.ledger as LedgerEntry[]).push({ kind: "deposit", amountKobo: 9_000_000 });
+} catch (error) {
+  console.log(String(error));
+}
+console.log(wallet.balanceKobo, wallet.ledger.length);
+</starter>
+<hint><p>Return a copy, not the field itself: <code>[...this.#ledger]</code> makes a new array that outside code cannot use to reach the private one.</p></hint>
+<hint><p><code>return Object.freeze([...this.#ledger]);</code> — freezing the copy makes an attacker's <code>push</code> throw instead of silently succeeding.</p></hint>
 <solution>
 <example file="safe-wallet.ts" project="ex-wallet">
 interface LedgerEntry {
@@ -768,6 +827,65 @@ TypeError: Cannot add property 1, object is not extensible
 </exercise>
 <exercise title="Quiet hours">
 <p>Write a decorator <code>withQuietHours(channel, isQuiet)</code> for the notification channels: when <code>isQuiet()</code> returns true, it stores the message in a queue instead of sending it. It also has <code>pending()</code>, the number of queued messages, and <code>flush()</code>, which sends everything queued and returns how many it sent.</p>
+<starter file="quiet.ts">
+// Example to learn from: the same "hold now, release later" decorator,
+// wrapping a printer instead of a notification channel.
+//
+//   interface Printer { name: string; print(job: string): Promise<void> }
+//
+//   function withHoldQueue(printer: Printer, isHeld: () => boolean): Printer & { pending(): number; release(): Promise<number> } {
+//     const queue: string[] = [];
+//     return {
+//       name: `${printer.name}+hold`,
+//       async print(job) {
+//         if (isHeld()) queue.push(job);
+//         else await printer.print(job);
+//       },
+//       pending: () => queue.length,
+//       async release() {
+//         const held = queue.splice(0);
+//         for (const job of held) await printer.print(job);
+//         return held.length;
+//       },
+//     };
+//   }
+//
+// Now do the same for notification channels below.
+
+import { consoleChannel } from "./channels.js";
+import type { NotificationChannel } from "./channels.js";
+
+interface QuietChannel extends NotificationChannel {
+  pending(): number;
+  flush(): Promise<number>;
+}
+
+function withQuietHours(channel: NotificationChannel, isQuiet: () => boolean): QuietChannel {
+  // Queue [to, text] pairs while isQuiet() is true, instead of sending.
+  // pending() reports the queue length. flush() sends everything queued
+  // (in order) and returns how many messages it sent.
+  return {
+    name: `${channel.name}+quiet`,
+    async send(to, text) {
+      await channel.send(to, text);
+    },
+    pending: () => 0,
+    async flush() {
+      return 0;
+    },
+  };
+}
+
+let night = true;
+const sms = withQuietHours(consoleChannel("sms"), () => night);
+await sms.send("+2348030000000", "Your order is packed");
+await sms.send("+2348030000001", "Flash sale starts at 9am");
+console.log("queued overnight:", sms.pending());
+night = false;
+console.log("flushed:", await sms.flush());
+</starter>
+<hint><p>Keep a local <code>const queue: [to: string, text: string][] = [];</code> in the closure. In <code>send</code>, push onto it when <code>isQuiet()</code> is true, otherwise call <code>channel.send</code> as normal.</p></hint>
+<hint><p><code>flush</code> empties the queue with <code>queue.splice(0)</code> (so a re-entrant call cannot resend), then <code>await channel.send(to, text)</code> for each pair in order, and returns how many there were.</p></hint>
 <solution>
 <example file="quiet.ts" project="notify">
 import { consoleChannel } from "./channels.js";
@@ -814,6 +932,59 @@ flushed: 2
 </exercise>
 <exercise title="Add OPay both ways">
 <p>Add an OPay provider (1.25% fee, capped at ₦1,500) to the object-oriented design as a class, and to the functional design as a union member. In each style, list what else had to change, and check the fee for ₦15,000.</p>
+<starter file="opay.ts">
+// Example to learn from: adding a new variant to a class hierarchy and to
+// a union, for discounts instead of payment providers.
+//
+//   interface Discount { readonly name: string; amountOff(subtotal: number): number }
+//
+//   class LoyaltyDiscount implements Discount {
+//     readonly name = "loyalty";
+//     amountOff(subtotal: number): number { return Math.round(subtotal * 0.05); }
+//   }
+//
+//   type Promo = { kind: "seasonal" } | { kind: "loyalty" };
+//
+//   function amountOff(promo: Promo, subtotal: number): number {
+//     switch (promo.kind) {
+//       case "seasonal": return Math.round(subtotal * 0.1);
+//       case "loyalty": return Math.round(subtotal * 0.05);
+//     }
+//   }
+//
+// Now add OPay to the payment provider designs below.
+
+interface PaymentProvider {
+  readonly name: string;
+  feeKobo(amountKobo: number): number;
+}
+
+class OpayAdapter implements PaymentProvider {
+  readonly name = "opay";
+  feeKobo(amountKobo: number): number {
+    // 1.25% of amountKobo, capped at 150_000 (₦1,500).
+    return 0;
+  }
+}
+
+type Provider = { kind: "paystack" } | { kind: "opay"; merchantId: string };
+
+function feeKobo(provider: Provider, amountKobo: number): number {
+  switch (provider.kind) {
+    case "paystack":
+      return Math.min(Math.round(amountKobo * 0.015) + 10_000, 200_000);
+    case "opay":
+      // Same rule as OpayAdapter above: 1.25%, capped at 150_000.
+      return 0;
+    default:
+      return provider satisfies never;
+  }
+}
+
+console.log(new OpayAdapter().feeKobo(1_500_000), feeKobo({ kind: "opay", merchantId: "M-77" }, 1_500_000));
+</starter>
+<hint><p>Both places compute the same rule: <code>Math.round(amountKobo * 0.0125)</code>, then cap it with <code>Math.min(..., 150_000)</code>.</p></hint>
+<hint><p><code>Math.min(Math.round(amountKobo * 0.0125), 150_000)</code> in both <code>OpayAdapter.feeKobo</code> and the <code>"opay"</code> case.</p></hint>
 <solution>
 <example file="opay.ts" project="ex-opay">
 interface PaymentProvider {

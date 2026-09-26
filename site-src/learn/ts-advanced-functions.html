@@ -738,6 +738,50 @@ PASS "refund ORD-7 100"
 <h2 id="practice">Practice</h2>
 <exercise title="once">
 <p>Write <code>once(fn)</code>: it returns a function with exactly the same parameters and result as <code>fn</code>, which runs <code>fn</code> the first time and returns the first result on every later call. Use it for a "send receipt" function that must never send twice.</p>
+<starter file="once.ts">
+// Example to learn from: the same wrapper shape, caching a config build
+// instead of a receipt send.
+//
+//   function once<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+//     let done = false;
+//     let result: R;
+//     return (...args) => {
+//       if (!done) {
+//         result = fn(...args);
+//         done = true;
+//       }
+//       return result;
+//     };
+//   }
+//
+//   let builds = 0;
+//   const getConfig = once((env: string) => {
+//     builds++;
+//     return { env, port: 8080 };
+//   });
+//
+//   console.log(getConfig("prod"), getConfig("prod"), "builds:", builds);
+//
+// Now do the same for sending a receipt below.
+
+function once<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  // Keep a `done` flag and the first `result` in this closure. On each call,
+  // run fn only if `done` is still false, then always return `result`.
+  return (...args) => fn(...args);
+}
+
+let sent = 0;
+const sendReceipt = once((orderId: string, email: string) => {
+  sent++;
+  return `receipt for ${orderId} sent to ${email}`;
+});
+
+console.log(sendReceipt("ORD-1042", "ada@shop.ng"));
+console.log(sendReceipt("ORD-1042", "ada@shop.ng"));
+console.log("emails sent:", sent);
+</starter>
+<hint><p>Declare <code>let done = false;</code> and <code>let result: R;</code> outside the returned function, so they persist between calls.</p></hint>
+<hint><p>Inside the returned function: <code>if (!done) { result = fn(...args); done = true; }</code>, then <code>return result;</code> unconditionally, so a later call never runs <code>fn</code> again.</p></hint>
 <solution>
 <example file="once.ts" project="ex-once">
 function once<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
@@ -772,6 +816,38 @@ emails sent: 1
 </exercise>
 <exercise title="A cancel command without arguments">
 <p>Add a <code>/cancel</code> command to the router that takes no arguments and returns <code>"pending operation cancelled"</code>. What is its argument tuple? What does <code>router.run("cancel")</code> accept, and what happens with <code>/cancel now</code>?</p>
+<starter file="cancel.ts">
+// Example to learn from: a zero-parameter function infers the empty tuple,
+// so its wrapper takes no further arguments either.
+//
+//   function action<A extends unknown[]>(run: (...args: A) => string): (...args: A) => string {
+//     return (...args) => run(...args);
+//   }
+//
+//   const ping = action((): string => "pong");   // A is []
+//   console.log(ping());                          // pong (ping(1) would not compile)
+//
+// Now add a command whose `run` also takes no arguments.
+
+import { command, createRouter } from "./router.js";
+
+const router = createRouter({
+  cancel: command({
+    usage: "(no arguments)",
+    // No tokens: return []. Any tokens: return an error message naming
+    // them, e.g. `unexpected "now"`.
+    parse: (tokens): [] | string => [],
+    // Return the fixed string "pending operation cancelled".
+    run: () => "",
+  }),
+});
+
+console.log(router.run("cancel"));
+console.log(router.exec("/cancel"));
+console.log(router.exec("/cancel now"));
+</starter>
+<hint><p><code>parse</code>'s return type is the argument tuple: an empty tuple, <code>[]</code>, when there are no arguments. Check <code>tokens.length === 0</code>.</p></hint>
+<hint><p><code>parse: (tokens): [] | string =&gt; (tokens.length === 0 ? [] : `unexpected "${tokens.join(" ")}"`)</code>, and <code>run: () =&gt; "pending operation cancelled"</code>.</p></hint>
 <solution>
 <example file="cancel.ts" project="router">
 import { command, createRouter } from "./router.js";
@@ -798,6 +874,42 @@ usage: /cancel (no arguments) (unexpected "now")
 </exercise>
 <exercise title="Make the handler interface strict">
 <p>A notification module declares <code>interface Notifier { notify(event: OrderEvent): void }</code>, and someone registered an SMS notifier that only accepts <code>ShippedEvent</code>. Change the interface so the compiler refuses that registration, and show the error.</p>
+<starter file="notifier.ts">
+// Example to learn from: the same method-vs-property distinction, on a
+// different pair of event interfaces.
+//
+//   interface AnimalEvent { species: string }
+//   interface DogEvent extends AnimalEvent { breed: string }
+//
+//   interface Handler {
+//     handle: (event: AnimalEvent) => void;   // a property: checked strictly
+//   }
+//
+//   const dogHandler: Handler = {
+//     handle: (event: DogEvent) => console.log(event.breed),   // now an error
+//   };
+//
+// Now do the same for the notifier below: change `notify` from a method to
+// a property so the compiler checks it strictly, run `npx tsc --noEmit` on
+// your computer, and paste what it prints.
+
+interface OrderEvent {
+  orderId: string;
+}
+interface ShippedEvent extends OrderEvent {
+  courier: string;
+}
+
+interface Notifier {
+  notify(event: OrderEvent): void;
+}
+
+const sms: Notifier = {
+  notify: (event: ShippedEvent) => console.log(`${event.orderId} is with ${event.courier}`),
+};
+</starter>
+<hint><p>A method written with the shorthand <code>notify(event: OrderEvent): void</code> is checked <em>bivariantly</em>: TypeScript allows a narrower parameter type there. Written as a property, <code>notify: (event: OrderEvent) =&gt; void</code>, it is checked strictly.</p></hint>
+<hint><p>Change only the interface: <code>interface Notifier { notify: (event: OrderEvent) =&gt; void; }</code>. The <code>sms</code> object does not need to change; it is the one that should now fail.</p></hint>
 <solution>
 <example file="notifier.ts" project="ex-notifier" check="tsc-error">
 interface OrderEvent {

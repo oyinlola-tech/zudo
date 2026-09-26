@@ -999,6 +999,45 @@ ada, same org, other session       404 {"error":"Organization not found","code":
 <h2 id="practice">Practice</h2>
 <exercise title="Customers, the same way">
 <p>Write a <code>CustomerRepository</code> with a <code>list()</code> method that follows the invoice repository's rules: no organization parameter, the <code>org_id</code> filter, and <code>inTenant</code>. Print the customers of both organizations. Then say which line of <code>tests/isolation.test.ts</code> you would add for a new <code>GET /customers</code> route.</p>
+<starter file="ex-customers.ts">
+// Example to learn from: reading the organization from context for an
+// in-memory lookup, the same rule with no database involved.
+//
+//   const themeByOrg = new Map([["adas-bakery", "warm"], ["kola-motors", "cool"]]);
+//   function currentTheme(): string {
+//     return themeByOrg.get(currentOrg().id) ?? "default"; // never a parameter
+//   }
+//
+// Now read the organization the same way for a real query, below.
+
+import type { PGlite } from "@electric-sql/pglite";
+import { createTenantId } from "@zudojs/tenancy";
+import { createDatabase } from "./db.js";
+import { inTenant } from "./rls.js";
+import { createOrgRepository, currentOrg, tenantContext } from "./tenants.js";
+
+class CustomerRepository {
+  constructor(private readonly db: PGlite) {}
+
+  list(): Promise<{ id: number; orgId: string; name: string }[]> {
+    // Read the organization from currentOrg(), then run a SELECT id, org_id
+    // AS "orgId", name FROM customers WHERE org_id = $1 ORDER BY id through
+    // inTenant(this.db, orgId, ...), the same way the invoice repository does.
+    return Promise.resolve([]);
+  }
+}
+
+const db = await createDatabase();
+const customers = new CustomerRepository(db);
+const orgs = createOrgRepository(db);
+for (const id of ["adas-bakery", "kola-motors"]) {
+  const org = await orgs.findById(createTenantId(id));
+  if (org) console.log(id, await tenantContext.run(org, () => customers.list()));
+}
+await db.close();
+</starter>
+<hint><p><code>currentOrg().id</code> is the organization of the request in progress; never add a parameter for it, or a caller could pass someone else's.</p></hint>
+<hint><p><code>inTenant(this.db, orgId, async (tx) =&gt; (await tx.query(...)).rows)</code> runs the query under the row-level security policy for that organization, exactly like <code>ProductRepository.list</code> above.</p></hint>
 <solution>
 <example file="ex-customers.ts" project="saas" browser="no">
 import type { PGlite } from "@electric-sql/pglite";
@@ -1039,6 +1078,46 @@ kola-motors [ { id: 3, orgId: 'kola-motors', name: 'Lagos Taxi Co' } ]
 </exercise>
 <exercise title="Pilot organizations first">
 <p>Kola Motors asked to join the bulk-reminders beta. Change the flag so that Kola Motors always has it, and about 10% of the other organizations too. Evaluate it for Kola Motors, the bakery and Chidi Pharmacy, and print the reason for each.</p>
+<starter file="ex-pilot.ts">
+// Example to learn from: a named pilot on top of a smaller rollout, for a
+// different flag and a different pilot tenant. Rules run in order, first
+// match wins.
+//
+//   const flags = createFeatureFlags({
+//     provider: createMemoryProvider([{
+//       key: "new-dashboard",
+//       enabled: true,
+//       defaultValue: false,
+//       rules: [
+//         { type: "tenant", tenants: ["adas-bakery"], value: true },
+//         { type: "percentage", percentage: 5, value: true },
+//       ],
+//     }]),
+//   });
+//
+// Now write the bulk-reminders flag below, piloted on Kola Motors.
+
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "bulk-reminders",
+    enabled: true,
+    defaultValue: false,
+    rules: [
+      // Add two rules here, in order: a "tenant" rule naming kola-motors as
+      // always on, then a "percentage" rule at 10 for everyone else.
+    ],
+  }]),
+});
+
+for (const tenantId of ["kola-motors", "adas-bakery", "chidi-pharmacy"]) {
+  const result = await flags.evaluate("bulk-reminders", { tenantId });
+  console.log(tenantId.padEnd(15), result.value, result.reason);
+}
+</starter>
+<hint><p>A rule has a <code>type</code>, and <code>value</code> is what it resolves to on a match: <code>{ type: "tenant", tenants: ["kola-motors"], value: true }</code>.</p></hint>
+<hint><p>Order matters: the named-tenant rule must come <em>before</em> the percentage rule, or the percentage rule could match first and give the wrong reason for Kola Motors specifically (though not the wrong value, here). <code>{ type: "percentage", percentage: 10, value: true }</code> is the second rule.</p></hint>
 <solution>
 <example file="ex-pilot.ts" project="saas-pilot" browser="no">
 import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
@@ -1070,6 +1149,9 @@ chidi-pharmacy  false default
 </exercise>
 <exercise title="Review three pull requests">
 <p>For each change, say whether it can leak data between organizations, and why. (a) A new route caches search results with <code>cache.getOrSet(`search.${query}`, …, { namespace: currentOrg().id })</code>. (b) A nightly "overdue invoices" job loops over all organizations and calls <code>db.query("select * from invoices where status = 'sent'")</code> directly, "because the job has no tenant context". (c) A "switch organization" endpoint takes <code>{ org }</code> from the body and stores it in <code>activeOrg</code> for the current session.</p>
+<hint><p>For (a), where does the namespace's value actually come from — is it something the client sent, or something the server already trusts?</p></hint>
+<hint><p>For (b), which role is running this query, and which of the two walls from earlier in the lesson is missing when nobody calls <code>inTenant</code>?</p></hint>
+<hint><p>For (c), re-read "Which organization is this request for?": a value the client sends in a body is a <em>want</em>, never a <em>have</em>. What must happen before <code>{ org }</code> is trusted with anything?</p></hint>
 <solution>
 <p>(a) Safe from leaks: the namespace comes from the tenant context. (The key is another problem: a search query can contain characters that are not allowed in a cache key, so hash it first.) (b) Leaks by design: running as the table owner bypasses row-level security, and the query has no filter, so every organization's invoices end up in one loop, one log line or one e-mail away from the wrong customer. Loop over the organizations, and for each one call <code>tenantContext.run(org, …)</code> and use the repository. (c) Leaks unless it checks the membership: it must look up <code>memberships</code> for (current user, <code>org</code>) and answer like the login does, the same 403 for "no such organization" and "not a member", before it changes <code>activeOrg</code>. The organization in the body is only what the user <em>wants</em>.</p>
 </solution>

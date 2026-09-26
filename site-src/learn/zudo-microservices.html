@@ -470,6 +470,33 @@ forged header: undefined
 <h2 id="practice">Practice</h2>
 <exercise title="Retry only what is safe">
 <p>Write <code>shouldRetry(method, status)</code> that returns <code>true</code> only for <code>GET</code>, <code>HEAD</code> and <code>PUT</code> requests that failed with 429, 502, 503 or 504. Why is <code>PUT</code> on the list but not <code>POST</code>?</p>
+<starter file="should-retry.js">
+// Example to learn from: two Sets standing in for two allow-lists, checked
+// together with &&.
+//
+//   const ELIGIBLE_TIERS = new Set(["gold", "platinum"]);
+//   const STACKABLE_CODES = new Set(["WELCOME10", "LOYALTY5"]);
+//   function canStack(tier, code) {
+//     return ELIGIBLE_TIERS.has(tier) && STACKABLE_CODES.has(code);
+//   }
+//
+// Now do the same for method and status below.
+
+const SAFE = new Set(["GET", "HEAD", "PUT"]);
+const TRANSIENT = new Set([429, 502, 503, 504]);
+
+function shouldRetry(method, status) {
+  // true only when method is in SAFE and status is in TRANSIENT
+  return false;
+}
+
+console.log(shouldRetry("GET", 503));
+console.log(shouldRetry("GET", 404));
+console.log(shouldRetry("PUT", 502));
+console.log(shouldRetry("POST", 503));
+</starter>
+<hint><p>Both sets already exist; the function only needs to ask each of them one question and combine the answers.</p></hint>
+<hint><p><code>return SAFE.has(method) &amp;&amp; TRANSIENT.has(status);</code></p></hint>
 <solution>
 <example file="should-retry.js">
 const SAFE = new Set(["GET", "HEAD", "PUT"]);
@@ -495,6 +522,45 @@ false
 </exercise>
 <exercise title="Ignore duplicate events">
 <p>The outbox delivers at least once. Write an inventory handler for <code>order.placed</code> that reduces the stock only the first time it sees an <code>orderId</code>. Deliver the same event twice and show the stock went down once.</p>
+<starter file="dedupe.ts">
+// Example to learn from: the same "seen before? skip it" dedupe, for a
+// different at-least-once event.
+//
+//   bus.on<Event<PaymentReceived>>("payment.received", (event) => {
+//     if (applied.has(event.payload.paymentId)) {
+//       console.log(`payment ${event.payload.paymentId} already applied, skipping`);
+//       return;
+//     }
+//     applied.add(event.payload.paymentId);
+//     balanceKobo += event.payload.amountKobo;
+//     console.log(`payment ${event.payload.paymentId}: balance is now ${balanceKobo}`);
+//   });
+//
+// Now do the same for order.placed and stock below.
+
+import { createEventBus, type Event } from "@zudojs/events";
+
+interface OrderPlaced {
+  readonly orderId: number;
+  readonly quantity: number;
+}
+
+const bus = createEventBus();
+const handled = new Set<number>();
+let stock = 10;
+
+bus.on<Event<OrderPlaced>>("order.placed", (event) => {
+  // already in `handled`: log `order ${event.payload.orderId} already
+  // handled, skipping` and return
+  // otherwise: add it to `handled`, subtract event.payload.quantity from
+  // stock, and log `order ${event.payload.orderId}: stock is now ${stock}`
+});
+
+await bus.publishEvent({ type: "order.placed", payload: { orderId: 7, quantity: 2 } });
+await bus.publishEvent({ type: "order.placed", payload: { orderId: 7, quantity: 2 } });
+</starter>
+<hint><p>Guard first: <code>if (handled.has(event.payload.orderId)) { console.log(...); return; }</code>, before touching <code>stock</code> at all.</p></hint>
+<hint><p>After the guard: <code>handled.add(event.payload.orderId); stock -= event.payload.quantity; console.log(`order ${event.payload.orderId}: stock is now ${stock}`);</code>.</p></hint>
 <solution>
 <example file="dedupe.ts">
 import { createEventBus, type Event } from "@zudojs/events";
@@ -530,6 +596,8 @@ order 7 already handled, skipping
 </exercise>
 <exercise title="Add a fallback">
 <p>Change the circuit breaker example so that when the breaker is open, the caller shows <code>"stock unknown"</code> instead of an error. Which ShopFlow pages could live with that fallback, and which could not?</p>
+<hint><p>A rejected promise can be given a fallback value with one method, without touching the breaker itself.</p></hint>
+<hint><p>Which pages only ever <em>read</em> stock to display it, and which pages need to be sure enough stock exists before they let money change hands?</p></hint>
 <solution>
 <p>Wrap the call: <code>const text = await breaker.call(askInventory).catch(() =&gt; "stock unknown");</code>. A product page can show "stock unknown" and still sell. Checkout cannot: it must not accept an order it cannot reserve, so there the right answer is a clear "please try again in a minute".</p>
 </solution>

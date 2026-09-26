@@ -561,6 +561,8 @@ wrong kid:    { ok: false, reason: 'bad signature' }
 <h2 id="practice">Practice</h2>
 <exercise title="Pick the tool">
 <p>For each situation, name the promise needed and the tool: (a) a mobile app caches the product catalogue and must notice if the cached file was corrupted on disk; (b) your shop sends delivery partners a daily manifest, and partners must be sure it came from you, but you do not want partners to be able to create manifests; (c) you store customers' dates of birth and must show them on the profile page; (d) two of your own services call each other inside your network.</p>
+<hint><p>Ask, for each: does it need a secret key at all? Does the reader need to get the original value back, or only to check that it has not changed?</p></hint>
+<hint><p>(b) needs many readers to verify but only one writer to sign; which family of algorithm has different keys for those two jobs?</p></hint>
 <solution>
 <ul>
 <li>(a) Integrity against accidents: a SHA-256 checksum stored with the file. No key, because the threat is corruption, not an attacker.</li>
@@ -573,6 +575,49 @@ wrong kid:    { ok: false, reason: 'bad signature' }
 
 <exercise title="Sign with a timestamp and a purpose">
 <p>A signature made for a receipt must not be accepted as, say, a refund approval, even if someone copies the payload across. Extend <code>signReceipt</code>/<code>verifyReceipt</code> so the signed bytes include a <code>purpose</code> (<code>"receipt"</code>) and <code>verify</code> refuses any other purpose. Show that a correctly signed <code>"refund-approval"</code> envelope is refused by the receipt verifier.</p>
+<starter file="purpose.js">
+// Example to learn from: including one more field inside the signed bytes,
+// and refusing a signature made for a different value of it.
+//
+//   function signAs(role, note, privateKey) {
+//     const payload = Buffer.from(JSON.stringify({ role, note }));
+//     return { payload: payload.toString("base64url"), signature: sign(null, payload, privateKey).toString("base64url") };
+//   }
+//   function verifyAs(role, envelope, publicKey) {
+//     const payload = Buffer.from(envelope.payload, "base64url");
+//     if (!verify(null, payload, publicKey, Buffer.from(envelope.signature, "base64url"))) return "bad signature";
+//     const message = JSON.parse(payload.toString("utf8"));
+//     return message.role === role ? message.note : `wrong role: ${message.role}`;
+//   }
+//
+// Now do the same with `purpose` for receipts below.
+
+import { generateKeyPairSync, sign, verify } from "node:crypto";
+
+function signFor(purpose, data, privateKey) {
+  // include purpose in the signed bytes: JSON.stringify({ purpose, data })
+  const payload = Buffer.from(JSON.stringify(data));
+  return { payload: payload.toString("base64url"), signature: sign(null, payload, privateKey).toString("base64url") };
+}
+
+function verifyFor(purpose, envelope, publicKey) {
+  // verify the signature first (as below), then check message.purpose ===
+  // purpose; when it does not match, return `wrong purpose: ${message.purpose}`
+  // instead of message.data
+  const payload = Buffer.from(envelope.payload, "base64url");
+  if (!verify(null, payload, publicKey, Buffer.from(envelope.signature, "base64url"))) return "bad signature";
+  return JSON.parse(payload.toString("utf8"));
+}
+
+const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+const receipt = signFor("receipt", { id: "R-7731", totalKobo: 4_500_000 }, privateKey);
+const approval = signFor("refund-approval", { id: "R-7731", totalKobo: 4_500_000 }, privateKey);
+
+console.log(verifyFor("receipt", receipt, publicKey));
+console.log(verifyFor("receipt", approval, publicKey));
+</starter>
+<hint><p><code>signFor</code> needs to sign <code>{ purpose, data }</code> as one JSON object, not just <code>data</code>.</p></hint>
+<hint><p>After verifying the signature in <code>verifyFor</code>: <code>const message = JSON.parse(payload.toString("utf8")); return message.purpose === purpose ? message.data : `wrong purpose: ${message.purpose}`;</code>.</p></hint>
 <solution>
 <example file="purpose.js" browser="no">
 import { generateKeyPairSync, sign, verify } from "node:crypto";
@@ -606,6 +651,43 @@ wrong purpose: refund-approval
 
 <exercise title="An HMAC key ring for webhooks">
 <p>Your stock updates are signed with HMAC-SHA256, and the header looks like <code>v1=&lt;hex&gt;</code>. Write <code>verifyStock(secrets, rawBody, header)</code> where <code>secrets</code> is an object such as <code>{ v1: oldSecret, v2: newSecret }</code>. Pick the secret by the version prefix, compare in constant time, and refuse unknown versions. Show that during a rotation both versions verify, and that an unknown version is refused.</p>
+<starter file="hmac-ring.js">
+// Example to learn from: the same "pick the secret by prefix, then compare
+// in constant time" key ring, for a different header shape.
+//
+//   function verifyOrderSig(secrets, rawBody, header) {
+//     const match = /^(k\d+)=([0-9a-f]{64})$/.exec(header ?? "");
+//     if (!match) return "malformed header";
+//     const secret = Object.hasOwn(secrets, match[1]) ? secrets[match[1]] : undefined;
+//     if (secret === undefined) return "unknown key";
+//     const expected = createHmac("sha256", secret).update(rawBody).digest();
+//     return timingSafeEqual(expected, Buffer.from(match[2], "hex")) ? "ok" : "bad signature";
+//   }
+//
+// Now do the same for stock updates below, with the "v" prefix instead of "k".
+
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+
+function verifyStock(secrets, rawBody, header) {
+  // match header against /^(v\d+)=([0-9a-f]{64})$/; "malformed header" if
+  // it does not match
+  // look up secrets[version] with Object.hasOwn; "unknown version" if absent
+  // recompute the HMAC-SHA256 of rawBody with that secret and compare it to
+  // the hex in constant time: "ok" or "bad signature"
+  return "ok";
+}
+
+const secrets = { v1: randomBytes(32), v2: randomBytes(32) };
+const body = '{"sku":"RICE-5","inStock":40}';
+const signWith = (version) => `${version}=${createHmac("sha256", secrets[version]).update(body).digest("hex")}`;
+
+console.log("old secret:", verifyStock(secrets, body, signWith("v1")));
+console.log("new secret:", verifyStock(secrets, body, signWith("v2")));
+console.log("unknown:   ", verifyStock(secrets, body, signWith("v2").replace("v2=", "v9=")));
+console.log("garbage:   ", verifyStock(secrets, body, "v2=zz"));
+</starter>
+<hint><p>Start with the regular expression: <code>const match = /^(v\d+)=([0-9a-f]{64})$/.exec(header ?? ""); if (!match) return "malformed header";</code>.</p></hint>
+<hint><p><code>const secret = Object.hasOwn(secrets, match[1]) ? secrets[match[1]] : undefined; if (secret === undefined) return "unknown version";</code>, then compare with <code>timingSafeEqual</code> against <code>createHmac("sha256", secret).update(rawBody).digest()</code>.</p></hint>
 <solution>
 <example file="hmac-ring.js" browser="no">
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";

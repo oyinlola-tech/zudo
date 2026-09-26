@@ -613,6 +613,51 @@ console.log("still pending:", [...pending.keys()]);
 fulfilled rejected fulfilled rejected
 still pending: [ 'PAY-2', 'PAY-4' ]
 </output>
+<starter file="pending-fixed.js">
+// Example to learn from: tying an entry's life to a call with try/finally,
+// for open file handles instead of pending payments.
+//
+//   const openHandles = new Map();
+//   async function withHandle(id, work) {
+//     openHandles.set(id, { id });
+//     try {
+//       return await work();
+//     } finally {
+//       openHandles.delete(id);   // runs whichever way work() ends
+//     }
+//   }
+//   await Promise.allSettled([
+//     withHandle("f1", async () => "ok"),
+//     withHandle("f2", async () => { throw new Error("disk error"); }),
+//   ]);
+//   console.log([...openHandles.keys()]); // []
+//
+// Now do the same idea for charge below.
+
+const pending = new Map();
+
+async function charge(id, kobo) {
+  pending.set(id, { id, kobo, startedAt: 0 });
+  // your code here: wrap the rest of this function in try/finally, moving
+  // `pending.delete(id)` into the finally block, so it runs whichever way
+  // charge ends — a return or a throw.
+  if (kobo > 5_000_000) throw new Error(`limit exceeded for ${id}`);
+  await Promise.resolve();
+  pending.delete(id);
+  return "paid";
+}
+
+const results = await Promise.allSettled([
+  charge("PAY-1", 250_000),
+  charge("PAY-2", 9_000_000),
+  charge("PAY-3", 120_000),
+  charge("PAY-4", 7_500_000),
+]);
+console.log(results.map((r) => r.status).join(" "));
+console.log("still pending:", [...pending.keys()]);
+</starter>
+<hint><p><code>finally</code> runs whether the code above it returned normally or threw — that is exactly "however the payment ends". Move the cleanup there instead of leaving it as the last line of the success path.</p></hint>
+<hint><p><code>try { if (kobo &gt; 5_000_000) throw new Error(...); await Promise.resolve(); return "paid"; } finally { pending.delete(id); }</code></p></hint>
 <solution>
 <example file="pending-fixed.js">
 const pending = new Map();
@@ -664,6 +709,46 @@ console.log("listeners that ran for closed pages:", calls);
 <output>
 listeners that ran for closed pages: 5
 </output>
+<starter file="checkout-fixed.js">
+// Example to learn from: one AbortController per "session", one signal for
+// every listener it registers, for a small widget instead of a checkout.
+//
+//   function openWidget() {
+//     const widget = new AbortController();
+//     bus.addEventListener("tick", () => hits++, { signal: widget.signal });
+//     bus.addEventListener("tock", () => hits++, { signal: widget.signal });
+//     return { close: () => widget.abort() };
+//   }
+//   for (let i = 0; i < 3; i++) openWidget().close();
+//   bus.dispatchEvent(new Event("tick"));
+//   console.log(hits); // 0 — every widget already closed
+//
+// Now do the same idea for openCheckout below.
+
+const cartEvents = new EventTarget();
+let calls = 0;
+
+function openCheckout() {
+  // your code here: const page = new AbortController(); const { signal } = page;
+  // pass { signal } as a third argument to each addEventListener call below,
+  // and return { close: () => page.abort() } instead of a no-op close.
+  cartEvents.addEventListener("item-added", () => calls++);
+  cartEvents.addEventListener("item-removed", () => calls++);
+  cartEvents.addEventListener("coupon", () => calls++);
+  return { close() {} };
+}
+
+for (let i = 0; i < 5; i++) openCheckout().close();
+cartEvents.dispatchEvent(new Event("item-added"));
+console.log("listeners that ran for closed pages:", calls);
+
+const open = openCheckout();
+cartEvents.dispatchEvent(new Event("coupon"));
+console.log("an open page still listens:", calls);
+open.close();
+</starter>
+<hint><p>One <code>AbortController</code> per call to <code>openCheckout</code>, its <code>signal</code> passed as the options object to every <code>addEventListener</code> in that call. Aborting it removes all of them together.</p></hint>
+<hint><p><code>const page = new AbortController(); const { signal } = page; cartEvents.addEventListener("item-added", () =&gt; calls++, { signal }); /* … same for the other two … */ return { close: () =&gt; page.abort() };</code></p></hint>
 <solution>
 <example file="checkout-fixed.js">
 const cartEvents = new EventTarget();
@@ -696,6 +781,44 @@ an open page still listens: 1
 </exercise>
 <exercise title="Memoize per object without leaking">
 <p>A <code>shippingQuote(order)</code> function is slow and called many times for the same order objects. Memoize it with a <code>WeakMap</code> so results live exactly as long as their orders, and show how many times the slow part ran.</p>
+<starter file="memo-weak.js">
+// Example to learn from: attaching a computed value to an object with a
+// WeakMap, keyed by the object itself, for a request label instead of a
+// memoized function result.
+//
+//   const labels = new WeakMap();
+//   function labelFor(request) {
+//     if (!labels.has(request)) labels.set(request, `${request.method} ${request.path}`);
+//     return labels.get(request);
+//   }
+//   const req = { method: "GET", path: "/orders" };
+//   console.log(labelFor(req), labelFor(req));   // computed once, read twice
+//   console.log(labelFor({ ...req }));           // a copy is a different key
+//
+// Now do the same has/set pattern inside a reusable memoizeByObject below.
+
+function memoizeByObject(fn) {
+  // your code here: use a WeakMap `results`. Return a function of one
+  // argument `obj` that computes and stores fn(obj) into results the first
+  // time obj is seen (results.has/set), and returns the stored value every
+  // time after, without calling fn again.
+  return (obj) => fn(obj);
+}
+
+let slowCalls = 0;
+const shippingQuote = memoizeByObject((order) => {
+  slowCalls += 1;
+  return order.weightKg * 20_000 + (order.city === "Lagos" ? 0 : 150_000);
+});
+
+const a = { id: 7, weightKg: 5, city: "Lagos" };
+const b = { id: 8, weightKg: 2, city: "Kano" };
+console.log(shippingQuote(a), shippingQuote(b), shippingQuote(a), shippingQuote(b));
+console.log("slow calls:", slowCalls);
+console.log("a copy is a different key:", shippingQuote({ ...a }), "slow calls:", slowCalls);
+</starter>
+<hint><p><code>results.has(obj)</code> tells you whether this exact object was seen before. Compute and store only on the first call for that object; every later call for the same object just reads the stored value.</p></hint>
+<hint><p><code>function memoizeByObject(fn) { const results = new WeakMap(); return (obj) =&gt; { if (!results.has(obj)) results.set(obj, fn(obj)); return results.get(obj); }; }</code></p></hint>
 <solution>
 <example file="memo-weak.js">
 function memoizeByObject(fn) {

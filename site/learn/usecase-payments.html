@@ -1893,7 +1893,43 @@ await runTests("tests/failures.test.ts");</script>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="1" data-file="webhook-demo.ts" data-project="pay" data-command="npx tsx webhook-demo.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Verify PayGate's webhooks</h3><p>PayGate calls <code>POST /v1/webhooks/paygate</code> when a charge settles, with a header <code>paygate-signature: t=&lt;unix seconds&gt;,v1=&lt;hex HMAC-SHA256 of "t.body"&gt;</code> made with a shared secret. Write the verification: the signature over the raw body, compared in constant time; a timestamp within five minutes, so a captured webhook cannot be replayed later; and each event id handled once. Use <code>@zudojs/crypto</code>.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="webhook.ts" data-project="pay">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="1" data-file="webhook-demo.ts" data-project="pay" data-command="npx tsx webhook-demo.ts" data-title="Verify PayGate's webhooks"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Verify PayGate's webhooks</h3><div class="lx-ex-task"><p>PayGate calls <code>POST /v1/webhooks/paygate</code> when a charge settles, with a header <code>paygate-signature: t=&lt;unix seconds&gt;,v1=&lt;hex HMAC-SHA256 of "t.body"&gt;</code> made with a shared secret. Write the verification: the signature over the raw body, compared in constant time; a timestamp within five minutes, so a captured webhook cannot be replayed later; and each event id handled once. Use <code>@zudojs/crypto</code>.</p></div><script type="text/plain" class="lx-ex-starter" data-file="webhook.ts">// Example to learn from: verifying a signed, timestamped download link the
+// same three ways — signature, freshness, one use.
+//
+//   function createLinkVerifier(secret: string, used: Set<string>) {
+//     const key = utf8Encode(secret);
+//     return async function verify(fileId: string, expires: number, sig: string, nowSeconds: number) {
+//       const expected = await hmacSha256(`${fileId}.${expires}`, key);
+//       if (!timingSafeEqualString(expected, sig)) return { ok: false, reason: "bad signature" };
+//       if (nowSeconds > expires) return { ok: false, reason: "expired" };
+//       if (used.has(fileId)) return { ok: false, reason: "already downloaded" };
+//       used.add(fileId);
+//       return { ok: true };
+//     };
+//   }
+//
+// Now do the same for a PayGate webhook below.
+
+import { hmacSha256, timingSafeEqualString, utf8Encode } from "@zudojs/crypto";
+
+/**
+ * Verifies a PayGate webhook: header "t=<unix seconds>,v1=<hex HMAC-SHA256 of `${t}.${rawBody}`>".
+ * Checks the signature over the raw bytes, the timestamp (5 minutes), and that the event is new.
+ */
+export function createWebhookVerifier(secret: string, seen: Set<string>) {
+  const key = utf8Encode(secret);
+  return async function verify(rawBody: string, header: string | undefined, nowSeconds: number) {
+    // 1. Parse header as "t=<seconds>,v1=<hex>" into { t, v1 }. Missing or
+    //    non-numeric t, or a missing v1, is { ok: false, reason: "malformed signature" }.
+    // 2. Recompute the HMAC of `${t}.${rawBody}` with hmacSha256(..., key) and
+    //    compare it to v1 with timingSafeEqualString. A mismatch is
+    //    { ok: false, reason: "bad signature" }.
+    // 3. More than 300 seconds away from nowSeconds is { ok: false, reason: "too old" }.
+    // 4. Parse rawBody as JSON for its `id`. Seen before: { ok: true, duplicate: true }.
+    //    Otherwise add it to `seen` and return { ok: true, duplicate: false, event }.
+    return { ok: false, reason: "not implemented" };
+  };
+}</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Split the header on <code>,</code> and each part on <code>=</code>: <code>Object.fromEntries(header.split(",").map((p) =&gt; p.split("=", 2)))</code> gives you <code>{ t, v1 }</code>. <code>Number(parts.t)</code> must be an integer.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>await hmacSha256(`${timestamp}.${rawBody}`, key)</code> is the expected signature; compare it with <code>timingSafeEqualString(expected, parts.v1)</code>, never <code>===</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 3</p><p><code>Math.abs(nowSeconds - timestamp) &gt; 300</code> catches both a replayed old webhook and a clock far in the future. <code>seen.has(event.id)</code> before <code>seen.add(event.id)</code> is what makes a retry a no-op instead of a second charge recorded twice.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="webhook.ts" data-project="pay">
 <figcaption class="lx-bar"><span class="lx-file">webhook.ts</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> hmacSha256<span class="t-pn">,</span> timingSafeEqualString<span class="t-pn">,</span> utf8Encode <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/crypto"</span><span class="t-pn">;</span>
 
@@ -1986,7 +2022,32 @@ replayed old: { ok: false, reason: 'too old' }
 no header:    { ok: false, reason: 'malformed signature' }</pre></div>
 </figure>
 <p>The HMAC is computed over the <em>raw</em> body, before any JSON parsing, because re-serializing parsed JSON can change the bytes. <code>timingSafeEqualString</code> compares without leaking how many characters matched. <code>hmacSha256</code> itself refuses keys shorter than 16 bytes, so an empty or missing secret cannot produce signatures anyone could forge. A verified webhook then calls <code>settle</code>, which is already idempotent; the <code>seen</code> set would be a table in production.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="readiness.ts" data-project="pay" data-command="npx tsx readiness.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A readiness endpoint</h3><p>The load balancer should stop sending payment traffic to an instance when PayGate is unreachable from it. Write <code>ready()</code> with the adapter registry's <code>healthAll</code>: 200 when every adapter is healthy or degraded, 503 otherwise, and the status of each adapter.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="20" data-file="readiness.ts" data-project="pay">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="readiness.ts" data-project="pay" data-command="npx tsx readiness.ts" data-title="A readiness endpoint"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A readiness endpoint</h3><div class="lx-ex-task"><p>The load balancer should stop sending payment traffic to an instance when PayGate is unreachable from it. Write <code>ready()</code> with the adapter registry's <code>healthAll</code>: 200 when every adapter is healthy or degraded, 503 otherwise, and the status of each adapter.</p></div><script type="text/plain" class="lx-ex-starter" data-file="readiness.ts">// Example to learn from: a readiness check for a cache adapter, built the
+// same way: run healthAll, fail closed only on "unhealthy".
+//
+//   async function cacheReady() {
+//     const report = await registry.healthAll({ timeout: 1000 });
+//     const status = report.status === "unhealthy" ? 503 : 200;
+//     return { status, stores: Object.fromEntries(Object.entries(report.adapters).map(([n, h]) => [n, h.status])) };
+//   }
+//
+// Now do the same for OjaPay's gateways below.
+
+import { startOjaPay } from "./oja-pay.js";
+
+const oja = await startOjaPay();
+async function ready() {
+  // Call oja.registry.healthAll({ timeout: 2000 }); its report.status is
+  // "healthy", "degraded" or "unhealthy". Answer status: 503 only for
+  // "unhealthy" (200 otherwise), and gateways: a map of adapter name to its
+  // own health.status, from report.adapters.
+  return { status: 500, gateways: {} };
+}
+
+console.log("PayGate up:  ", await ready());
+await oja.paygate.stop(); // PayGate goes down
+console.log("PayGate down:", await ready());
+await oja.stop();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>const report = await oja.registry.healthAll({ timeout: 2000 })</code> gives you <code>report.status</code> (the worst of every adapter) and <code>report.adapters</code> (one entry per adapter).</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>Object.fromEntries(Object.entries(report.adapters).map(([name, health]) =&gt; [name, health.status]))</code> turns the adapters map into <code>{ paygate: "healthy" }</code>. Only <code>"unhealthy"</code> should answer 503; a merely <code>"degraded"</code> gateway still gets traffic.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="20" data-file="readiness.ts" data-project="pay">
 <figcaption class="lx-bar"><span class="lx-file">readiness.ts</span><button type="button" class="lx-edit" data-index="20" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> startOjaPay <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./oja-pay.js"</span><span class="t-pn">;</span>
 
@@ -2019,7 +2080,7 @@ await oja.stop();</script>
 PayGate down: { status: 503, gateways: { paygate: 'unhealthy' } }</pre></div>
 </figure>
 <p><code>healthAll</code> runs every adapter's <code>health()</code> with a timeout, and a check that throws or times out counts as unhealthy, so a hanging gateway cannot hang the readiness probe. Keep liveness (is the process alive?) separate: restarting a healthy process because PayGate is down would not help.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Design refunds</h3><p>Support staff must be able to refund a succeeded payment, fully or partly. Without code: which tables, states and rules do you need, and what can go wrong that the payment flow already taught you to handle?</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Design refunds"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Design refunds</h3><div class="lx-ex-task"><p>Support staff must be able to refund a succeeded payment, fully or partly. Without code: which tables, states and rules do you need, and what can go wrong that the payment flow already taught you to handle?</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>A refund is a payment going the other way: which columns did the <code>payments</code> table need to stay safe under retries and races, and which of those does a refund need too?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Two support staff refunding the same payment at the same moment is the same shape of problem as two clicks creating two payments — what stopped that, and what must the database enforce here so refunds can never add up to more than was paid?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 3</p><p>The gateway call can time out or answer unknown exactly as a charge can. What must never happen to a refund whose outcome is unknown, and who finds out later?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
 <li>A <code>refunds</code> table: payment id, amount in kobo, status (<code>processing</code>, <code>succeeded</code>, <code>failed</code>, <code>unknown</code>), the staff member, an idempotency key and a fingerprint, like payments.</li>
 <li>A rule the database enforces: the sum of non-failed refunds never exceeds the payment's amount. Check it in the same transaction that inserts the refund, with the payment row locked (<code>FOR UPDATE</code>), so two refunds clicked at once cannot both pass.</li>
 <li>The gateway call uses a key derived from the refund id, gets <code>succeeded</code>/<code>failed</code>/<code>unknown</code>, and <code>unknown</code> goes to reconciliation, never to "failed".</li>

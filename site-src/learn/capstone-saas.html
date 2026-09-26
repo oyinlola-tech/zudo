@@ -198,7 +198,7 @@ development 3000 2000 true
 <p>Transactions come from <code>@zudojs/transactions</code>, as in <a href="/learn/zudo-transactions">the transactions lesson</a>, with one twist. PGlite is a single connection, so the adapter here runs each transaction inside PGlite's own <code>transaction()</code>, which makes every other query wait until it finishes. Without that, a second request's query would run inside the first request's open transaction. <code>sql()</code> returns the current transaction's connection when there is one, and the plain database otherwise; every repository query goes through it.</p>
 <file name="db.ts" project="feesdesk">
 import { PGlite, type Transaction as PgTransaction } from "@electric-sql/pglite";
-import { createTransactionContext, createTransactionManager, type Transaction, type TransactionAdapter } from "@zudojs/transactions";
+import { createTransactionManager, type Transaction, type TransactionAdapter } from "@zudojs/transactions";
 
 interface Handle {
   readonly tx: PgTransaction;
@@ -258,19 +258,18 @@ export type Queryable = Pick<PGlite, "query">;
 export async function createDatabase() {
   const pg = new PGlite();
   await pg.exec(SCHEMA);
-  const context = createTransactionContext();
-  const transactions = createTransactionManager({ adapter: pgliteAdapter(pg), context });
+  const transactions = createTransactionManager({ adapter: pgliteAdapter(pg) });
   const sql = (): Queryable => transactions.getCurrentHandle<Handle>()?.tx ?? pg;
-  /** Runs `work` after `tx` commits, outside it: work started there must not inherit a finished transaction. */
-  const afterCommit = (tx: Transaction, work: () => Promise<void>) => tx.afterCommit(() => context.exit(work));
+  /** Runs `work` after `tx` commits, detached from it: `fee.paid`'s handler must not join a finished transaction. */
+  const afterCommit = (tx: Transaction, work: () => Promise<void>) => tx.afterCommit(work);
   return { pg, transactions, sql, afterCommit, close: () => pg.close() };
 }
 
 export type Database = Awaited<ReturnType<typeof createDatabase>>;
 </file>
-<p>What is <code>afterCommit</code> for, and why does it call <code>context.exit</code>? FeesDesk publishes <code>fee.paid</code> after the payment commits, and a handler of that event queues the receipt job. Here is what happens without the <code>exit</code>, with a stand-in adapter so only the transaction logic runs:</p>
+<p>What is <code>afterCommit</code> for? FeesDesk publishes <code>fee.paid</code> after the payment commits, and a handler of that event queues the receipt job — a job that opens its <em>own</em> transaction a little later, once <code>render-receipt</code> reaches the front of the queue. That job must never find itself inside the payment's transaction, which has already committed by then. <code>afterCommit</code> callbacks run detached from the transaction that registered them, so a <code>manager.run</code> called from inside one starts a genuinely new transaction rather than joining a closed one. Here it is, with a stand-in adapter so only the transaction logic runs:</p>
 <example file="tx-context.ts" project="feesdesk" browser="no">
-import { createTransactionContext, createTransactionManager, type TransactionAdapter, type TransactionManagerOptions } from "@zudojs/transactions";
+import { createTransactionManager, type TransactionAdapter } from "@zudojs/transactions";
 
 // A stand-in adapter: begin, commit and rollback do nothing, so only the context logic runs.
 const adapter: TransactionAdapter = {
@@ -280,30 +279,27 @@ const adapter: TransactionAdapter = {
   rollback: async () => {},
 };
 
-async function publishAfterCommit(label: string, options: Partial<TransactionManagerOptions>, wrap = (work: () => Promise<void>) => work()) {
-  const manager = createTransactionManager({ adapter, ...options });
-  let receiptJob: Promise<void> = Promise.resolve();
-  await manager.run(async (payment) => {
-    payment.afterCommit(() => wrap(async () => {
-      // "publish fee.paid": a handler queues a job that runs a little later and opens its own transaction
-      receiptJob = new Promise((resolve) => setTimeout(async () => {
-        await manager.run(async (job) => console.log(`${label.padEnd(26)} job sees: ${job.kind}, same transaction as the payment: ${job.id === payment.id}`));
-        resolve();
-      }, 5));
-    }));
+const manager = createTransactionManager({ adapter });
+let receiptJob: Promise<void> = Promise.resolve();
+await manager.run(async (payment) => {
+  payment.afterCommit(async () => {
+    console.log("inside afterCommit, manager.getCurrent():", manager.getCurrent());
+    // "publish fee.paid": a handler queues a job that runs a little later and opens its own transaction
+    receiptJob = new Promise((resolve) => setTimeout(async () => {
+      await manager.run(async (job) => {
+        console.log(`job sees: ${job.kind}, same transaction as the payment: ${job.id === payment.id}`);
+      });
+      resolve();
+    }, 5));
   });
-  await receiptJob;
-}
-
-await publishAfterCommit("plain afterCommit", {});
-const context = createTransactionContext();
-await publishAfterCommit("afterCommit + context.exit", { context }, (work) => context.exit(work));
+});
+await receiptJob;
 </example>
 <output>
-plain afterCommit          job sees: participant, same transaction as the payment: true
-afterCommit + context.exit job sees: root, same transaction as the payment: false
+inside afterCommit, manager.getCurrent(): undefined
+job sees: root, same transaction as the payment: false
 </output>
-<p>With a plain <code>afterCommit</code>, the job that starts later still runs inside the payment's asynchronous context. Its own <code>manager.run</code> believes a transaction is in progress and <em>joins the one that has already committed</em> as a participant. In FeesDesk that surfaced as the receipt job failing with PGlite's "Transaction is closed", retried over and over. Running the callback through <code>context.exit</code> (with a context you create and pass to the manager) starts the job with no transaction in scope. This is a defect in the published <code>@zudojs/transactions</code>: callbacks registered with <code>afterCommit</code> should not inherit the finished transaction. Until it is fixed, wrap them as <code>db.afterCommit</code> does.</p>
+<p><code>manager.getCurrent()</code> is <code>undefined</code> even while the callback runs, and the later job's own <code>manager.run</code> opens a fresh, root transaction rather than joining the payment's. Before <code>@zudojs/transactions</code> 1.3, an <code>afterCommit</code> callback inherited the finished transaction's asynchronous context, so its own <code>manager.run</code> believed a transaction was already in progress and joined it as a <em>participant</em> — in FeesDesk that surfaced as the receipt job failing with PGlite's "Transaction is closed", retried forever, and the only fix was to run the callback through a separately created context's <code>exit</code>. That workaround is gone; a plain <code>afterCommit</code> is now the correct and only thing to write.</p>
 </section>
 
 <section>
@@ -1544,7 +1540,7 @@ $ npx vitest run --reporter=verbose feesdesk.test.ts
 <tr><td>Choose an architecture and change it when the evidence says so</td><td><a href="/learn/arch-styles">Architecture styles</a>, <a href="/learn/zudo-modular-monolith">Modular monolith</a>, <a href="/learn/zudo-microservices">Microservices</a></td><td>Milestone 6</td></tr>
 <tr><td>Serialize data that crosses service boundaries, and version its contracts</td><td><a href="/learn/zudo-serialization">Serialization</a>, <a href="/learn/dist-contracts">Contracts between services</a></td><td>Milestone: the RPC service split</td></tr>
 <tr><td>Scale the system: find the real bottleneck by measuring, then fix that</td><td><a href="/learn/zudo-performance">Diagnosing performance</a></td><td>Milestone: production</td></tr>
-<tr><td>Read a framework's source to answer "how does this really work?"</td><td><a href="/learn/zudo-internals">Reading ZudoJS internals</a></td><td>The afterCommit defect</td></tr>
+<tr><td>Read a framework's source to answer "how does this really work?"</td><td><a href="/learn/zudo-internals">Reading ZudoJS internals</a></td><td>Why <code>afterCommit</code> detaches</td></tr>
 <tr><td>Extend ZudoJS with your own packages and plugins</td><td><a href="/learn/zudo-create-package">Creating a ZudoJS package</a>, <a href="/learn/zudo-create-plugin">Building a complete ZudoJS plugin</a></td><td>Milestone: plugins</td></tr>
 </tbody>
 </table></div>
@@ -1554,6 +1550,52 @@ $ npx vitest run --reporter=verbose feesdesk.test.ts
 <h2 id="practice">Practice</h2>
 <exercise title="A login limit that fits a school">
 <p>Replace the per-IP login limit. Count only <em>failed</em> logins, per school and e-mail, allow 5 in 15 minutes, clear the count on a success, and keep refusing a locked account even when the right password arrives. Use <code>createRateLimiter</code>'s <code>keyGenerator</code>.</p>
+<starter file="login-limit.ts">
+// Example to learn from: a per-account limiter for password-reset requests,
+// keyed by the account instead of the caller's address.
+//
+//   const resets = createRateLimiter({
+//     windowMs: 60 * 60_000,
+//     max: 3,
+//     keyGenerator: (request) => String(request.headers?.["x-reset-account"]),
+//   });
+//   function requestReset(email: string): void {
+//     const request = { headers: { "x-reset-account": email.trim().toLowerCase() } };
+//     if (!resets.check(request).allowed) throw new RateLimitError("Too many reset requests");
+//   }
+//
+// Now do the same for a login limiter below, keyed by school + e-mail.
+
+import { RateLimitError } from "@zudojs/errors";
+import { createRateLimiter } from "@zudojs/security";
+
+// One budget per school + e-mail, counting only failures, cleared by a success.
+const failures = createRateLimiter({
+  windowMs: 15 * 60_000,
+  max: 5,
+  // Add a keyGenerator here: build the key from request.headers["x-login-account"].
+});
+
+async function login(school: string, email: string, passwordOk: boolean): Promise<string> {
+  const request = { headers: { "x-login-account": `${school}/${email.trim().toLowerCase()}` } };
+  const key = String(request.headers["x-login-account"]);
+  // 1. If failures.getCount(key) is already >= 5, throw a RateLimitError
+  //    ("Too many failed logins; try again later") before looking at the password.
+  // 2. Wrong password: call failures.check(request) to count the failure, return "401".
+  // 3. Right password: call failures.reset(key) to clear the count, return "201".
+  return passwordOk ? "201" : "401";
+}
+
+const attempt = (email: string, ok: boolean) => login("greenfield", email, ok).catch((error: Error) => String((error as RateLimitError).statusCode));
+const results: string[] = [];
+for (let i = 0; i < 3; i++) results.push(await attempt("ada@example.com", true));
+for (let i = 0; i < 6; i++) results.push(await attempt("Ada@Example.com", false));
+results.push(await attempt("ada@example.com", true), await attempt("kemi@example.com", true));
+console.log(results.join(" "));
+failures.destroy();
+</starter>
+<hint><p>Pass <code>keyGenerator: (request) =&gt; String(request.headers?.["x-login-account"])</code> to <code>createRateLimiter</code>, the same way the reset limiter reads <code>"x-reset-account"</code>.</p></hint>
+<hint><p>Check <code>failures.getCount(key) &gt;= 5</code> first and throw before anything else. Only call <code>failures.check(request)</code> on a wrong password (that is what counts the failure), and only call <code>failures.reset(key)</code> on a right one.</p></hint>
 <solution>
 <example file="login-limit.ts" project="feesdesk" browser="no">
 import { RateLimitError } from "@zudojs/errors";
@@ -1593,6 +1635,39 @@ failures.destroy();
 </exercise>
 <exercise title="Reconcile a pending payment">
 <p>Payment 7 was left pending because KoboPay did not answer in time. Show that the reconciliation job can safely resend the charge with the same reference, and list what the job must do after it gets the answer.</p>
+<starter file="reconcile.ts">
+// Example to learn from: two different payments never share a reference, so
+// resending one can never accidentally charge the other.
+//
+//   const refA = "fd_greenfield_11";
+//   const refB = "fd_greenfield_12";
+//   await chargeWithRetry(provider, { reference: refA, amountKobo: 1_000_000, cardToken: "tok_visa" }, 1000);
+//   await chargeWithRetry(provider, { reference: refA, amountKobo: 1_000_000, cardToken: "tok_visa" }, 1000);
+//   await chargeWithRetry(provider, { reference: refB, amountKobo: 1_000_000, cardToken: "tok_visa" }, 1000);
+//   console.log("charges made:", kobopay.controls.chargeCalls); // 2, not 3
+//
+// Now show the *same* reference resent after a timeout, below.
+
+import { startKoboPay } from "./kobopay-server.js";
+import { chargeWithRetry, KoboPayAdapter } from "./payment-provider.js";
+
+const secret = `sk_test_${crypto.randomUUID()}`;
+const kobopay = await startKoboPay(secret);
+const provider = new KoboPayAdapter(kobopay.url, secret);
+const request = { reference: "fd_greenfield_7", amountKobo: 35_000_000, cardToken: "tok_visa" };
+
+// 1. Make KoboPay slow (kobopay.controls.latencyMs = 1500) and call
+//    chargeWithRetry(provider, request, 1000). It will time out on every
+//    attempt; log the outcome as "during the request: <status or error name>".
+// 2. Set the latency back to 0, then wait past the earlier timeouts
+//    (setTimeout ~1700ms) so KoboPay's slow answer has already landed.
+// 3. Call chargeWithRetry(provider, request, 1000) again, with the *same*
+//    request, and log the result together with kobopay.controls.chargeCalls.
+
+await kobopay.stop();
+</starter>
+<hint><p><code>chargeWithRetry(...).then((r) =&gt; r.status, (error: Error) =&gt; error.name)</code> turns either outcome into a string you can log, without a <code>try</code>/<code>catch</code>.</p></hint>
+<hint><p>After setting <code>kobopay.controls.latencyMs = 0</code>, <code>await new Promise((resolve) =&gt; setTimeout(resolve, 1700))</code> gives KoboPay's delayed first answer time to arrive before you call <code>chargeWithRetry</code> again with the identical <code>request</code> object.</p></hint>
 <solution>
 <example file="reconcile.ts" project="feesdesk" browser="no">
 import { startKoboPay } from "./kobopay-server.js";
@@ -1623,6 +1698,9 @@ reconciliation: {"status":"succeeded","chargeId":"ch_1"} | charges made: 1
 </exercise>
 <exercise title="Where does it go?">
 <p>For each new requirement, name the file(s) of the core that change, and the one test you would write first: (a) a bursar records a cash payment; (b) Unity College enables instalments; (c) receipts must also go by SMS; (d) a school is suspended for not paying FeesDesk.</p>
+<hint><p>Match each requirement to the file that owns that concern: <code>access.ts</code> decides who may do what, <code>billing.ts</code> holds the money rules, <code>notices.ts</code> holds what happens after a payment, and <code>app.ts</code> wires flags and dependencies together.</p></hint>
+<hint><p>For (b) and (d), a column or a mechanism already in <a href="#database">the schema</a> and <a href="#identity">identity.ts</a> does most of the work before you write a single new line — look for what already refuses a request, rather than reaching for new code.</p></hint>
+<hint><p>For (c), ask which existing handler already reacts to <code>fee.paid</code>, and what a second one next to it would need from the payment that the first one does not.</p></hint>
 <solution>
 <ul>
 <li>(a) <code>access.ts</code> (bursar may <code>bill:record-cash</code>), a new <code>RecordCashPayment</code> command handled in <code>billing.ts</code> that reuses <code>reserve</code> and <code>settle</code> with a <code>cash</code> ledger account, and a route in <code>http.ts</code>. First test: a parent sending the same request gets 403, and the ledger still sums to zero.</li>
@@ -1641,7 +1719,7 @@ reconciliation: {"status":"succeeded","chargeId":"ch_1"} | charges made: 1
 <li>Money rules live in three places at once: the code (reserve, settle), the database (constraints and unique keys) and the protocol (idempotency keys and provider references). Any one of them alone has a gap.</li>
 <li>A timeout is not a failure. An unknown outcome is answered with "pending" and settled later by reconciliation.</li>
 <li>Tenancy is carried by the session into every query, cache key, job and file key, and background work re-enters the school explicitly.</li>
-<li>The acceptance suite tests the promises, not the functions, and it found two design problems that no type checker could: a login limit that punishes shared networks, and a transaction context that leaks into later work.</li>
+<li>The acceptance suite tests the promises, not the functions, and it found a design problem no type checker could: a login limit that punishes shared networks (Exercise 1). <code>afterCommit</code> callbacks run detached from the transaction that registered them, so background work triggered from one starts its own transaction rather than inheriting a closed one.</li>
 <li>Six milestones finish the product; the graduation table tells you where to go for any item you cannot yet do alone.</li>
 </ul>
 <p>One step is left: <a href="/learn/final-challenge">the final challenge</a>, where you take someone else's broken feature and make it production-ready on your own.</p>

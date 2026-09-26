@@ -142,7 +142,7 @@ email: well done on "Write report"
 email active: false handlers left: 0
 </output>
 <p><code>bus.publish(event)</code> publishes an event you built with <code>create</code>. After the unsubscribe, no handler is left, so the third event reaches nobody. That is not an error: the publisher does not care who listens.</p>
-<p>The <code>&lt;Event&lt;TaskCompleted&gt;&gt;</code> type argument on <code>bus.on</code> is unchecked: nothing connects it to the string <code>"task.completed"</code>, so it compiles just as happily if you get the name or the payload type wrong, and the mismatch only shows up at runtime. <a href="/learn/ts-typed-events#zudo">A type-safe event system</a> shows the same gap in the package's types and a small wrapper that closes it.</p>
+<p>The <code>&lt;Event&lt;TaskCompleted&gt;&gt;</code> type argument on <code>bus.on</code> is unchecked: nothing connects it to the string <code>"task.completed"</code>, so it compiles just as happily if you get the name or the payload type wrong, and the mismatch only shows up at runtime. <code>@zudojs/events</code> now ships <code>createTypedEventBus&lt;TMap&gt;(bus)</code> for exactly this: wrap the raw bus once with a payload map (<code>{ "task.completed": TaskCompleted; … }</code>), and its <code>on</code>, <code>once</code> and <code>publish</code> take the event type from that map, so a wrong name or payload is a compile error instead of a silent runtime mismatch. It adds no runtime behaviour of its own, and <code>typed.bus</code> still reaches the raw bus for anything the typed view does not cover. <a href="/learn/ts-typed-events#zudo">A type-safe event system</a> builds the same idea by hand, which is still worth reading to see why the gap exists.</p>
 <warn title="COMMON MISTAKE: SUBSCRIBING PER REQUEST">Subscribe your handlers once, when the app starts. If you call <code>bus.on</code> inside a request handler, every request adds another copy, each event runs it more and more times, and memory grows forever. This is called a <strong>listener leak</strong>. The bus warns you when one event type collects more than 100 handlers.</warn>
 </section>
 
@@ -460,6 +460,36 @@ linus: Task 1 not found
 <h2 id="practice">Practice</h2>
 <exercise title="Count all task activity">
 <p>Subscribe one handler to <code>task.*</code> that counts events per type in a <code>Map</code>. Publish <code>task.created</code> twice and <code>task.completed</code> once, then print the map. Unsubscribe the handler and publish once more to show that the count stops.</p>
+<starter file="count.ts">
+// Example to learn from: counting a different pattern of events.
+//
+//   const totals = new Map<string, number>();
+//   bus.on("order.*", (event) => {
+//     totals.set(event.type, (totals.get(event.type) ?? 0) + 1);
+//   });
+//
+// Now do the same for "task.*" below.
+
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+const counts = new Map<string, number>();
+
+const counter = bus.on("task.*", (event) => {
+  // Increment counts.get(event.type), starting from 0 when it is missing.
+});
+
+await bus.publishEvent({ type: "task.created", payload: { taskId: 1 } });
+await bus.publishEvent({ type: "task.created", payload: { taskId: 2 } });
+await bus.publishEvent({ type: "task.completed", payload: { taskId: 1 } });
+console.log(counts);
+
+counter.unsubscribe();
+await bus.publishEvent({ type: "task.deleted", payload: { taskId: 2 } });
+console.log(counts);
+</starter>
+<hint><p>Inside the handler, read the current count with <code>counts.get(event.type) ?? 0</code> before writing a new one back with <code>counts.set</code>.</p></hint>
+<hint><p><code>counts.set(event.type, (counts.get(event.type) ?? 0) + 1);</code>. Because <code>counter.unsubscribe()</code> runs before the fourth publish, that last event never reaches the handler, so the map is unchanged from before.</p></hint>
 <solution>
 <example file="count.ts">
 import { createEventBus } from "@zudojs/events";
@@ -488,6 +518,36 @@ Map(2) { 'task.created' => 2, 'task.completed' => 1 }
 </exercise>
 <exercise title="A timing middleware">
 <p>Write a middleware with <code>bus.use</code> that prints how many handlers ran for each event, using the result that <code>next()</code> returns. Hint: the result has a <code>results</code> array.</p>
+<starter file="timing.ts">
+// Example to learn from: reading a different field off what next() resolves to.
+//
+//   bus.use(async (context, next) => {
+//     const result = await next();
+//     console.log(context.event.type, "handled:", (result as { handled: boolean }).handled);
+//     return result;
+//   });
+//
+// Now log how many handlers ran, using result.results.length instead.
+
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+
+bus.use(async (context, next) => {
+  // Await next(), read (result as { results: readonly unknown[] }).results
+  // for how many handlers ran, log
+  // `${context.event.type}: ${ran} handler(s)`, and return the result.
+  return next();
+});
+
+bus.on("task.completed", () => {});
+bus.on("task.*", () => {});
+
+await bus.publishEvent({ type: "task.completed", payload: null });
+await bus.publishEvent({ type: "task.created", payload: null });
+</starter>
+<hint><p><code>const result = await next();</code> gives you the publish result. Cast it, <code>(result as { results: readonly unknown[] }).results.length</code>, to count how many handlers ran, then log it before returning <code>result</code>.</p></hint>
+<hint><p><code>const result = await next(); const ran = (result as { results: readonly unknown[] }).results.length; console.log(`${context.event.type}: ${ran} handler(s)`); return result;</code>.</p></hint>
 <solution>
 <example file="timing.ts">
 import { createEventBus } from "@zudojs/events";
@@ -516,6 +576,8 @@ task.created: 1 handler(s)
 </exercise>
 <exercise title="Which mode?">
 <p>For each case, choose sequential or parallel: (a) three handlers that each call a different outside API and take 300 ms; (b) a handler that writes a row and another that reads that row to build a report.</p>
+<hint><p>Re-read <a href="#dispatch">sequential or parallel</a>: one mode is for handlers that do not depend on each other's result; the other is for handlers where one needs to see what an earlier one produced.</p></hint>
+<hint><p>For (a), ask whether the three API calls need each other's results. For (b), ask what the reader would see if it ran <em>before</em> the writer.</p></hint>
 <solution>
 <p>(a) Parallel: they are independent, so the publish takes about 300 ms instead of 900 ms. (b) Sequential, with the writer at a higher priority: the reader depends on the writer having finished. Better still, make it one handler, because two handlers that depend on each other's order are really one job.</p>
 </solution>

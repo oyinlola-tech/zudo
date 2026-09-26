@@ -664,6 +664,33 @@ reset link token is 43 characters: true stored hash is 64 hex: true
 <h2 id="practice">Practice</h2>
 <exercise title="Re-hash when the cost goes up">
 <p>Add a <code>needsRehash(stored)</code> function to the password module that returns <code>true</code> when a stored scrypt value used different parameters than the current <code>PARAMS</code>. Show it on a hash made with <code>N = 2 ** 15</code> and one made with the current parameters.</p>
+<starter file="rehash.js">
+// Example to learn from: comparing a stored value against the current settings.
+//
+//   const CURRENT = { version: "3", region: "eu" };
+//   function needsUpgrade(stored) {
+//     const [, version, region] = stored.split("|");
+//     return version !== CURRENT.version || region !== CURRENT.region;
+//   }
+//   console.log(needsUpgrade("cfg|2|eu")); // true: version differs
+//   console.log(needsUpgrade("cfg|3|eu")); // false: matches
+//
+// Now compare a stored scrypt value's N/r/p against PARAMS below.
+
+import { PARAMS, hashPassword } from "./passwords.js";
+
+function needsRehash(stored) {
+  // 1. split stored on "$": scrypt$N$r$p$salt$key
+  // 2. convert N, r, p to numbers
+  // 3. return true if any of them differs from PARAMS.N / PARAMS.r / PARAMS.p
+}
+
+const old = "scrypt$32768$8$1$c2FsdHNhbHRzYWx0c2FsdA$aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g";
+console.log("old cost:", needsRehash(old));
+console.log("current cost:", needsRehash(await hashPassword("correct horse battery staple")));
+</starter>
+<hint><p><code>stored.split("$")</code> gives you <code>["scrypt", N, r, p, salt, key]</code> as text. Convert the three cost numbers with <code>Number(...)</code> before comparing.</p></hint>
+<hint><p><code>const [, N, r, p] = stored.split("$").map(Number); return N !== PARAMS.N || r !== PARAMS.r || p !== PARAMS.p;</code></p></hint>
 <solution>
 <example file="rehash.js" project="pw" browser="no">
 import { PARAMS, hashPassword } from "./passwords.js";
@@ -686,6 +713,36 @@ current cost: false
 </exercise>
 <exercise title="Verify a Paystack-style webhook">
 <p>Some providers sign the raw body alone with HMAC-SHA512 and send the hex digest in a header, with no timestamp. Write <code>verifySha512(secret, rawBody, headerHex)</code> with a constant-time comparison, test it on a genuine body, a changed body and an empty header, and explain what protects you from replays in this scheme.</p>
+<starter file="sha512-webhook.js">
+// Example to learn from: checking a signed API call in constant time.
+//
+//   function verifyApiCall(secret, payload, headerHex) {
+//     const expected = createHmac("sha256", secret).update(payload).digest();
+//     const received = Buffer.from(headerHex ?? "", "hex");
+//     return received.length === expected.length && timingSafeEqual(received, expected);
+//   }
+//
+// Now do the same shape, but sha512 and no separate payload/header split, below.
+
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+
+function verifySha512(secret, rawBody, headerHex) {
+  // 1. compute the expected HMAC-SHA512 digest of rawBody with secret,
+  //    as a Buffer (no encoding argument to .digest())
+  // 2. turn headerHex into a Buffer: Buffer.from(headerHex ?? "", "hex")
+  // 3. return true only when the lengths match and timingSafeEqual agrees
+}
+
+const secret = randomBytes(32);
+const body = '{"event":"charge.success","data":{"reference":"ORD-1042","amount":4500000}}';
+const header = createHmac("sha512", secret).update(body).digest("hex");
+
+console.log("genuine:", verifySha512(secret, body, header));
+console.log("changed:", verifySha512(secret, body.replace("ORD-1042", "ORD-1043"), header));
+console.log("empty header:", verifySha512(secret, body, ""));
+</starter>
+<hint><p><code>createHmac("sha512", secret).update(rawBody).digest()</code> with no argument to <code>digest()</code> gives you a <code>Buffer</code>, ready to compare against another buffer.</p></hint>
+<hint><p><code>const expected = createHmac("sha512", secret).update(rawBody).digest(); const received = Buffer.from(headerHex ?? "", "hex"); return received.length === expected.length &amp;&amp; timingSafeEqual(received, expected);</code></p></hint>
 <solution>
 <example file="sha512-webhook.js" browser="no">
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -714,6 +771,49 @@ empty header: false
 </exercise>
 <exercise title="Rotate an encryption key">
 <p>Write <code>decryptAny(keys, sealed, context)</code> that takes a map of key versions (<code>{ v1: oldKey, v2: newKey }</code>) and picks the key by the prefix, and <code>reencrypt</code> that moves a value from <code>v1</code> to <code>v2</code>. Use <code>encrypt</code> and <code>decrypt</code> from <code>vault.js</code>, replacing the <code>v1</code> label.</p>
+<starter file="rotate.js">
+// Example to learn from: picking a value by a version prefix, and rewriting
+// the prefix before handing it to code that only understands one label.
+//
+//   const secrets = { k1: "old-secret", k2: "new-secret" };
+//   function describe(token) {
+//     const [version] = token.split(":");
+//     if (!secrets[version]) throw new Error(`no secret for ${version}`);
+//     return `${secrets[version]} used for ${token.replace(/^k\d+:/, "")}`;
+//   }
+//   console.log(describe("k2:order-1042"));
+//
+// Now do the same idea for encrypted values and vault.js's decrypt, below.
+
+import { randomBytes } from "node:crypto";
+import { decrypt, encrypt } from "./vault.js";
+
+const keys = { v1: randomBytes(32), v2: randomBytes(32) };
+const CURRENT = "v2";
+
+function seal(plaintext, context) {
+  const sealed = encrypt(keys[CURRENT], plaintext, context);
+  // sealed always starts with "v1." (that's the label vault.js's encrypt
+  // writes). Replace that prefix with `${CURRENT}.` and return the result.
+  return sealed;
+}
+
+function decryptAny(sealed, context) {
+  const [version] = sealed.split(".");
+  // 1. if keys[version] doesn't exist, throw new Error(`no key for ${version}`)
+  // 2. vault.js's decrypt only understands a "v1." prefix, so swap this
+  //    value's own version prefix for "v1." before calling it
+  // 3. return decrypt(keys[version], swapped, context)
+  return ""; // placeholder so the calls below don't crash
+}
+
+const old = encrypt(keys.v1, "0123456789 GTBank", "seller:17");
+const moved = seal(decryptAny(old, "seller:17"), "seller:17");
+console.log(old.split(".")[0], "->", moved.split(".")[0]);
+console.log(decryptAny(moved, "seller:17"));
+</starter>
+<hint><p>A template literal's replace can rewrite a prefix either way: <code>sealed.replace(/^v1\./, `${CURRENT}.`)</code> for <code>seal</code>, and <code>sealed.replace(/^v\d+\./, "v1.")</code> for <code>decryptAny</code> before calling <code>decrypt</code>.</p></hint>
+<hint><p><code>decryptAny</code>: <code>if (!keys[version]) throw new Error(`no key for ${version}`); return decrypt(keys[version], sealed.replace(/^v\d+\./, "v1."), context);</code></p></hint>
 <solution>
 <example file="rotate.js" project="vault" browser="no">
 import { randomBytes } from "node:crypto";

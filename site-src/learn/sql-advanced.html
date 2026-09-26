@@ -369,6 +369,34 @@ Deleted: sha256:212aeeeb8faaef6c46498d86cbec6b9344d8d9492996b174664ff82c562ab685
 <h2 id="practice">Practice</h2>
 <exercise title="Tasks per user, busiest first">
 <p>Write one query that lists every user with their number of <strong>open</strong> tasks, including users with none, busiest first, then by name. Return plain numbers.</p>
+<starter file="busiest.js">
+// Example to learn from: a left join with the filter in the ON clause, so
+// rows with nothing to count are not dropped.
+//
+//   select c.name, count(p.id)::int as unsold
+//   from categories c
+//   left join products p on p.category_id = c.id and not p.sold
+//   group by c.id, c.name
+//   order by unsold desc, c.name;
+//
+// A category with only sold products still gets a row, with 0.
+// Now do the same for users and their open tasks below.
+
+import { openDb } from "./db.js";
+
+const db = await openDb();
+const { rows } = await db.query(`
+  -- one row per user, even Grace who has no tasks: left join tasks with
+  -- "not t.done" in the ON clause (not WHERE, or unmatched users vanish).
+  -- count(t.id)::int as "open", group by user, order by open desc, then name.
+  select u.name
+  from users u
+`);
+console.log(rows);
+await db.close();
+</starter>
+<hint><p>Start from <code>from users u left join tasks t on t.user_id = u.id</code>, and add <code>and not t.done</code> to the same <code>on</code> clause so it filters before the join, not after.</p></hint>
+<hint><p><code>select u.name, count(t.id)::int as open ... group by u.id, u.name order by open desc, u.name</code>. <code>count</code> ignores the <code>null</code> a left join produces for Grace, giving 0.</p></hint>
 <solution>
 <example file="busiest.js" project="adv" browser="no">
 import { openDb } from "./db.js";
@@ -396,6 +424,34 @@ await db.close();
 
 <exercise title="The biggest task of each user">
 <p>For each user who has tasks, show the title of their task with the largest estimate. Hint: a correlated subquery can compare a task's estimate with the maximum for the same user.</p>
+<starter file="biggest.js">
+// Example to learn from: a correlated subquery that compares each row with
+// the maximum for its own group.
+//
+//   select dept, name, salary
+//   from employees e
+//   where salary = (select max(salary) from employees where dept = e.dept)
+//   order by dept;
+//
+// The inner query re-runs once per row of e, using that row's dept.
+// Now do the same for tasks and their user below.
+
+import { openDb } from "./db.js";
+
+const db = await openDb();
+const { rows } = await db.query(`
+  -- for each task t, keep it only when its estimate equals the max
+  -- estimate among tasks with the same user_id (a subquery in the WHERE).
+  -- join users to get the name, order by name.
+  select u.name, t.title, t.estimate
+  from tasks t
+  join users u on u.id = t.user_id
+`);
+console.log(rows);
+await db.close();
+</starter>
+<hint><p>The subquery needs to see the outer row's <code>user_id</code>: <code>(select max(estimate) from tasks where user_id = t.user_id)</code>.</p></hint>
+<hint><p>Compare it in the <code>where</code>: <code>where t.estimate = (select max(estimate) from tasks where user_id = t.user_id)</code>, then <code>order by u.name</code>.</p></hint>
 <solution>
 <example file="biggest.js" project="adv" browser="no">
 import { openDb } from "./db.js";

@@ -568,12 +568,48 @@ console.log("9");
 3
 6
 </output>
+<hint><p>All synchronous code runs first, top to bottom, including the async function's body up to its first <code>await</code>. Only after that does JavaScript drain the whole microtask queue, and only after <em>that</em> does the next task (a timer callback) get a turn.</p></hint>
+<hint><p>Synchronous: <code>1</code>, <code>4</code> (the async function up to <code>await</code>), <code>9</code>. Microtasks, in queue order: <code>5</code> (the resumed async function, which also queues timer <code>6</code> behind the already-queued timer for <code>2</code>), then <code>7</code>, whose own <code>.then</code> queues <code>8</code> in the same drain. Tasks: timer <code>2</code> runs, its microtask prints <code>3</code> before anything else can, then timer <code>6</code>.</p></hint>
 <solution>
 <p>Synchronous first: <code>1</code>, then the async function runs up to its <code>await</code>: <code>4</code>, then <code>9</code>. Microtasks in queue order: the async function's continuation prints <code>5</code> (and queues timer 6 behind timer 2), then <code>7</code>, whose promise then queues <code>8</code>, which runs in the same drain. Tasks: timer 2 prints <code>2</code>, its microtask prints <code>3</code> before the next task, then timer <code>6</code>.</p>
 </solution>
 </exercise>
 <exercise title="Batch stock alerts">
 <p>A warehouse function <code>reportLow(sku)</code> is called many times while a delivery is processed. Change it so that all SKUs reported in one task are sent in a single alert, with duplicates removed, using <code>queueMicrotask</code>.</p>
+<starter file="stock-alerts.js">
+// Example to learn from: batching many calls in one task into a single
+// microtask flush, for UI re-renders instead of stock alerts.
+//
+//   const pendingUpdates = new Set();
+//   function markDirty(id) {
+//     if (pendingUpdates.size === 0) {
+//       queueMicrotask(() => {
+//         console.log("re-render:", [...pendingUpdates].join(", "));
+//         pendingUpdates.clear();
+//       });
+//     }
+//     pendingUpdates.add(id);
+//   }
+//   for (const id of ["row-1", "row-2", "row-1"]) markDirty(id);
+//   console.log("batch queued"); // this line runs before the flush — microtasks wait
+//
+// Now do the same idea for reportLow below.
+
+const pending = new Set();
+
+function reportLow(sku) {
+  // your code here: if `pending` is currently empty, queueMicrotask a flush
+  // that logs "ALERT low stock:" followed by the pending skus joined with
+  // ", ", then clears pending. Either way, add sku to pending.
+  pending.add(sku);
+}
+
+for (const sku of ["oil-1l", "sugar-1kg", "oil-1l", "salt-500g"]) reportLow(sku);
+console.log("delivery processed");
+setTimeout(() => reportLow("rice-5kg"), 0);
+</starter>
+<hint><p>Only the <em>first</em> call in a batch needs to schedule the flush — check <code>pending.size === 0</code> before adding <code>sku</code>. Every later call in the same task just adds to the set that the already-scheduled microtask will read.</p></hint>
+<hint><p><code>if (pending.size === 0) { queueMicrotask(() =&gt; { console.log("ALERT low stock:", [...pending].join(", ")); pending.clear(); }); } pending.add(sku);</code></p></hint>
 <solution>
 <example file="stock-alerts.js">
 const pending = new Set();
@@ -617,6 +653,39 @@ setTimeout(() => console.log("timer ran before the last reminder:", log.indexOf(
 <output>
 timer ran before the last reminder: false
 </output>
+<starter file="reminders-fixed.js">
+// Example to learn from: the same fix (await a timer-based promise inside
+// a busy loop) so a queued heartbeat gets a turn, instead of a reminder
+// timer.
+//
+//   const yieldToLoop = () => new Promise((resolve) => setTimeout(resolve, 0));
+//   setTimeout(() => log.push("HEARTBEAT"), 0);
+//   for (let n = 1; n <= 10; n++) {
+//     busyWait(2);
+//     log.push(n);
+//     await yieldToLoop();   // lets the queued timer run before the next turn
+//   }
+//   console.log(log.indexOf("HEARTBEAT") < log.indexOf(10)); // true
+//
+// Now do the same for the reminders loop below.
+
+const log = [];
+const busyWait = (ms) => { const end = Date.now() + ms; while (Date.now() < end); };
+const sendText = async (n) => { busyWait(2); log.push(n); };
+
+setTimeout(() => log.push("TIMER"), 0);
+
+for (let n = 1; n <= 30; n++) {
+  await sendText(n);
+  // your code here: also await a promise that only resolves via a timer —
+  // const yieldToLoop = () => new Promise((resolve) => setTimeout(resolve, 0));
+  // then await yieldToLoop() here. sendText's own await only goes through
+  // the microtask queue, which never gives a timer a turn.
+}
+setTimeout(() => console.log("timer ran before the last reminder:", log.indexOf("TIMER") < log.indexOf(30)), 0);
+</starter>
+<hint><p><code>await sendText(n)</code> resolves through the microtask queue only, which always runs to completion before the next task (a timer) gets a turn. A promise that resolves via <code>setTimeout</code> instead forces a wait for the next task.</p></hint>
+<hint><p>Add <code>const yieldToLoop = () =&gt; new Promise((resolve) =&gt; setTimeout(resolve, 0));</code> above the loop, then <code>await yieldToLoop();</code> right after <code>await sendText(n);</code> inside it.</p></hint>
 <solution>
 <example file="reminders-fixed.js">
 const log = [];

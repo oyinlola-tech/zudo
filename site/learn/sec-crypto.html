@@ -907,14 +907,52 @@ wrong kid:    { ok: false, reason: 'bad signature' }</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Pick the tool</h3><p>For each situation, name the promise needed and the tool: (a) a mobile app caches the product catalogue and must notice if the cached file was corrupted on disk; (b) your shop sends delivery partners a daily manifest, and partners must be sure it came from you, but you do not want partners to be able to create manifests; (c) you store customers' dates of birth and must show them on the profile page; (d) two of your own services call each other inside your network.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
+<div class="lx-exercise" data-exercise="1" data-mode="think" data-title="Pick the tool"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Pick the tool</h3><div class="lx-ex-task"><p>For each situation, name the promise needed and the tool: (a) a mobile app caches the product catalogue and must notice if the cached file was corrupted on disk; (b) your shop sends delivery partners a daily manifest, and partners must be sure it came from you, but you do not want partners to be able to create manifests; (c) you store customers' dates of birth and must show them on the profile page; (d) two of your own services call each other inside your network.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Ask, for each: does it need a secret key at all? Does the reader need to get the original value back, or only to check that it has not changed?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(b) needs many readers to verify but only one writer to sign; which family of algorithm has different keys for those two jobs?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
 <li>(a) Integrity against accidents: a SHA-256 checksum stored with the file. No key, because the threat is corruption, not an attacker.</li>
 <li>(b) Public verifiability: an Ed25519 signature with a <code>kid</code>, with your public keys published as a JWKS. HMAC would let every partner forge manifests.</li>
 <li>(c) Confidentiality with read-back: AES-256-GCM with a random nonce per value, the key from a secret store, and a version prefix for rotation. Hashing would make it unreadable; encoding would protect nothing.</li>
 <li>(d) Authenticity and confidentiality in transit between parties you control: mutual TLS, or TLS plus an HMAC-signed or signed token per request. "Inside the network" is not a reason to skip it: one compromised machine could otherwise read and change everything.</li>
 </ul></div></div>
 
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="purpose.js" data-command="node purpose.js"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Sign with a timestamp and a purpose</h3><p>A signature made for a receipt must not be accepted as, say, a refund approval, even if someone copies the payload across. Extend <code>signReceipt</code>/<code>verifyReceipt</code> so the signed bytes include a <code>purpose</code> (<code>"receipt"</code>) and <code>verify</code> refuses any other purpose. Show that a correctly signed <code>"refund-approval"</code> envelope is refused by the receipt verifier.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="12" data-file="purpose.js">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="purpose.js" data-command="node purpose.js" data-title="Sign with a timestamp and a purpose"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Sign with a timestamp and a purpose</h3><div class="lx-ex-task"><p>A signature made for a receipt must not be accepted as, say, a refund approval, even if someone copies the payload across. Extend <code>signReceipt</code>/<code>verifyReceipt</code> so the signed bytes include a <code>purpose</code> (<code>"receipt"</code>) and <code>verify</code> refuses any other purpose. Show that a correctly signed <code>"refund-approval"</code> envelope is refused by the receipt verifier.</p></div><script type="text/plain" class="lx-ex-starter" data-file="purpose.js">// Example to learn from: including one more field inside the signed bytes,
+// and refusing a signature made for a different value of it.
+//
+//   function signAs(role, note, privateKey) {
+//     const payload = Buffer.from(JSON.stringify({ role, note }));
+//     return { payload: payload.toString("base64url"), signature: sign(null, payload, privateKey).toString("base64url") };
+//   }
+//   function verifyAs(role, envelope, publicKey) {
+//     const payload = Buffer.from(envelope.payload, "base64url");
+//     if (!verify(null, payload, publicKey, Buffer.from(envelope.signature, "base64url"))) return "bad signature";
+//     const message = JSON.parse(payload.toString("utf8"));
+//     return message.role === role ? message.note : `wrong role: ${message.role}`;
+//   }
+//
+// Now do the same with `purpose` for receipts below.
+
+import { generateKeyPairSync, sign, verify } from "node:crypto";
+
+function signFor(purpose, data, privateKey) {
+  // include purpose in the signed bytes: JSON.stringify({ purpose, data })
+  const payload = Buffer.from(JSON.stringify(data));
+  return { payload: payload.toString("base64url"), signature: sign(null, payload, privateKey).toString("base64url") };
+}
+
+function verifyFor(purpose, envelope, publicKey) {
+  // verify the signature first (as below), then check message.purpose ===
+  // purpose; when it does not match, return `wrong purpose: ${message.purpose}`
+  // instead of message.data
+  const payload = Buffer.from(envelope.payload, "base64url");
+  if (!verify(null, payload, publicKey, Buffer.from(envelope.signature, "base64url"))) return "bad signature";
+  return JSON.parse(payload.toString("utf8"));
+}
+
+const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+const receipt = signFor("receipt", { id: "R-7731", totalKobo: 4_500_000 }, privateKey);
+const approval = signFor("refund-approval", { id: "R-7731", totalKobo: 4_500_000 }, privateKey);
+
+console.log(verifyFor("receipt", receipt, publicKey));
+console.log(verifyFor("receipt", approval, publicKey));</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>signFor</code> needs to sign <code>{ purpose, data }</code> as one JSON object, not just <code>data</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>After verifying the signature in <code>verifyFor</code>: <code>const message = JSON.parse(payload.toString("utf8")); return message.purpose === purpose ? message.data : `wrong purpose: ${message.purpose}`;</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="12" data-file="purpose.js">
 <figcaption class="lx-bar"><span class="lx-file">purpose.js</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> generateKeyPairSync<span class="t-pn">,</span> sign<span class="t-pn">,</span> verify <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:crypto"</span><span class="t-pn">;</span>
 
@@ -962,7 +1000,39 @@ wrong purpose: refund-approval</pre></div>
 </figure>
 <p>Both signatures are valid; only the purpose inside the signed bytes tells them apart. Putting the purpose (and often an issuer, an audience and an expiry) <em>inside</em> what is signed is called <strong>domain separation</strong>. JWTs do the same with their <code>aud</code>, <code>iss</code> and <code>exp</code> claims. Using separate keys per purpose is an even stronger version of the same idea.</p></div></div>
 
-<div class="lx-exercise" data-exercise="3" data-mode="paste" data-target="0" data-file="hmac-ring.js" data-command="node hmac-ring.js"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>An HMAC key ring for webhooks</h3><p>Your stock updates are signed with HMAC-SHA256, and the header looks like <code>v1=&lt;hex&gt;</code>. Write <code>verifyStock(secrets, rawBody, header)</code> where <code>secrets</code> is an object such as <code>{ v1: oldSecret, v2: newSecret }</code>. Pick the secret by the version prefix, compare in constant time, and refuse unknown versions. Show that during a rotation both versions verify, and that an unknown version is refused.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="13" data-file="hmac-ring.js">
+<div class="lx-exercise" data-exercise="3" data-mode="paste" data-target="0" data-file="hmac-ring.js" data-command="node hmac-ring.js" data-title="An HMAC key ring for webhooks"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>An HMAC key ring for webhooks</h3><div class="lx-ex-task"><p>Your stock updates are signed with HMAC-SHA256, and the header looks like <code>v1=&lt;hex&gt;</code>. Write <code>verifyStock(secrets, rawBody, header)</code> where <code>secrets</code> is an object such as <code>{ v1: oldSecret, v2: newSecret }</code>. Pick the secret by the version prefix, compare in constant time, and refuse unknown versions. Show that during a rotation both versions verify, and that an unknown version is refused.</p></div><script type="text/plain" class="lx-ex-starter" data-file="hmac-ring.js">// Example to learn from: the same "pick the secret by prefix, then compare
+// in constant time" key ring, for a different header shape.
+//
+//   function verifyOrderSig(secrets, rawBody, header) {
+//     const match = /^(k\d+)=([0-9a-f]{64})$/.exec(header ?? "");
+//     if (!match) return "malformed header";
+//     const secret = Object.hasOwn(secrets, match[1]) ? secrets[match[1]] : undefined;
+//     if (secret === undefined) return "unknown key";
+//     const expected = createHmac("sha256", secret).update(rawBody).digest();
+//     return timingSafeEqual(expected, Buffer.from(match[2], "hex")) ? "ok" : "bad signature";
+//   }
+//
+// Now do the same for stock updates below, with the "v" prefix instead of "k".
+
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+
+function verifyStock(secrets, rawBody, header) {
+  // match header against /^(v\d+)=([0-9a-f]{64})$/; "malformed header" if
+  // it does not match
+  // look up secrets[version] with Object.hasOwn; "unknown version" if absent
+  // recompute the HMAC-SHA256 of rawBody with that secret and compare it to
+  // the hex in constant time: "ok" or "bad signature"
+  return "ok";
+}
+
+const secrets = { v1: randomBytes(32), v2: randomBytes(32) };
+const body = '{"sku":"RICE-5","inStock":40}';
+const signWith = (version) => `${version}=${createHmac("sha256", secrets[version]).update(body).digest("hex")}`;
+
+console.log("old secret:", verifyStock(secrets, body, signWith("v1")));
+console.log("new secret:", verifyStock(secrets, body, signWith("v2")));
+console.log("unknown:   ", verifyStock(secrets, body, signWith("v2").replace("v2=", "v9=")));
+console.log("garbage:   ", verifyStock(secrets, body, "v2=zz"));</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Start with the regular expression: <code>const match = /^(v\d+)=([0-9a-f]{64})$/.exec(header ?? ""); if (!match) return "malformed header";</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const secret = Object.hasOwn(secrets, match[1]) ? secrets[match[1]] : undefined; if (secret === undefined) return "unknown version";</code>, then compare with <code>timingSafeEqual</code> against <code>createHmac("sha256", secret).update(rawBody).digest()</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="13" data-file="hmac-ring.js">
 <figcaption class="lx-bar"><span class="lx-file">hmac-ring.js</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createHmac<span class="t-pn">,</span> randomBytes<span class="t-pn">,</span> timingSafeEqual <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:crypto"</span><span class="t-pn">;</span>
 

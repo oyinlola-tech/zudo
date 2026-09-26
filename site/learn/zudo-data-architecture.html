@@ -8,19 +8,6 @@
   <link rel="alternate" type="text/markdown" href="/learn/zudo-data-architecture.md" title="Markdown version">
   <meta name="description" content="Design the Task API's data layer with @zudojs/database: entities and DTOs, repositories, query services, keyset pagination, indexes and safe concurrent writes.">
   <!-- seo:start -->
-  <meta name="robots" content="index, follow, max-image-preview:large">
-  <link rel="canonical" href="https://zudojs.oyinlola.site/learn/zudo-data-architecture">
-  <meta property="og:site_name" content="ZudoJS">
-  <meta property="og:type" content="article">
-  <meta property="og:title" content="Data architecture with ZudoJS — ZudoJS Academy">
-  <meta property="og:description" content="Design the Task API's data layer with @zudojs/database: entities and DTOs, repositories, query services, keyset pagination, indexes and safe concurrent writes.">
-  <meta property="og:url" content="https://zudojs.oyinlola.site/learn/zudo-data-architecture">
-  <meta property="og:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Data architecture with ZudoJS — ZudoJS Academy">
-  <meta name="twitter:description" content="Design the Task API's data layer with @zudojs/database: entities and DTOs, repositories, query services, keyset pagination, indexes and safe concurrent writes.">
-  <meta name="twitter:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"ZudoJS","item":"https://zudojs.oyinlola.site/"},{"@type":"ListItem","position":2,"name":"Academy","item":"https://zudojs.oyinlola.site/learn"},{"@type":"ListItem","position":3,"name":"ZudoJS application development","item":"https://zudojs.oyinlola.site/learn/zudo-applications"},{"@type":"ListItem","position":4,"name":"Data architecture with ZudoJS","item":"https://zudojs.oyinlola.site/learn/zudo-data-architecture"}]}</script>
   <!-- seo:end -->
   <meta name="keywords" content="zudojs data architecture, entity vs dto, repository pattern, query service, n+1 queries, keyset pagination, cursor precision, composite index, partial unique index, soft delete, optimistic concurrency, version column, lost update, atomic increment, row lock, consistency, pglite">
   <meta name="author" content="Oluwayemi Oyinlola Michael">
@@ -260,7 +247,7 @@ console.log(rows[0]);</script>
 <tr><td>Response DTO</td><td><code>TaskResponse</code>: <code>{ id, title, createdAt: "2026-…Z" }</code></td><td>a mapper, from the entity</td></tr>
 </tbody>
 </table></div>
-<p>A <strong>DTO</strong> (data transfer object) is a shape made for crossing a boundary, here the network. An <strong>entity</strong> is the full record your code works with. <code>@zudojs/database</code> gives you base types for entities: <code>DatabaseEntity&lt;TId&gt;</code> has a readonly <code>id</code>, <code>createdAt</code> and <code>updatedAt</code>. There is also <code>SoftDeletableEntity</code>, but it has no type parameter, so its id is always a <code>string</code>. With <code>serial</code> number ids it does not fit:</p>
+<p>A <strong>DTO</strong> (data transfer object) is a shape made for crossing a boundary, here the network. An <strong>entity</strong> is the full record your code works with. <code>@zudojs/database</code> gives you base types for entities: <code>DatabaseEntity&lt;TId&gt;</code> has a readonly <code>id</code>, <code>createdAt</code> and <code>updatedAt</code>. There is also <code>SoftDeletableEntity&lt;TId = string&gt;</code>, whose id defaults to <code>string</code> when you don't say otherwise. Extend it plainly, with no type argument, and a <code>serial</code> number id still does not fit the default:</p>
 <figure class="lx-example" data-index="1" data-file="entity-id.ts">
 <figcaption class="lx-bar"><span class="lx-file">entity-id.ts</span><button type="button" class="lx-edit" data-index="1" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="1"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">SoftDeletableEntity</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/database"</span><span class="t-pn">;</span>
@@ -276,7 +263,7 @@ export interface Task extends SoftDeletableEntity {
   readonly id: number;
   readonly title: string;
 }</script>
-<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">entity-id.ts:3:18 - error TS2430: Interface 'Task' incorrectly extends interface 'SoftDeletableEntity'.
+<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">entity-id.ts:3:18 - error TS2430: Interface 'Task' incorrectly extends interface 'SoftDeletableEntity&lt;string&gt;'.
   Types of property 'id' are incompatible.
     Type 'number' is not assignable to type 'string'.
 
@@ -286,7 +273,7 @@ export interface Task extends SoftDeletableEntity {
 
 Found 1 error in entity-id.ts:3</pre></div>
 </figure>
-<p>So for number ids, extend <code>DatabaseEntity&lt;number&gt;</code> and add <code>deletedAt</code> yourself, as the next file does.</p>
+<p>Pass the id type instead, <code>SoftDeletableEntity&lt;number&gt;</code>, and it compiles (before <code>@zudojs/database</code> 1.5.0, the type took no argument at all, so a number id could never fit it). This lesson still extends <code>DatabaseEntity&lt;number&gt;</code> and adds <code>deletedAt</code> by hand, as the next file does, to keep the soft-delete field visible in one place with the rest of the schema.</p>
 <h3>The project's data files</h3>
 <p>The adapter from <a href="/learn/zudo-database#adapter">the database lesson</a> comes along unchanged in <code>where.ts</code>. <code>pglite-adapter.ts</code> gets three small additions, each marked <code>new:</code>. It reads only the columns a query <code>select</code>s, it understands Prisma's <code>{ increment: 1 }</code> and <code>{ decrement: 1 }</code> updates, and it sets <code>updated_at</code> on every update, like Prisma's <code>@updatedAt</code>. It also maps PostgreSQL's <code>CHECK</code> violation (<code>23514</code>) to Prisma's <code>P2004</code>.</p>
 <details class="lx-solution"><summary>Show where.ts and pglite-adapter.ts</summary>
@@ -1065,10 +1052,10 @@ await client.disconnect();</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx repository-rules.ts</code></div><pre class="lx-no-copy">open in project 1: [ 1, 3, 4 ]
 same title, other case: 409 Task already exists.
 project that does not exist: 409 Task create violates a foreign key constraint.
-counter below zero: 500 Project update failed.</pre></div>
+counter below zero: 409 Project update failed: a database constraint was violated.</pre></div>
 </figure>
 <p>The unique index compares <code>lower(title)</code>, so "write THE copy" collides with "Write the copy": <strong>409</strong>. The foreign key refuses a task in project 9: also <strong>409</strong>. Both messages are generic; they never name the constraint or the column.</p>
-<p>The <code>CHECK</code> violation arrives as a <strong>500</strong>. In <code>@zudojs/database</code> 1.4.0, the repository maps unique and foreign-key violations to 409, but not a <code>CHECK</code> (<code>P2004</code>), which falls through to a generic failure. Treat it as what it is: your validation let through a value the database refuses, which is a bug to fix, not a client mistake. Validate at the edge first (next section), and let the constraint be the last line of defence.</p>
+<p>The <code>CHECK</code> violation now arrives as a <strong>409</strong> too. <code>@zudojs/database</code> 1.5.0 made <code>mapRepositoryError</code> cover every code the database can raise: a <code>CHECK</code> (<code>P2004</code>) is a 409, a missing required value or one that is the wrong shape (<code>P2000</code>/<code>P2011</code>) is 400, and a few rarer ones map to 404 or 503. Before 1.5.0, a <code>CHECK</code> violation fell through to a generic, non-exposed 500. Either way, treat it as what it is: your validation let through a value the database refuses, which is a bug to fix, not a client mistake. Validate at the edge first (next section), and let the constraint be the last line of defence, not the first.</p>
 </section>
 
 <section>
@@ -1573,7 +1560,8 @@ console.log(JSON.stringify(buildKeysetWhere(payload, sort), null, 1));</script>
    "AND": [
     {
      "createdAt": {
-      "equals": "2026-09-02T09:00:00.000Z"
+      "gte": "2026-09-02T09:00:00.000Z",
+      "lt": "2026-09-02T09:00:00.001Z"
      }
     },
     {
@@ -1586,9 +1574,9 @@ console.log(JSON.stringify(buildKeysetWhere(payload, sort), null, 1));</script>
  ]
 }</pre></div>
 </figure>
-<p>Read the condition as "created earlier, or created at the same moment with a smaller id". Only the sort fields go into the cursor, not the title. In SQL it becomes <code>created_at &lt; $1 OR (created_at = $1 AND id &lt; $2)</code>, and an index on <code>(created_at DESC, id DESC)</code> can jump straight to that spot. Give the repository a <code>cursorSecret</code>, as in the database lesson, and the cursor is signed so a client cannot edit it.</p>
-<h3 id="precision">The cursor that skipped rows</h3>
-<p>Look at the payload again: the date became the text <code>"2026-09-02T09:00:00.000Z"</code>. A JavaScript <code>Date</code> has millisecond precision. A PostgreSQL <code>timestamptz</code> has <em>microsecond</em> precision by default. Rows created within the same millisecond differ only in digits the cursor cannot carry. Here are sensor readings stored with the default precision, paged one at a time:</p>
+<p>Read the condition as "created earlier, or created inside the same millisecond with a smaller id". Only the sort fields go into the cursor, not the title. The tie branch does not compare <code>equals</code>: it treats the cursor's millisecond as a whole <strong>bucket</strong>, <code>gte</code> the cursor and <code>lt</code> one millisecond later, because the column can hold more precision than the cursor can carry (next section). In SQL it becomes <code>created_at &lt; $1 OR (created_at &gt;= $1 AND created_at &lt; $1 + interval '1 millisecond' AND id &lt; $2)</code>, and an index on <code>(created_at DESC, id DESC)</code> can still jump straight to that spot. Give the repository a <code>cursorSecret</code>, as in the database lesson, and the cursor is signed so a client cannot edit it.</p>
+<h3 id="precision">Millisecond cursors and same-millisecond rows</h3>
+<p>Look at the payload again: the date became the text <code>"2026-09-02T09:00:00.000Z"</code>. A JavaScript <code>Date</code> has millisecond precision. A PostgreSQL <code>timestamptz</code> has <em>microsecond</em> precision by default, so several rows can share every digit a cursor can carry. Here are sensor readings stored with the default precision, three of them a fraction of a millisecond apart, paged one at a time:</p>
 <figure class="lx-example" data-index="16" data-file="precision.ts" data-project="data">
 <figcaption class="lx-bar"><span class="lx-file">precision.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">PGlite</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@electric-sql/pglite"</span><span class="t-pn">;</span>
@@ -1662,10 +1650,11 @@ do {
 console.log("paged through:", seen);
 console.log("in the table:", (await pg.query("SELECT count(*)::int AS n FROM readings")).rows[0]);
 await pg.close();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx precision.ts</code></div><pre class="lx-no-copy">paged through: [ 'third', 'older' ]
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx precision.ts</code></div><pre class="lx-no-copy">paged through: [ 'third', 'second', 'first', 'older' ]
 in the table: { n: 4 }</pre></div>
 </figure>
-<p>Two of the four readings were never shown, and nothing failed. The first page's cursor said <code>10:00:00.000</code>. PostgreSQL compared it with <code>10:00:00.000200</code> and decided that "second" was <em>newer</em> than the cursor, so it did not belong on the next page. The fix is to store only what the cursor can carry: <code>timestamptz(3)</code>, as the tasks table does, or to sort by a column without this problem, such as the id. Bulk imports, which insert many rows in one millisecond, are exactly where this shows up.</p>
+<p>All four readings came back, in the right order. The first page's cursor said <code>10:00:00.000</code>; PostgreSQL's real column holds <code>10:00:00.000100</code>, <code>…0200</code> and <code>…0300</code>, all inside that same millisecond. <code>buildKeysetWhere</code> treats the cursor's millisecond as the bucket you saw above, <code>gte</code> the cursor and <code>lt</code> one millisecond later, and lets the <code>id</code> tiebreaker order the rows inside it — so "second" and "first" stayed on the next pages instead of falling through the gap.</p>
+<p>Before <code>@zudojs/database</code> 1.5.0, the tie branch compared the cursor with <code>equals</code> against the microsecond column, so PostgreSQL saw <code>10:00:00.000 &lt; 10:00:00.000200</code> as true and every reading after the first one on a page quietly never came back, with no error to notice. If you already store timestamps at millisecond precision, such as <code>timestamptz(3)</code> as the tasks table does, you were never exposed to this: the bucket and the column agree exactly, so the comparison behaves exactly as a plain equality always did. Bulk imports, which insert many rows within one millisecond, are exactly where the gap used to show up.</p>
 </section>
 
 <section>
@@ -2307,7 +2296,35 @@ outside: [ { indexname: 'tasks_assignee_idx' } ]</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="assignee-load.ts" data-project="data" data-command="npx tsx assignee-load.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Tasks per assignee</h3><p>Add <code>assigneeLoad(projectId)</code> to <code>ProjectQueries</code>: for one project, each assignee with their number of open tasks, busiest first, unassigned tasks left out. Use one query, and return <code>{ assigneeId, open }</code> objects.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="26" data-file="assignee-load.ts" data-project="data">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="assignee-load.ts" data-project="data" data-command="npx tsx assignee-load.ts" data-title="Tasks per assignee"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Tasks per assignee</h3><div class="lx-ex-task"><p>Add <code>assigneeLoad(projectId)</code> to <code>ProjectQueries</code>: for one project, each assignee with their number of open tasks, busiest first, unassigned tasks left out. Use one query, and return <code>{ assigneeId, open }</code> objects.</p></div><script type="text/plain" class="lx-ex-starter" data-file="assignee-load.ts">// Example to learn from: one query that groups and counts a different table.
+//
+//   async function ordersByStatus(client: DatabaseClient) {
+//     return client.queryRawUnsafe<{ status: string; total: number }[]>(
+//       `SELECT status, count(*)::int AS total
+//          FROM orders
+//         GROUP BY status
+//         ORDER BY total DESC, status`,
+//     );
+//   }
+//
+// Now group tasks by assignee instead, with a filter and a parameter.
+
+import type { DatabaseClient } from "@zudojs/database";
+import { setup } from "./setup.js";
+
+async function assigneeLoad(client: DatabaseClient, projectId: number) {
+  // One query: group tasks by assignee_id, count them, filter to this
+  // project, status = 'open', deleted_at IS NULL and assignee_id IS NOT
+  // NULL, order by the count descending then assignee_id for stable ties.
+  // Return { assigneeId, open } objects (map assignee_id -> assigneeId,
+  // count(*)::int AS open -> open).
+  return [];
+}
+
+const { pg, client } = await setup();
+await pg.query("INSERT INTO tasks (project_id, title, assignee_id) VALUES (1, 'Proofread', 'chidi')");
+console.log(await assigneeLoad(client, 1));
+await client.disconnect();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Use <code>client.queryRawUnsafe(sql, [projectId])</code> with a <code>GROUP BY assignee_id</code> and <code>count(*)::int AS open</code>, the same shape as <code>cardsFor</code> above, filtered with a <code>WHERE</code> instead of a join.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>WHERE project_id = $1 AND status = 'open' AND deleted_at IS NULL AND assignee_id IS NOT NULL GROUP BY assignee_id ORDER BY open DESC, assignee_id</code>. Map each row to <code>{ assigneeId: row.assignee_id, open: row.open }</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="26" data-file="assignee-load.ts" data-project="data">
 <figcaption class="lx-bar"><span class="lx-file">assignee-load.ts</span><button type="button" class="lx-edit" data-index="26" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">DatabaseClient</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/database"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> setup <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./setup.js"</span><span class="t-pn">;</span>
@@ -2352,7 +2369,52 @@ await client.disconnect();</script>
 </figure>
 <p>The second sort key, <code>assignee_id</code>, makes the order stable when two people have the same load. Without it, the order of ties could change between two requests.</p></div></div>
 
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="delete-task.ts" data-project="data" data-command="npx tsx delete-task.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Delete without drift</h3><p>The invariant test found that soft-deleting an open task left <code>open_tasks</code> too high. Write <code>deleteTask(service parts, id)</code> that, in one transaction, soft-deletes the task and decrements the counter only if the task was open. Show that the drift query then finds nothing.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="27" data-file="delete-task.ts" data-project="data">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="delete-task.ts" data-project="data" data-command="npx tsx delete-task.ts" data-title="Delete without drift"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Delete without drift</h3><div class="lx-ex-task"><p>The invariant test found that soft-deleting an open task left <code>open_tasks</code> too high. Write <code>deleteTask(service parts, id)</code> that, in one transaction, soft-deletes the task and decrements the counter only if the task was open. Show that the drift query then finds nothing.</p></div><script type="text/plain" class="lx-ex-starter" data-file="delete-task.ts">// Example to learn from: cancel a reservation, and only free the seat if it
+// was actually held (not already cancelled).
+//
+//   async function cancelReservation(client: DatabaseClient, id: number) {
+//     await withTransaction(client, async (tx) => {
+//       const [row] = await tx.$queryRawUnsafe<{ showId: number }[]>(
+//         `UPDATE reservations SET status = 'cancelled'
+//          WHERE id = $1 AND status <> 'cancelled' RETURNING show_id AS "showId"`, id,
+//       );
+//       if (row) await tx.$executeRawUnsafe("UPDATE shows SET seats_held = seats_held - 1 WHERE id = $1", row.showId);
+//     });
+//   }
+//
+// Now do the same for a task: soft-delete it, and only decrement the
+// project's counter when the deleted row was still open.
+
+import { withTransaction } from "@zudojs/database";
+import type { DatabaseClient } from "@zudojs/database";
+import { NotFoundError } from "@zudojs/errors";
+import { PROJECT_MODEL, TASK_MODEL } from "./database.js";
+import type { Project, Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { ProjectRepository, TaskRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+
+async function deleteTask(client: DatabaseClient, projects: ProjectRepository, tasks: TaskRepository, id: number) {
+  // In one transaction: bind both repositories with withTransaction(tx),
+  // then softDelete(id). If softDelete rejects, the task does not exist:
+  // throw NotFoundError(`Task ${id} not found`). Otherwise, using the row
+  // softDelete returned, decrement the project's openTasks only when its
+  // status was "open".
+}
+
+const { pg, client } = await setup();
+const projects = new ProjectRepository(modelDelegate<Project>(pg, PROJECT_MODEL));
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+
+await deleteTask(client, projects, tasks, 1); // open
+await deleteTask(client, projects, tasks, 2); // done
+await deleteTask(client, projects, tasks, 1).catch((error: Error) => console.log(error.message));
+const { rows } = await pg.query(`
+  SELECT p.id FROM projects p
+  WHERE p.open_tasks <> (SELECT count(*) FROM tasks t
+                         WHERE t.project_id = p.id AND t.status = 'open' AND t.deleted_at IS NULL)`);
+console.log("open_tasks:", (await projects.findById(1))?.openTasks, "drifted projects:", rows);
+await client.disconnect();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Inside <code>withTransaction(client, async (tx) => { ... })</code>, bind both repositories first: <code>const p = projects.withTransaction(tx); const t = tasks.withTransaction(tx);</code>. Call <code>t.softDelete(id)</code> and catch its rejection to throw your own <code>NotFoundError</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const deleted = await t.softDelete(id).catch(() => { throw new NotFoundError(`Task ${id} not found`); });</code>, then <code>if (deleted.status === "open") await p.update(deleted.projectId, { openTasks: { decrement: 1 } });</code>. Reading <code>deleted.status</code> from the row you just changed avoids a second query that could see stale data.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="27" data-file="delete-task.ts" data-project="data">
 <figcaption class="lx-bar"><span class="lx-file">delete-task.ts</span><button type="button" class="lx-edit" data-index="27" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> withTransaction <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/database"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">DatabaseClient</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/database"</span><span class="t-pn">;</span>
@@ -2426,7 +2488,36 @@ open_tasks: 2 drifted projects: []</pre></div>
 </figure>
 <p><code>softDelete</code> only matches a row that is not deleted yet, so deleting twice is a 404 instead of a second decrement. Using the row it returns, rather than a separate read, means the status you check is the one you just changed.</p></div></div>
 
-<div class="lx-exercise" data-exercise="3" data-mode="paste" data-target="0" data-file="priority-sort.ts" data-project="data" data-command="npx tsx priority-sort.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Sort by priority, with an index</h3><p>Clients want "high priority first, then newest". Page project 1's tasks with <code>paginateCursor</code> sorted by <code>priority</code> ascending and then <code>createdAt</code> descending, two per page. Why is sorting by the text <code>priority</code> a trap, and what would you change?</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="28" data-file="priority-sort.ts" data-project="data">
+<div class="lx-exercise" data-exercise="3" data-mode="paste" data-target="0" data-file="priority-sort.ts" data-project="data" data-command="npx tsx priority-sort.ts" data-title="Sort by priority, with an index"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Sort by priority, with an index</h3><div class="lx-ex-task"><p>Clients want "high priority first, then newest". Page project 1's tasks with <code>paginateCursor</code> sorted by <code>priority</code> ascending and then <code>createdAt</code> descending, two per page. Why is sorting by the text <code>priority</code> a trap, and what would you change?</p></div><script type="text/plain" class="lx-ex-starter" data-file="priority-sort.ts">// Example to learn from: paging through a different sort, same loop shape.
+//
+//   const seen: string[] = [];
+//   let cursor: string | undefined;
+//   do {
+//     const page = await scores.paginateCursor(undefined, { limit: 2, sort: [{ field: "points", direction: "desc" }], cursor });
+//     seen.push(...page.data.map((s) => s.name));
+//     cursor = page.meta.nextCursor;
+//   } while (cursor);
+//   console.log(seen);
+//
+// Now page tasks by two sort fields instead of one.
+
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { TaskRepository } from "./repositories.js";
+import { setup } from "./setup.js";
+
+const { pg, client } = await setup();
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+
+// Page project 1's tasks with tasks.paginateCursor: sort by "priority"
+// ascending then "createdAt" descending, limit 2, looping (the do/while
+// above) until page.meta.nextCursor is undefined. Push "<priority>:<title>"
+// for each task into `seen`.
+const seen: string[] = [];
+
+console.log(seen);
+await client.disconnect();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Give <code>paginateCursor</code> a <code>sort</code> with two entries: <code>[{ field: "priority", direction: "asc" }, { field: "createdAt", direction: "desc" }]</code>, and filter to <code>{ projectId: 1 }</code>. Loop on <code>page.meta.nextCursor</code> as the examples above do.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>After collecting <code>seen</code>, look at the order the priorities come out in: <code>"high"</code>, <code>"low"</code>, <code>"normal"</code>. Ask what a plain text sort does with those three words compared with what "high, then normal, then low" means.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="28" data-file="priority-sort.ts" data-project="data">
 <figcaption class="lx-bar"><span class="lx-file">priority-sort.ts</span><button type="button" class="lx-edit" data-index="28" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-cn">TASK_MODEL</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./database.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Task</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./database.js"</span><span class="t-pn">;</span>

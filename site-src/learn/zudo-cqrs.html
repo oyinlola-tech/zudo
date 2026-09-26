@@ -418,6 +418,55 @@ all: [ 'Buy milk (done)', 'Write report (open)' ]
 <h2 id="practice">Practice</h2>
 <exercise title="Add RenameTask">
 <p>Add a <code>RenameTask</code> command with <code>taskId</code> and <code>title</code>. It must refuse a title shorter than 3 characters with a <code>ValidationError</code> from <code>@zudojs/errors</code>, and must only rename the caller's own task.</p>
+<starter file="rename.ts">
+// Example to learn from: the same guard-then-check-then-update shape for a
+// different command on the same rows.
+//
+//   bus.register<SetPriority, void>("SetPriority", (command, context) => {
+//     const userId = context?.userId;
+//     if (!userId) throw new AuthenticationError("Sign in first");
+//     if (!["low", "normal", "high"].includes(command.priority)) throw new ValidationError("Invalid priority");
+//     const row = rows.get(command.taskId);
+//     if (!row || row.userId !== userId) throw new NotFoundError(`Task ${command.taskId} not found`);
+//     row.priority = command.priority;
+//   });
+//
+// Now write RenameTask the same way, checking the title's length instead.
+
+import { createCommandBus, createExecutionContext, withUser } from "@zudojs/cqrs";
+import type { CommandOf } from "@zudojs/cqrs";
+import { AuthenticationError, NotFoundError, ValidationError } from "@zudojs/errors";
+
+type RenameTask = CommandOf<"RenameTask", { taskId: number; title: string }>;
+
+const rows = new Map([[1, { id: 1, userId: "ada", title: "Buy milk" }]]);
+const bus = createCommandBus();
+
+bus.register<RenameTask, void>("RenameTask", (command, context) => {
+  // 1. Read context?.userId; if missing, throw AuthenticationError("Sign in first").
+  // 2. If command.title.trim().length < 3, throw
+  //    ValidationError("Title must be at least 3 characters").
+  // 3. Load rows.get(command.taskId); if missing or row.userId !== userId,
+  //    throw NotFoundError(`Task ${command.taskId} not found`).
+  // 4. Set row.title to the trimmed title.
+});
+
+const ada = withUser(createExecutionContext(), "ada");
+const linus = withUser(createExecutionContext(), "linus");
+
+await bus.execute<RenameTask>({ type: "RenameTask", taskId: 1, title: "Buy oat milk" }, ada);
+console.log(rows.get(1)?.title);
+
+for (const [title, context] of [["no", ada], ["Hacked", linus]] as const) {
+  try {
+    await bus.execute<RenameTask>({ type: "RenameTask", taskId: 1, title }, context);
+  } catch (error) {
+    if (error instanceof Error) console.log(error.name, error.message);
+  }
+}
+</starter>
+<hint><p>Check the user first (<code>AuthenticationError</code>), then the title's trimmed length (<code>ValidationError</code>), then load the row and compare <code>row.userId</code> with <code>userId</code> (<code>NotFoundError</code>). Only after all three checks pass, write <code>row.title</code>.</p></hint>
+<hint><p><code>const userId = context?.userId; if (!userId) throw new AuthenticationError("Sign in first"); if (command.title.trim().length &lt; 3) throw new ValidationError("Title must be at least 3 characters"); const row = rows.get(command.taskId); if (!row || row.userId !== userId) throw new NotFoundError(`Task ${command.taskId} not found`); row.title = command.title.trim();</code>.</p></hint>
 <solution>
 <example file="rename.ts">
 import { createCommandBus, createExecutionContext, withUser } from "@zudojs/cqrs";
@@ -461,12 +510,46 @@ NotFoundError Task 1 not found
 </exercise>
 <exercise title="Command or query?">
 <p>Sort these into commands and queries: (a) <code>GetTaskCount</code>; (b) <code>MarkAllAsRead</code>; (c) <code>SearchTasks</code> that also records the search term for analytics; (d) <code>ArchiveOldTasks</code>.</p>
+<hint><p>(a), (b) and (d) are each clearly one or the other: does running it twice change anything in the world? (c) is the trap: it does two different jobs. What happens if you try to cache or retry it as written?</p></hint>
+<hint><p>Split (c) in two: a pure read, and a side effect that a query must not have. What mechanism from <a href="/learn/zudo-events">the events lesson</a> fits recording the search term without the query knowing about it?</p></hint>
 <solution>
 <p>(a) Query. (b) Command. (d) Command. (c) is the interesting one: as described it is both, which breaks the rule. Make <code>SearchTasks</code> a pure query, and record the search term separately, for example by publishing a <code>search.performed</code> event that an analytics handler reacts to. Then the search can be cached and retried safely.</p>
 </solution>
 </exercise>
 <exercise title="A guard middleware">
 <p>Write a middleware that throws <code>AuthenticationError</code> for any request whose context has no <code>userId</code>, so no handler has to remember the check. Test it with and without a user.</p>
+<starter file="guard.ts">
+// Example to learn from: a guard middleware for a different requirement.
+//
+//   const requireTenant: CqrsMiddleware = async (request, context, next) => {
+//     if (!context?.tenantId) throw new ValidationError("A tenant is required");
+//     return next(request, context);
+//   };
+//
+// Now write requireUser the same way, checking context?.userId instead.
+
+import { createQueryBus } from "@zudojs/cqrs";
+import type { CqrsMiddleware } from "@zudojs/cqrs";
+import { AuthenticationError } from "@zudojs/errors";
+
+const requireUser: CqrsMiddleware = async (request, context, next) => {
+  // If context?.userId is missing, throw new AuthenticationError("Sign in first").
+  // Otherwise return next(request, context).
+  return next(request, context);
+};
+
+const queries = createQueryBus({ middleware: [requireUser] });
+queries.register("ListTasks", (query, context) => [`tasks of ${context?.userId}`]);
+
+console.log(await queries.execute({ type: "ListTasks" }, { userId: "ada" }));
+try {
+  await queries.execute({ type: "ListTasks" });
+} catch (error) {
+  if (error instanceof AuthenticationError) console.log(error.statusCode, error.message);
+}
+</starter>
+<hint><p>The check goes before calling <code>next</code>: <code>if (!context?.userId) throw new AuthenticationError("Sign in first");</code>, then <code>return next(request, context);</code> when it passes.</p></hint>
+<hint><p><code>if (!context?.userId) throw new AuthenticationError("Sign in first"); return next(request, context);</code>.</p></hint>
 <solution>
 <example file="guard.ts">
 import { createQueryBus } from "@zudojs/cqrs";

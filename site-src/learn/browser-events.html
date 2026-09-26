@@ -832,6 +832,49 @@ after checkout: (empty) | Total: ₦0 | badge 0 | Order placed. Thank you!
 <h2 id="practice">Practice</h2>
 <exercise title="Close a menu on Escape or an outside click">
 <p>Write <code>openMenu(menu)</code> that shows a menu element and closes it (sets <code>hidden</code>) when the user presses Escape or clicks anywhere outside it, but not when they click inside it. Clean up both listeners when the menu closes, and do not use <code>stopPropagation</code>.</p>
+<starter file="menu.js">
+// Example to learn from: one AbortController's signal wired to two
+// listeners, so a single abort() cleans up both at once.
+//
+//   function showToast(toast, onClose) {
+//     toast.hidden = false;
+//     const controller = new AbortController();
+//     const close = (reason) => {
+//       toast.hidden = true;
+//       controller.abort();
+//       onClose(reason);
+//     };
+//     const timer = setTimeout(() => close("timeout"), 3000);
+//     toast.addEventListener("click", () => { clearTimeout(timer); close("dismissed"); }, { signal: controller.signal });
+//   }
+//
+// Now do the same idea for a menu, closed by Escape or an outside click, below.
+
+function openMenu(menu, onClose) {
+  menu.hidden = false;
+  // 1. create an AbortController, and pass { signal: controller.signal } to
+  //    every listener you add below, so one controller.abort() removes them all
+  // 2. define close(reason): hide the menu, abort the controller, call onClose(reason)
+  // 3. listen for "click" on document: if !menu.contains(event.target),
+  //    call close("outside click")
+  // 4. listen for "keydown" on document: if event.key === "Escape", call close("Escape")
+}
+
+const menu = document.querySelector("#cart");
+const log = (reason) => console.log("closed by", reason, "| hidden:", menu.hidden);
+
+openMenu(menu, log);
+document.querySelector("#remove-rice").click();
+console.log("after inside click, hidden:", menu.hidden);
+document.querySelector("#help").addEventListener("click", (e) => e.preventDefault());
+document.querySelector("#help").click();
+
+openMenu(menu, log);
+document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+document.querySelector("#help").click();
+</starter>
+<hint><p>Decide "inside or outside" with <code>menu.contains(event.target)</code>, never <code>stopPropagation</code>. Give every listener the same <code>{ signal }</code> so one <code>controller.abort()</code> removes them all.</p></hint>
+<hint><p><code>document.addEventListener("click", (event) =&gt; { if (!menu.contains(event.target)) close("outside click"); }, { signal: controller.signal });</code> and the same shape for <code>"keydown"</code>, checking <code>event.key === "Escape"</code>.</p></hint>
 <solution>
 <example file="menu.js" project="events" runtime="dom">
 function openMenu(menu, onClose) {
@@ -873,6 +916,49 @@ closed by Escape | hidden: true
 </exercise>
 <exercise title="Write a throttle">
 <p>Write <code>throttle(fn, periodMs)</code>: the first call runs straight away, and further calls within <code>periodMs</code> of the last run are ignored. Test it with calls every 40 ms for 400 ms and a 100 ms period.</p>
+<starter file="throttle.js">
+// Example to learn from: only doing something once enough time has passed
+// since it last happened.
+//
+//   function limitedLogger(periodMs) {
+//     let last = -Infinity;
+//     return (message) => {
+//       const now = performance.now();
+//       if (now - last < periodMs) return;
+//       last = now;
+//       console.log(message);
+//     };
+//   }
+//   const log = limitedLogger(100);
+//   setInterval(() => log("tick"), 40); // only prints roughly every 100 ms
+//
+// Now wrap it around any function, not just a logger, below.
+
+function throttle(fn, periodMs) {
+  let last = -Infinity;
+  // return a function that reads performance.now(), and only calls
+  // fn(...args) (after updating `last` to the current time) when at least
+  // periodMs has passed since the last call that actually ran fn
+  return () => {}; // placeholder so the calls below don't crash
+}
+
+let runs = 0;
+const onScroll = throttle(() => runs++, 100);
+let calls = 0;
+await new Promise((resolve) => {
+  const timer = setInterval(() => {
+    calls++;
+    onScroll();
+    if (calls === 10) {
+      clearInterval(timer);
+      resolve();
+    }
+  }, 40);
+});
+console.log("calls:", calls, "runs between 3 and 5:", runs >= 3 && runs <= 5);
+</starter>
+<hint><p>Keep <code>last</code> in the closure, the same way the worked example does. Compare <code>performance.now() - last</code> with <code>periodMs</code> before deciding to call <code>fn</code>.</p></hint>
+<hint><p><code>return (...args) =&gt; { const now = performance.now(); if (now - last &lt; periodMs) return; last = now; fn(...args); };</code></p></hint>
 <solution>
 <example file="throttle.js">
 function throttle(fn, periodMs) {
@@ -908,6 +994,43 @@ calls: 10 runs between 3 and 5: true
 </exercise>
 <exercise title="A keyboard shortcut that respects typing">
 <p>Pressing <kbd>n</kbd> anywhere on the task page should focus the "new task" box, but not when the user is already typing in a text field (they want the letter n). Write the listener and test both cases.</p>
+<starter file="shortcut.js">
+// Example to learn from: checking both the key and where the event came
+// from before acting.
+//
+//   document.addEventListener("keydown", (event) => {
+//     const typing = event.target.closest("input, textarea, select, [contenteditable]");
+//     if (event.key !== "/" || typing) return;
+//     event.preventDefault();
+//     document.querySelector("#search").focus();
+//   });
+//
+// Now do the same for "n", also ignoring Ctrl/Cmd/Alt combinations, below.
+
+const nameBox = document.querySelector('input[name="name"]');
+const phone = document.querySelector('input[name="phone"]');
+
+document.addEventListener("keydown", (event) => {
+  // 1. work out whether the user is already typing:
+  //    event.target.closest("input, textarea, select, [contenteditable]")
+  // 2. if event.key isn't "n", or they're typing, or a modifier key is
+  //    held (event.ctrlKey, event.metaKey, event.altKey), return without
+  //    doing anything
+  // 3. otherwise: event.preventDefault(); nameBox.focus();
+});
+
+function press(target, options = {}) {
+  const event = new KeyboardEvent("keydown", { key: "n", bubbles: true, cancelable: true, ...options });
+  target.dispatchEvent(event);
+  return event.defaultPrevented ? "shortcut ran" : "left alone";
+}
+
+console.log("n on the page:", press(document.body));
+console.log("n in the phone box:", press(phone));
+console.log("Ctrl+n on the page:", press(document.body, { ctrlKey: true }));
+</starter>
+<hint><p>One <code>if</code> with several conditions joined by <code>||</code> covers every reason to do nothing; only when none of them is true do you <code>preventDefault()</code> and focus.</p></hint>
+<hint><p><code>const typing = event.target.closest("input, textarea, select, [contenteditable]"); if (event.key !== "n" || typing || event.ctrlKey || event.metaKey || event.altKey) return; event.preventDefault(); nameBox.focus();</code></p></hint>
 <solution>
 <example file="shortcut.js" project="checkout-form" runtime="dom">
 const nameBox = document.querySelector('input[name="name"]');

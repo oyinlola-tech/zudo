@@ -656,6 +656,8 @@ token URL to cloud metadata -> OAuthEndpointNotAllowedError - tokenUrl resolves 
   const user = usersByEmail.get(profile.email ?? "") ?? createUser(profile);
   return createResponseContext().json({ googleToken: tokens.accessToken });
 });</code></pre>
+<hint><p>Compare this handler with <code>pending.ts</code> and <code>try-state.ts</code>: where does the real flow get its <code>state</code> and PKCE verifier from, and where does this one get them from instead?</p></hint>
+<hint><p>Look at <code>findOrCreateAccount</code>: what does it key an account by, and what does this handler match on instead? And once the flow finishes, whose token does the client end up holding — yours, or the provider's?</p></hint>
 <solution>
 <ol>
 <li>No state check. Anyone can send a victim a callback link with the attacker's code (login CSRF). Take the pending login from the server and call <code>verifyState</code> first.</li>
@@ -666,6 +668,48 @@ token URL to cloud metadata -> OAuthEndpointNotAllowedError - tokenUrl resolves 
 </exercise>
 <exercise title="A GitHub config">
 <p>Write <code>githubConfig()</code> like <code>googleConfig()</code>, reading <code>GITHUB_CLIENT_ID</code> and <code>GITHUB_CLIENT_SECRET</code>, with the callback <code>http://localhost:3000/auth/github/callback</code> and only the <code>read:user</code> scope. Print the <code>scope</code> and <code>redirect_uri</code> of its authorization URL.</p>
+<starter file="github.ts">
+// Example to learn from: a provider config for a different service.
+//
+//   function discordConfig(): OAuthConfig {
+//     return {
+//       provider: "discord",
+//       clientId: requireEnv("DISCORD_CLIENT_ID"),
+//       clientSecret: requireEnv("DISCORD_CLIENT_SECRET"),
+//       allowedRedirectUris: ["http://localhost:3000/auth/discord/callback"],
+//       scopes: ["identify"],
+//     };
+//   }
+//
+// Now write githubConfig() the same way, for GitHub, with one scope.
+
+import { randomBytes } from "node:crypto";
+import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
+import type { OAuthConfig } from "@zudojs/auth-oauth";
+import { requireEnv } from "./env.js";
+
+process.env.GITHUB_CLIENT_ID ??= "demo-github-client-id";
+process.env.GITHUB_CLIENT_SECRET ??= randomBytes(24).toString("base64url");
+
+const GITHUB_CALLBACK = "http://localhost:3000/auth/github/callback";
+
+function githubConfig(): OAuthConfig {
+  // provider: "github", clientId/clientSecret from requireEnv,
+  // allowedRedirectUris: [GITHUB_CALLBACK], scopes: ["read:user"] only.
+  return {
+    provider: "github",
+    clientId: requireEnv("GITHUB_CLIENT_ID"),
+    clientSecret: requireEnv("GITHUB_CLIENT_SECRET"),
+    allowedRedirectUris: [GITHUB_CALLBACK],
+  };
+}
+
+const { url } = createAuthorizationUrl(githubConfig(), { state: generateState(), redirectUri: GITHUB_CALLBACK });
+const params = new URL(url).searchParams;
+console.log(new URL(url).host, params.get("scope"), params.get("redirect_uri"));
+</starter>
+<hint><p>Add a <code>scopes</code> field to the returned object: <code>scopes: ["read:user"]</code>. Without it, the preset's own default scopes are used instead.</p></hint>
+<hint><p><code>return { provider: "github", clientId: requireEnv("GITHUB_CLIENT_ID"), clientSecret: requireEnv("GITHUB_CLIENT_SECRET"), allowedRedirectUris: [GITHUB_CALLBACK], scopes: ["read:user"] };</code>.</p></hint>
 <solution>
 <example file="github.ts" project="oauth" browser="no">
 import { randomBytes } from "node:crypto";

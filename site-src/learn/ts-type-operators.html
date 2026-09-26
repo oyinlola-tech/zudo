@@ -701,6 +701,45 @@ terminal statuses: delivered, cancelled, refunded
 <h2 id="practice">Practice</h2>
 <exercise title="Currencies from one table">
 <p>A shop sells in three currencies. Write one <code>as const</code> table with each currency's symbol and number of minor units per major unit (NGN 100, USD 100, JPY 1). Derive <code>Currency</code>, and write <code>format(minor: number, currency: Currency): string</code> so that <code>format(150050, "NGN")</code> gives <code>₦1500.50</code> and <code>format(1500, "JPY")</code> gives <code>¥1500</code>.</p>
+<starter file="currency.ts">
+// Example to learn from: deriving a unit type from a value table, then a
+// function that uses the derived type.
+//
+//   const BYTES_PER_UNIT = {
+//     KB: 1024,
+//     MB: 1024 ** 2,
+//     GB: 1024 ** 3,
+//   } as const satisfies Record<string, number>;
+//
+//   type Unit = keyof typeof BYTES_PER_UNIT;
+//
+//   function toBytes(amount: number, unit: Unit): number {
+//     return amount * BYTES_PER_UNIT[unit];
+//   }
+//
+//   console.log(toBytes(2, "MB"), toBytes(1, "GB"));   // 2097152 1073741824
+//
+// Now do the same for currencies below.
+
+const CURRENCIES = {
+  NGN: { symbol: "₦", minorUnits: 100 },
+  USD: { symbol: "$", minorUnits: 100 },
+  JPY: { symbol: "¥", minorUnits: 1 },
+} as const satisfies Record<string, { symbol: string; minorUnits: number }>;
+
+type Currency = keyof typeof CURRENCIES;
+
+function format(minor: number, currency: Currency): string {
+  // Look up { symbol, minorUnits } for `currency` in CURRENCIES.
+  // decimals is 0 when minorUnits is 1, otherwise 2.
+  // Return `${symbol}${(minor / minorUnits).toFixed(decimals)}`.
+  return "";
+}
+
+console.log(format(150050, "NGN"), format(1999, "USD"), format(1500, "JPY"));
+</starter>
+<hint><p>Look up the row for <code>currency</code> in <code>CURRENCIES</code>: <code>const { symbol, minorUnits } = CURRENCIES[currency]</code>.</p></hint>
+<hint><p><code>decimals</code> is <code>0</code> when <code>minorUnits</code> is <code>1</code>, otherwise <code>2</code>. Build the string with <code>`${symbol}${(minor / minorUnits).toFixed(decimals)}`</code>.</p></hint>
 <solution>
 <example file="currency.ts" project="ex-currency">
 const CURRENCIES = {
@@ -739,6 +778,34 @@ type P2 = Expect<Equal<(Card | Transfer)["kind"], ???>>;
 type P3 = Expect<Equal<keyof { [reference: string]: Card }, ???>>;
 type P4 = Expect<Equal<[Card, Transfer]["length"], ???>>;
 </file>
+<starter file="predict.ts">
+// Example to learn from: predicting keyof and indexed access on a different
+// discriminated union.
+//
+//   interface Cat { kind: "cat"; livesLeft: number }
+//   interface Dog { kind: "dog"; breed: string }
+//
+//   type A1 = Expect<Equal<keyof (Cat | Dog), "kind">>;            // only the shared key
+//   type A2 = Expect<Equal<(Cat | Dog)["kind"], "cat" | "dog">>;   // union of the values
+//
+// Now do the same for the cards below.
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+interface Card { kind: "card"; last4: string; amountKobo: number }
+interface Transfer { kind: "transfer"; bankCode: string; amountKobo: number }
+
+// Replace each `unknown` below with the type you predict. Once every line is
+// really true, add: console.log("predictions compiled");
+
+type P1 = Expect<Equal<keyof (Card | Transfer), unknown>>;
+type P2 = Expect<Equal<(Card | Transfer)["kind"], unknown>>;
+type P3 = Expect<Equal<keyof { [reference: string]: Card }, unknown>>;
+type P4 = Expect<Equal<[Card, Transfer]["length"], unknown>>;
+</starter>
+<hint><p>A union's <code>keyof</code> keeps only the keys every member shares. Indexing a union with that shared key gives the union of each member's value at that key.</p></hint>
+<hint><p><code>P3</code>'s string index signature also accepts numeric keys. <code>P4</code> indexes a tuple's <code>"length"</code>, which is a literal number, not <code>number</code>.</p></hint>
 <solution>
 <example file="predict.ts" project="ex-predict">
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -762,6 +829,38 @@ predictions compiled
 </exercise>
 <exercise title="A typed pluckAll">
 <p>Write <code>pluckAll&lt;T, K extends keyof T&gt;(items: readonly T[], keys: readonly K[])</code> that returns, for each item, an object with only those keys. Use <code>Pick&lt;T, K&gt;</code> for the result type. Try it on products with <code>["name", "priceKobo"]</code>.</p>
+<starter file="pluck-all.ts">
+// Example to learn from: the opposite direction, dropping some keys instead
+// of keeping them, with the same generic-key technique.
+//
+//   function omitAll<T extends object, K extends keyof T>(items: readonly T[], keys: readonly K[]): Omit<T, K>[] {
+//     return items.map((item) => {
+//       const rest: Partial<T> = { ...item };
+//       for (const key of keys) delete rest[key];
+//       return rest as Omit<T, K>;
+//     });
+//   }
+//
+//   const users = [{ id: 1, name: "Ada", passwordHash: "x1" }];
+//   console.log(omitAll(users, ["passwordHash"]));   // [ { id: 1, name: 'Ada' } ]
+//
+// Now do the same the other way round: keep only the listed keys.
+
+function pluckAll<T, K extends keyof T>(items: readonly T[], keys: readonly K[]): Pick<T, K>[] {
+  // For each item, build an object with only the given keys, then return it.
+  return items.map(() => ({}) as Pick<T, K>);
+}
+
+const products = [
+  { sku: "TOTE-01", name: "Ankara tote bag", priceKobo: 450_000, supplier: "Kano Textiles" },
+  { sku: "MUG-07", name: "Enamel mug", priceKobo: 180_000, supplier: "Aba Crafts" },
+];
+
+const listing = pluckAll(products, ["name", "priceKobo"]);
+console.log(listing);
+</starter>
+<hint><p>Start each item with an empty object cast to the result type, <code>{} as Pick&lt;T, K&gt;</code>, then loop over <code>keys</code> and copy each one across.</p></hint>
+<hint><p><code>picked[key] = item[key]</code> is allowed because both sides are <code>T[K]</code> for the same <code>K</code>, the generic write rule from this lesson.</p></hint>
 <solution>
 <example file="pluck-all.ts" project="ex-pluck">
 function pluckAll<T, K extends keyof T>(items: readonly T[], keys: readonly K[]): Pick<T, K>[] {

@@ -868,6 +868,40 @@ list shows: [ 'Rice 10kg' ]
 <h2 id="practice">Practice</h2>
 <exercise title="Decide the CORS headers">
 <p>Write <code>corsHeadersFor(request, allowedOrigins)</code>, a pure function that takes <code>{ method, origin, requestMethod }</code> and returns the headers the API should add. Unknown origins get only <code>Vary</code>. Preflights (<code>OPTIONS</code>) from allowed origins also get methods, headers and max-age.</p>
+<starter file="cors-headers.js">
+// Example to learn from: building a headers object, adding more entries
+// only when certain conditions hold.
+//
+//   function rateLimitHeaders(remaining, limit) {
+//     const headers = { "X-RateLimit-Limit": String(limit) };
+//     headers["X-RateLimit-Remaining"] = String(remaining);
+//     if (remaining === 0) headers["Retry-After"] = "60";
+//     return headers;
+//   }
+//
+// Now do the same idea for CORS, deciding what to add based on the origin
+// and the method, below.
+
+function corsHeadersFor({ method, origin }, allowedOrigins) {
+  const headers = { Vary: "Origin" };
+  // 1. if there's no origin, or it isn't in allowedOrigins, return headers as they are
+  // 2. otherwise add Access-Control-Allow-Origin (the origin) and
+  //    Access-Control-Allow-Credentials: "true"
+  // 3. if method === "OPTIONS" (a preflight), also add
+  //    Access-Control-Allow-Methods: "GET, POST, PATCH",
+  //    Access-Control-Allow-Headers: "Content-Type", and
+  //    Access-Control-Max-Age: "600"
+  return headers;
+}
+
+const allowed = ["https://tasks.example", "http://localhost:5173"];
+console.log(corsHeadersFor({ method: "GET", origin: "https://tasks.example" }, allowed));
+console.log(corsHeadersFor({ method: "OPTIONS", origin: "http://localhost:5173" }, allowed));
+console.log(corsHeadersFor({ method: "GET", origin: "https://tasks.example.evil.com" }, allowed));
+console.log(corsHeadersFor({ method: "GET" }, allowed));
+</starter>
+<hint><p>Check the origin first, and return early when it is missing or not allowed. Only an allowed origin gets any further headers, and only a preflight (<code>OPTIONS</code>) among those gets the last three.</p></hint>
+<hint><p><code>if (!origin || !allowedOrigins.includes(origin)) return headers; headers["Access-Control-Allow-Origin"] = origin; headers["Access-Control-Allow-Credentials"] = "true"; if (method === "OPTIONS") { headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH"; headers["Access-Control-Allow-Headers"] = "Content-Type"; headers["Access-Control-Max-Age"] = "600"; }</code></p></hint>
 <solution>
 <example file="cors-headers.js">
 function corsHeadersFor({ method, origin }, allowedOrigins) {
@@ -911,6 +945,60 @@ console.log(corsHeadersFor({ method: "GET" }, allowed));
 </exercise>
 <exercise title="Retry safely">
 <p>Write <code>withRetry(send, { method, attempts, delayMs })</code>. It calls <code>send()</code>, and retries after a network error (a <code>TypeError</code>) or a 503, waiting <code>delayMs</code>, then twice as long each time, up to <code>attempts</code> tries in total. It never retries a <code>POST</code>. Test it with fake responses.</p>
+<starter file="retry.js">
+// Example to learn from: retrying an unreliable operation with a growing
+// delay between attempts, and giving up after a fixed number of tries.
+//
+//   async function withRetries(run, attempts, delayMs) {
+//     for (let attempt = 1; ; attempt++) {
+//       try {
+//         return await run();
+//       } catch (error) {
+//         if (attempt === attempts) throw error;
+//         await new Promise((resolve) => setTimeout(resolve, delayMs * 2 ** (attempt - 1)));
+//       }
+//     }
+//   }
+//
+// Now add two more rules: retry a 503 response too, and never retry a
+// non-idempotent method, below.
+
+const IDEMPOTENT = ["GET", "HEAD", "PUT", "DELETE"];
+
+async function withRetry(send, { method = "GET", attempts = 3, delayMs = 10 } = {}) {
+  const tries = IDEMPOTENT.includes(method) ? attempts : 1;
+  // for attempt = 1, 2, ... up to `tries`:
+  //   1. try calling send(); if the response's status isn't 503, or this
+  //      is the last attempt, return it
+  //   2. catch: if the error isn't a TypeError, or this is the last
+  //      attempt, throw it
+  //   3. otherwise, wait delayMs * 2 ** (attempt - 1) ms, then loop again
+  try {
+    return await send();
+  } catch {
+    return new Response(null, { status: 0 }); // placeholder so the calls below don't crash
+  }
+}
+
+function flakyServer(script) {
+  let call = 0;
+  return async () => {
+    const next = script[Math.min(call++, script.length - 1)];
+    if (next === "down") throw new TypeError("Failed to fetch");
+    return new Response(null, { status: next });
+  };
+}
+
+console.log("GET:", (await withRetry(flakyServer(["down", 503, 200]))).status);
+console.log("POST:", (await withRetry(flakyServer([503, 200]), { method: "POST" })).status);
+try {
+  await withRetry(flakyServer(["down"]), { attempts: 2 });
+} catch (error) {
+  console.log("gave up:", error.message);
+}
+</starter>
+<hint><p>Wrap the body of the loop in a <code>try</code>/<code>catch</code>, the same shape as the worked example, but check <code>response.status !== 503</code> in the <code>try</code> as an extra reason to return early.</p></hint>
+<hint><p><code>for (let attempt = 1; ; attempt++) { try { const response = await send(); if (response.status !== 503 || attempt === tries) return response; } catch (error) { if (!(error instanceof TypeError) || attempt === tries) throw error; } await new Promise((resolve) =&gt; setTimeout(resolve, delayMs * 2 ** (attempt - 1))); }</code></p></hint>
 <solution>
 <example file="retry.js">
 const IDEMPOTENT = ["GET", "HEAD", "PUT", "DELETE"];
@@ -960,6 +1048,42 @@ gave up: Failed to fetch
 </exercise>
 <exercise title="Can JavaScript read this cookie?">
 <p>Write <code>describeCookie(setCookieLine)</code> that parses a <code>Set-Cookie</code> value and reports its name, whether page JavaScript can read it, whether it is limited to HTTPS, and its <code>SameSite</code> value. When the attribute is missing, Chromium-based browsers treat the cookie as <code>Lax</code>, but not every browser does, so report it as not set.</p>
+<starter file="describe-cookie.js">
+// Example to learn from: turning a header's flags into a Map, then reading
+// booleans and values off it.
+//
+//   function describeCacheControl(value) {
+//     const flags = new Map(value.split(",").map((part) => {
+//       const [key, v = ""] = part.trim().split("=");
+//       return [key.toLowerCase(), v];
+//     }));
+//     return { noStore: flags.has("no-store"), maxAge: flags.get("max-age") ?? "not set" };
+//   }
+//   console.log(describeCacheControl("no-store, max-age=0"));
+//
+// Now do the same idea for a Set-Cookie line's attributes, below.
+
+function describeCookie(line) {
+  const [pair, ...attributes] = line.split(";").map((part) => part.trim());
+  const name = pair.slice(0, pair.indexOf("="));
+  const flags = new Map(attributes.map((a) => {
+    const [key, value = ""] = a.split("=");
+    return [key.toLowerCase(), value];
+  }));
+  // return an object with:
+  //   name
+  //   readableByJs: true unless flags has "httponly"
+  //   httpsOnly: true when flags has "secure"
+  //   sameSite: flags.get("samesite"), or "not set (Lax in Chromium)" when
+  //     it is missing or empty
+}
+
+console.log(describeCookie("session=4f1c9e; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600"));
+console.log(describeCookie("theme=dark; Path=/"));
+console.log(describeCookie("tracker=x1; SameSite=None; Secure"));
+</starter>
+<hint><p><code>flags.has("httponly")</code> and <code>flags.has("secure")</code> give you two of the four fields directly. <code>flags.get("samesite") || "not set (Lax in Chromium)"</code> covers both "missing" and "present but empty".</p></hint>
+<hint><p><code>return { name, readableByJs: !flags.has("httponly"), httpsOnly: flags.has("secure"), sameSite: flags.get("samesite") || "not set (Lax in Chromium)" };</code></p></hint>
 <solution>
 <example file="describe-cookie.js">
 function describeCookie(line) {

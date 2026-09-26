@@ -721,6 +721,45 @@ PASS the failure is reported
 <h2 id="practice">Practice</h2>
 <exercise title="waitFor with a timeout">
 <p><code>waitFor</code> waits forever if the event never comes. Write <code>waitForWithin(bus, name, ms)</code> that resolves with the payload, or rejects with <code>Error("timed out waiting for NAME")</code> after <code>ms</code> milliseconds, and unsubscribes in both cases. The payload type must still follow the name.</p>
+<starter file="wait-within.ts">
+// Example to learn from: the same race-against-a-timer, cleaning up either
+// way, for a plain promise instead of a bus subscription.
+//
+//   function afterFirst<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+//     let timer: ReturnType<typeof setTimeout>;
+//     const timeout = new Promise<T>((_, reject) => {
+//       timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms} ms`)), ms);
+//     });
+//     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+//   }
+//
+//   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+//   console.log(await afterFirst(wait(10).then(() => "ready"), 100, "job"));   // ready
+//
+// Now do the same for a bus event below.
+
+import { EventBus } from "./event-bus.js";
+import type { EventName } from "./event-types.js";
+import type { ShopEvents } from "./shop-events.js";
+
+function waitForWithin<E extends object, K extends EventName<E>>(bus: EventBus<E>, name: K, ms: number): Promise<E[K]> {
+  // Race bus.once(name, ...) against a timer that rejects after ms
+  // milliseconds. Either way, clean up: clear the timer once the event
+  // arrives, or unsubscribe once the timer wins.
+  return new Promise((_resolve, reject) => {
+    setTimeout(() => reject(new Error("not implemented")), ms);
+  });
+}
+
+const shop = new EventBus<ShopEvents>();
+setTimeout(() => void shop.emit("stock.low", { sku: "YAM-TUBER", left: 2 }), 5);
+
+const low = await waitForWithin(shop, "stock.low", 100);
+console.log("got", low.sku);
+await waitForWithin(shop, "order.cancelled", 20).catch((error: unknown) => console.log(String(error)));
+</starter>
+<hint><p>Build your own promise: <code>new Promise((resolve, reject) =&gt; { ... })</code>. Inside it, <code>const off = bus.once(name, (...args) =&gt; { clearTimeout(timer); resolve(args[0] as E[K]); });</code>, and a <code>setTimeout</code> that calls <code>off()</code> then <code>reject(new Error(...))</code>.</p></hint>
+<hint><p>The timer must be declared before the listener (so the listener's callback can clear it), and the listener before the timeout fires (so the timeout's callback can call <code>off()</code>). Declare <code>let timer</code> and <code>const off = bus.once(...)</code> in that order, then create the timer referencing both.</p></hint>
 <solution>
 <example file="wait-within.ts" project="bus">
 import { EventBus } from "./event-bus.js";
@@ -756,6 +795,52 @@ Error: timed out waiting for order.cancelled
 </exercise>
 <exercise title="One analytics line per event, enforced">
 <p>Analytics wants one line of text for every shop event. Write a mapped type <code>Formatters&lt;E&gt;</code> that requires a formatter for every event name, taking that event's payload, and a function <code>trackAll(bus, formatters, log)</code> that subscribes all of them. Adding a new event to <code>ShopEvents</code> must make the formatters object fail to compile until it has a line for it.</p>
+<starter file="track-all.ts">
+// Example to learn from: the same "one handler per kind, required by a
+// mapped type" pattern, dispatching chat messages instead of events.
+//
+//   type Handlers<M extends { readonly kind: string }> = { readonly [K in M["kind"]]: (msg: Extract<M, { kind: K }>) => string };
+//   type ChatMessage = { kind: "text"; body: string } | { kind: "image"; url: string };
+//
+//   function describeAll(messages: readonly ChatMessage[], handlers: Handlers<ChatMessage>): string[] {
+//     return messages.map((msg) => {
+//       const format = handlers[msg.kind] as (msg: ChatMessage) => string;
+//       return format(msg);
+//     });
+//   }
+//
+// Now do the same for subscribing to every shop event, below.
+
+import { EventBus } from "./event-bus.js";
+import type { EventName } from "./event-types.js";
+import type { ShopEvents } from "./shop-events.js";
+
+// One formatter per event name, taking that event's own payload.
+type Formatters<E> = { readonly [K in EventName<E>]: (payload: unknown) => string };
+
+function trackAll<E extends object>(bus: EventBus<E>, formatters: Formatters<E>, log: (line: string) => void): void {
+  // Subscribe once, to every event ("*"), and for each one call the
+  // matching formatter and log "<name>: <formatted line>".
+}
+
+const shop = new EventBus<ShopEvents>();
+trackAll(
+  shop,
+  {
+    "order.placed": (o) => `₦${o.totalKobo / 100}`,
+    "order.cancelled": (c) => c.reason,
+    "stock.low": (s) => `${s.sku} x${s.left}`,
+    "cart.cleared": () => "-",
+  },
+  (line) => console.log(line),
+);
+
+await shop.emit("order.placed", { orderId: "ORD-5", email: "ada@shop.ng", totalKobo: 250_000 });
+await shop.emit("stock.low", { sku: "OIL-5L", left: 1 });
+await shop.emit("cart.cleared");
+</starter>
+<hint><p><code>Formatters&lt;E&gt;</code> needs each payload's real type: <code>{ readonly [K in EventName&lt;E&gt;]: (payload: E[K]) =&gt; string }</code>.</p></hint>
+<hint><p>Inside <code>trackAll</code>: <code>bus.onPattern("*", (event) =&gt; { const format = formatters[event.name] as (payload: unknown) =&gt; string; log(`${event.name}: ${format(event.payload)}`); });</code>.</p></hint>
 <solution>
 <example file="track-all.ts" project="bus">
 import { EventBus } from "./event-bus.js";
@@ -797,6 +882,42 @@ cart.cleared: -
 </exercise>
 <exercise title="Close the hole in forward">
 <p>The <code>forward(name, payload)</code> function from the correlated-union section accepted a cancellation payload for <code>"stock.low"</code>. Rewrite it so that it takes one <code>EventOf</code> value and publishes it on the full bus, and show that the correct call still works.</p>
+<starter file="forward.ts">
+// Example to learn from: narrowing a parameter to a subset of a union with
+// Extract, so an impossible combination cannot be constructed, for a
+// message relay instead of an event forwarder.
+//
+//   type Message = { kind: "ping" } | { kind: "echo"; text: string } | { kind: "shutdown"; code: number };
+//   type Allowed<M extends { kind: string }, K extends M["kind"]> = Extract<M, { kind: K }>;
+//
+//   function relay(message: Allowed<Message, "ping" | "echo">): string {
+//     return message.kind === "ping" ? "pong" : `echo: ${message.text}`;
+//   }
+//
+//   console.log(relay({ kind: "ping" }));   // pong
+//
+// Now do the same for forward below: one EventOf value, not a separate
+// name and payload.
+
+import { EventBus } from "./event-bus.js";
+import type { EventOf } from "./event-types.js";
+import type { ShopEvents } from "./shop-events.js";
+
+const shop = new EventBus<ShopEvents>();
+shop.on("stock.low", (s) => console.log(`reorder ${s.sku}: ${s.left} left`));
+shop.on("order.cancelled", (c) => console.log(`refund ${c.orderId}`));
+
+async function forward(event: EventOf<ShopEvents, "order.cancelled" | "stock.low">): Promise<number> {
+  // Publish `event` on the bus (bus.publish takes one EventOf value), and
+  // return how many listeners it reached.
+  return 0;
+}
+
+console.log(await forward({ name: "stock.low", payload: { sku: "RICE-50KG", left: 3 } }));
+console.log(await forward({ name: "order.cancelled", payload: { orderId: "ORD-1042", reason: "customer changed mind" } }));
+</starter>
+<hint><p><code>shop.publish(event)</code> takes exactly one <code>EventOf</code> value and returns a <code>Promise&lt;EmitReport&gt;</code>. <code>forward</code> can be a thin wrapper around it.</p></hint>
+<hint><p><code>const report = await shop.publish(event); return report.delivered;</code></p></hint>
 <solution>
 <example file="forward.ts" project="bus">
 import { EventBus } from "./event-bus.js";

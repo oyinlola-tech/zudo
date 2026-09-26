@@ -972,6 +972,45 @@ await runTests("tests/delivery.test.ts");
 <h2 id="practice">Practice</h2>
 <exercise title="Measure the queue lag">
 <p>Write <code>oldestWaitingSeconds(db, now)</code>, which returns how many seconds the oldest delivery that is still <code>queued</code> or <code>running</code> has been waiting (0 when none is). Give two deliveries fixed creation times, and print the lag before and after the older one is sent.</p>
+<starter file="ex-lag.ts">
+// Example to learn from: how old the oldest open item in a table is, as a
+// single aggregate query with a clock passed in.
+//
+//   async function oldestOpenTicketSeconds(db: PGlite, now: Date): Promise<number> {
+//     const { rows } = await db.query<{ seconds: number | null }>(
+//       `select extract(epoch from ($1::timestamptz - min(opened_at)))::int as seconds
+//        from tickets where status = 'open'`, [now]);
+//     return rows[0]?.seconds ?? 0;
+//   }
+//
+// Now do the same for deliveries below, over two statuses instead of one.
+
+import type { PGlite } from "@electric-sql/pglite";
+import { createDatabase } from "./db.js";
+import { createLedger } from "./ledger.js";
+
+async function oldestWaitingSeconds(db: PGlite, now: Date): Promise<number> {
+  // Aggregate over deliveries whose status is 'queued' or 'running':
+  // the number of whole seconds between `now` and the oldest created_at,
+  // or 0 when there is no such row (min() of nothing is null).
+  return 0;
+}
+
+const db = await createDatabase();
+const ledger = createLedger(db);
+await ledger.request(1, "invoice", "invoice:1", "req-1");
+await ledger.request(2, "invoice", "invoice:2", "req-2");
+await db.query("update deliveries set created_at = '2026-10-05T09:00:00Z' where id = 1");
+await db.query("update deliveries set created_at = '2026-10-05T09:04:30Z' where id = 2");
+
+const now = new Date("2026-10-05T09:05:00Z");
+console.log("oldest waiting:", await oldestWaitingSeconds(db, now), "s");
+await db.query("update deliveries set status = 'sent' where id = 1");
+console.log("oldest waiting:", await oldestWaitingSeconds(db, now), "s");
+await db.close();
+</starter>
+<hint><p><code>extract(epoch from ($1::timestamptz - min(created_at)))::int</code> gives whole seconds between the passed-in clock and the earliest matching row; <code>min()</code> over no rows is <code>null</code>, which is why the result needs <code>?? 0</code>.</p></hint>
+<hint><p>The <code>where</code> clause is <code>status in ('queued', 'running')</code> — the same two states <code>claimDue</code> looks for, since both are "still waiting" from an operator's point of view.</p></hint>
 <solution>
 <example file="ex-lag.ts" project="jobs" browser="no">
 import type { PGlite } from "@electric-sql/pglite";
@@ -1007,6 +1046,33 @@ oldest waiting: 30 s
 </exercise>
 <exercise title="Replay a dead delivery">
 <p>INV-0004 went dead because its amount was missing. Somebody fixes the amount. Use the ledger's <code>replay</code> to put the delivery back in line, show that replaying twice only works once, and show that a dispatcher claims it again with a fresh claim count.</p>
+<starter file="ex-replay.ts">
+// Example to learn from: fixing the cause, then putting a dead row back in
+// line — and checking that doing it twice only has an effect once.
+//
+//   await db.query("update accounts set balance_kobo = 500000 where id = 9"); // the fix
+//   console.log("replayed:", await ledger.replay(9), await ledger.replay(9)); // true, then false
+//
+// Now do the same for delivery 1 below, after fixing invoice 4's amount.
+
+import { createDatabase } from "./db.js";
+import { createLedger } from "./ledger.js";
+import { LEASE_MS, MAX_CLAIMS } from "./worker.js";
+
+const db = await createDatabase();
+const ledger = createLedger(db);
+await ledger.request(4, "invoice", "invoice:4", "req-4");
+await db.query("update deliveries set status = 'dead', last_error = 'amount missing' where id = 1");
+
+console.log("replay before the fix:", (await ledger.get(1))?.status);
+// 1. Fix the cause: update invoices set amount_kobo = 650000 where id = 4.
+// 2. Call ledger.replay(1) twice and log both results.
+// 3. Claim due deliveries with ledger.claimDue("worker-a", new Date(), LEASE_MS, MAX_CLAIMS)
+//    and log each row's id and claims count.
+await db.close();
+</starter>
+<hint><p><code>replay</code> takes the delivery's id (<code>1</code>, not the invoice id <code>4</code>) and returns whether it changed a row — call it twice in the same <code>console.log</code>, the way the accounts example does.</p></hint>
+<hint><p><code>ledger.claimDue("worker-a", new Date(), LEASE_MS, MAX_CLAIMS)</code> returns the claimed rows; map them to <code>`${row.id} claims=${row.claims}`</code> to see the counter reset.</p></hint>
 <solution>
 <example file="ex-replay.ts" project="jobs" browser="no">
 import { createDatabase } from "./db.js";
@@ -1035,6 +1101,9 @@ claimed: [ '1 claims=1' ]
 </exercise>
 <exercise title="The database blinks">
 <p>The provider has just accepted delivery 7, and the database goes down for 30 seconds, so <code>markSent</code> throws. Walk through what happens next, step by step, until the delivery is <code>sent</code>. Does the customer get a second e-mail? Which line of <code>worker.ts</code> would turn this into a lost delivery if it were written carelessly?</p>
+<hint><p>The processor threw, so the queue does what it always does with a failure: think about backoff, the claim counter, and what happens once every attempt within the crash budget has failed.</p></hint>
+<hint><p>The delivery's row is still <code>running</code> with a lease. What ends a lease, and who notices when it does? That is what gives this delivery a second chance without anyone intervening by hand.</p></hint>
+<hint><p>When the processor finally calls the provider again, it sends the same idempotency key as the first, accepted call. What does that guarantee about how many e-mails go out, whatever the provider does with the second call?</p></hint>
 <solution>
 <p>The processor throws, so the queue retries with backoff. Each retry loads the delivery, which also fails while the database is down, so all 4 attempts fail within a fraction of a second and the job is dead-lettered in memory. The <code>job:dead-lettered</code> handler tries <code>markDead</code>, which fails too, and is logged. The ledger row is still <code>running</code> with its lease. When the lease expires, a dispatcher claims it again (claim 2), the processor calls the provider with the same key, the provider replays <code>msg_7</code>, and <code>markSent</code> now works. One e-mail. The careless version is a <code>void deps.ledger.markDead(...)</code> without <code>.catch</code>: its rejection would be unhandled, and Node.js ends the whole process on an unhandled rejection, taking every other running delivery with it. A catch-all <code>try { … } catch {}</code> around <code>markSent</code> that ignored the error would be worse: the job would count as completed, and nothing would ever retry it.</p>
 </solution>

@@ -1636,7 +1636,53 @@ PASS a v1 payload labelled v2 is rejected</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="loyalty.ts" data-project="shop" data-command="npx tsx loyalty.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A loyalty-points consumer</h3><p>Add a <code>loyalty</code> consumer that gives the customer 1 point per ₦100 of the order total, stored in a <code>points</code> table keyed by email. It must be idempotent. Deliver one v1 and one v2 event, then deliver the v2 event again, and print the points table.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="21" data-file="loyalty.ts" data-project="shop">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="loyalty.ts" data-project="shop" data-command="npx tsx loyalty.ts" data-title="A loyalty-points consumer"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A loyalty-points consumer</h3><div class="lx-ex-task"><p>Add a <code>loyalty</code> consumer that gives the customer 1 point per ₦100 of the order total, stored in a <code>points</code> table keyed by email. It must be idempotent. Deliver one v1 and one v2 event, then deliver the v2 event again, and print the points table.</p></div><script type="text/plain" class="lx-ex-starter" data-file="loyalty.ts">// Example to learn from: the same "handleOnce, then upsert a running
+// total" shape, for a different consumer.
+//
+//   const referrals: Consumer = {
+//     name: "referrals",
+//     handle(db, envelope) {
+//       const referrerId = (envelope.payload as { referrerId: string }).referrerId;
+//       return handleOnce(db, "referrals", envelope.id, async (tx) => {
+//         await tx.query(
+//           `INSERT INTO referral_counts (referrer_id, signups) VALUES ($1, 1)
+//            ON CONFLICT (referrer_id) DO UPDATE SET signups = referral_counts.signups + 1`,
+//           [referrerId],
+//         );
+//       });
+//     },
+//   };
+//
+// Now do the same for order.created and loyalty points below.
+
+import type { Consumer } from "./consumers.js";
+import type { Envelope } from "./contracts.js";
+import { createDb } from "./db.js";
+import { handleOnce } from "./once.js";
+import { readOrderCreated } from "./upcast.js";
+
+const loyalty: Consumer = {
+  name: "loyalty",
+  handle(db, envelope) {
+    const order = readOrderCreated(envelope);
+    // 1 point per ₦100: Math.floor(order.totalKobo / 10_000)
+    const points = 0;
+    // wrap the write in handleOnce(db, "loyalty", envelope.id, ...) for
+    // idempotency; inside it, upsert into points: on conflict on email, add
+    // to the existing total instead of overwriting it
+    return handleOnce(db, "loyalty", envelope.id, async (tx) => {});
+  },
+};
+
+const db = await createDb();
+await db.exec("CREATE TABLE points (email text PRIMARY KEY, points integer NOT NULL)");
+const v1: Envelope = { id: "evt-ORD-0999", type: "order.created", version: 1,
+  payload: { orderId: "ORD-0999", email: "ada@shop.ng", totalKobo: 900_050 } };
+const v2: Envelope = { id: "evt-ORD-1001", type: "order.created", version: 2,
+  payload: { orderId: "ORD-1001", customer: { email: "ada@shop.ng", name: "Ada" }, totalKobo: 2_500_000, currency: "NGN" } };
+
+for (const envelope of [v1, v2, v2]) console.log(envelope.id, await loyalty.handle(db, envelope));
+console.log((await db.query("SELECT email, points FROM points")).rows);</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>const points = Math.floor(order.totalKobo / 10_000);</code>, computed before the <code>handleOnce</code> call so the transaction only needs to write it.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Inside <code>handleOnce</code>'s callback: <code>await tx.query("INSERT INTO points (email, points) VALUES ($1, $2) ON CONFLICT (email) DO UPDATE SET points = points.points + EXCLUDED.points", [order.customer.email, points]);</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="21" data-file="loyalty.ts" data-project="shop">
 <figcaption class="lx-bar"><span class="lx-file">loyalty.ts</span><button type="button" class="lx-edit" data-index="21" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Consumer</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./consumers.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Envelope</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./contracts.js"</span><span class="t-pn">;</span>
@@ -1705,7 +1751,31 @@ evt-ORD-1001 duplicate
 [ { email: 'ada@shop.ng', points: 340 } ]</pre></div>
 </figure>
 <p>₦9,000.50 gives 90 points (rounded down, so a customer is never given a point they did not earn) and ₦25,000 gives 250. The consumer reads through <code>readOrderCreated</code> like every other, so it handles v1 without knowing v1 exists. To wire it in, add it to the list passed to <code>createSystem</code>: no producer code changes.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="v3.ts" data-project="shop"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Version 3: the sales channel</h3><p>The product team wants to know whether an order came from the web or the app. Design <code>order.created</code> v3 with a <code>channel: "web" | "app" | "unknown"</code> field. Write the 2 → 3 upcaster. What value does it give old events, and why not <code>"web"</code>?</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="22" data-file="v3.ts" data-project="shop">
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="v3.ts" data-project="shop" data-title="Version 3: the sales channel"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Version 3: the sales channel</h3><div class="lx-ex-task"><p>The product team wants to know whether an order came from the web or the app. Design <code>order.created</code> v3 with a <code>channel: "web" | "app" | "unknown"</code> field. Write the 2 → 3 upcaster. What value does it give old events, and why not <code>"web"</code>?</p></div><script type="text/plain" class="lx-ex-starter" data-file="v3.ts">// Example to learn from: extending a previous version's interface with a
+// new field, and choosing what value an upcaster gives history.
+//
+//   interface TicketCreatedV2 extends TicketCreatedV1 {
+//     readonly priority: "low" | "normal" | "high";
+//   }
+//   const upcast1to2 = (payload: unknown): TicketCreatedV2 =>
+//     ({ ...(payload as TicketCreatedV1), priority: "normal" });
+//
+// "normal" is a neutral default: nobody recorded a priority, so guessing
+// "high" would make every old ticket look urgent. Now do the same for
+// order.created's channel below.
+
+import type { OrderCreatedV2 } from "./contracts.js";
+
+interface OrderCreatedV3 extends OrderCreatedV2 {
+  readonly channel: "web" | "app" | "unknown";
+}
+
+// spread the old payload and add the new field; old events never recorded
+// a channel, so what should it default to?
+const upcast2to3 = (payload: unknown): OrderCreatedV3 => ({ ...(payload as OrderCreatedV2), channel: "web" });
+
+const old: OrderCreatedV2 = { orderId: "ORD-1001", customer: { email: "ada@shop.ng", name: "Ada" }, totalKobo: 2_500_000, currency: "NGN" };
+console.log(upcast2to3(old).channel);</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The default must not silently claim something nobody recorded. Is <code>"web"</code> a fact about old orders, or just a guess?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>channel: "unknown"</code>. Filling in a specific channel would make every historical report of "web vs app" wrong.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="22" data-file="v3.ts" data-project="shop">
 <figcaption class="lx-bar"><span class="lx-file">v3.ts</span><button type="button" class="lx-edit" data-index="22" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="22"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">OrderCreatedV2</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./contracts.js"</span><span class="t-pn">;</span>
 
@@ -1731,7 +1801,7 @@ console.log(upcast2to3(old).channel);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx v3.ts</code> and of the browser terminal</div><pre class="lx-no-copy">unknown</pre></div>
 </figure>
 <p>Old events get <code>"unknown"</code>: nobody recorded the channel, and most customers may well have used the app. Filling in <code>"web"</code> would make every report of "web vs app" wrong for all history. Then: bump <code>LATEST_VERSION</code> to 3, add the function to the upcaster chain under key 2, extend the parser, deploy the consumers, and only then deploy the producer that writes v3.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Transient or permanent?</h3><p>For each failure, decide whether the consumer should throw (so the queue retries) or park the event: (a) the database connection was reset; (b) the payload fails the contract because <code>totalKobo</code> is <code>-5</code>; (c) the payment provider answers 429 Too Many Requests; (d) the SMS provider says the phone number is not a valid Nigerian number.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) Throw: a reset connection usually works on the next try. (b) Park, although it arrives there through a few retries in this lesson's code. A negative total is a bug in the producer, and no retry fixes it; it needs a developer, and the dead letter is the evidence. (c) Throw, with backoff: 429 means "later", and backoff with jitter is exactly the right answer. (d) Park: the number will not become valid by waiting. Tell a person, or the customer, so it can be corrected.</p></div></div>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Transient or permanent?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Transient or permanent?</h3><div class="lx-ex-task"><p>For each failure, decide whether the consumer should throw (so the queue retries) or park the event: (a) the database connection was reset; (b) the payload fails the contract because <code>totalKobo</code> is <code>-5</code>; (c) the payment provider answers 429 Too Many Requests; (d) the SMS provider says the phone number is not a valid Nigerian number.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Will trying again, unchanged, a moment later plausibly succeed? Or is the event itself wrong, so every retry would fail the exact same way?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(b) never becomes valid by waiting; who can actually fix it, and how would they know it happened?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) Throw: a reset connection usually works on the next try. (b) Park, although it arrives there through a few retries in this lesson's code. A negative total is a bug in the producer, and no retry fixes it; it needs a developer, and the dead letter is the evidence. (c) Throw, with backoff: 429 means "later", and backoff with jitter is exactly the right answer. (d) Park: the number will not become valid by waiting. Tell a person, or the customer, so it can be corrected.</p></div></div>
 </section>
 
 <section>

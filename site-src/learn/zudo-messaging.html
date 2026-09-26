@@ -401,6 +401,41 @@ bus.dispose();
 <h2 id="practice">Practice</h2>
 <exercise title="Time every message">
 <p>Write a middleware that stores the start time in <code>ctx.state</code> before <code>next()</code>, and after it prints the message type and whether the dispatch threw. Test it with one handler that works and one that throws.</p>
+<starter file="timing.ts">
+// Example to learn from: the same before/after middleware shape, timing
+// the dispatch instead of reporting success or failure.
+//
+//   bus.use(async (ctx, next) => {
+//     const startedAt = Date.now();
+//     const value = await next();
+//     console.log(`${ctx.message.type} took ${Date.now() - startedAt}ms`);
+//     return value;
+//   });
+//
+// Now store the start time in ctx.state, and log success or failure instead.
+
+import { createMessageBus } from "@zudojs/messaging";
+
+const bus = createMessageBus();
+
+bus.use(async (ctx, next) => {
+  // Store Date.now() in ctx.state.set("startedAt", ...). Then, inside
+  // try/catch: await next(), on success log `${ctx.message.type}: ok` and
+  // return the value; on failure log `${ctx.message.type}: failed` and
+  // re-throw the error.
+  return next();
+});
+
+bus.on("task.count", async () => 3, { id: "count" });
+bus.on("task.explode", async () => {
+  throw new Error("boom");
+}, { id: "explode" });
+
+console.log((await bus.send({ type: "task.count", payload: null })).value);
+console.log((await bus.send({ type: "task.explode", payload: null })).success);
+</starter>
+<hint><p><code>ctx.state.set("startedAt", Date.now())</code> is a plain <code>Map</code> write. Wrap <code>await next()</code> in <code>try</code>/<code>catch</code>: log and return on success, log and re-throw on failure.</p></hint>
+<hint><p><code>ctx.state.set("startedAt", Date.now()); try { const value = await next(); console.log(`${ctx.message.type}: ok`); return value; } catch (error) { console.log(`${ctx.message.type}: failed`); throw error; }</code>.</p></hint>
 <solution>
 <example file="timing.ts">
 import { createMessageBus } from "@zudojs/messaging";
@@ -438,12 +473,47 @@ false
 </exercise>
 <exercise title="Messages or events?">
 <p>Which fits each case: (a) "user.registered", which starts a welcome email, an analytics entry and a Slack notice; (b) "tax.calculate", which needs the tax amount back for an invoice?</p>
+<hint><p>Look at the table under <a href="#why">events tell, messages ask</a>: how many handlers does each case need, and does the caller need a value back?</p></hint>
+<hint><p>(a) has three independent reactions and nobody waits for a result. (b) has exactly one answer that the caller cannot proceed without.</p></hint>
 <solution>
 <p>(a) An event: something happened, several independent reactions, and nobody needs an answer. (b) A message: it asks for a result and needs exactly one handler, so use a bus with <code>allowMultipleHandlers: false</code>. The next lesson, CQRS, builds on this split between "do something" and "tell me something".</p>
 </solution>
 </exercise>
 <exercise title="Respect the signal">
 <p>This handler ignores its signal: <code>async () =&gt; { await wait(300); return "done"; }</code>. Rewrite it so a dispatch with <code>timeout: 45</code> stops it soon after the timeout, by waiting in steps of 30 ms.</p>
+<starter file="respect.ts">
+// Example to learn from: checking the signal between steps of different work.
+//
+//   bus.on("report.build", async (message, context) => {
+//     for (let page = 1; page <= 10; page++) {
+//       context.signal.throwIfAborted();
+//       await wait(20);
+//     }
+//     return "report ready";
+//   }, { id: "build-report" });
+//
+// Now write slow.job the same way: steps of 30 ms, checking the signal
+// before each one, counting how many ran in `steps`.
+
+import { createMessageBus } from "@zudojs/messaging";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const bus = createMessageBus();
+let steps = 0;
+
+bus.on("slow.job", async (message, context) => {
+  // Replace this with a loop of 10 steps: before each wait(30), check
+  // context.signal.throwIfAborted(), then increment steps.
+  await wait(300);
+  return "done";
+}, { id: "slow-job" });
+
+const result = await bus.send({ type: "slow.job", payload: null }, { timeout: 45 });
+await wait(100);
+console.log("success:", result.success, "steps done:", steps);
+</starter>
+<hint><p>Turn the single <code>wait(300)</code> into a loop: <code>for (let i = 0; i &lt; 10; i++) { ...; await wait(30); steps += 1; }</code>, and check the signal at the top of each iteration.</p></hint>
+<hint><p><code>for (let i = 0; i &lt; 10; i++) { context.signal.throwIfAborted(); await wait(30); steps += 1; } return "done";</code>. <code>throwIfAborted()</code> throws once the signal is aborted, which stops the loop from inside.</p></hint>
 <solution>
 <example file="respect.ts">
 import { createMessageBus } from "@zudojs/messaging";

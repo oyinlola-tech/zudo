@@ -2521,7 +2521,69 @@ await runTests("tests/access.test.ts");</script>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="verify-email.ts" data-project="sabi" data-command="npx tsx verify-email.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Verify e-mails at registration</h3><p>Rule 5 of the Kora linking removes the password of an unverified account. Make that rare: after registration, e-mail a verification link. Write <code>createEmailVerification(db, mailer)</code> with <code>send(userId, email)</code> and <code>confirm(token)</code>, using <code>generateVerificationToken</code> and storing only a hash. A token works once, for 24 hours, and must not verify an address the user changed in the meantime.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="25" data-file="verify-email.ts" data-project="sabi">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="verify-email.ts" data-project="sabi" data-command="npx tsx verify-email.ts" data-title="Verify e-mails at registration"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Verify e-mails at registration</h3><div class="lx-ex-task"><p>Rule 5 of the Kora linking removes the password of an unverified account. Make that rare: after registration, e-mail a verification link. Write <code>createEmailVerification(db, mailer)</code> with <code>send(userId, email)</code> and <code>confirm(token)</code>, using <code>generateVerificationToken</code> and storing only a hash. A token works once, for 24 hours, and must not verify an address the user changed in the meantime.</p></div><script type="text/plain" class="lx-ex-starter" data-file="verify-email.ts">// Example to learn from: a one-time invite link, stored as a hash, that
+// expires and can only be used for the invitee it was sent to.
+//
+//   function createInvite(db: DatabaseClient, mailer: Mailer) {
+//     return {
+//       async send(teamId: number, email: string): Promise<void> {
+//         const token = await generateVerificationToken();
+//         await db.executeRawUnsafe(
+//           `INSERT INTO invites (token_hash, team_id, email, expires_at)
+//            VALUES ($1, $2, $3, now() + interval '48 hours')`,
+//           [await hashTokenForStorage(token), teamId, email],
+//         );
+//         await mailer.send(email, "You're invited", `Open https://app.example/join#token=${token}`);
+//       },
+//       async accept(token: string): Promise<boolean> {
+//         const [row] = await db.queryRawUnsafe<{ team_id: number }[]>(
+//           `DELETE FROM invites WHERE token_hash = $1 AND expires_at > now() RETURNING team_id`,
+//           [await hashTokenForStorage(token)],
+//         );
+//         return !!row;
+//       },
+//     };
+//   }
+//
+// Now do the same for e-mail verification below.
+
+import { generateVerificationToken, hashTokenForStorage } from "@zudojs/crypto";
+import type { DatabaseClient } from "@zudojs/database";
+import type { Mailer } from "./resets.js";
+import { startSabi } from "./sabi.js";
+
+function createEmailVerification(db: DatabaseClient, mailer: Mailer) {
+  return {
+    async send(userId: number, email: string): Promise<void> {
+      // Generate a token, store its hash with the user id, the e-mail it was
+      // sent to and a 24-hour expiry, then e-mail a link carrying the token.
+    },
+    async confirm(token: string): Promise<boolean> {
+      // Look the hash up and delete it in one statement (so it works once).
+      // No row, or the user's e-mail has since changed: return false.
+      // Otherwise set users.email_verified = true for that user and e-mail,
+      // and return whether a row was actually updated.
+      return false;
+    },
+  };
+}
+
+const sabi = await startSabi();
+await sabi.db.executeRawUnsafe(
+  "CREATE TABLE email_verifications (token_hash text PRIMARY KEY, user_id integer NOT NULL REFERENCES users (id), email text NOT NULL, expires_at timestamptz NOT NULL)",
+);
+const mails: string[] = [];
+const verification = createEmailVerification(sabi.db, { send: async (_to, _subject, text) => void mails.push(text) });
+
+const joined = await sabi.call("POST", "/v1/users", { email: "ada@example.com", name: "Ada", password: "ada's long passphrase" });
+await verification.send(Number(joined.body.id), joined.body.email);
+const token = mails[0]!.match(/token=(\S+)/)![1]!;
+console.log("token prefix:", token.split("_")[0]);
+console.log("wrong token:", await verification.confirm("verify_" + "x".repeat(43)));
+console.log("right token:", await verification.confirm(token));
+console.log("same token again:", await verification.confirm(token));
+console.log(await sabi.db.queryRawUnsafe("SELECT email, email_verified FROM users"));
+await sabi.stop();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>send</code> mirrors <code>createInvite</code>'s: <code>await generateVerificationToken()</code>, insert <code>await hashTokenForStorage(token)</code> with the user id, e-mail and <code>now() + interval '24 hours'</code>, then <code>mailer.send(...)</code> with the token in the link.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>confirm</code> needs <code>DELETE FROM email_verifications WHERE token_hash = $1 AND expires_at &gt; now() RETURNING user_id, email</code>. No row means <code>false</code>. Otherwise <code>UPDATE users SET email_verified = true WHERE id = $1 AND email = $2</code> with the row's <code>user_id</code> and <code>email</code> — the returned row count, not just "no error", tells you whether it verified anything.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="25" data-file="verify-email.ts" data-project="sabi">
 <figcaption class="lx-bar"><span class="lx-file">verify-email.ts</span><button type="button" class="lx-edit" data-index="25" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> generateVerificationToken<span class="t-pn">,</span> hashTokenForStorage <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/crypto"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">DatabaseClient</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/database"</span><span class="t-pn">;</span>
@@ -2619,7 +2681,46 @@ same token again: false
 [ { email: 'ada@example.com', email_verified: true } ]</pre></div>
 </figure>
 <p>The row stores the e-mail the link was sent to, and <code>confirm</code> only verifies the account if its e-mail is still that one. <code>DELETE … RETURNING</code> reads and uses the token in one statement, so it works once. In the platform, you would call <code>send</code> from the registration route and add the table to <code>SCHEMA</code>.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="devices.ts" data-project="sabi" data-command="npx tsx devices.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Show my devices</h3><p>Users want a list of the devices where they are signed in, with the current one marked. Write <code>listDevices(db, user)</code> for the verified token payload of the caller. Which fields must come from the token, and why must the list not contain session ids?</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="26" data-file="devices.ts" data-project="sabi">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="devices.ts" data-project="sabi" data-command="npx tsx devices.ts" data-title="Show my devices"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Show my devices</h3><div class="lx-ex-task"><p>Users want a list of the devices where they are signed in, with the current one marked. Write <code>listDevices(db, user)</code> for the verified token payload of the caller. Which fields must come from the token, and why must the list not contain session ids?</p></div><script type="text/plain" class="lx-ex-starter" data-file="devices.ts">// Example to learn from: a caller's own recent orders, scoped by the
+// verified token, never by a value the request could name.
+//
+//   function listMyOrders(db: DatabaseClient, user: TokenPayload) {
+//     return db.queryRawUnsafe<{ id: number; placedAt: string }[]>(
+//       `SELECT id, created_at AS "placedAt" FROM orders
+//        WHERE user_id = $1 ORDER BY created_at DESC`,
+//       [Number(user.sub)],
+//     );
+//   }
+//
+// Now do the same for a caller's sessions below.
+
+import type { TokenPayload } from "@zudojs/auth";
+import type { DatabaseClient } from "@zudojs/database";
+import { startSabi } from "./sabi.js";
+
+/** The caller's own live sessions. Owner and "current" come from the verified token, never the request. */
+function listDevices(db: DatabaseClient, user: TokenPayload) {
+  // Select from `sessions` where user_id is the token's subject and
+  // expires_at is in the future, ordered by created_at. Each row needs
+  // `device` (user_agent, or "unknown" when absent) and `current`
+  // (whether this row's id matches the token's own session id, user.sid).
+  return db.queryRawUnsafe<{ device: string; current: boolean }[]>("SELECT 1", []);
+}
+
+const sabi = await startSabi();
+for (const email of ["ada@example.com", "bola@example.com"]) {
+  await sabi.call("POST", "/v1/users", { email, name: email, password: `${email} long passphrase` });
+}
+async function logIn(email: string, agent: string): Promise<string> {
+  const credentials = { email, password: `${email} long passphrase` };
+  return (await sabi.call("POST", "/v1/sessions", credentials, undefined, { "user-agent": agent })).body.accessToken;
+}
+
+await logIn("ada@example.com", "Sabi Android 3.2");
+const laptop = await logIn("ada@example.com", "Firefox 131 on Windows");
+await logIn("bola@example.com", "Bola's iPhone");
+console.log(await listDevices(sabi.db, await sabi.auth.verifyToken(laptop)));
+await sabi.stop();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The query needs both the owner and which row is "current": <code>WHERE user_id = $1 AND expires_at &gt; now()</code>, with <code>id = $2 AS current</code> in the select list, parameters <code>[Number(user.sub), user.sid ?? ""]</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>COALESCE(user_agent, 'unknown') AS device</code> handles a session with no recorded agent, and <code>ORDER BY created_at</code> keeps the list in login order.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="26" data-file="devices.ts" data-project="sabi">
 <figcaption class="lx-bar"><span class="lx-file">devices.ts</span><button type="button" class="lx-edit" data-index="26" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">TokenPayload</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/auth"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">DatabaseClient</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/database"</span><span class="t-pn">;</span>
@@ -2682,7 +2783,7 @@ await sabi.stop();</script>
 ]</pre></div>
 </figure>
 <p>The owner (<code>sub</code>) and the current session (<code>sid</code>) come from the verified token, so a user can only ever see their own sessions. Session ids are left out because they are half of what makes a session: they are not enough to forge a token, but they have no use in a browser, and every value you do not send is one less thing to leak. To offer "sign out that device", give each session a separate public id, and check <code>user_id</code> in the <code>DELETE</code>.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Review a reset endpoint</h3><p>A teammate's version of the reset: <code>GET /reset?email=ada@example.com&amp;token=…</code> sets the password to a value from the query string, compares <code>token</code> with the stored token using <code>===</code>, and keeps the token valid for 7 days so "users are not annoyed". List the problems.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Review a reset endpoint"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Review a reset endpoint</h3><div class="lx-ex-task"><p>A teammate's version of the reset: <code>GET /reset?email=ada@example.com&amp;token=…</code> sets the password to a value from the query string, compares <code>token</code> with the stored token using <code>===</code>, and keeps the token valid for 7 days so "users are not annoyed". List the problems.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Look at each part of the URL in turn: the method, and everything that travels as a query parameter. What ends up in browser history, server logs and proxy logs that a body would not?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Compare "the token alone decides whose password changes" against what this endpoint actually trusts the client to say. And re-read the two incidents earlier in the lesson: one of them is this exact expiry, with a different number.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 3</p><p>A reset that changes a password should also do one more thing everywhere else in this lesson a compromise-recovery flow does — check what a successful reset does to the user's other sessions.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
 <li><strong>GET changes state</strong>, and the new password and the token travel in the URL: into browser history, server logs, proxy logs and <code>Referer</code> headers. Use POST with a JSON body, and the token in the link's fragment.</li>
 <li><strong>The token is stored in clear</strong>, so a database leak is a set of working reset links. Store <code>hashTokenForStorage(token)</code> and compare hashes in the query.</li>
 <li><strong><code>===</code> on a secret</strong> can leak through timing how many characters matched. Looking up by hash avoids comparing secrets in code at all; where you must compare, use <code>timingSafeEqualString</code> from <code>@zudojs/crypto</code>.</li>

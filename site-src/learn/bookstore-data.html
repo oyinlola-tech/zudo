@@ -705,6 +705,45 @@ $ psql "$DATABASE_URL" -c 'SELECT * FROM authors'
 <h2 id="practice">Practice</h2>
 <exercise title="One order by id">
 <p>Add a <code>get(id)</code> method for orders that throws <code>NotFoundError</code> when the order does not exist, like <code>BookRepository.get</code>. Try it on an order that exists and on one that does not.</p>
+<starter file="try-order-get.ts">
+// Example to learn from: the same "row, or NotFoundError" shape for a
+// different table.
+//
+//   async function getCustomer(db: Queryable, id: number): Promise<Customer> {
+//     const { rows } = await db.query<Customer>("SELECT id, name FROM authors WHERE id = $1", [id]);
+//     if (rows[0] === undefined) throw new NotFoundError(`Customer ${id}`);
+//     return rows[0];
+//   }
+//
+// Now do the same for orders below.
+
+import type { Queryable } from "./src/db.js";
+import { openDatabase } from "./src/db.js";
+import { NotFoundError } from "./src/errors.js";
+import type { Order } from "./src/repositories/orders.js";
+
+async function getOrder(db: Queryable, id: number): Promise<Order> {
+  // SELECT id, book_id AS "bookId", quantity, total_cents AS "totalCents"
+  // FROM orders WHERE id = $1
+  // no matching row: throw new NotFoundError(`Order ${id}`)
+  return { id, bookId: 0, quantity: 0, totalCents: 0 };
+}
+
+const db = await openDatabase();
+await db.exec(`INSERT INTO authors (name) VALUES ('Chinua Achebe');
+  INSERT INTO books (title, author_id, price_cents, stock) VALUES ('Things Fall Apart', 1, 1299, 3);
+  INSERT INTO orders (book_id, quantity, total_cents) VALUES (1, 1, 1299);`);
+
+console.log(await getOrder(db, 1));
+try {
+  await getOrder(db, 2);
+} catch (error) {
+  if (error instanceof NotFoundError) console.log(error.name, error.message);
+}
+await db.close();
+</starter>
+<hint><p>The query is a straight <code>SELECT</code> by id, with the same column renames as <code>OrderRepository.list</code>: <code>book_id AS "bookId"</code>, <code>total_cents AS "totalCents"</code>.</p></hint>
+<hint><p><code>if (rows[0] === undefined) throw new NotFoundError(`Order ${id}`);</code>, otherwise <code>return rows[0];</code>.</p></hint>
 <solution>
 <p>Add the method to <code>OrderRepository</code>. Here it is as a function so you can run it:</p>
 <example file="try-order-get.ts" project="data" browser="no">
@@ -743,6 +782,53 @@ NotFoundError Order 2 not found
 </exercise>
 <exercise title="Deleting an author who has books">
 <p>What should happen when a client deletes an author who still has books? Write an <code>AuthorRepository</code>-style <code>remove(id)</code> that turns the foreign key error <code>23503</code> into a <code>ConflictError</code>.</p>
+<starter file="try-remove-author.ts">
+// Example to learn from: turning a specific PostgreSQL error code into a
+// typed application error.
+//
+//   async function removeCategory(db: Queryable, id: number): Promise<void> {
+//     try {
+//       const { rows } = await db.query("DELETE FROM categories WHERE id = $1 RETURNING id", [id]);
+//       if (rows.length === 0) throw new NotFoundError(`Category ${id}`);
+//     } catch (error) {
+//       if (isPgError(error) && error.code === "23503") {
+//         throw new ConflictError(`Category ${id} still has products`);
+//       }
+//       throw error;
+//     }
+//   }
+//
+// Now do the same for authors and their books below.
+
+import type { Queryable } from "./src/db.js";
+import { isPgError, openDatabase } from "./src/db.js";
+import { ConflictError, NotFoundError } from "./src/errors.js";
+import { toErrorResponse } from "./src/http/errors.js";
+
+async function removeAuthor(db: Queryable, id: number): Promise<void> {
+  // try: DELETE FROM authors WHERE id = $1 RETURNING id
+  //   no row deleted: throw new NotFoundError(`Author ${id}`)
+  // catch: isPgError(error) && error.code === "23503": rethrow as
+  //   new ConflictError(`Author ${id} still has books`)
+  // any other error: rethrow it unchanged
+}
+
+const db = await openDatabase();
+await db.exec(`INSERT INTO authors (name) VALUES ('Chinua Achebe'), ('Nobody Yet');
+  INSERT INTO books (title, author_id, price_cents, stock) VALUES ('Things Fall Apart', 1, 1299, 3);`);
+
+for (const id of [1, 2, 2]) {
+  try {
+    await removeAuthor(db, id);
+    console.log(id, "deleted");
+  } catch (error) {
+    console.log(id, toErrorResponse(error));
+  }
+}
+await db.close();
+</starter>
+<hint><p>Wrap the delete in <code>try</code>/<code>catch</code>: <code>const { rows } = await db.query("DELETE FROM authors WHERE id = $1 RETURNING id", [id]);</code>, then check <code>rows.length === 0</code> for <code>NotFoundError</code>.</p></hint>
+<hint><p>In <code>catch</code>: <code>if (isPgError(error) && error.code === "23503") throw new ConflictError(...)</code>, then <code>throw error;</code> to let anything else through unchanged.</p></hint>
 <solution>
 <example file="try-remove-author.ts" project="data" browser="no">
 import type { Queryable } from "./src/db.js";

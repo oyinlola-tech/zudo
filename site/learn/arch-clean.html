@@ -2235,7 +2235,124 @@ PASS the expiry job cancels only unpaid orders older than 30 minutes
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="1" data-file="tests/orders-contract.ts" data-project="clean" data-command="npx tsx tests/orders-contract.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>One contract, two adapters</h3><p>Write a PGlite adapter for <code>OrderRepository</code> (the order in one row, its lines in a <code>jsonb</code> column, reusing <code>toRecord</code> and <code>fromRecord</code>). Then write <code>orderRepositoryContract(name, make)</code>: three tests that any <code>OrderRepository</code> must pass, and run them against both adapters.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="22" data-file="src/adapters/pglite-orders.ts" data-project="clean">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="1" data-file="tests/orders-contract.ts" data-project="clean" data-command="npx tsx tests/orders-contract.ts" data-title="One contract, two adapters"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>One contract, two adapters</h3><div class="lx-ex-task"><p>Write a PGlite adapter for <code>OrderRepository</code> (the order in one row, its lines in a <code>jsonb</code> column, reusing <code>toRecord</code> and <code>fromRecord</code>). Then write <code>orderRepositoryContract(name, make)</code>: three tests that any <code>OrderRepository</code> must pass, and run them against both adapters.</p></div><script type="text/plain" class="lx-ex-starter" data-file="src/adapters/pglite-orders.ts">// Example to learn from: mapping a domain object to a row (with one jsonb
+// column) and back, the same shape as order-record.ts's toRecord/fromRecord.
+//
+//   interface Review { readonly id: string; readonly bookId: string; readonly stars: number; readonly tags: readonly string[]; }
+//   async function saveReview(db: PGlite, review: Review): Promise<void> {
+//     await db.query(
+//       `INSERT INTO reviews (id, book_id, stars, tags) VALUES ($1, $2, $3, $4)
+//        ON CONFLICT (id) DO UPDATE SET stars = EXCLUDED.stars, tags = EXCLUDED.tags`,
+//       [review.id, review.bookId, review.stars, JSON.stringify(review.tags)],
+//     );
+//   }
+//
+// Now do the same for orders below: get, save and listPlacedBefore.
+
+import type { PGlite } from "@electric-sql/pglite";
+import type { OrderRepository } from "../application/ports.js";
+import type { Order } from "../domain/order.js";
+import { fromRecord, toRecord } from "./order-record.js";
+import type { OrderRecord } from "./order-record.js";
+
+const COLUMNS = `id, customer_id, status, to_char(placed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS placed_at, payment_ref, lines`;
+
+export class PgliteOrders implements OrderRepository {
+  constructor(private readonly db: PGlite) {}
+
+  static async open(db: PGlite): Promise<PgliteOrders> {
+    await db.exec(`CREATE TABLE IF NOT EXISTS orders (
+      id text PRIMARY KEY, customer_id text NOT NULL, status text NOT NULL,
+      placed_at timestamptz NOT NULL, payment_ref text, lines jsonb NOT NULL)`);
+    return new PgliteOrders(db);
+  }
+
+  async get(id: string): Promise<Order | undefined> {
+    // SELECT ${COLUMNS} FROM orders WHERE id = $1, parameterised with [id];
+    // rows[0] === undefined ? undefined : fromRecord(rows[0])
+    // your code here
+    return undefined;
+  }
+
+  async save(order: Order): Promise<void> {
+    // const r = toRecord(order); INSERT INTO orders (id, customer_id,
+    // status, placed_at, payment_ref, lines) VALUES ($1..$6)
+    // ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, payment_ref = EXCLUDED.payment_ref
+    // (lines needs JSON.stringify(r.lines) as the 6th value)
+    // your code here
+  }
+
+  async listPlacedBefore(time: Date): Promise<Order[]> {
+    // SELECT ${COLUMNS} FROM orders WHERE status = 'placed' AND placed_at < $1
+    // ORDER BY placed_at, parameterised with [time.toISOString()]; rows.map(fromRecord)
+    // your code here
+    return [];
+  }
+}</script><script type="text/plain" class="lx-ex-starter" data-file="tests/orders-contract.ts">// Example to learn from: a contract test using the test/expectEqual
+// harness, checked against two implementations of the same interface.
+//
+//   interface Counter { increment(): Promise<number>; value(): Promise<number>; }
+//   async function counterContract(name: string, make: () => Counter): Promise<void> {
+//     await test(`${name}: starts at zero`, async () => {
+//       expectEqual(await make().value(), 0);
+//     });
+//     await test(`${name}: increment returns the new value`, async () => {
+//       const counter = make();
+//       await counter.increment();
+//       expectEqual(await counter.increment(), 2);
+//     });
+//   }
+//
+// Now write the order repository contract below: keep the setup on each
+// test, and work out what each expectEqual should check.
+
+import { PGlite } from "@electric-sql/pglite";
+import type { OrderRepository } from "../src/application/ports.js";
+import { InMemoryOrders } from "../src/adapters/memory.js";
+import { PgliteOrders } from "../src/adapters/pglite-orders.js";
+import { Money } from "../src/domain/money.js";
+import { Order } from "../src/domain/order.js";
+import { expectEqual, report, test } from "./harness.js";
+
+function newOrder(id: string, isoTime: string): Order {
+  const line = { bookId: "b1", title: "Things Fall Apart", unitPrice: Money.ofKobo(450_000), quantity: 2 };
+  const placed = Order.place(id, "ada", [line], new Date(isoTime));
+  if (!placed.ok) throw new Error("test order refused");
+  return placed.value;
+}
+
+async function orderRepositoryContract(name: string, make: () => Promise<OrderRepository>): Promise<void> {
+  await test(`${name}: what you save is what you get`, async () => {
+    const repo = await make();
+    await repo.save(newOrder("ord-1", "2026-09-24T09:00:00.000Z"));
+    const loaded = await repo.get("ord-1");
+    // What must [loaded?.status, loaded?.total.kobo, loaded?.snapshot().placedAt.toISOString()]
+    // equal, given the order that was saved above?
+    expectEqual([loaded?.status, loaded?.total.kobo, loaded?.snapshot().placedAt.toISOString()], undefined /* your code here */);
+  });
+  await test(`${name}: changes count only after save`, async () => {
+    const repo = await make();
+    await repo.save(newOrder("ord-1", "2026-09-24T09:00:00.000Z"));
+    (await repo.get("ord-1"))!.pay("ref-1");
+    // The loaded order above was never saved again after .pay(). What
+    // status must a fresh repo.get("ord-1") show?
+    expectEqual((await repo.get("ord-1"))?.status, undefined /* your code here */);
+  });
+  await test(`${name}: lists only placed orders before the time`, async () => {
+    const repo = await make();
+    const paid = newOrder("ord-2", "2026-09-24T08:00:00.000Z");
+    paid.pay("ref-2");
+    for (const order of [newOrder("ord-1", "2026-09-24T08:30:00.000Z"), paid, newOrder("ord-3", "2026-09-24T09:30:00.000Z")]) await repo.save(order);
+    const due = await repo.listPlacedBefore(new Date("2026-09-24T09:00:00.000Z"));
+    // Of ord-1 (placed before, unpaid), ord-2 (paid) and ord-3 (placed
+    // after the cutoff), which id(s) belong in `due`?
+    expectEqual(due.map((order) => order.id), undefined /* your code here */);
+  });
+}
+
+await orderRepositoryContract("in memory", async () => new InMemoryOrders());
+await orderRepositoryContract("pglite", async () => PgliteOrders.open(new PGlite()));
+report();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>In <code>pglite-orders.ts</code>, follow the SQL comments literally: <code>get</code> and <code>listPlacedBefore</code> both use <code>this.db.query&lt;OrderRecord&gt;(sql, params)</code> then map with <code>fromRecord</code>; <code>save</code> builds the row with <code>toRecord(order)</code> first.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>In <code>orders-contract.ts</code>, the first test's expected value is <code>["placed", 900_000, "2026-09-24T09:00:00.000Z"]</code> (the line was 450,000 kobo × 2). The second is <code>"placed"</code> (a fake that returns the same live object would fail here). The third is <code>["ord-1"]</code>: <code>ord-2</code> is paid and <code>ord-3</code> is placed after the cutoff.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="22" data-file="src/adapters/pglite-orders.ts" data-project="clean">
 <figcaption class="lx-bar"><span class="lx-file">src/adapters/pglite-orders.ts</span><button type="button" class="lx-edit" data-index="22" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">PGlite</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@electric-sql/pglite"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">OrderRepository</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"../application/ports.js"</span><span class="t-pn">;</span>
@@ -2414,7 +2531,57 @@ PASS pglite: lists only placed orders before the time
 6 passed, 0 failed</pre></div>
 </figure>
 <p>The second test is the one that catches a fake that stores live objects. When the fake and the database pass the same contract, tests written against the fake say something true about production.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="purity.ts" data-project="clean"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Hidden inputs</h3><p>The import checker cannot see a use case that calls <code>new Date()</code> or <code>crypto.randomUUID()</code>: those are globals, not imports. Write <code>checkPurity(files)</code>, which reports lines in the domain and the application that read the clock, make random values, read <code>process.env</code> or write to the console, each with a hint about the port to use instead.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="24" data-file="purity.ts" data-project="clean">
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="purity.ts" data-project="clean" data-title="Hidden inputs"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Hidden inputs</h3><div class="lx-ex-task"><p>The import checker cannot see a use case that calls <code>new Date()</code> or <code>crypto.randomUUID()</code>: those are globals, not imports. Write <code>checkPurity(files)</code>, which reports lines in the domain and the application that read the clock, make random values, read <code>process.env</code> or write to the console, each with a hint about the port to use instead.</p></div><script type="text/plain" class="lx-ex-starter" data-file="purity.ts">// Example to learn from: a small table of pattern -> message pairs, scanned
+// line by line.
+//
+//   const BAD_WORDS: readonly [RegExp, string][] = [
+//     [/\bTODO\b/, "leftover TODO comment"],
+//     [/\bdebugger\b/, "leftover debugger statement"],
+//   ];
+//   function findBadWords(text: string): string[] {
+//     return BAD_WORDS.filter(([pattern]) => pattern.test(text)).map(([, message]) => message);
+//   }
+//   console.log(findBadWords("debugger; // TODO fix this"));
+//
+// Now do the same for hidden inputs below: fill in HIDDEN_INPUTS with one
+// [pattern, message] pair per case (the scanning code is already written).
+
+import { layerOf } from "./tools/import-rules.js";
+import type { Violation } from "./tools/import-rules.js";
+
+const HIDDEN_INPUTS: readonly [RegExp, string][] = [
+  // 1. Date.now() or new Date(): "reads the system clock: take a Clock port"
+  // 2. Math.random() or crypto.randomUUID(): "makes random values: take an IdGenerator port"
+  // 3. process.env: "reads the environment: pass the setting in"
+  // 4. console.<anything>(...): "writes to the console: publish an event or take a logger port"
+  // your code here
+];
+
+export function checkPurity(files: Readonly<Record<string, string>>): Violation[] {
+  const violations: Violation[] = [];
+  for (const [file, source] of Object.entries(files)) {
+    const layer = layerOf(file);
+    if (layer !== "domain" && layer !== "application") continue;
+    source.split("\n").forEach((text, index) => {
+      for (const [pattern, message] of HIDDEN_INPUTS) {
+        if (pattern.test(text)) violations.push({ file, line: index + 1, message });
+      }
+    });
+  }
+  return violations;
+}
+
+const files = {
+  "src/domain/order.ts": `static place(id: string, customerId: string, lines: readonly OrderLine[], now: Date) {`,
+  "src/application/place-order.ts": `const id = crypto.randomUUID();
+const order = Order.place(id, command.customerId, lines, new Date());
+console.log("placed", id);`,
+  "src/application/expire.ts": `const maxAge = Number(process.env.MAX_AGE_MINUTES);
+const cutoff = new Date(Date.now() - maxAge * 60_000);`,
+  "src/adapters/memory.ts": `now(): Date { return new Date(); }`,
+};
+
+for (const v of checkPurity(files)) console.log(`${v.file}:${v.line} ${v.message}`);</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Each entry is a regex/message pair, like <code>BAD_WORDS</code> above: <code>[/\bDate\.now\(|\bnew Date\(\s*\)/, "reads the system clock: take a Clock port"]</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>The other three: <code>[/\bMath\.random\(|\bcrypto\.randomUUID\(/, "makes random values: take an IdGenerator port"]</code>, <code>[/\bprocess\.env\b/, "reads the environment: pass the setting in"]</code>, <code>[/\bconsole\.\w+\(/, "writes to the console: publish an event or take a logger port"]</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="24" data-file="purity.ts" data-project="clean">
 <figcaption class="lx-bar"><span class="lx-file">purity.ts</span><button type="button" class="lx-edit" data-index="24" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="24"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> layerOf <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./tools/import-rules.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Violation</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./tools/import-rules.js"</span><span class="t-pn">;</span>
@@ -2494,7 +2661,7 @@ src/application/expire.ts:1 reads the environment: pass the setting in
 src/application/expire.ts:2 reads the system clock: take a Clock port</pre></div>
 </figure>
 <p>The domain line passes because <code>now</code> arrives as a parameter, and the adapter's <code>new Date()</code> passes because reading the clock is an adapter's job. Hidden inputs make use cases untestable in exactly the way the opening code was: you cannot pin the result of a function that reads the clock.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Where does it go?</h3><p>Three change requests arrive. For each, say which files change, and which rings stay untouched. (1) Customers may now order up to 10 copies. (2) The finance team wants every paid order sent to their accounting system. (3) Staff want the phone tool to print totals without the kobo.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(1) One constant in <code>src/domain/order.ts</code>. The HTTP 400 and the CLI message both read <code>max</code> from the failure, so they follow automatically. If the limit differed per customer group, it would become an argument of <code>Order.place</code>, filled in by the use case.</p>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Where does it go?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Where does it go?</h3><div class="lx-ex-task"><p>Three change requests arrive. For each, say which files change, and which rings stay untouched. (1) Customers may now order up to 10 copies. (2) The finance team wants every paid order sent to their accounting system. (3) Staff want the phone tool to print totals without the kobo.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>For each request, ask: is this a business rule (domain), a step of a use case (application), or how something is shown or stored (adapter)? A change should touch exactly one ring.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(2) re-read <a href="#driven">Driven adapters</a>: the use case already publishes an event when an order is paid. (3) re-read how the CLI and HTTP adapters each format money in their own words, from <a href="#driving">Driving adapters</a>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(1) One constant in <code>src/domain/order.ts</code>. The HTTP 400 and the CLI message both read <code>max</code> from the failure, so they follow automatically. If the limit differed per customer group, it would become an argument of <code>Order.place</code>, filled in by the use case.</p>
 <p>(2) A new driven adapter: an event publisher that forwards <code>OrderPaid</code> events to the accounting system, wired in <code>main.ts</code> (next to or instead of <code>RecordingEvents</code>). No use case changes, because <code>PayOrder</code> already publishes the event. That is what the domain events were for.</p>
 <p>(3) Only <code>src/adapters/cli.ts</code>: it gets its own formatter instead of reusing the HTTP one. The domain and the application never knew how money is shown.</p>
 <p>A good test of any architecture: likely changes touch one ring, and the ring matches the kind of change.</p></div></div>

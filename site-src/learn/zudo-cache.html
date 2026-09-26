@@ -143,7 +143,7 @@ try {
 taskapi:tasks.list
 taskapi:ada:tasks.list
 ERR_INVALID_INPUT 400
-Invalid cache key part "tasks:list": parts must match /^[a-zA-Z0-9._\-]+$/ and must not contain the separator ":".
+Invalid cache key part "tasks:list": parts must not contain the separator ":", which delimits prefix, namespace and key (a key "a:b" would collide with key "b" in namespace "a"). Put the scope in the namespace option (cache.get("b", { namespace: "a" })), use "." or "-" inside the part, or configure a different separator on the key builder.
 </output>
 <p>A bad key is a bug in your code, so it throws a <code>CacheError</code> with the code <code>ERR_INVALID_INPUT</code> and status 400. It is never treated as a miss.</p>
 <p>Why so strict? If a key could contain a colon, a key such as <code>"ada:tasks.list"</code> would look exactly like the key <code>tasks.list</code> in the namespace <code>ada</code>. Someone who controls part of a key could then read or overwrite another user's entry.</p>
@@ -508,6 +508,45 @@ hit rate: 0.25
 <h2 id="practice">Practice</h2>
 <exercise title="Cache one task">
 <p>Add a <code>get(userId, id)</code> method that caches a single task under the key <code>task.&lt;id&gt;</code> in the user's namespace, with the <code>tasks</code> tag. Check that <code>create</code> also clears it, without changing <code>create</code>.</p>
+<starter file="one-task.ts">
+// Example to learn from: getOrSet with a tag, for a different kind of entry.
+//
+//   async function getSetting(userId: string, name: string) {
+//     const result = await cache.getOrSet(`setting.${name}`, () => loadSetting(name), {
+//       namespace: userId,
+//       tags: ["settings"],
+//     });
+//     return result.value;
+//   }
+//
+// Now write get(userId, id) the same way, tagged "tasks".
+
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+let queries = 0;
+
+async function loadTask(id: number) {
+  queries += 1;
+  return { id, title: "Buy milk" };
+}
+
+async function get(userId: string, id: number) {
+  // Use cache.getOrSet with key `task.${id}`, namespace: userId, and the
+  // tag "tasks", falling back to loadTask(id) on a miss.
+  return loadTask(id);
+}
+
+await get("ada", 1);
+await get("ada", 1);
+console.log("queries:", queries);
+
+await cache.invalidateByTag(["tasks"], { namespace: "ada" });
+await get("ada", 1);
+console.log("queries:", queries);
+</starter>
+<hint><p>Wrap the load in <code>cache.getOrSet(key, loader, options)</code>: <code>return (await cache.getOrSet(`task.${id}`, () => loadTask(id), { namespace: userId, tags: ["tasks"] })).value;</code>.</p></hint>
+<hint><p>The key must be <code>`task.${id}`</code> and the tag must be exactly <code>"tasks"</code>, the same tag <code>create</code> already invalidates, or the second block would still show 3 queries instead of 2.</p></hint>
 <solution>
 <example file="one-task.ts">
 import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
@@ -545,12 +584,40 @@ queries: 2
 </exercise>
 <exercise title="Find the leak">
 <p>A teammate caches the admin report like this: <code>cache.getOrSet("report", () =&gt; buildReport(user.role))</code>. An admin and a normal user call it. What goes wrong, and how do you fix it?</p>
+<hint><p>Look at the key, <code>"report"</code>, versus what the answer actually depends on, <code>user.role</code>. Re-read the warning in <a href="#keys">keys and namespaces</a> about the key needing to include who is asking.</p></hint>
+<hint><p><code>getOrSet</code> only checks the cache <em>before</em> running the callback. If two different roles share one key, whichever role asks first decides what gets stored — and for how long everyone else sees it.</p></hint>
 <solution>
 <p>The key <code>report</code> does not include the role, but the answer depends on it. Whoever asks first fills the cache, and everyone else gets that answer. If an admin asks first, normal users receive the admin report: a data leak. Put the role in the key, for example <code>`report.${user.role}`</code>, or better, check the permission before reading the cache at all, so a normal user never reaches the admin data.</p>
 </solution>
 </exercise>
 <exercise title="Measure the hit rate">
 <p>Using <code>getOrSet</code>, read the key <code>tasks.list</code> 10 times with a TTL of 30 ms, waiting 10 ms between reads. Predict the number of misses, then print <code>getStats()</code> to check.</p>
+<starter file="hit-rate.ts">
+// Example to learn from: the same read-and-wait loop, with a different TTL.
+//
+//   for (let i = 0; i < 5; i++) {
+//     await cache.getOrSet("ping", async () => "pong", { ttl: 20 });
+//     await wait(5);
+//   }
+//   console.log(cache.getStats()?.sets);
+//
+// Now read "tasks.list" 10 times, TTL 30 ms, waiting 10 ms between reads.
+
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+
+console.log("(not implemented: the loop below does not read the cache yet)");
+for (let i = 0; i < 10; i++) {
+  // getOrSet "tasks.list" with a 30 ms ttl, resolving to ["Buy milk"] on a
+  // miss, then wait(10) before the next read.
+}
+const stats = cache.getStats();
+console.log("misses:", stats?.misses, "hits:", stats?.hits);
+</starter>
+<hint><p>Each loop iteration is one call: <code>await cache.getOrSet("tasks.list", async () =&gt; ["Buy milk"], { ttl: 30 });</code>, followed by <code>await wait(10);</code>.</p></hint>
+<hint><p>The entry lives 30 ms and you read roughly every 10 ms, so it survives about 2 reads before expiring: expect close to 1 miss in every 3 reads over 10 reads.</p></hint>
 <solution>
 <example file="hit-rate.ts">
 import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";

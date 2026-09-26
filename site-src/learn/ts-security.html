@@ -676,6 +676,8 @@ console.log("500 random bodies: none approved, gateway calls:", gatewayCalls);
 <h2 id="practice">Practice</h2>
 <exercise title="Add a finance role">
 <p>The finance team may approve refunds of any size, but only after the order is at least 7 days old (fraud checks take a week). Add <code>"finance"</code> to <code>Role</code>, add <code>paidAt</code> (a <code>Date</code>) to <code>Order</code>, and pass <code>now</code> to <code>decideRefund</code>. Which existing line would have kept the system safe if you had added the role to the type but forgotten the rule?</p>
+<hint><p>Look at how <code>decideRefund</code> ends: what does it return when none of the earlier checks matched a role?</p></hint>
+<hint><p>Compare "deny by default, allow only what an explicit check permits" with "allow by default, deny only what an explicit check forbids". Which one is safe when a case is missing?</p></hint>
 <solution>
 <p>The new rule, written as its own check before the final "allow":</p>
 <pre><code>if (actor.role === "finance") {
@@ -691,6 +693,46 @@ console.log("500 random bodies: none approved, gateway calls:", gatewayCalls);
 
 <exercise title="A schema for changing a user's email">
 <p>Write a strict Zod schema for <code>PATCH /me/email</code>, whose body has <code>email</code> and <code>currentPassword</code>. The email must be valid and at most 254 characters, stored in lower case. The password must be 8 to 200 characters. Show that a body with an extra <code>userId</code> field and a body with a 300-character email are both refused, and that the error does not contain the password.</p>
+<starter file="change-email.ts">
+// Example to learn from: a strict schema with a length check, then a
+// transform, for a different field.
+//
+//   const ChangeDisplayName = z.strictObject({
+//     displayName: z.string().max(60).transform((name) => name.trim()),
+//   });
+//
+//   console.log(ChangeDisplayName.parse({ displayName: "  Ada Lovelace  " }));
+//   const result = ChangeDisplayName.safeParse({ displayName: "Ada", role: "admin" });
+//   if (!result.success) console.log(result.error.issues.map((issue) => issue.code));
+//
+// Now write ChangeEmail below, with two fields instead of one.
+
+import * as z from "zod";
+
+const ChangeEmail = z.strictObject({
+  // email: a string, at most 254 characters (checked before the format, so
+  // the format check never runs on a huge string), piped through
+  // z.email(), then lower-cased with .transform(...)
+  email: z.string(),
+  // currentPassword: a string, 8 to 200 characters
+  currentPassword: z.string(),
+});
+
+console.log(ChangeEmail.parse({ email: "Ada@Example.com", currentPassword: "correct horse battery" }));
+
+for (const body of [
+  { email: "ada@example.com", currentPassword: "correct horse battery", userId: "usr_emeka" },
+  { email: "a".repeat(290) + "@example.com", currentPassword: "correct horse battery" },
+]) {
+  const result = ChangeEmail.safeParse(body);
+  if (!result.success) {
+    const text = JSON.stringify(result.error.issues);
+    console.log(result.error.issues.map((issue) => issue.code), "password in error:", text.includes("correct horse"));
+  }
+}
+</starter>
+<hint><p><code>email: z.string().max(254).pipe(z.email()).transform((email) =&gt; email.toLowerCase())</code>. <code>.max</code> before <code>.pipe</code> matters: it rejects huge strings before the format check ever looks at them.</p></hint>
+<hint><p><code>currentPassword: z.string().min(8).max(200)</code>. No transform needed for it; it is checked against the stored hash later, not stored as-is.</p></hint>
 <solution>
 <example file="change-email.ts" browser="no">
 import * as z from "zod";
@@ -724,6 +766,25 @@ for (const body of [
 
 <exercise title="Redact nested secrets in a log line">
 <p>A colleague's logger calls <code>JSON.stringify</code> on whatever it is given. Show that an object containing a <code>Secret</code> two levels deep, inside an array, is still logged as <code>[redacted]</code>, and explain why no special code in the logger was needed.</p>
+<starter file="nested-secret.ts">
+// Example to learn from: the same self-redacting toJSON, nested inside a
+// plain object instead of an array.
+//
+//   const profile = { name: "Ada", billing: { card: new Secret("4111-1111-1111-1111") } };
+//   console.log(JSON.stringify(profile));
+//   // {"name":"Ada","billing":{"card":"[redacted]"}}
+//
+// Now do the same with an array in the middle, for gateways below.
+
+import { Secret } from "./secret.js";
+
+// build an object with "service": "refunds" and a "gateways" array
+// containing one { name: "primary", key: <a Secret wrapping an API key> }
+const event = { service: "refunds" };
+console.log(JSON.stringify(event));
+</starter>
+<hint><p><code>gateways</code> is an array with one object in it: <code>[{ name: "primary", key: new Secret("...") }]</code>.</p></hint>
+<hint><p><code>const event = { service: "refunds", gateways: [{ name: "primary", key: new Secret("sk_live_example_not_a_real_key_000000") }] };</code></p></hint>
 <solution>
 <example file="nested-secret.ts" project="refunds" browser="no">
 import { Secret } from "./secret.js";

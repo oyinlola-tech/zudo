@@ -394,6 +394,46 @@ second run:
 <h2 id="practice">Practice</h2>
 <exercise title="Projects own tasks">
 <p>Add a <code>projects</code> table (id and a unique, non-empty name) and give <code>tasks</code> a <strong>nullable</strong> <code>project_id</code>, so a task may belong to no project. When a project is deleted, its tasks should stay but lose their project. Hint: <code>on delete set null</code>. Show it working.</p>
+<starter file="projects.js">
+// Example to learn from: the same nullable, set-null-on-delete relationship
+// between authors and books.
+//
+//   create table authors (
+//     id integer generated always as identity primary key,
+//     name text not null
+//   );
+//   create table books (
+//     id integer generated always as identity primary key,
+//     author_id integer references authors (id) on delete set null,
+//     title text not null
+//   );
+//
+// Deleting an author leaves their books in place, with author_id set to null.
+// Now do the same for projects and tasks below.
+
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table projects (
+    id integer generated always as identity primary key,
+    name text not null unique check (name <> '')
+  );
+  create table tasks (
+    id integer generated always as identity primary key,
+    project_id integer,
+    title text not null
+  );
+  insert into projects (name) values ('Home');
+  insert into tasks (project_id, title) values (1, 'Fix bike'), (null, 'Call Ada');
+`);
+
+await db.query("delete from projects where id = $1", [1]);
+console.log((await db.query("select * from tasks order by id")).rows);
+await db.close();
+</starter>
+<hint><p>The <code>tasks.project_id</code> column needs a foreign key: <code>references projects (id)</code>.</p></hint>
+<hint><p>Add <code>on delete set null</code> right after the reference, so a deleted project clears <code>project_id</code> on its tasks instead of blocking the delete or removing them.</p></hint>
 <solution>
 <example file="projects.js" browser="no">
 import { PGlite } from "@electric-sql/pglite";
@@ -428,6 +468,8 @@ await db.close();
 
 <exercise title="Which relationship?">
 <p>Name the relationship and where the key goes: (a) an order and its order lines; (b) students and courses; (c) a user and their settings row; (d) a comment and the task it is on.</p>
+<hint><p>Can either side of the relationship have more than one of the other? If both can, one foreign key on either table cannot express it.</p></hint>
+<hint><p>(b) needs a table of its own, just to hold the pairs. (c) is the special case of one-to-many where the "many" side is capped at one.</p></hint>
 <solution>
 <p>(a) One-to-many: <code>order_id</code> on <code>order_lines</code>. (b) Many-to-many: a join table <code>enrollments (student_id, course_id)</code>. (c) One-to-one: a unique <code>user_id</code> on <code>settings</code>. (d) One-to-many: <code>task_id</code> on <code>comments</code>.</p>
 </solution>
@@ -435,6 +477,8 @@ await db.close();
 
 <exercise title="Migration 4">
 <p>Add a fourth migration to the runner that creates an index on <code>tasks (due_date)</code>. Why must it be a new migration instead of a change to migration 3?</p>
+<hint><p>Look at how the migration runner earlier in this lesson decides which migrations still need to run.</p></hint>
+<hint><p>It checks the <code>id</code>s already recorded in <code>schema_migrations</code>. What happens to a database that already has migration 3's <code>id</code> recorded, if you edit migration 3 instead of adding a new one?</p></hint>
 <solution>
 <p>Add <code>{ id: 4, name: "index due date", sql: "create index tasks_due_date_idx on tasks (due_date)" }</code> to the list. Every database that already ran migration 3 has it recorded in <code>schema_migrations</code> and will never run it again, so a change to it would never reach them. A new id runs everywhere exactly once.</p>
 </solution>

@@ -630,6 +630,36 @@ function connect(config: GatewayConfig): string {
 const config = { provider: "paystack", timeoutMs: 5000 };
 console.log(connect(config));
 </example>
+<starter file="config.ts">
+// Example to learn from: fixing the same kind of widening for an order status.
+//
+//   type OrderStatus = "pending" | "paid";
+//   interface Order { id: number; status: OrderStatus }
+//   function ship(order: Order): string { return `${order.id}:${order.status}`; }
+//
+//   const a: Order = { id: 1, status: "paid" };   // annotation: checked, stays Order
+//   const b = { id: 2, status: "paid" } as const; // as const: frozen, no widening
+//   console.log(ship(a), ship(b));
+//
+// Now fix connect(config) the same way, twice: once with an annotation,
+// once with as const. Call connect with each and log both results.
+
+type Provider = "paystack" | "flutterwave";
+
+interface GatewayConfig {
+  provider: Provider;
+  timeoutMs: number;
+}
+
+function connect(config: GatewayConfig): string {
+  return `${config.provider} (${config.timeoutMs}ms)`;
+}
+
+const config = { provider: "paystack", timeoutMs: 5000 };
+console.log(connect(config));
+</starter>
+<hint><p>The first fix: give <code>config</code> a <code>: GatewayConfig</code> annotation, so <code>provider</code> is checked against <code>Provider</code> instead of widening to <code>string</code>.</p></hint>
+<hint><p>The second fix: <code>const frozen = { provider: "flutterwave", timeoutMs: 8000 } as const;</code>, with no annotation. Call <code>connect</code> with each config and log both results on two lines.</p></hint>
 <output kind="tsc">
 config.ts:13:21 - error TS2345: Argument of type '{ provider: string; timeoutMs: number; }' is not assignable to parameter of type 'GatewayConfig'.
   Types of property 'provider' are incompatible.
@@ -682,6 +712,30 @@ console.log(`Shipping: ₦${fee}`);
 <output>
 Shipping: ₦undefined
 </output>
+<starter file="shipping.ts">
+// Example to learn from: a return type that exposes a forgotten case.
+//
+//   function grade(score: number) {                 // no return type: bug hides
+//     if (score >= 90) return "A";
+//     if (score >= 70) return "B";
+//     // falls through to undefined below 70
+//   }
+//
+//   console.log(`Grade: ${grade(40)}`);              // prints "Grade: undefined"
+//
+// Add : number to shippingFee below the same way, read where tsc points now,
+// and add the missing case.
+
+function shippingFee(state: string, weightKg: number) {
+  if (state === "Lagos") return weightKg <= 5 ? 1500 : 3000;
+  if (state === "Abuja") return weightKg <= 5 ? 2500 : 4500;
+}
+
+const fee = shippingFee("Kano", 3);
+console.log(`Shipping: ₦${fee}`);
+</starter>
+<hint><p>Add <code>: number</code> after the parameter list of <code>shippingFee</code>. <code>tsc</code> now reports the missing return <em>inside</em> the function, not at the caller.</p></hint>
+<hint><p>Add a final <code>return weightKg &lt;= 5 ? 3500 : 6000;</code> for every other state, so the function always returns a number.</p></hint>
 <solution>
 <p>For every state except Lagos and Abuja the function falls off the end, so its inferred return type is <code>1500 | 2500 | 3000 | 4500 | undefined</code>, and the template string happily prints <code>undefined</code>. Annotate the return type as <code>number</code> and TS2366 appears inside <code>shippingFee</code>. Then add the missing case:</p>
 <example file="shipping.ts" project="ex-shipping">
@@ -701,6 +755,34 @@ Shipping: ₦3500
 </exercise>
 <exercise title="Handlers without annotations">
 <p>Write a <code>notifiers</code> object with one function per channel, <code>"sms"</code>, <code>"email"</code> and <code>"push"</code>, each taking <code>(to: string, message: string)</code> and returning a string. Type the object once, so that none of the three functions needs a parameter annotation, and so that forgetting a channel is an error.</p>
+<starter file="notify.ts">
+// Example to learn from: one Record annotation gives every handler its
+// parameter types, with one entry required per size.
+//
+//   type Size = "small" | "medium" | "large";
+//   const prices: Record<Size, (base: number) => number> = {
+//     small: (base) => base,
+//     medium: (base) => base * 1.2,
+//     large: (base) => base * 1.5,
+//   };
+//   console.log(prices.medium(1000));
+//
+// Now do the same for the three notification channels below.
+
+type Channel = "sms" | "email" | "push";
+
+// Declare notifiers: Record<Channel, (to: string, message: string) => string>
+// sms -> `SMS to ${to}: ${message.slice(0, 20)}`
+// email -> `Email to ${to}: ${message}`
+// push -> `Push to device ${to}: ${message}`
+
+const channels: Channel[] = ["sms", "email"];
+for (const channel of channels) {
+  console.log(notifiers[channel]("Ada", "Your transfer of ₦25,000 was successful"));
+}
+</starter>
+<hint><p>Annotate the whole object at once: <code>const notifiers: Record&lt;Channel, (to: string, message: string) =&gt; string&gt; = { ... };</code>. That gives every arrow function's parameters their types through contextual typing.</p></hint>
+<hint><p><code>Record</code> requires exactly one property per <code>Channel</code>, so leaving out <code>push</code> would be a compile error. Each handler's body is one template literal, as described above.</p></hint>
 <solution>
 <example file="notify.ts" project="ex-notify">
 type Channel = "sms" | "email" | "push";

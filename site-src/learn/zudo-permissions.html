@@ -664,6 +664,40 @@ token-grace 200 ["ada","grace"]
 <h2 id="practice">Practice</h2>
 <exercise title="An editor role">
 <p>Add an <code>editor</code> role to <code>roles.ts</code>. Editors can do everything a member can, and can update any task, but must not delete tasks. Print a small table of <code>task:update</code> and <code>task:delete</code> for a member, an editor and an admin.</p>
+<starter file="editor.ts">
+// Example to learn from: a hierarchy where each role adds exactly one
+// permission to the one below it.
+//
+//   const engine = createPermissionEngine({
+//     roles: [
+//       { name: "reader", permissions: ["doc:read"] },
+//       { name: "writer", permissions: ["doc:write"], inherits: ["reader"] },
+//       { name: "owner", permissions: ["doc:*"], inherits: ["writer"] },
+//     ],
+//   });
+//
+// Now insert "editor" between "member" and "admin" the same way.
+
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "viewer", permissions: ["task:read"] },
+    { name: "member", permissions: ["task:create"], inherits: ["viewer"] },
+    // Add a role "editor" here: permissions: ["task:update"], inherits: ["member"].
+    { name: "admin", permissions: ["task:*", "user:read"], inherits: ["member"] },
+  ],
+});
+
+for (const role of ["member", "editor", "admin"]) {
+  const actor = createPermissionActor(`user-${role}`, { roles: [role] });
+  const update = await engine.can(actor, "task:update");
+  const remove = await engine.can(actor, "task:delete");
+  console.log(role.padEnd(7), "update:", update, " delete:", remove);
+}
+</starter>
+<hint><p>Add one more role object to the array: <code>{ name: "editor", permissions: ["task:update"], inherits: ["member"] }</code>. It only needs the one permission it adds; <code>inherits</code> brings the rest.</p></hint>
+<hint><p>Also change <code>admin</code>'s <code>inherits</code> from <code>["member"]</code> to <code>["editor"]</code>, so the hierarchy is viewer → member → editor → admin, and admin still gets everything through the chain.</p></hint>
 <solution>
 <example file="editor.ts" project="editor">
 import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
@@ -695,6 +729,31 @@ admin   update: true  delete: true
 
 <exercise title="Find the escalation">
 <p>A teammate wrote this condition so that support staff can read any task: <code>(ctx) => ctx.metadata?.get("support") === true</code>, and filled the metadata with <code>{ support: request.getHeader("x-support") === "yes" }</code>. What can an attacker do, and how do you fix it?</p>
+<starter file="support.ts">
+// Example to learn from: turning a client-controlled flag into a role check.
+//
+//   // WRONG: const isPremium = (ctx) => ctx.metadata?.get("premium") === true;
+//   //         filled from request.getHeader("x-premium") === "yes"
+//   // RIGHT: give the actor a "premium" role from your own database, and
+//   //        grant that role the permissions it needs.
+//
+// Now build the engine so "support" is a role, not a header.
+
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: [] }, { name: "support", permissions: [] }],
+  // Give the "support" role the permission ["task:read"].
+});
+const rolesInDatabase = new Map([["ada", ["member"]], ["sam", ["support"]]]);
+
+for (const userId of ["ada", "sam"]) {
+  const actor = createPermissionActor(userId, { roles: rolesInDatabase.get(userId) ?? [] });
+  console.log(userId, await engine.can(actor, "task:read", { id: 3, userId: "linus" }));
+}
+</starter>
+<hint><p>The fix is entirely in the role definition: give <code>{ name: "support", ... }</code> a <code>permissions</code> array instead of an empty one.</p></hint>
+<hint><p><code>{ name: "support", permissions: ["task:read"] }</code>. Nothing about <code>currentActor</code> or the request needs to change: the role, not a header, is what grants the read.</p></hint>
 <solution>
 <p>Anyone can send the header <code>x-support: yes</code> and read every task. The fix is to make support a <strong>role</strong>, stored in your database, and grant it <code>task:read</code>. The client never gets to say which role it has:</p>
 <example file="support.ts" project="support">
@@ -719,6 +778,36 @@ sam true
 
 <exercise title="Locked tasks, but only for members">
 <p>Change the deny rule from the deny section so that a locked task stops members, but an admin can still update it. Use <code>allOf</code> and <code>not</code> from the package to combine conditions.</p>
+<starter file="locked.ts">
+// Example to learn from: combining two conditions so an exception applies,
+// for a different rule ("no edits to archived projects, unless you own it").
+//
+//   const isArchived: PermissionConditionFn = (ctx) => (ctx.resource as { archived?: boolean }).archived === true;
+//   rules: [{ effect: "deny", resource: "project", action: "update", condition: allOf(isArchived, not(isOwner("userId"))) }]
+//
+// Now write the locked-task deny rule using allOf and not the same way.
+
+import { allOf, createPermissionActor, createPermissionEngine, isOwner, not } from "@zudojs/permissions";
+import type { PermissionConditionFn } from "@zudojs/permissions";
+
+const isLocked: PermissionConditionFn = (ctx) => (ctx.resource as { locked?: boolean }).locked === true;
+const isAdmin: PermissionConditionFn = (ctx) => ctx.actor.roles?.includes("admin") === true;
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "member", permissions: [], rules: [{ effect: "allow", resource: "task", action: "update", condition: isOwner("userId") }] },
+    { name: "admin", permissions: ["task:*"] },
+  ],
+  rules: [{ name: "locked", effect: "deny", resource: "task", action: "update", condition: isLocked }],
+  // Combine isLocked and not(isAdmin) with allOf, so an admin is exempt.
+});
+
+const lockedTask = { id: 1, userId: "ada", locked: true };
+console.log("ada:  ", await engine.can(createPermissionActor("ada", { roles: ["member"] }), "task:update", lockedTask));
+console.log("grace:", await engine.can(createPermissionActor("grace", { roles: ["admin"] }), "task:update", lockedTask));
+</starter>
+<hint><p><code>allOf(conditionA, conditionB)</code> is true only when both are true; <code>not(condition)</code> flips one. You want "locked, and not an admin".</p></hint>
+<hint><p><code>condition: allOf(isLocked, not(isAdmin))</code>. For grace, <code>isAdmin</code> is true, so <code>not(isAdmin)</code> is false, so the deny rule's condition is false and it does not apply.</p></hint>
 <solution>
 <example file="locked.ts" project="locked">
 import { allOf, createPermissionActor, createPermissionEngine, isOwner, not } from "@zudojs/permissions";

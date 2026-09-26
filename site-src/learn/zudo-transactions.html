@@ -594,6 +594,57 @@ ROLLBACK
 <h2 id="practice">Practice</h2>
 <exercise title="Complete a task">
 <p>Write <code>completeTask(id)</code>. In one transaction it marks the task done (add a <code>done</code> column), records the activity with a participant function, and registers an after-commit "notify" message. If no row was updated, throw a <code>NotFoundError</code> from <code>@zudojs/errors</code>. Try it with an existing and a missing id, and show that the missing one changed nothing.</p>
+<starter file="complete-task.ts">
+// Example to learn from: verify a user's email in one transaction, log the
+// attempt as a participant, and notify only after commit.
+//
+//   async function logAttempt(message: string) {
+//     await manager.run(async () => { await pg.query("INSERT INTO log (message) VALUES ($1)", [message]); });
+//   }
+//   async function verifyEmail(id: number) {
+//     await manager.run(async (tx) => {
+//       await logAttempt(`verifying user ${id}`);
+//       const result = await pg.query("UPDATE users SET verified = true WHERE id = $1", [id]);
+//       if (result.affectedRows === 0) throw new NotFoundError(`User ${id} not found`);
+//       tx.afterCommit(async () => console.log(`welcome email: user ${id}`));
+//     });
+//   }
+//
+// Now do the same for tasks: mark done, record activity, notify after commit.
+
+import { NotFoundError } from "@zudojs/errors";
+import { setup } from "./setup.js";
+
+const { pg, manager, count } = await setup();
+await pg.exec("ALTER TABLE tasks ADD COLUMN done boolean NOT NULL DEFAULT false");
+await pg.query("INSERT INTO tasks (title) VALUES ($1)", ["Buy milk"]);
+
+async function recordActivity(message: string) {
+  await manager.run(async () => {
+    await pg.query("INSERT INTO activity (message) VALUES ($1)", [message]);
+  });
+}
+
+async function completeTask(id: number) {
+  await manager.run(async (tx) => {
+    // 1. await recordActivity(`completed task ${id}`) as a participant.
+    // 2. UPDATE tasks SET done = true WHERE id = $1, and check
+    //    result.affectedRows.
+    // 3. If nothing was updated, throw new NotFoundError(`Task ${id} not found`).
+    // 4. Otherwise tx.afterCommit(...) to log `notify: task ${id} is done`.
+  });
+}
+
+await completeTask(1);
+try {
+  await completeTask(42);
+} catch (error) {
+  if (error instanceof NotFoundError) console.log(error.statusCode, error.message);
+}
+console.log("activity rows:", await count("activity"));
+</starter>
+<hint><p>Call <code>await recordActivity(...)</code> first, so its insert is part of the same transaction. Then run the update with <code>pg.query</code> and look at <code>result.affectedRows</code> to see whether a row actually changed.</p></hint>
+<hint><p><code>const result = await pg.query(...); if (result.affectedRows === 0) throw new NotFoundError(`Task ${id} not found`); tx.afterCommit(async () =&gt; console.log(`notify: task ${id} is done`));</code>. Registering the hook after the check means a missing task never gets a notification.</p></hint>
 <solution>
 <example file="complete-task.ts" project="tx" browser="no">
 import { NotFoundError } from "@zudojs/errors";
@@ -637,6 +688,33 @@ activity rows: 1
 
 <exercise title="Count the events">
 <p>Create a manager with the in-memory adapter whose <code>onEvent</code> counts events by type. Run one transaction that commits and one that throws, then print the counts.</p>
+<starter file="event-counts.ts">
+// Example to learn from: the same running-tally shape for word lengths.
+//
+//   const lengths = new Map<number, number>();
+//   for (const word of ["a", "an", "at", "add", "art"]) {
+//     lengths.set(word.length, (lengths.get(word.length) ?? 0) + 1);
+//   }
+//   console.log(Object.fromEntries(lengths)); // { '1': 1, '2': 2, '3': 2 }
+//
+// Now tally manager events by their type the same way.
+
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const counts = new Map<string, number>();
+const manager = createTransactionManager({
+  adapter: createInMemoryAdapter(),
+  onEvent: (event) => {
+    // Increment counts.get(event.type), starting from 0 when it is missing.
+  },
+});
+
+await manager.run(async () => "ok");
+await manager.run(async () => { throw new Error("nope"); }).catch(() => undefined);
+console.log(Object.fromEntries(counts));
+</starter>
+<hint><p><code>onEvent</code> is called once per lifecycle event, each with a <code>type</code> such as <code>"transaction.started"</code>. Read the current count with <code>counts.get(event.type) ?? 0</code> before you write a new one.</p></hint>
+<hint><p><code>counts.set(event.type, (counts.get(event.type) ?? 0) + 1)</code>. A committing run fires <code>started</code>, <code>committing</code>, <code>committed</code>; a throwing one fires <code>started</code>, <code>rolling_back</code>, <code>rolled_back</code>.</p></hint>
 <solution>
 <example file="event-counts.ts" project="tx" browser="no">
 import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";

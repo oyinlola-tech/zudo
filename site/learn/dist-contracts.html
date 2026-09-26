@@ -1282,7 +1282,47 @@ FAIL the v3 draft reads the v2 fixture: channel: Required field missing: channel
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="upcast-v3.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Add order.placed v3</h3><p>Orders wants to add a required <code>channel</code> field (<code>"web"</code>, <code>"mobile"</code> or <code>"pos"</code>). Every order placed before the change came from the web. Write an upcaster chain that turns v1 and v2 bodies into v3, and show that both old fixtures and a real v3 body come out in the same shape.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="16" data-file="upcast-v3.ts">
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="upcast-v3.ts" data-title="Add order.placed v3"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Add order.placed v3</h3><div class="lx-ex-task"><p>Orders wants to add a required <code>channel</code> field (<code>"web"</code>, <code>"mobile"</code> or <code>"pos"</code>). Every order placed before the change came from the web. Write an upcaster chain that turns v1 and v2 bodies into v3, and show that both old fixtures and a real v3 body come out in the same shape.</p></div><script type="text/plain" class="lx-ex-starter" data-file="upcast-v3.ts">// Example to learn from: the same "one step per version" upcaster chain,
+// migrating a plain user record instead of an order.
+//
+//   const steps: Record<number, (u: any) => any> = {
+//     1: (u) => ({ ...u, firstName: u.name.split(" ")[0], lastName: u.name.split(" ")[1], name: undefined }),
+//   };
+//   function readV2(version: number, user: any) {
+//     let current = user;
+//     for (let v = version; v < 2; v++) current = steps[v](current);
+//     return current;
+//   }
+//   console.log(readV2(1, { name: "Ada Lovelace" }));
+//   // { name: undefined, firstName: 'Ada', lastName: 'Lovelace' }
+//
+// Now write the order.placed upcaster chain below (v1 and v2 -> v3).
+
+import { schema } from "@zudojs/schema";
+
+const OrderPlacedV3 = schema.object({
+  orderId: schema.string(),
+  total: schema.object({ amountMinor: schema.number().int().positive(), currency: schema.enum(["NGN", "GHS"]) }),
+  channel: schema.enum(["web", "mobile", "pos"]),
+});
+
+type Body = Record<string, unknown>;
+const upcasters: Record<number, (body: Body) => Body> = {
+  // v1 -> v2: turn body.totalKobo into total: { amountMinor, currency: "NGN" }.
+  1: (body) => ({ ...body, total: { amountMinor: 0, currency: "NGN" } }),
+  // v2 -> v3: every order before this change came from the web.
+  2: (body) => ({ ...body, channel: "mobile" }), // fix this placeholder
+};
+
+function readV3(version: number, body: Body) {
+  let current = body;
+  for (let v = version; v < 3; v++) current = upcasters[v]!(current);
+  return OrderPlacedV3.parse(current);
+}
+
+console.log(readV3(1, { orderId: "ord_1", totalKobo: 250000 }));
+console.log(readV3(2, { orderId: "ord_2", total: { amountMinor: 480000, currency: "GHS" } }));
+console.log(readV3(3, { orderId: "ord_3", total: { amountMinor: 90000, currency: "NGN" }, channel: "pos" }));</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The v1 step reads <code>body.totalKobo</code>, the number that already exists, into <code>total.amountMinor</code> — it must not invent a fixed number. The v2 step's channel is <code>"web"</code>, exactly as the task says.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>1: (body) =&gt; ({ ...body, total: { amountMinor: body.totalKobo, currency: "NGN" }, totalKobo: undefined })</code>, and <code>2: (body) =&gt; ({ ...body, channel: "web" })</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="16" data-file="upcast-v3.ts">
 <figcaption class="lx-bar"><span class="lx-file">upcast-v3.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="16"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
@@ -1348,7 +1388,7 @@ console.log(readV3(3, { orderId: "ord_3", total: { amountMinor: 90000, currency:
 }</pre></div>
 </figure>
 <p>Each upcaster knows only one step, so v1 goes through both. The v1 step sets <code>totalKobo</code> to <code>undefined</code> and the default <code>strip</code> behaviour removes it along with anything else unknown. Remember the order of deploys: readers with <code>readV3</code> first, then the orders release that writes v3.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="tolerant-notifications.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Make a reader tolerant</h3><p>This notifications reader breaks on every harmless change the orders team makes. Rewrite it so it accepts unknown fields, handles a new status by sending a generic e-mail instead of failing, and still rejects a body without an <code>orderId</code>.</p>
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="tolerant-notifications.ts" data-title="Make a reader tolerant"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Make a reader tolerant</h3><div class="lx-ex-task"><p>This notifications reader breaks on every harmless change the orders team makes. Rewrite it so it accepts unknown fields, handles a new status by sending a generic e-mail instead of failing, and still rejects a body without an <code>orderId</code>.</p>
 <figure class="lx-example" data-index="17" data-file="brittle.ts">
 <figcaption class="lx-bar"><span class="lx-file">brittle.ts</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="17"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
@@ -1375,7 +1415,38 @@ for (const body of [{ orderId: "ord_1", status: "paid" }, { orderId: "ord_1", st
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx brittle.ts</code> and of the browser terminal</div><pre class="lx-no-copy">true
 false
 false</pre></div>
-</figure><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="tolerant-notifications.ts">
+</figure></div><script type="text/plain" class="lx-ex-starter" data-file="tolerant-notifications.ts">// Example to learn from: accepting any string but mapping unfamiliar values
+// to a fallback, for a shipping carrier field instead of an order status.
+//
+//   const Package = schema.object({
+//     trackingId: schema.string(),
+//     carrier: schema.string().transform((v) => (v === "dhl" || v === "gig" ? v : ("other" as const))),
+//   });
+//   console.log(Package.parse({ trackingId: "t1", carrier: "aramex" }));
+//   // { trackingId: 't1', carrier: 'other' }
+//
+// Now do the same for OrderStatusChanged's status field below. Start from
+// the brittle schema, then make three changes:
+// 1. Remove .strict() so an unknown field like `courier` is accepted.
+// 2. Instead of schema.enum(["paid", "shipped"]), accept any string and
+//    .transform it so anything that is not "paid" or "shipped" becomes the
+//    literal "other" (which already has its own template below).
+// 3. Keep orderId required — a notification without an order must still be
+//    rejected.
+
+import { schema } from "@zudojs/schema";
+
+const OrderStatusChanged = schema.object({
+  orderId: schema.string(),
+  status: schema.enum(["paid", "shipped"]),
+}).strict();
+
+const templates = { paid: "Payment received", shipped: "Your order is on its way", other: "Your order was updated" };
+
+for (const body of [{ orderId: "ord_1", status: "paid" }, { orderId: "ord_1", status: "refunded" }, { orderId: "ord_1", status: "paid", courier: "GIG" }, { status: "paid" }]) {
+  const result = OrderStatusChanged.safeParse(body);
+  console.log(result.success ? `${result.data.orderId}: ${templates[result.data.status]}` : "rejected: " + result.issues[0]!.message);
+}</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Drop <code>.strict()</code> entirely, so an object with an extra field like <code>courier</code> is no longer rejected.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>status: schema.string().transform((value) =&gt; (value === "paid" || value === "shipped" ? value : "other" as const))</code> — <code>orderId: schema.string()</code> stays required, exactly as it is now.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="tolerant-notifications.ts">
 <figcaption class="lx-bar"><span class="lx-file">tolerant-notifications.ts</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="18"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
@@ -1410,7 +1481,7 @@ ord_1: Payment received
 rejected: Required field missing: orderId</pre></div>
 </figure>
 <p>Removing <code>.strict()</code> lets unknown fields through, and the transform maps unknown statuses to <code>other</code>, which has a real template. <code>orderId</code> is still required, because a notification without an order cannot be sent: tolerance means ignoring what you do not need, not accepting a body that lacks what you do need.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Who breaks?</h3><p>Using the provider verification from this lesson, add a fourth candidate that changes <code>lines</code> from <code>[{ sku, quantity }]</code> to <code>[{ sku, qty }]</code>. Before running it, predict which consumers fail. Then explain why the inventory pact with <code>like([{ sku: "lamp", quantity: 2 }])</code> does <em>not</em> catch it, and change the pact so it does.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>Prediction: only inventory should fail, since it is the only consumer that reads <code>lines</code>. But with this lesson's <code>check</code>, it passes: <code>like([…])</code> only checks that <code>lines</code> is an array, not what is inside. That is a real gap, and real tools handle it with an "each like" matcher that checks every element against the example's shape. The quick fix here is to describe the element explicitly, for example <code>expects: { lines: { 0: { sku: like("lamp"), quantity: exact(2) } } }</code>: the nested expectation walks into <code>lines[0]</code> and reports <code>$.lines.0.quantity is missing</code> for the candidate. A contract test is only as precise as its matchers, so test your test: run it once against a response you know is broken and check that it fails.</p></div></div>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Who breaks?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Who breaks?</h3><div class="lx-ex-task"><p>Using the provider verification from this lesson, add a fourth candidate that changes <code>lines</code> from <code>[{ sku, quantity }]</code> to <code>[{ sku, qty }]</code>. Before running it, predict which consumers fail. Then explain why the inventory pact with <code>like([{ sku: "lamp", quantity: 2 }])</code> does <em>not</em> catch it, and change the pact so it does.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Only inventory reads <code>lines</code> from <code>order.placed</code> — look at what the other consumers' pacts actually assert on before predicting who fails.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>like([...])</code> only checks that <code>lines</code> is an array shaped like the example overall — it never looks inside the array at what each element contains. What would a matcher need to describe to reach into <code>lines[0].quantity</code> specifically?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>Prediction: only inventory should fail, since it is the only consumer that reads <code>lines</code>. But with this lesson's <code>check</code>, it passes: <code>like([…])</code> only checks that <code>lines</code> is an array, not what is inside. That is a real gap, and real tools handle it with an "each like" matcher that checks every element against the example's shape. The quick fix here is to describe the element explicitly, for example <code>expects: { lines: { 0: { sku: like("lamp"), quantity: exact(2) } } }</code>: the nested expectation walks into <code>lines[0]</code> and reports <code>$.lines.0.quantity is missing</code> for the candidate. A contract test is only as precise as its matchers, so test your test: run it once against a response you know is broken and check that it fails.</p></div></div>
 </section>
 
 <section>

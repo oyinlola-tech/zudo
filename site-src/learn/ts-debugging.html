@@ -583,6 +583,40 @@ const limits = [
   { maxOrderKobo: 1_000_00, currency: "usd" },
 ];
 startServer({ port: 8080, limits });</code></pre>
+<starter file="limits.ts">
+// Example to learn from: the same "the error points at the call, not the
+// typo" problem, for a list of coupons instead of order limits.
+//
+//   interface Coupon { code: string; kind: "percent" | "fixed" }
+//   declare function applyCoupons(list: Coupon[]): void;
+//
+//   const coupons = [
+//     { code: "SAVE10", kind: "percent" },
+//     { code: "OFF500", kind: "Fixed" },   // wrong case
+//   ];
+//   applyCoupons(coupons);   // error names the whole array, not "Fixed"
+//
+//   // Fixed: satisfies checks each element where it is written.
+//   const fixed = [
+//     { code: "SAVE10", kind: "percent" },
+//     { code: "OFF500", kind: "Fixed" },
+//   ] satisfies Coupon[];   // now the error points at "Fixed" itself
+//
+// Now do the same for the limits below: run `npx tsc --noEmit` on your
+// computer and paste what it prints.
+
+interface Limits { maxOrderKobo: number; currency: "NGN" | "USD" }
+interface ServerConfig { port: number; limits: Limits[] }
+declare function startServer(config: ServerConfig): void;
+
+const limits = [
+  { maxOrderKobo: 50_000_000, currency: "NGN" },
+  { maxOrderKobo: 1_000_00, currency: "usd" },
+];
+startServer({ port: 8080, limits });
+</starter>
+<hint><p>The array's element type is inferred as <code>{ maxOrderKobo: number; currency: string }</code>, so the mismatch only shows up where it meets <code>Limits[]</code>: at the call. Check each element where it is written instead.</p></hint>
+<hint><p>Drop <code>ServerConfig</code>/<code>startServer</code> from this file entirely, and write <code>const limits = [ ... ] satisfies Limits[];</code>. The error now names the exact line and property.</p></hint>
 <solution>
 <example file="limits.ts" project="ex-limits" check="tsc-error">
 interface Limits {
@@ -614,6 +648,30 @@ Found 1 error in limits.ts:8
 <exercise title="Stop the extra state">
 <p>A helper <code>pickDefault(options, preferred)</code> returns <code>preferred</code> if it is one of the options. With the signature below, <code>pickDefault(["card", "transfer"], "cash")</code> compiles. Change the signature so that it does not, and explain what changed.</p>
 <pre><code>function pickDefault&lt;T extends string&gt;(options: readonly T[], preferred: T): T</code></pre>
+<starter file="pick.ts">
+// Example to learn from: NoInfer on a second argument, so only the first
+// argument decides the type parameter, for a log level instead of a
+// payment method.
+//
+//   function coerceLevel<T extends string>(levels: readonly T[], value: NoInfer<T>): T {
+//     return levels.includes(value) ? value : levels[0]!;
+//   }
+//
+//   const levels = ["info", "warn", "error"] as const;
+//   console.log(coerceLevel(levels, "warn"));   // "warn"
+//   // coerceLevel(levels, "debug") would not compile: "debug" is not inferred from `levels`
+//
+// Now do the same for pickDefault below, then run `npx tsc --noEmit` on
+// your computer and paste what it prints.
+
+function pickDefault<T extends string>(options: readonly T[], preferred: T): T {
+  return options.includes(preferred) ? preferred : options[0]!;
+}
+
+const method = pickDefault(["card", "transfer"], "cash");
+</starter>
+<hint><p>Both arguments currently contribute to inferring <code>T</code>, so <code>T</code> becomes the union of everything passed, including <code>"cash"</code>. Stop <code>preferred</code> from contributing.</p></hint>
+<hint><p><code>function pickDefault&lt;T extends string&gt;(options: readonly T[], preferred: NoInfer&lt;T&gt;): T</code> — now <code>T</code> comes only from <code>options</code>, and <code>preferred</code> is checked against it.</p></hint>
 <solution>
 <example file="pick.ts" project="ex-pick" check="tsc-error">
 function pickDefault<T extends string>(options: readonly T[], preferred: NoInfer<T>): T {
@@ -642,6 +700,8 @@ Matched 'exports' condition 'types'.
 Using 'exports' subpath '.' with target './dist/index.d.ts'.
 File '~/shop-app/node_modules/@naija-shop/naira/dist/index.d.ts' does not exist.
 Failed to resolve under condition 'types'.</pre>
+<hint><p>The trace never says the package or its <code>exports</code> map are wrong. It stops at one specific, named file. What does that file's absence tell you about how the package got there?</p></hint>
+<hint><p><code>ls node_modules/@naija-shop/naira/dist</code> tells you which of the two causes you have: an unbuilt workspace package, or a broken published one.</p></hint>
 <solution>
 <p>The package is installed and its <code>exports</code> map is read correctly, but the declaration file it promises is not in the installed package. Either it was never published (the <code>files</code> field left it out, exactly the 1.0.0 release in <a href="/learn/ts-publishing#problem">Publishing TypeScript packages</a>), or, for a workspace package, it was never built (the <code>dist</code> folder does not exist yet). <code>ls node_modules/@naija-shop/naira/dist</code> tells you which: an empty or missing folder in a workspace means "build it"; a folder with only <code>.js</code> files from the registry means "the package is broken; tell its authors, and add a local declaration meanwhile".</p>
 </solution>

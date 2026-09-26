@@ -701,6 +701,35 @@ literal search: true
 <h2 id="practice">Practice</h2>
 <exercise title="An invoice download route">
 <p>Customers download invoices at <code>GET /invoices/:id</code>, where files are stored as <code>invoices/INV-1042.pdf</code>. Write <code>invoicePath(id)</code> that avoids path traversal without using <code>confine</code> at all, and explain why it is safe. Then say what else the route must check before sending the file.</p>
+<starter file="invoice-path.js">
+// Example to learn from: the same "check an anchored pattern, then build
+// the path yourself" defence for a different id shape.
+//
+//   const ORDER_ID = /^ORD-\d{1,8}$/;
+//   function orderReceiptPath(id) {
+//     if (typeof id !== "string" || !ORDER_ID.test(id)) return null;
+//     return join("receipts", `${id}.txt`);
+//   }
+//
+// No accepted id can contain "/", "." or "\", so path syntax never reaches
+// the file system. Now do the same for invoices below.
+
+import { join } from "node:path";
+
+const INVOICE_ID = /^INV-\d{1,10}$/;
+
+function invoicePath(id) {
+  // must be a string matching INVOICE_ID, else return null
+  // otherwise build the path yourself: join("invoices", `${id}.pdf`)
+  return null;
+}
+
+for (const id of ["INV-1042", "INV-1042/../../config", "../INV-1042", "INV-", "inv-1042"]) {
+  console.log(JSON.stringify(id).padEnd(26), invoicePath(id));
+}
+</starter>
+<hint><p><code>INVOICE_ID.test(id)</code> is your whole validity check; nothing else needs to inspect the id's characters one by one.</p></hint>
+<hint><p><code>if (typeof id !== "string" || !INVOICE_ID.test(id)) return null; return join("invoices", `${id}.pdf`);</code></p></hint>
 <solution>
 <example file="invoice-path.js" browser="no">
 import { join } from "node:path";
@@ -729,6 +758,58 @@ for (const id of ["INV-1042", "INV-1042/../../config", "../INV-1042", "INV-", "i
 
 <exercise title="Safe product search with several filters">
 <p>Write <code>searchProducts(db, filters)</code> using the <code>products</code> table from this lesson. <code>filters</code> may contain <code>text</code> (a substring of the name), <code>maxPriceKobo</code> (a whole number) and <code>skus</code> (an array). Build the <code>WHERE</code> clause from fixed fragments and numbered placeholders only, and test it with a search term containing <code>%</code> and an apostrophe.</p>
+<starter file="filters.js">
+// Example to learn from: the same growing WHERE clause, a fragment and a
+// placeholder per filter that was actually given, for a different table.
+//
+//   async function searchCustomers(db, filters) {
+//     const where = [];
+//     const values = [];
+//     const param = (value) => { values.push(value); return `$${values.length}`; };
+//     if (typeof filters.name === "string") where.push(`name ILIKE ${param(`%${filters.name}%`)}`);
+//     if (Number.isInteger(filters.minId)) where.push(`id >= ${param(filters.minId)}`);
+//     const sql = `SELECT name FROM customers${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY id`;
+//     return (await db.query(sql, values)).rows.map((row) => row.name);
+//   }
+//
+// Now do the same for products below, with three filters instead of two.
+
+import { openShopDb } from "./db.js";
+
+async function searchProducts(db, filters) {
+  const where = [];
+  const values = [];
+  const param = (value) => {
+    values.push(value);
+    return `$${values.length}`;
+  };
+  // filters.text (a string, up to 100 chars): push
+  //   `name ILIKE ${param(`%${escaped text}%`)} ESCAPE '\\'`, where the
+  //   wildcards % and _ in the text are escaped first:
+  //   text.replace(/[\\%_]/g, "\\$&")
+  // filters.maxPriceKobo (a whole number): push `price_kobo <= ${param(...)}`
+  // filters.skus (an array): push `sku = ANY(${param(...)})`
+  const sql = `SELECT sku FROM products${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY sku`;
+  const { rows } = await db.query(sql, values);
+  return rows.map((row) => row.sku);
+}
+
+const db = await openShopDb();
+for (const [sku, name, price] of [
+  ["RICE-5", "Mama's Rice 5kg, 50% extra", 4_500_000],
+  ["RICE-500", "Rice 500g", 120_000],
+  ["OIL-1", "Mama's Palm Oil 1L", 250_000],
+]) {
+  await db.query("INSERT INTO products (sku, name, price_kobo) VALUES ($1, $2, $3)", [sku, name, price]);
+}
+
+console.log(await searchProducts(db, { text: "mama's" }));
+console.log(await searchProducts(db, { text: "50%" }));
+console.log(await searchProducts(db, { text: "rice", maxPriceKobo: 1_000_000 }));
+console.log(await searchProducts(db, { skus: ["OIL-1", "RICE-5"], maxPriceKobo: "cheap" }));
+</starter>
+<hint><p>Each filter is independent: <code>if (typeof filters.text === "string" &amp;&amp; filters.text.length &lt;= 100) where.push(...)</code>, then a separate <code>if</code> for each of the other two.</p></hint>
+<hint><p><code>where.push(`name ILIKE ${param(`%${filters.text.replace(/[\\%_]/g, "\\$&")}%`)} ESCAPE '\\'`)</code>; <code>where.push(`price_kobo &lt;= ${param(filters.maxPriceKobo)}`)</code>; <code>where.push(`sku = ANY(${param(filters.skus.map(String))})`)</code>.</p></hint>
 <solution>
 <example file="filters.js" project="importer" browser="no">
 import { openShopDb } from "./db.js";
@@ -776,6 +857,8 @@ console.log(await searchProducts(db, { skus: ["OIL-1", "RICE-5"], maxPriceKobo: 
 
 <exercise title="Allow a second supplier, safely">
 <p>A new supplier serves images from <code>cdn.supplier-two.example</code>. A colleague proposes changing the host check to <code>url.hostname.endsWith("supplier-two.example")</code> "so all their subdomains work". What is wrong with that, and what would you do instead?</p>
+<hint><p>Could someone register a completely different domain that also ends with the same characters as <code>supplier-two.example</code>, with nothing in front of it but more letters?</p></hint>
+<hint><p>Compare a pattern-based check with adding the one exact host you actually need to an allow-list. Which one is easy to review at a glance?</p></hint>
 <solution>
 <p><code>endsWith("supplier-two.example")</code> also matches <code>evil-supplier-two.example</code>, a completely different domain that anyone could register, because there is no dot in front. Even <code>endsWith(".supplier-two.example")</code> trusts every subdomain the supplier has now or will ever have, including forgotten ones that could be taken over. Add the exact host <code>cdn.supplier-two.example</code> to <code>ALLOWED_HOSTS</code>, preferably from configuration, and add a test that the lookalike host is refused. Exact matches are easy to review; patterns are where allow-lists quietly turn into deny-lists.</p>
 </solution>

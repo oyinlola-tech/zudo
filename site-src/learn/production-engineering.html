@@ -463,6 +463,32 @@ q5: running
 <h2 id="practice">Practice</h2>
 <exercise title="Add a rule to the config schema">
 <p>Extend the configuration schema with <code>LOG_LEVEL</code>, one of <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>, defaulting to <code>info</code>, and <code>CACHE_TTL_MS</code>, a whole number of at least 1000, defaulting to 60000. Show that <code>CACHE_TTL_MS=5</code> is refused.</p>
+<starter file="config-more.ts">
+// Example to learn from: a default enum field next to a coerced number.
+//
+//   const Settings = schema.object({
+//     THEME: schema.default(schema.enum(["light", "dark"]), "light"),
+//     PAGE_SIZE: schema.coerce.number().int().min(1).default(20),
+//   });
+//   console.log(Settings.parse({}));
+//   const bad = Settings.safeParse({ PAGE_SIZE: "0" });
+//   if (!bad.success) console.log(bad.issues.map((i) => i.code));
+//
+// Now add LOG_LEVEL and CACHE_TTL_MS to the config schema the same way.
+
+import { schema } from "@zudojs/schema";
+
+const Extra = schema.object({
+  // your code here: LOG_LEVEL: schema.default(schema.enum([...]), "info"),
+  // your code here: CACHE_TTL_MS: schema.coerce.number().int().min(1000).default(60_000),
+});
+
+console.log(Extra.parse({}));
+const bad = Extra.safeParse({ CACHE_TTL_MS: "5" });
+if (!bad.success) console.log(bad.issues.map((issue) => `${issue.path.join(".")}: ${issue.code}`));
+</starter>
+<hint><p><code>schema.default(schema.enum([...]), "info")</code> gives an enum field a fallback when it is missing. <code>schema.coerce.number()</code> turns a string such as <code>"5"</code> into a number before the other checks run.</p></hint>
+<hint><p><code>LOG_LEVEL: schema.default(schema.enum(["debug", "info", "warn", "error"]), "info"), CACHE_TTL_MS: schema.coerce.number().int().min(1000).default(60_000),</code></p></hint>
 <solution>
 <example file="config-more.ts">
 import { schema } from "@zudojs/schema";
@@ -484,6 +510,8 @@ if (!bad.success) console.log(bad.issues.map((issue) => `${issue.path.join(".")}
 </exercise>
 <exercise title="Which probe?">
 <p>For each check, decide whether it belongs in <code>/health</code> (liveness), <code>/ready</code> (readiness), or neither: the event loop is responsive; the database answers <code>SELECT 1</code>; the payment provider's API is reachable; database migrations have run; the disk has more than 1 GB free.</p>
+<hint><p>Ask two questions for each check: "if this fails, would restarting the process help?" (liveness) versus "if this fails, can the process still serve some traffic?" (readiness). Something that is neither belongs on a dashboard instead.</p></hint>
+<hint><p>A check that depends on another service or a slowly changing resource (disk, a third party) rarely belongs in either probe: it needs its own metric and alert, not a request that blocks startup or serving traffic.</p></hint>
 <solution>
 <ul>
 <li>Event loop responsive: <strong>liveness</strong>. If the process cannot answer at all, a restart helps.</li>
@@ -496,6 +524,28 @@ if (!bad.success) console.log(bad.issues.map((issue) => `${issue.path.join(".")}
 </exercise>
 <exercise title="Size a pool">
 <p>Your database allows 100 connections. You keep 10 for yourself and for migrations. You run 6 app processes, and each process also runs a background worker with its own pool of 3. What is the largest safe pool size for the web part of each process?</p>
+<starter file="pool-size.js">
+// Example to learn from: splitting a shared budget between parts.
+//
+//   const totalSeats = 200;
+//   const reservedForStaff = 20;
+//   const rooms = 4;
+//   const seatsPerRoom = Math.floor((totalSeats - reservedForStaff) / rooms);
+//   console.log(seatsPerRoom);
+//
+// Now do the same arithmetic for the connection pool below: split what
+// is left after reserving connections, across every process, then take
+// out the worker's own pool.
+
+const limit = 100;
+const reserved = 10;
+const processes = 6;
+const workerPool = 3;
+
+// your code here: work out perProcess, then log it and the web pool size
+</starter>
+<hint><p>First divide what is left after the reserved connections across every process. Then take the worker's own pool out of that share.</p></hint>
+<hint><p><code>const perProcess = Math.floor((limit - reserved) / processes); console.log("connections per process:", perProcess); console.log("web pool size:", perProcess - workerPool);</code></p></hint>
 <solution>
 <example file="pool-size.js">
 const limit = 100;

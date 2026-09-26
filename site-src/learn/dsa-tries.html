@@ -494,6 +494,65 @@ PASS 1500 random operations match an array of words
 <h2 id="practice">Practice</h2>
 <exercise title="Delivery zone by longest prefix">
 <p>A courier prices deliveries by postcode prefix: "1" is ₦3,000, "10" is ₦2,000, "100" is ₦1,500 and "2" is ₦4,500. The rate for a postcode is the one with the <em>longest</em> prefix that matches it. Store the prefixes in a trie and write <code>rateFor(postcode)</code> that walks the postcode once, remembering the last rate it passed.</p>
+<starter file="zones.js">
+// Example to learn from: the same "walk once, remember the last match"
+// shape, picking the most specific team that owns a chat channel name.
+//
+//   const owners = { "eng": "Engineering", "eng-backend": "Backend", "design": "Design" };
+//   const root = { children: new Map(), owner: undefined };
+//   for (const [prefix, owner] of Object.entries(owners)) {
+//     let node = root;
+//     for (const ch of prefix) {
+//       if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), owner: undefined });
+//       node = node.children.get(ch);
+//     }
+//     node.owner = owner;
+//   }
+//   function ownerOf(channel) {
+//     let node = root, best;
+//     for (const ch of channel) {
+//       node = node.children.get(ch);
+//       if (!node) break;
+//       if (node.owner !== undefined) best = node.owner;
+//     }
+//     return best;
+//   }
+//   console.log(ownerOf("eng-backend-alerts"));                // 'Backend'
+//
+// Now do the same shape for rateFor below, using rate instead of owner.
+
+const root = { children: new Map(), rate: undefined };
+
+function addZone(prefix, rate) {
+  let node = root;
+  for (const ch of prefix) {
+    if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), rate: undefined });
+    node = node.children.get(ch);
+  }
+  node.rate = rate;
+}
+
+function rateFor(postcode) {
+  let node = root;
+  let best;
+  // walk postcode one character at a time, following node.children
+  // stop as soon as there is no matching child
+  // every time you land on a node with a defined rate, remember it in best
+  return best;
+}
+
+addZone("1", 3000);
+addZone("10", 2000);
+addZone("100", 1500);
+addZone("2", 4500);
+
+for (const postcode of ["100271", "101233", "112001", "200001", "900001"]) {
+  const rate = rateFor(postcode);
+  console.log(postcode, rate === undefined ? "no delivery" : `₦${rate.toLocaleString("en-NG")}`);
+}
+</starter>
+<hint><p>Walk the postcode one character at a time, moving <code>node</code> to <code>node.children.get(ch)</code>. Stop as soon as there is no such child. Every time the node you land on has a defined <code>rate</code>, that is your new best answer so far.</p></hint>
+<hint><p><code>for (const ch of postcode) { node = node.children.get(ch); if (!node) break; if (node.rate !== undefined) best = node.rate; }</code></p></hint>
 <solution>
 <example file="zones.js">
 const root = { children: new Map(), rate: undefined };
@@ -541,6 +600,50 @@ for (const postcode of ["100271", "101233", "112001", "200001", "900001"]) {
 
 <exercise title="Top sellers under a prefix">
 <p>Use the <code>Trie</code> class for the catalogue, but show the three <em>best-selling</em> products for a prefix instead of the first three alphabetically. Sales are in a <code>Map</code> from name to units. Walk every product under the prefix and keep the best three. What does this cost after one typed letter, and after a whole brand name?</p>
+<starter file="top-sellers.js">
+// Example to learn from: the same "keep a small sorted list, insert and
+// truncate" shape, tracking the 2 lightest packages seen so far.
+//
+//   function lightest(weights, k) {
+//     const best = [];
+//     for (const w of weights) {
+//       best.push(w);
+//       best.sort((a, b) => a - b);
+//       if (best.length > k) best.pop();
+//     }
+//     return best;
+//   }
+//   console.log(lightest([5, 1, 9, 2, 7], 2));                  // [ 1, 2 ]
+//
+// Now do the same shape for bestSellers below: sort by sales (highest
+// first) instead of weight (lowest first).
+
+import { products } from "./catalog.js";
+import { Trie } from "./trie.js";
+
+const trie = new Trie();
+for (const name of products) trie.insert(name);
+
+const sales = new Map(products.map((name, i) => [name, (i * 7919) % 5000]));
+
+function bestSellers(prefix, k) {
+  const best = [];
+  let seen = 0;
+  for (const name of trie.withPrefix(prefix)) {
+    seen++;
+    // push name onto best, sort best so the highest sales come first,
+    // then drop the weakest entry once best has grown past k
+  }
+  return { best, seen };
+}
+
+for (const typed of ["s", "samsung earbuds"]) {
+  const { best, seen } = bestSellers(typed, 3);
+  console.log(`"${typed}" looked at ${seen}: ${best.map((n) => `${n} (${sales.get(n)})`).join(", ")}`);
+}
+</starter>
+<hint><p>Push the name in, sort <code>best</code> by <code>sales.get(b) - sales.get(a)</code> so the biggest sellers come first, then pop the last (weakest) entry once <code>best</code> has grown past <code>k</code>.</p></hint>
+<hint><p><code>best.push(name); best.sort((a, b) =&gt; sales.get(b) - sales.get(a)); if (best.length &gt; k) best.pop();</code></p></hint>
 <solution>
 <example file="top-sellers.js" project="trie">
 import { products } from "./catalog.js";
@@ -578,6 +681,39 @@ for (const typed of ["s", "samsung earbuds"]) {
 
 <exercise title="Accent-insensitive search">
 <p>Customers type "cafe" and expect to find "Café Latte Mug" and "CAFÉ Espresso Cups". Write a key function that lower-cases and removes accents, insert names with the <code>Trie</code> class using that key, and make sure the suggestions still show the original names.</p>
+<starter file="accents.js">
+// Example to learn from: the same "fold before inserting and before
+// searching" shape, matching phone numbers however they are punctuated.
+//
+//   function foldPhone(text) {
+//     return text.replace(/\D/g, "");                 // keep digits only
+//   }
+//   const trie = new Trie();
+//   trie.insert(foldPhone("0803-000-0001"), "0803-000-0001");
+//   console.log(trie.has(foldPhone("(0803) 000 0001")));        // true
+//
+// Now do the same shape for foldKey below, folding accents instead of
+// punctuation: normalize to NFD, strip combining marks, then lower-case.
+
+import { Trie } from "./trie.js";
+
+function foldKey(text) {
+  // text.normalize("NFD") splits accented letters into a base letter plus a
+  // combining mark; replace(/\p{Mark}/gu, "") removes the marks; then lower-case
+  return text;
+}
+
+const trie = new Trie();
+for (const name of ["Café Latte Mug", "CAFÉ Espresso Cups", "Cafeteria Tray", "Crème Brûlée Set"]) {
+  trie.insert(foldKey(name), name);
+}
+
+for (const typed of ["cafe", "CAFÉ", "creme b"]) {
+  console.log(`${typed} -> ${trie.suggest(foldKey(typed)).join(" | ")}`);
+}
+</starter>
+<hint><p><code>text.normalize("NFD")</code> splits an accented letter such as "é" into "e" plus a separate combining mark. A regular expression with <code>\p{Mark}</code> and the <code>u</code> flag matches those marks so you can remove them.</p></hint>
+<hint><p><code>return text.normalize("NFD").replace(/\p{Mark}/gu, "").toLowerCase();</code></p></hint>
 <solution>
 <example file="accents.js" project="trie">
 import { Trie } from "./trie.js";

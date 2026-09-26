@@ -872,7 +872,7 @@ await server.stop();</script>
    https://app.example.com: 200 allow-origin = https://app.example.com
    https://evil.example: 200 allow-origin = null
 3. A 50 KB task title
-   413 {"error":"Payload Too Large"}
+   413 {"error":"Payload Too Large","code":"PAYLOAD_TOO_LARGE"}
 4. SSRF through the preview feature
    400 {"error":"That URL cannot be previewed","code":"BAD_REQUEST"}
    400 {"error":"That URL cannot be previewed","code":"BAD_REQUEST"}
@@ -880,7 +880,7 @@ await server.stop();</script>
 5. Headers on every response
    x-frame-options: DENY
    x-content-type-options: nosniff
-   strict-transport-security: max-age=31536000; includeSubDomains; preload</pre></div>
+   strict-transport-security: max-age=63072000; includeSubDomains; preload</pre></div>
 </figure>
 <p>Every attack was stopped by a different layer:</p>
 <ol>
@@ -890,7 +890,7 @@ await server.stop();</script>
 <li>The metadata address and the IPv6 form of a private address got <code>400</code>. A public URL was accepted.</li>
 <li>The security middleware added its headers to every response.</li>
 </ol>
-<div class="callout callout-warning"><p class="lx-callout-label">THAT HEADER CHECK ONLY ASKED A 200</p>Step 5 above only asks a plain <code>200</code> response for its headers. In the published <code>@zudojs/http</code> 1.4.4, a response built outside the normal route return — the <code>401</code> from a thrown <code>unauthorized()</code>, the adapter's own <code>413</code> for an oversized body, or an uncaught <code>500</code> — comes back without <code>createSecurityMiddleware()</code>'s headers, because the pipeline never gets to run on it. <a href="/learn/zudo-production-security">A production security review</a> covers checking every status code a route can return, not just its happy path.</div>
+<div class="callout callout-warning"><p class="lx-callout-label">ERROR RESPONSES GET HEADERS TOO</p>Step 5 above only checked a plain <code>200</code> response, but the <code>401</code> and <code>413</code> above carry the same headers. Since <code>@zudojs/http</code> 1.5.0, every response the adapter builds itself — the request guard's refusal, the adapter's own <code>413</code>, an uncaught <code>500</code>, or a thrown <code>HttpError</code> such as the <code>401</code> from <code>unauthorized()</code> — gets the default security headers filled in even though it never reached <code>createSecurityMiddleware()</code> in the pipeline. (Before 1.5.0, only a response built inside the pipeline got them; an error thrown before or around it came back bare.) The adapter's new <code>securityHeaders</code> option controls this (default <code>true</code>) and only fills in header names a response does not already set. Still check every status code a route can return, not just its happy path: a custom <code>errorHandler</code> or a header your own code sets can leave a gap a happy-path test never sees. <a href="/learn/zudo-production-security">A production security review</a> covers that in depth.</div>
 <p>Run it on your computer. Both files go in the same folder:</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
 <pre class="lx-shell-body" data-copy="npx tsc --noEmit
@@ -901,7 +901,25 @@ npx tsx attack.ts"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="tru
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="api-limit.ts" data-project="api-limit" data-command="npx tsx api-limit.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A second limiter for the whole API</h3><p>Besides the strict login limit, add a generous limit for every route: 3 requests per minute for this exercise (use something like 300 in real life). Build it with <code>createRateLimiter</code> from @zudojs/security and check it for one IP, four times.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="14" data-file="api-limit.ts" data-project="api-limit">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="api-limit.ts" data-project="api-limit" data-command="npx tsx api-limit.ts" data-title="A second limiter for the whole API"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A second limiter for the whole API</h3><div class="lx-ex-task"><p>Besides the strict login limit, add a generous limit for every route: 3 requests per minute for this exercise (use something like 300 in real life). Build it with <code>createRateLimiter</code> from @zudojs/security and check it for one IP, four times.</p></div><script type="text/plain" class="lx-ex-starter" data-file="api-limit.ts">// Example to learn from: the same check loop for a different limit.
+//
+//   const previewLimiter = createRateLimiter({ windowMs: 60_000, max: 1 });
+//   for (let request = 1; request <= 2; request++) {
+//     const result = previewLimiter.check({ ip: "203.0.113.9" });
+//     console.log(request, result.allowed ? "ok" : "429");
+//   }
+//   previewLimiter.destroy();
+//
+// Now build a limiter of 3 requests per minute, and check it 4 times.
+
+import { createRateLimiter } from "@zudojs/security";
+
+const apiLimiter = createRateLimiter({ windowMs: 60_000, max: 3 });
+for (let request = 1; request <= 4; request++) {
+  // Check apiLimiter.check({ ip: "203.0.113.7" }) and log the attempt
+  // number, "ok" or "429" from result.allowed, and result.remaining.
+}
+apiLimiter.destroy();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>createRateLimiter({ windowMs: 60_000, max: 3 })</code> is the limiter. Each loop iteration calls <code>apiLimiter.check({ ip: "203.0.113.7" })</code> and reads <code>result.allowed</code> and <code>result.remaining</code> off what it returns.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const result = apiLimiter.check({ ip: "203.0.113.7" }); console.log(request, result.allowed ? "ok" : "429", "remaining:", result.remaining);</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="14" data-file="api-limit.ts" data-project="api-limit">
 <figcaption class="lx-bar"><span class="lx-file">api-limit.ts</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createRateLimiter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/security"</span><span class="t-pn">;</span>
 
@@ -927,7 +945,23 @@ apiLimiter.destroy();</script>
 </figure>
 <p>In the Task API, pass the same options to <code>createRateLimitMiddleware</code> and add it to the pipeline with <code>pipeline.use</code>, so it runs for every route.</p></div></div>
 
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="staging.ts" data-project="staging" data-command="npx tsx staging.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Allow a staging app</h3><p>Your team also runs a staging copy of the web app at <code>https://staging.app.example.com</code>. Change the CORS configuration so it is allowed too, and prove that <code>https://staging.app.example.com.evil.example</code> is still refused.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="15" data-file="staging.ts" data-project="staging">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="staging.ts" data-project="staging" data-command="npx tsx staging.ts" data-title="Allow a staging app"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Allow a staging app</h3><div class="lx-ex-task"><p>Your team also runs a staging copy of the web app at <code>https://staging.app.example.com</code>. Change the CORS configuration so it is allowed too, and prove that <code>https://staging.app.example.com.evil.example</code> is still refused.</p></div><script type="text/plain" class="lx-ex-starter" data-file="staging.ts">// Example to learn from: adding one more exact origin to a different allow-list.
+//
+//   const config = { origin: ["https://shop.example.com", "https://admin.example.com"], credentials: true };
+//   console.log(isOriginAllowed("https://admin.example.com", config));
+//
+// Now add the staging origin to config below.
+
+import { isOriginAllowed } from "@zudojs/security";
+
+const config = {
+  origin: ["https://app.example.com"],
+  // Add "https://staging.app.example.com" to this array.
+  credentials: true,
+};
+for (const origin of ["https://staging.app.example.com", "https://staging.app.example.com.evil.example"]) {
+  console.log(origin, isOriginAllowed(origin, config) ?? "refused");
+}</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>origin</code> takes an array of exact strings. Add the new one next to the existing entry, rather than replacing it.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>origin: ["https://app.example.com", "https://staging.app.example.com"]</code>. The look-alike domain still fails, because it is a different, longer string that only starts with the allowed one.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="15" data-file="staging.ts" data-project="staging">
 <figcaption class="lx-bar"><span class="lx-file">staging.ts</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> isOriginAllowed <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/security"</span><span class="t-pn">;</span>
 
@@ -953,7 +987,7 @@ https://staging.app.example.com.evil.example refused</pre></div>
 </figure>
 <p>Adding another exact string is the safe way. In a real app, read the list from configuration, one origin per environment.</p></div></div>
 
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Which layer stops it?</h3><p>For each attack, name the layer that stops it: (a) a script on <code>evil.example</code> reads a user's tasks with <code>fetch</code>; (b) a hidden form on <code>evil.example</code> posts to the API using the user's session cookie; (c) a user sets their avatar URL to <code>http://localhost:6379/</code>; (d) a task title contains <code>&lt;script&gt;</code>.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) CORS: the browser hides the response because the origin is not on the allow-list. (b) CSRF protection: the form cannot send the token, and a <code>SameSite</code> cookie is not sent at all. (c) SSRF checks: <code>isSafeUrl</code> refuses <code>localhost</code>, and the DNS check refuses names that point to private addresses. (d) Output encoding: <code>escapeHtml</code> (or your frontend framework) shows it as text, and the CSP stops injected scripts from running. A detector may log it, but it is not the defence.</p></div></div>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Which layer stops it?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Which layer stops it?</h3><div class="lx-ex-task"><p>For each attack, name the layer that stops it: (a) a script on <code>evil.example</code> reads a user's tasks with <code>fetch</code>; (b) a hidden form on <code>evil.example</code> posts to the API using the user's session cookie; (c) a user sets their avatar URL to <code>http://localhost:6379/</code>; (d) a task title contains <code>&lt;script&gt;</code>.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>(a) and (b) both involve a browser and another site, but one is a plain <code>fetch</code> that only needs to <em>read</em> the response, and the other is a form <code>POST</code> that only needs to be <em>sent</em>. Which layer stops a read; which stops a write that carries cookies?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(c) is a URL your server would fetch on the user's behalf, pointing inside your own network. (d) is text that ends up shown back to other users. Look at the table in <a href="#layers">defense in depth</a> for the layer named for each.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) CORS: the browser hides the response because the origin is not on the allow-list. (b) CSRF protection: the form cannot send the token, and a <code>SameSite</code> cookie is not sent at all. (c) SSRF checks: <code>isSafeUrl</code> refuses <code>localhost</code>, and the DNS check refuses names that point to private addresses. (d) Output encoding: <code>escapeHtml</code> (or your frontend framework) shows it as text, and the CSP stops injected scripts from running. A detector may log it, but it is not the defence.</p></div></div>
 </section>
 
 <section>

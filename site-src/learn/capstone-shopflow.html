@@ -614,6 +614,48 @@ $ npx vitest run --reporter=verbose
 <h2 id="practice">Practice</h2>
 <exercise title="Order history without leaking other people's orders">
 <p>Add <code>history(userId)</code> to the orders module: the caller's orders, newest first, each with its total. Then write the rule for <code>GET /orders/:id</code> in one sentence. Where must the check happen: in the SQL, or after loading the order?</p>
+<starter file="history.ts">
+// Example to learn from: a user's saved addresses, newest first, filtered
+// by owner in the query itself rather than after loading every row.
+//
+//   export function createAddressBook(db: PGlite) {
+//     return {
+//       async list(userId: number) {
+//         const { rows } = await db.query<{ id: number; line1: string }>(
+//           `SELECT id, line1 FROM addresses WHERE user_id = $1 ORDER BY id DESC LIMIT 20`,
+//           [userId],
+//         );
+//         return rows;
+//       },
+//     };
+//   }
+//
+// Now do the same for order history below. `one` already filters by owner.
+
+import type { PGlite } from "@electric-sql/pglite";
+import { NotFoundError } from "@zudojs/errors";
+
+export function createOrderHistory(db: PGlite) {
+  return {
+    async history(userId: number) {
+      // Select id, total_cents AS "totalCents" from orders, filtered to this
+      // user's own rows, newest first, limited to 50 — the owner check
+      // belongs in the WHERE clause, the same place `one` puts it.
+      return [];
+    },
+    async one(userId: number, orderId: number) {
+      const { rows } = await db.query<{ id: number; totalCents: number }>(
+        `SELECT id, total_cents AS "totalCents" FROM orders WHERE id = $1 AND user_id = $2`,
+        [orderId, userId],
+      );
+      if (!rows[0]) throw new NotFoundError(`No order ${orderId}`);
+      return rows[0];
+    },
+  };
+}
+</starter>
+<hint><p>The query is <code>SELECT id, total_cents AS "totalCents" FROM orders WHERE user_id = $1 ORDER BY id DESC LIMIT 50</code>, with a single parameter, <code>[userId]</code>.</p></hint>
+<hint><p>Compare it with <code>one</code>: both filter ownership as a <code>WHERE</code> condition, not as an <code>if</code> after the query returns. That is what makes the check impossible to forget.</p></hint>
 <solution>
 <example file="history.ts" project="shopflow" browser="no">
 import type { PGlite } from "@electric-sql/pglite";
@@ -644,6 +686,8 @@ export function createOrderHistory(db: PGlite) {
 </exercise>
 <exercise title="Why not SELECT, then UPDATE?">
 <p>A teammate rewrites the checkout line as "<code>SELECT stock</code>, if it is enough then <code>UPDATE products SET stock = $new</code>". The tests still pass. Explain what goes wrong in production, and which test would catch it.</p>
+<hint><p>What happens between the <code>SELECT</code> finishing and the <code>UPDATE</code> starting, when a second checkout runs at the same moment? Is there anything stopping both from reading the same number?</p></hint>
+<hint><p>A single test running one checkout at a time can never see this. What would a test need to do differently, and on which database (not PGlite) would it need to run to actually see the failure?</p></hint>
 <solution>
 <p>Two checkouts for the last mug run at the same time. Both <code>SELECT</code> and see 1. Both decide it is enough. Both write <code>stock = 0</code>. Two mugs are sold, one exists. This is a <strong>race condition</strong>: the gap between reading and writing. The single <code>UPDATE … WHERE stock &gt;= $1</code> has no gap. The "never oversells" test with four parallel checkouts catches it on a real PostgreSQL server with several connections. PGlite runs one transaction at a time, so it can hide this race: run that test against real PostgreSQL in CI too.</p>
 </solution>

@@ -775,7 +775,40 @@ seed 3: sliding log worst 20, fixed window worst 26 (limit 20)</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="fallback.js"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Fail open or fail closed</h3><p>Write <code>withFallback(check, mode)</code> that wraps an async limiter check. If the check throws (the store is down), it returns <code>{ allowed: true }</code> in <code>"open"</code> mode and <code>{ allowed: false, retryAfterMs: 1000 }</code> in <code>"closed"</code> mode, and logs a warning either way. Use it for a general API limit and a log-in limit while the store is down.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="9" data-file="fallback.js">
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="fallback.js" data-title="Fail open or fail closed"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Fail open or fail closed</h3><div class="lx-ex-task"><p>Write <code>withFallback(check, mode)</code> that wraps an async limiter check. If the check throws (the store is down), it returns <code>{ allowed: true }</code> in <code>"open"</code> mode and <code>{ allowed: false, retryAfterMs: 1000 }</code> in <code>"closed"</code> mode, and logs a warning either way. Use it for a general API limit and a log-in limit while the store is down.</p></div><script type="text/plain" class="lx-ex-starter" data-file="fallback.js">// Example to learn from: wrapping a risky call so failure becomes a
+// specific fallback value, chosen by a mode flag, with a logged warning.
+//
+//   function withCacheFallback(read, mode) {
+//     return async (key) => {
+//       try {
+//         return await read(key);
+//       } catch (error) {
+//         console.log(`warning: cache failed (${error.message}); using ${mode}`);
+//         return mode === "stale" ? { cached: true, value: null } : null;
+//       }
+//     };
+//   }
+//
+// Now do the same shape for a rate limit check, with "open" and "closed"
+// modes, below.
+
+function withFallback(check, mode) {
+  return async (key, now) => {
+    // 1. try calling check(key, now) and return its result
+    // 2. if it throws: console.log a warning naming error.message and mode,
+    //    then return { allowed: true } in "open" mode, or
+    //    { allowed: false, retryAfterMs: 1000 } in "closed" mode
+  };
+}
+
+const storeDown = async () => {
+  throw new Error("connection refused");
+};
+
+const apiLimit = withFallback(storeDown, "open");
+const loginLimit = withFallback(storeDown, "closed");
+console.log("GET /rates:", await apiLimit("user:ada", 0));
+console.log("POST /sessions:", await loginLimit("ip:102.89.4.17", 0));</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The whole risky part is <code>await check(key, now)</code>, in a <code>try</code>. Everything else is choosing what to return once you're in the <code>catch</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>try { return await check(key, now); } catch (error) { console.log(`warning: rate limit store failed (${error.message}); failing ${mode}`); return mode === "open" ? { allowed: true } : { allowed: false, retryAfterMs: 1000 }; }</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="9" data-file="fallback.js">
 <figcaption class="lx-bar"><span class="lx-file">fallback.js</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="9"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">function</span> <span class="t-fn">withFallback</span><span class="t-pn">(</span>check<span class="t-pn">,</span> mode<span class="t-pn">)</span> <span class="t-pn">{</span>
   <span class="t-kw">return</span> <span class="t-kw">async</span> <span class="t-pn">(</span>key<span class="t-pn">,</span> now<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
@@ -822,7 +855,46 @@ warning: rate limit store failed (connection refused); failing closed
 POST /sessions: { allowed: false, retryAfterMs: 1000 }</pre></div>
 </figure>
 <p>Browsing exchange rates keeps working through the outage; log-in attempts are refused until the store is back, so the outage cannot be used to guess passwords. The warning is not optional: a limiter that silently fails open is a limiter you do not have.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="sweep.js"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Forget full buckets</h3><p>An in-memory token bucket keeps an entry for every key it has seen. Add a <code>sweep(now)</code> function that deletes every bucket that would be <em>full</em> at <code>now</code>. Explain why deleting a full bucket changes nothing for that client, then show the map shrinking.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="10" data-file="sweep.js">
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="sweep.js" data-title="Forget full buckets"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Forget full buckets</h3><div class="lx-ex-task"><p>An in-memory token bucket keeps an entry for every key it has seen. Add a <code>sweep(now)</code> function that deletes every bucket that would be <em>full</em> at <code>now</code>. Explain why deleting a full bucket changes nothing for that client, then show the map shrinking.</p></div><script type="text/plain" class="lx-ex-starter" data-file="sweep.js">// Example to learn from: iterating a Map, deleting entries that meet a
+// condition, and returning how many are left.
+//
+//   function evictExpired(cache, now) {
+//     for (const [key, entry] of cache) {
+//       if (entry.expiresAt <= now) cache.delete(key);
+//     }
+//     return cache.size;
+//   }
+//
+// Now do the same idea for token buckets that have refilled all the way
+// back to full, below.
+
+function tokenBucket({ capacity, refillPerSecond }) {
+  const buckets = new Map();
+  const refill = (bucket, now) => Math.min(capacity, bucket.tokens + ((now - bucket.at) / 1000) * refillPerSecond);
+  return {
+    take(key, now) {
+      const bucket = buckets.get(key) ?? { tokens: capacity, at: now };
+      bucket.tokens = refill(bucket, now);
+      bucket.at = now;
+      buckets.set(key, bucket);
+      if (bucket.tokens < 1) return false;
+      bucket.tokens -= 1;
+      return true;
+    },
+    sweep(now) {
+      // delete every entry from `buckets` whose refill(bucket, now) would
+      // be >= capacity (it would be full by now); return buckets.size
+    },
+  };
+}
+
+const limiter = tokenBucket({ capacity: 10, refillPerSecond: 1 });
+for (let ip = 1; ip <= 1_000; ip++) limiter.take(`ip:10.0.${ip >> 8}.${ip & 255}`, 0);
+for (let i = 0; i < 10; i++) limiter.take("ip:198.51.100.66", 5_000);
+
+console.log("after 5 s:", limiter.sweep(5_000), "buckets");
+console.log("after 9 s:", limiter.sweep(9_000), "buckets");
+console.log("after 15 s:", limiter.sweep(15_000), "buckets");</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Call the existing <code>refill</code> helper for each bucket to find out what it would hold <em>right now</em>, without changing the bucket itself, then compare that to <code>capacity</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>for (const [key, bucket] of buckets) { if (refill(bucket, now) &gt;= capacity) buckets.delete(key); } return buckets.size;</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="10" data-file="sweep.js">
 <figcaption class="lx-bar"><span class="lx-file">sweep.js</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="10"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">function</span> <span class="t-fn">tokenBucket</span><span class="t-pn">(</span><span class="t-pn">{</span> capacity<span class="t-pn">,</span> refillPerSecond <span class="t-pn">}</span><span class="t-pn">)</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> buckets <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Map</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -888,7 +960,45 @@ after 9 s: 1 buckets
 after 15 s: 0 buckets</pre></div>
 </figure>
 <p>A missing bucket is created full, so a full bucket and no bucket give the client exactly the same allowance. The 1,000 one-off visitors each used one token at time 0 and were full again after one second, so the first sweep removed them. The busy client emptied its bucket at 5 s, so its entry stays until it has refilled, 10 seconds later. Memory now grows with <em>active</em> clients, not with every address ever seen.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="run" data-target="0" data-file="daily.js"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A daily quota</h3><p>A free plan allows 1,000 requests per day (UTC), counted with a fixed window. Write <code>dailyQuota(limit)</code> returning <code>(key, now)</code> decisions with a <code>retryAfterSeconds</code> that points at the next UTC midnight. Test it at 23:59:30 UTC with the quota already used up.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="11" data-file="daily.js">
+<div class="lx-exercise" data-exercise="3" data-mode="run" data-target="0" data-file="daily.js" data-title="A daily quota"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A daily quota</h3><div class="lx-ex-task"><p>A free plan allows 1,000 requests per day (UTC), counted with a fixed window. Write <code>dailyQuota(limit)</code> returning <code>(key, now)</code> decisions with a <code>retryAfterSeconds</code> that points at the next UTC midnight. Test it at 23:59:30 UTC with the quota already used up.</p></div><script type="text/plain" class="lx-ex-starter" data-file="daily.js">// Example to learn from: counting uses within a period, keyed by a
+// computed period id, with a countdown to the next boundary.
+//
+//   function hourlyQuota(limit) {
+//     const used = new Map();
+//     const HOUR = 3600_000;
+//     return (key, now) => {
+//       const hour = Math.floor(now / HOUR);
+//       const id = `${key}:${hour}`;
+//       const count = used.get(id) ?? 0;
+//       if (count >= limit) return { allowed: false, retryAfterSeconds: Math.ceil(((hour + 1) * HOUR - now) / 1000) };
+//       used.set(id, count + 1);
+//       return { allowed: true, remaining: limit - count - 1 };
+//     };
+//   }
+//
+// Now do the same shape for a full day instead of an hour, below.
+
+const DAY = 24 * 60 * 60 * 1000;
+
+function dailyQuota(limit) {
+  const used = new Map();
+  return (key, now) => {
+    // 1. day = Math.floor(now / DAY); id combines key and day, so
+    //    yesterday's count is never read again
+    // 2. count = how many were used so far today (default 0)
+    // 3. if count >= limit, return { allowed: false, retryAfterSeconds }
+    //    counting down to the next UTC midnight:
+    //    Math.ceil(((day + 1) * DAY - now) / 1000)
+    // 4. otherwise record one more use and return
+    //    { allowed: true, remaining: limit - count - 1 }
+  };
+}
+
+const quota = dailyQuota(1_000);
+const lateNight = Date.UTC(2026, 8, 24, 23, 59, 30);
+for (let i = 0; i < 1_000; i++) quota("key:free-plan-17", lateNight - 3_600_000);
+console.log(quota("key:free-plan-17", lateNight));
+console.log(quota("key:free-plan-17", lateNight + 31_000));</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The id needs both the key and the day number, exactly like the worked example's <code>id</code>, just built from <code>DAY</code> instead of <code>HOUR</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const day = Math.floor(now / DAY); const id = `${key}:${day}`; const count = used.get(id) ?? 0; if (count &gt;= limit) return { allowed: false, retryAfterSeconds: Math.ceil(((day + 1) * DAY - now) / 1000) }; used.set(id, count + 1); return { allowed: true, remaining: limit - count - 1 };</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="11" data-file="daily.js">
 <figcaption class="lx-bar"><span class="lx-file">daily.js</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">const</span> <span class="t-cn">DAY</span> <span class="t-op">=</span> <span class="t-num">24</span> <span class="t-op">*</span> <span class="t-num">60</span> <span class="t-op">*</span> <span class="t-num">60</span> <span class="t-op">*</span> <span class="t-num">1000</span><span class="t-pn">;</span>
 

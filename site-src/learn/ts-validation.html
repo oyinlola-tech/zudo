@@ -707,6 +707,37 @@ console.log(`2000 near-miss orders: every accepted order has quantities from 1 t
 <h2 id="practice">Practice</h2>
 <exercise title="Add a field without drift">
 <p>Add an optional <code>couponCode</code> (uppercase letters and digits, 4 to 12 characters) to the mini library's <code>NewOrderSchema</code>. You need an <code>optional</code> combinator first. Show that <code>NewOrder</code> now includes <code>couponCode</code> with no other edit.</p>
+<starter file="coupon.ts">
+// Example to learn from: an optional combinator, used on a different schema.
+//
+//   function optional<T>(inner: Schema<T>): Schema<T | undefined> {
+//     return { parse: (value, path = "") => (value === undefined ? { ok: true, value: undefined } : inner.parse(value, path)) };
+//   }
+//   const UserSchema = object({
+//     email: string({ pattern: /^[^@\s]+@[^@\s]+\.[^@\s]+$/ }),
+//     nickname: optional(string({ min: 2, max: 20 })),
+//   });
+//
+// Now write the same optional() and add couponCode to NewOrderSchema below.
+
+import { object, string, integer, array, type Infer, type Schema } from "./mini-schema.js";
+
+// write: function optional<T>(inner: Schema<T>): Schema<T | undefined> { ... }
+
+const NewOrderSchema = object({
+  customerEmail: string({ pattern: /^[^@\s]+@[^@\s]+\.[^@\s]+$/ }),
+  items: array(object({ sku: string({ pattern: /^[A-Z]+-\d+$/ }), quantity: integer({ min: 1 }) }), { min: 1 }),
+  // add: couponCode: optional(string({ min: 4, max: 12, pattern: /^[A-Z0-9]+$/ })),
+});
+type NewOrder = Infer<typeof NewOrderSchema>;
+
+const order: NewOrder = { customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: 1 }], couponCode: undefined };
+console.log(order.couponCode);
+console.log(NewOrderSchema.parse({ customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: 1 }], couponCode: "WELCOME10" }));
+console.log(NewOrderSchema.parse({ customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: 1 }], couponCode: "no" }));
+</starter>
+<hint><p>Write <code>optional</code> exactly like the worked example above, then add <code>couponCode: optional(string({ min: 4, max: 12, pattern: /^[A-Z0-9]+$/ }))</code> as a fourth key in the shape.</p></hint>
+<hint><p>No other line needs to change: <code>NewOrder</code>, <code>order.couponCode</code> and the two <code>parse</code> calls already expect the new field once the shape has it.</p></hint>
 <solution>
 <example file="coupon.ts" project="mini">
 import { object, string, integer, array, type Infer, type Schema } from "./mini-schema.js";
@@ -747,6 +778,32 @@ undefined
 </exercise>
 <exercise title="Query strings with Zod">
 <p>Write a Zod schema for <code>GET /products?page=2&amp;perPage=20&amp;category=grains</code>: <code>page</code> defaults to 1 and <code>perPage</code> to 20, both whole numbers, <code>perPage</code> at most 100; <code>category</code> is optional, one of <code>grains</code>, <code>dairy</code>, <code>drinks</code>. Parse <code>Object.fromEntries(new URLSearchParams(query))</code> for three queries, including one with <code>perPage=500</code>.</p>
+<starter file="product-query.ts">
+// Example to learn from: coercing query-string text, with a default and an
+// unknown-key check, for a search endpoint.
+//
+//   const SearchQuery = z.strictObject({
+//     limit: z.coerce.number().int().min(1).max(50).default(10),
+//     sort: z.enum(["price", "name"]).optional(),
+//   });
+//   for (const query of ["limit=5&sort=price", "", "limit=999&extra=1"]) {
+//     const result = SearchQuery.safeParse(Object.fromEntries(new URLSearchParams(query)));
+//     console.log(result.success ? result.data : result.error.issues.map((i) => i.message));
+//   }
+//
+// Now write ProductQuery the same way: page, perPage and category.
+
+import * as z from "zod";
+
+const ProductQuery = z.object({});
+
+for (const query of ["page=2&perPage=20&category=grains", "", "perPage=500&sort=price"]) {
+  const result = ProductQuery.safeParse(Object.fromEntries(new URLSearchParams(query)));
+  console.log(result.success ? result.data : result.error.issues.map((i) => i.message));
+}
+</starter>
+<hint><p>Use <code>z.strictObject</code>, not <code>z.object</code>, so an unrecognised key such as <code>sort</code> in the third query is reported. Coerce both numbers: <code>z.coerce.number().int().min(1)</code>.</p></hint>
+<hint><p><code>page: z.coerce.number().int().min(1).default(1)</code>, <code>perPage: z.coerce.number().int().min(1).max(100).default(20)</code>, <code>category: z.enum(["grains", "dairy", "drinks"]).optional()</code>.</p></hint>
 <solution>
 <example file="product-query.ts" project="zod" browser="no">
 import * as z from "zod";
@@ -772,6 +829,40 @@ for (const query of ["page=2&perPage=20&category=grains", "", "perPage=500&sort=
 </exercise>
 <exercise title="Same rules, three validators">
 <p>A transfer request has <code>fromAccount</code> and <code>toAccount</code> (10-digit strings) and <code>amountKobo</code> (a whole number from 100 to 50,000,000), and the two accounts must differ. Write it in Valibot, using <code>v.forward</code> and <code>v.partialCheck</code> for the cross-field rule, and run it on a valid transfer and on a transfer to the same account.</p>
+<starter file="transfer-valibot.ts">
+// Example to learn from: a cross-field rule attached to one field with
+// forward and partialCheck.
+//
+//   const Signup = v.pipe(
+//     v.object({ password: v.pipe(v.string(), v.minLength(8)), confirmPassword: v.string() }),
+//     v.forward(
+//       v.partialCheck([["password"], ["confirmPassword"]], (s) => s.password === s.confirmPassword, "must match password"),
+//       ["confirmPassword"],
+//     ),
+//   );
+//
+// Transfer needs the same wrapping: fromAccount must differ from toAccount.
+
+import * as v from "valibot";
+
+const AccountNumber = v.pipe(v.string(), v.regex(/^\d{10}$/, "must be 10 digits"));
+
+const Transfer = v.object({
+  fromAccount: AccountNumber,
+  toAccount: AccountNumber,
+  amountKobo: v.pipe(v.number(), v.integer(), v.minValue(100), v.maxValue(50_000_000)),
+});
+
+for (const input of [
+  { fromAccount: "0123456789", toAccount: "9876543210", amountKobo: 500000 },
+  { fromAccount: "0123456789", toAccount: "0123456789", amountKobo: 500000 },
+]) {
+  const result = v.safeParse(Transfer, input);
+  console.log(result.success ? result.output : v.flatten(result.issues).nested);
+}
+</starter>
+<hint><p>Wrap the object in <code>v.pipe(v.object({ ... }), v.forward(v.partialCheck([["fromAccount"], ["toAccount"]], (t) =&gt; t.fromAccount !== t.toAccount, "must differ from fromAccount"), ["toAccount"]))</code>.</p></hint>
+<hint><p><code>partialCheck</code> lists the fields it reads (<code>fromAccount</code>, <code>toAccount</code>), and <code>forward</code>'s second argument is the path the resulting issue is attached to.</p></hint>
 <solution>
 <example file="transfer-valibot.ts" project="valibot" browser="no">
 import * as v from "valibot";

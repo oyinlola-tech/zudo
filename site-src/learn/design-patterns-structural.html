@@ -598,6 +598,65 @@ PASS [postgres] amounts come back as numbers
 <h2 id="practice">Practice</h2>
 <exercise title="Adapt a third SMS vendor">
 <p>A third vendor's SDK has <code>dispatch(msisdn: string, body: string)</code>, wants numbers as <code>2348031234567</code>, returns <code>{ accepted: boolean; ref?: string; error?: "BAD_MSISDN" | "BLOCKED" }</code>, and throws on network errors. Write <code>thirdVendorSender(sdk)</code> implementing <code>SmsSender</code>, and run the same three contract checks against it.</p>
+<starter file="third-vendor.ts">
+// Example to learn from: wrapping a third SDK the same way, translating its
+// request, response and errors into your own interface.
+//
+//   interface Notifier { notify(userId: string, text: string): Promise<{ ok: boolean }>; }
+//   class PushSdk {
+//     async push(deviceId: string, payload: { body: string }): Promise<{ delivered: boolean }> {
+//       return { delivered: deviceId.length > 0 };
+//     }
+//   }
+//   function pushNotifier(sdk: PushSdk): Notifier {
+//     return {
+//       async notify(userId, text) {
+//         const result = await sdk.push(userId, { body: text });
+//         return { ok: result.delivered };
+//       },
+//     };
+//   }
+//
+// Now do the same for the third vendor below.
+
+import { nigerianE164, type SmsResult, type SmsSender } from "./sms.js";
+
+class ThirdVendorSdk {
+  failNext = false;
+  async dispatch(msisdn: string, body: string): Promise<{ accepted: boolean; ref?: string; error?: "BAD_MSISDN" | "BLOCKED" }> {
+    if (this.failNext) {
+      this.failNext = false;
+      throw new Error("ETIMEDOUT");
+    }
+    if (!/^234\d{10}$/.test(msisdn)) return { accepted: false, error: "BAD_MSISDN" };
+    return { accepted: true, ref: `TV-${body.length}` };
+  }
+}
+
+function thirdVendorSender(sdk: ThirdVendorSdk): SmsSender {
+  return {
+    async send(to, text): Promise<SmsResult> {
+      // 1. normalise `to` with nigerianE164(to); if it is undefined, return
+      //    { ok: false, reason: "invalid_number" }
+      // 2. inside a try/catch, call sdk.dispatch(number.slice(1), text)
+      //    (drop the leading "+"); a thrown error means { ok: false, reason: "unavailable" }
+      // 3. response.accepted && response.ref -> { ok: true, messageId: response.ref }
+      // 4. otherwise -> { ok: false, reason: response.error === "BAD_MSISDN" ? "invalid_number" : "rejected" }
+      // your code here
+      return { ok: false, reason: "unavailable" };
+    },
+  };
+}
+
+const sdk = new ThirdVendorSdk();
+const sender = thirdVendorSender(sdk);
+console.log(await sender.send("0803 123 4567", "Your login code is 482913"));
+console.log(await sender.send("0803", "hi"));
+sdk.failNext = true;
+console.log(await sender.send("+2348031234567", "hi"));
+</starter>
+<hint><p>Start like the other two adapters: <code>const number = nigerianE164(to); if (number === undefined) return { ok: false, reason: "invalid_number" };</code>.</p></hint>
+<hint><p>Then <code>try { const response = await sdk.dispatch(number.slice(1), text); if (response.accepted &amp;&amp; response.ref) return { ok: true, messageId: response.ref }; return { ok: false, reason: response.error === "BAD_MSISDN" ? "invalid_number" : "rejected" }; } catch { return { ok: false, reason: "unavailable" }; }</code>.</p></hint>
 <solution>
 <example file="third-vendor.ts" project="sms">
 import { nigerianE164, type SmsResult, type SmsSender } from "./sms.js";
@@ -648,6 +707,53 @@ console.log(await sender.send("+2348031234567", "hi"));
 
 <exercise title="A timeout decorator">
 <p>Write <code>withTimeout(sender, ms)</code>: if the wrapped <code>send</code> has not finished within <code>ms</code> milliseconds, return <code>{ ok: false, reason: "unavailable" }</code>. Clear the timer when the send finishes first, so it does not keep the process alive. Test it with a sender that never answers and one that answers at once.</p>
+<starter file="timeout-decorator.ts">
+// Example to learn from: racing real work against a timer, and always
+// clearing the timer so it cannot keep the process alive either way.
+//
+//   interface Fetcher { get(url: string): Promise<string>; }
+//   function withDeadline(fetcher: Fetcher, ms: number): Fetcher {
+//     return {
+//       async get(url) {
+//         let timer: ReturnType<typeof setTimeout> | undefined;
+//         const deadline = new Promise<string>((_, reject) => {
+//           timer = setTimeout(() => reject(new Error("deadline exceeded")), ms);
+//         });
+//         try {
+//           return await Promise.race([fetcher.get(url), deadline]);
+//         } finally {
+//           clearTimeout(timer);
+//         }
+//       },
+//     };
+//   }
+//
+// Now do the same for the SMS sender below (settle with a value, not a
+// rejection: withDeadline above rejects, but withTimeout must resolve
+// with { ok: false, reason: "unavailable" }).
+
+import type { SmsResult, SmsSender } from "./sms.js";
+
+function withTimeout(sender: SmsSender, ms: number): SmsSender {
+  return {
+    async send(to, text): Promise<SmsResult> {
+      // Race sender.send(to, text) against a timer of `ms` milliseconds that
+      // resolves (not rejects) with { ok: false, reason: "unavailable" }.
+      // Clear the timer in a finally, whichever one wins the race.
+      // your code here
+      return { ok: false, reason: "unavailable" };
+    },
+  };
+}
+
+const hanging: SmsSender = { send: () => new Promise<SmsResult>(() => {}) };
+const fast: SmsSender = { send: async () => ({ ok: true, messageId: "MSG-1" }) };
+
+console.log(await withTimeout(hanging, 20).send("+2348031234567", "hi"));
+console.log(await withTimeout(fast, 20).send("+2348031234567", "hi"));
+</starter>
+<hint><p>Build a timeout promise with <code>new Promise&lt;SmsResult&gt;((resolve) =&gt; { timer = setTimeout(() =&gt; resolve({ ok: false, reason: "unavailable" }), ms); })</code>, then <code>Promise.race</code> it against <code>sender.send(to, text)</code>.</p></hint>
+<hint><p>Wrap the <code>Promise.race</code> in <code>try { ... } finally { clearTimeout(timer); }</code> so the timer never lingers once either side settles.</p></hint>
 <solution>
 <example file="timeout-decorator.ts" project="sms">
 import type { SmsResult, SmsSender } from "./sms.js";
@@ -684,6 +790,63 @@ console.log(await withTimeout(fast, 20).send("+2348031234567", "hi"));
 
 <exercise title="Grow the repository">
 <p>Add <code>findByStatus(status)</code> to the memory repository, returning orders sorted by id, and add a contract check for it. Why must the check go into the shared contract rather than into a test of the memory repository alone?</p>
+<starter file="by-status.ts">
+// Example to learn from: a new finder that reuses an existing private
+// helper, instead of duplicating the filter-and-sort logic.
+//
+//   class MemoryUsers {
+//     #rows = new Map<string, { id: string; active: boolean }>();
+//     #sorted(keep: (u: { id: string; active: boolean }) => boolean) {
+//       return [...this.#rows.values()].filter(keep).sort((a, b) => a.id.localeCompare(b.id));
+//     }
+//     findActive() { return this.#sorted((u) => u.active); }
+//   }
+//
+// Now add findByStatus to the order repository below, the same way.
+
+import type { Order, OrderRepository, OrderStatus } from "./order-repository.js";
+
+class MemoryOrders implements OrderRepository {
+  readonly #rows = new Map<string, Order>();
+
+  async findById(id: string) {
+    return this.#rows.get(id);
+  }
+
+  async findByCustomer(email: string) {
+    return this.#sorted((order) => order.email === email.toLowerCase());
+  }
+
+  async findByStatus(status: OrderStatus) {
+    // Return every order whose status matches, sorted by id: reuse
+    // #sorted the same way findByCustomer does above.
+    // your code here
+    return [];
+  }
+
+  async save(order: Order) {
+    this.#rows.set(order.id, { ...order, email: order.email.toLowerCase() });
+  }
+
+  #sorted(keep: (order: Order) => boolean): Order[] {
+    return [...this.#rows.values()].filter(keep).sort((a, b) => a.id.localeCompare(b.id));
+  }
+}
+
+const repo = new MemoryOrders();
+await repo.save({ id: "ORD-3", email: "chi@shop.ng", status: "paid", totalKobo: 100 });
+await repo.save({ id: "ORD-1", email: "ada@shop.ng", status: "paid", totalKobo: 200 });
+await repo.save({ id: "ORD-2", email: "bola@shop.ng", status: "pending", totalKobo: 300 });
+await repo.save({ id: "ORD-2", email: "bola@shop.ng", status: "paid", totalKobo: 300 });
+
+const check = (name: string, ok: boolean) => console.log(`${ok ? "PASS" : "FAIL"} ${name}`);
+const paid = await repo.findByStatus("paid");
+console.log(paid.map((o) => o.id));
+check("sorted by id", paid.map((o) => o.id).join() === "ORD-1,ORD-2,ORD-3");
+check("a re-saved order moves to its new status", (await repo.findByStatus("pending")).length === 0);
+</starter>
+<hint><p><code>#sorted</code> takes a predicate and does the filtering and sorting for you; <code>findByStatus</code> only needs to say which orders to keep.</p></hint>
+<hint><p><code>return this.#sorted((order) =&gt; order.status === status);</code>, exactly the shape of <code>findByCustomer</code>.</p></hint>
 <solution>
 <example file="by-status.ts" project="repo">
 import type { Order, OrderRepository, OrderStatus } from "./order-repository.js";

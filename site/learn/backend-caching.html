@@ -1359,7 +1359,45 @@ docker exec -it shop-cache redis-cli"><span class="lx-cmd"><span class="lx-promp
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="negative-ttl.ts" data-project="cache"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A shorter TTL for 'not found'</h3><p>Missing products are cached for the full 60 seconds, like real ones. If product 4 is created a moment after someone asked for it, it stays invisible for a minute. Write <code>getProduct</code> so that found products are cached for 60 seconds and missing ones for 5.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="negative-ttl.ts" data-project="cache">
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="negative-ttl.ts" data-project="cache" data-title="A shorter TTL for 'not found'"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A shorter TTL for 'not found'</h3><div class="lx-ex-task"><p>Missing products are cached for the full 60 seconds, like real ones. If product 4 is created a moment after someone asked for it, it stays invisible for a minute. Write <code>getProduct</code> so that found products are cached for 60 seconds and missing ones for 5.</p></div><script type="text/plain" class="lx-ex-starter" data-file="negative-ttl.ts">// Example to learn from: trusting a positive answer longer than a negative
+// one, from the same cache.
+//
+//   async function isPremium(userId: number): Promise<boolean> {
+//     const key = `premium:${userId}`;
+//     const cached = cache.get(key);
+//     if (cached !== undefined) return cached;
+//     const result = await checkPremium(userId);
+//     cache.set(key, result, result ? 60_000 : 5_000); // trust "yes" longer than "no"
+//     return result;
+//   }
+//
+// Now do the same for products below: a shorter TTL when nothing was found.
+
+import { CatalogDb } from "./src/catalog-db.js";
+import type { Product } from "./src/catalog-db.js";
+import { ManualClock } from "./src/clock.js";
+import { TtlCache } from "./src/ttl-cache.js";
+
+const clock = new ManualClock();
+const db = new CatalogDb();
+const cache = new TtlCache<Product | null>(clock);
+
+async function getProduct(id: number): Promise<Product | null> {
+  const key = `product:${id}`;
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  const product = (await db.findProduct(id)) ?? null;
+  // cache a real product for 60_000 ms, but a null (not found) for only 5_000 ms
+  cache.set(key, product, 60_000);
+  return product;
+}
+
+await getProduct(1);
+await getProduct(4);
+clock.advance(6_000);
+await getProduct(1);
+await getProduct(4);
+console.log("reads:", db.reads, "(product 1 once, product 4 twice)");</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The TTL only needs to depend on whether <code>product</code> is <code>null</code>: a ternary right inside the <code>cache.set</code> call.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>cache.set(key, product, product === null ? 5_000 : 60_000);</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="negative-ttl.ts" data-project="cache">
 <figcaption class="lx-bar"><span class="lx-file">negative-ttl.ts</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="18"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">CatalogDb</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./src/catalog-db.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Product</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./src/catalog-db.js"</span><span class="t-pn">;</span>
@@ -1413,7 +1451,34 @@ console.log("reads:", db.reads, "(product 1 once, product 4 twice)");</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx negative-ttl.ts</code> and of the browser terminal</div><pre class="lx-no-copy">reads: 3 (product 1 once, product 4 twice)</pre></div>
 </figure>
 <p>Negative entries protect the database from floods of requests for ids that do not exist, but they should expire quickly, because "does not exist yet" is the most likely thing to change.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="jitter.ts" data-project="cache"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Jitter</h3><p>Write <code>withJitter(ttlMs, fraction, random)</code> that returns a TTL randomly spread by ± <code>fraction</code> (0.1 means ±10%). Take <code>random</code> as a parameter (a function returning a number from 0 to 1) so it can be tested. Show the spread for 1,000 keys with a TTL of 60 seconds.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="19" data-file="jitter.ts" data-project="cache">
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="jitter.ts" data-project="cache" data-title="Jitter"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Jitter</h3><div class="lx-ex-task"><p>Write <code>withJitter(ttlMs, fraction, random)</code> that returns a TTL randomly spread by ± <code>fraction</code> (0.1 means ±10%). Take <code>random</code> as a parameter (a function returning a number from 0 to 1) so it can be tested. Show the spread for 1,000 keys with a TTL of 60 seconds.</p></div><script type="text/plain" class="lx-ex-starter" data-file="jitter.ts">// Example to learn from: taking `random` as a parameter so a random choice
+// can be tested exactly, instead of calling Math.random() directly.
+//
+//   function pickWeighted<T>(items: readonly T[], random: () => number): T {
+//     const index = Math.floor(random() * items.length);
+//     return items[index];
+//   }
+//
+//   console.log(pickWeighted(["red", "green", "blue"], () => 0));
+//   console.log(pickWeighted(["red", "green", "blue"], () => 0.99));
+//
+// Now write withJitter below: same idea, random is a parameter, but it
+// spreads a TTL by a fraction instead of picking from a list.
+
+function withJitter(ttlMs: number, fraction: number, random: () => number): number {
+  // spread = ttlMs * fraction
+  // place the result uniformly between ttlMs - spread and ttlMs + spread,
+  // using random() (a number from 0 to 1) to choose where in that range
+  return ttlMs;
+}
+
+let seed = 7;
+const random = () => (seed = (seed * 16_807) % 2_147_483_647) / 2_147_483_647;
+
+const ttls = Array.from({ length: 1_000 }, () => withJitter(60_000, 0.1, random));
+console.log("shortest:", Math.min(...ttls) >= 54_000, "longest:", Math.max(...ttls) <= 66_000);
+console.log("distinct expiry times:", new Set(ttls).size > 900);
+console.log(withJitter(60_000, 0.1, () => 0), withJitter(60_000, 0.1, () => 0.5), withJitter(60_000, 0.1, () => 1));</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>const spread = ttlMs * fraction;</code> gives you how far to move in either direction from <code>ttlMs</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>Math.round(ttlMs - spread + random() * 2 * spread)</code>: at <code>random() === 0</code> this is <code>ttlMs - spread</code>, at <code>1</code> it is <code>ttlMs + spread</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="19" data-file="jitter.ts" data-project="cache">
 <figcaption class="lx-bar"><span class="lx-file">jitter.ts</span><button type="button" class="lx-edit" data-index="19" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="19"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">function</span> <span class="t-fn">withJitter</span><span class="t-pn">(</span>ttlMs<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">,</span> fraction<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">,</span> random<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-ty">number</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">number</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> spread <span class="t-op">=</span> ttlMs <span class="t-op">*</span> fraction<span class="t-pn">;</span>
@@ -1445,7 +1510,7 @@ distinct expiry times: true
 54000 60000 66000</pre></div>
 </figure>
 <p>Instead of 1,000 keys expiring in the same millisecond, their expiries spread over 12 seconds, so the database sees a gentle stream of reloads instead of one spike. Passing <code>random</code> in makes the edges (0, 0.5, 1) easy to check.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="open"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>The cart that everyone saw</h3><p>This code caches carts. Find the bug, explain its effect, and fix it.</p>
+<div class="lx-exercise" data-exercise="3" data-mode="open" data-title="The cart that everyone saw"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>The cart that everyone saw</h3><div class="lx-ex-task"><p>This code caches carts. Find the bug, explain its effect, and fix it.</p>
 <figure class="lx-example" data-index="20" data-file="cart-cache.ts" data-project="cartbug">
 <figcaption class="lx-bar"><span class="lx-file">cart-cache.ts</span><button type="button" class="lx-edit" data-index="20" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">getCart</span><span class="t-pn">(</span>customerId<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-ty">Cart</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>
@@ -1455,7 +1520,9 @@ distinct expiry times: true
 <script type="text/plain" class="lx-src">async function getCart(customerId: number): Promise<Cart> {
   return cache.get("cart", 30_000, () => carts.findByCustomer(customerId));
 }</script>
-</figure><p class="lx-ex-how">Write it in the editor and run it. Hints and the solution open up once you have tried.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>The key <code>"cart"</code> does not contain the customer id. The first customer's cart is cached, and for the next 30 seconds every other customer gets it: their name, address and items. It is a privacy breach, and the checkout would charge the wrong customer for the wrong items. The fix is to put every input in the key:</p>
+</figure></div><script type="text/plain" class="lx-ex-starter" data-file="cart-cache.ts">async function getCart(customerId: number): Promise<Cart> {
+  return cache.get("cart", 30_000, () => carts.findByCustomer(customerId));
+}</script><p class="lx-ex-how">Write it in the editor and run it. Hints and the solution open up once you have tried.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Look at the cache key: does it depend on <code>customerId</code> at all?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Every call reads and writes the exact same key, <code>"cart"</code>, no matter who is asking. What must go into the key so two different customers never share an entry?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>The key <code>"cart"</code> does not contain the customer id. The first customer's cart is cached, and for the next 30 seconds every other customer gets it: their name, address and items. It is a privacy breach, and the checkout would charge the wrong customer for the wrong items. The fix is to put every input in the key:</p>
 <figure class="lx-example" data-index="21" data-file="cart-cache.ts" data-project="cartfix">
 <figcaption class="lx-bar"><span class="lx-file">cart-cache.ts</span><button type="button" class="lx-edit" data-index="21" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">getCart</span><span class="t-pn">(</span>customerId<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-ty">Cart</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>

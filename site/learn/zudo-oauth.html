@@ -1114,7 +1114,7 @@ token URL to cloud metadata -&gt; OAuthEndpointNotAllowedError - tokenUrl resolv
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Spot the mistakes</h3><p>This callback handler works, but has three security problems. Find them.</p>
+<div class="lx-exercise" data-exercise="1" data-mode="think" data-title="Spot the mistakes"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Spot the mistakes</h3><div class="lx-ex-task"><p>This callback handler works, but has three security problems. Find them.</p>
 <pre><code>router.get("/auth/google/callback", async (ctx) => {
   const tokens = await exchangeCodeForToken(google, {
     code: String(ctx.query.code), codeVerifier: String(ctx.query.verifier), redirectUri: CALLBACK_URL,
@@ -1122,12 +1122,49 @@ token URL to cloud metadata -&gt; OAuthEndpointNotAllowedError - tokenUrl resolv
   const profile = await fetchUserInfo(google, tokens.accessToken);
   const user = usersByEmail.get(profile.email ?? "") ?? createUser(profile);
   return createResponseContext().json({ googleToken: tokens.accessToken });
-});</code></pre><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ol>
+});</code></pre></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Compare this handler with <code>pending.ts</code> and <code>try-state.ts</code>: where does the real flow get its <code>state</code> and PKCE verifier from, and where does this one get them from instead?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Look at <code>findOrCreateAccount</code>: what does it key an account by, and what does this handler match on instead? And once the flow finishes, whose token does the client end up holding — yours, or the provider's?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ol>
 <li>No state check. Anyone can send a victim a callback link with the attacker's code (login CSRF). Take the pending login from the server and call <code>verifyState</code> first.</li>
 <li>The PKCE verifier comes from the query string, so it travelled through the browser next to the code. A thief who has one has both. Keep the verifier on the server, as in <code>pending.ts</code>.</li>
 <li>Accounts are matched by email, verified or not, which allows account takeover. And the handler returns Google's access token to the browser instead of starting your own session. Key accounts by <code>provider:providerId</code> and return your own token.</li>
 </ol></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="github.ts" data-project="oauth" data-command="npx tsx github.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A GitHub config</h3><p>Write <code>githubConfig()</code> like <code>googleConfig()</code>, reading <code>GITHUB_CLIENT_ID</code> and <code>GITHUB_CLIENT_SECRET</code>, with the callback <code>http://localhost:3000/auth/github/callback</code> and only the <code>read:user</code> scope. Print the <code>scope</code> and <code>redirect_uri</code> of its authorization URL.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="17" data-file="github.ts" data-project="oauth">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="github.ts" data-project="oauth" data-command="npx tsx github.ts" data-title="A GitHub config"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A GitHub config</h3><div class="lx-ex-task"><p>Write <code>githubConfig()</code> like <code>googleConfig()</code>, reading <code>GITHUB_CLIENT_ID</code> and <code>GITHUB_CLIENT_SECRET</code>, with the callback <code>http://localhost:3000/auth/github/callback</code> and only the <code>read:user</code> scope. Print the <code>scope</code> and <code>redirect_uri</code> of its authorization URL.</p></div><script type="text/plain" class="lx-ex-starter" data-file="github.ts">// Example to learn from: a provider config for a different service.
+//
+//   function discordConfig(): OAuthConfig {
+//     return {
+//       provider: "discord",
+//       clientId: requireEnv("DISCORD_CLIENT_ID"),
+//       clientSecret: requireEnv("DISCORD_CLIENT_SECRET"),
+//       allowedRedirectUris: ["http://localhost:3000/auth/discord/callback"],
+//       scopes: ["identify"],
+//     };
+//   }
+//
+// Now write githubConfig() the same way, for GitHub, with one scope.
+
+import { randomBytes } from "node:crypto";
+import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
+import type { OAuthConfig } from "@zudojs/auth-oauth";
+import { requireEnv } from "./env.js";
+
+process.env.GITHUB_CLIENT_ID ??= "demo-github-client-id";
+process.env.GITHUB_CLIENT_SECRET ??= randomBytes(24).toString("base64url");
+
+const GITHUB_CALLBACK = "http://localhost:3000/auth/github/callback";
+
+function githubConfig(): OAuthConfig {
+  // provider: "github", clientId/clientSecret from requireEnv,
+  // allowedRedirectUris: [GITHUB_CALLBACK], scopes: ["read:user"] only.
+  return {
+    provider: "github",
+    clientId: requireEnv("GITHUB_CLIENT_ID"),
+    clientSecret: requireEnv("GITHUB_CLIENT_SECRET"),
+    allowedRedirectUris: [GITHUB_CALLBACK],
+  };
+}
+
+const { url } = createAuthorizationUrl(githubConfig(), { state: generateState(), redirectUri: GITHUB_CALLBACK });
+const params = new URL(url).searchParams;
+console.log(new URL(url).host, params.get("scope"), params.get("redirect_uri"));</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Add a <code>scopes</code> field to the returned object: <code>scopes: ["read:user"]</code>. Without it, the preset's own default scopes are used instead.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>return { provider: "github", clientId: requireEnv("GITHUB_CLIENT_ID"), clientSecret: requireEnv("GITHUB_CLIENT_SECRET"), allowedRedirectUris: [GITHUB_CALLBACK], scopes: ["read:user"] };</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="17" data-file="github.ts" data-project="oauth">
 <figcaption class="lx-bar"><span class="lx-file">github.ts</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> randomBytes <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:crypto"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createAuthorizationUrl<span class="t-pn">,</span> generateState <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/auth-oauth"</span><span class="t-pn">;</span>

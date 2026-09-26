@@ -189,6 +189,37 @@ try {
 <h2 id="practice">Practice</h2>
 <exercise title="Spot the cycle">
 <p>Give the mini framework three modules where <code>orders</code> needs <code>payments</code>, <code>payments</code> needs <code>mailer</code>, and <code>mailer</code> needs <code>orders</code>. What does <code>start</code> do?</p>
+<starter file="cycle.ts">
+// Example to learn from: describing a dependency graph as data, and reading
+// the error a cycle produces.
+//
+//   const app = createApp([
+//     { name: "a", dependsOn: ["b"] },
+//     { name: "b", dependsOn: ["a"] },
+//   ]);
+//   try {
+//     await app.start();
+//   } catch (error) {
+//     console.log(error instanceof Error ? error.message : error);
+//   }
+//
+// Now describe the orders/payments/mailer cycle below.
+
+import { createApp } from "./framework.js";
+
+const app = createApp([
+  // orders depends on payments, payments depends on mailer, mailer depends on orders
+  // your code here
+]);
+
+try {
+  await app.start();
+} catch (error) {
+  console.log(error instanceof Error ? error.message : error);
+}
+</starter>
+<hint><p>Three objects, each with a <code>name</code> and a <code>dependsOn</code> array of one name, forming a ring: <code>{ name: "orders", dependsOn: ["payments"] }</code>, and so on.</p></hint>
+<hint><p><code>[{ name: "orders", dependsOn: ["payments"] }, { name: "payments", dependsOn: ["mailer"] }, { name: "mailer", dependsOn: ["orders"] }]</code>.</p></hint>
 <solution>
 <example file="cycle.ts" project="fw">
 import { createApp } from "./framework.js";
@@ -213,6 +244,50 @@ Circular dependency at "orders"
 </exercise>
 <exercise title="Undo a failed start">
 <p>If the database fails to start, the config module is already running and is never stopped. Write <code>startAll(modules)</code>: it starts the modules in the given order, and if one throws, it stops the ones already started, in reverse, then rethrows the error.</p>
+<starter file="rollback.ts">
+// Example to learn from: undoing what already succeeded, in reverse, when a
+// later step fails.
+//
+//   interface Resource { name: string; open(): void; close(): void; }
+//   function openAll(resources: Resource[]): Resource[] {
+//     const opened: Resource[] = [];
+//     try {
+//       for (const r of resources) { r.open(); opened.push(r); }
+//       return opened;
+//     } catch (error) {
+//       for (const r of [...opened].reverse()) r.close();
+//       throw error;
+//     }
+//   }
+//
+// Now do the same for starting modules below.
+
+import type { Module } from "./framework.js";
+
+async function startAll(modules: readonly Module[]): Promise<Module[]> {
+  const started: Module[] = [];
+  // 1. try: for each module, await module.start?.(), then push it onto
+  //    `started`; once every module has started, return `started`.
+  // 2. catch: stop the modules in `started`, in reverse (await
+  //    module.stop?.() for each), then rethrow the caught error.
+  // your code here
+  return started;
+}
+
+const modules: Module[] = [
+  { name: "config", start: () => console.log("start config"), stop: () => console.log("stop  config") },
+  { name: "database", start: () => { throw new Error("connection refused"); } },
+  { name: "http", start: () => console.log("start http") },
+];
+
+try {
+  await startAll(modules);
+} catch (error) {
+  console.log("could not start:", error instanceof Error ? error.message : error);
+}
+</starter>
+<hint><p>Wrap the loop in <code>try</code>: <code>for (const module of modules) { await module.start?.(); started.push(module); } return started;</code>.</p></hint>
+<hint><p>In <code>catch (error)</code>: <code>for (const module of [...started].reverse()) { await module.stop?.(); }</code>, then <code>throw error;</code> so the caller still sees the original failure.</p></hint>
 <solution>
 <example file="rollback.ts" project="fw">
 import type { Module } from "./framework.js";

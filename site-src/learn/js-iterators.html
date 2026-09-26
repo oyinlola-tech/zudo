@@ -870,6 +870,50 @@ console.log(`₦${totalKobo / 100} from ${api.requests} requests`);
 <h2 id="practice">Practice</h2>
 <exercise title="Round-robin ticket assignment">
 <p>Support tickets are assigned to agents in turn: Ada, Chidi, Tunde, Ada, Chidi, and so on, forever. Write <code>cycle(items)</code>, an infinite iterable that repeats the items of an array in order. Use it to assign five tickets, and use <code>take</code> to list the first four turns. What should happen with an empty array?</p>
+<starter file="cycle.js">
+// Example to learn from: an infinite iterable that cycles a fixed list,
+// for chart colours instead of support agents.
+//
+//   function repeatForever(values) {
+//     const list = [...values];
+//     if (list.length === 0) throw new RangeError("repeatForever needs at least one value");
+//     return {
+//       [Symbol.iterator]() {
+//         let i = 0;
+//         return Iterator.from({ next: () => ({ value: list[i++ % list.length], done: false }) });
+//       },
+//     };
+//   }
+//   const colors = repeatForever(["red", "blue"]);
+//   console.log(Iterator.from(colors).take(5).toArray()); // ['red','blue','red','blue','red']
+//
+// Now do the same idea for cycle below.
+
+function cycle(items) {
+  // your code here:
+  // 1. const list = [...items]; throw new RangeError("cycle needs at least
+  //    one item") when list.length === 0
+  // 2. return { [Symbol.iterator]() { ... } } whose iterator yields
+  //    list[i++ % list.length] forever (done: false, never done: true) —
+  //    wrap a plain { next } object with Iterator.from so .take works on it
+}
+
+const agents = cycle(["Ada", "Chidi", "Tunde"]);
+const tickets = ["T-101", "T-102", "T-103", "T-104", "T-105"];
+
+const who = agents[Symbol.iterator]();
+for (const ticket of tickets) console.log(ticket, "->", who.next().value);
+
+console.log(Iterator.from(agents).take(4).toArray());
+
+try {
+  cycle([]);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</starter>
+<hint><p>Each call to the iterator's <code>next()</code> should return the next item and advance a counter: <code>list[i++ % list.length]</code> wraps back to the start once <code>i</code> passes the list's length, and <code>done</code> is always <code>false</code>.</p></hint>
+<hint><p><code>[Symbol.iterator]() { let i = 0; return Iterator.from({ next: () =&gt; ({ value: list[i++ % list.length], done: false }) }); }</code>, with the length check and throw at the top of <code>cycle</code>.</p></hint>
 <solution>
 <example file="cycle.js">
 function cycle(items) {
@@ -913,6 +957,47 @@ RangeError: cycle needs at least one item
 </exercise>
 <exercise title="Make a cart iterable">
 <p>Write a <code>Cart</code> class that stores quantities in a <code>Map</code> from SKU to quantity, with <code>add(sku, qty)</code>. Make it iterable so that <code>for (const line of cart)</code> gives objects <code>{ sku, qty }</code>, and <code>[...cart]</code> works. Walking it twice must work.</p>
+<starter file="cart-iterable.js">
+// Example to learn from: making a class iterable by reshaping a Map's own
+// iterator, for a wallet of currency balances instead of a cart.
+//
+//   class Wallet {
+//     #balances = new Map();
+//     deposit(currency, amount) {
+//       this.#balances.set(currency, (this.#balances.get(currency) ?? 0) + amount);
+//       return this;
+//     }
+//     [Symbol.iterator]() {
+//       return this.#balances.entries().map(([currency, amount]) => ({ currency, amount }));
+//     }
+//   }
+//   const wallet = new Wallet().deposit("NGN", 500).deposit("USD", 10).deposit("NGN", 250);
+//   console.log([...wallet]); // [{ currency: 'NGN', amount: 750 }, { currency: 'USD', amount: 10 }]
+//
+// Now do the same idea for Cart below.
+
+class Cart {
+  #lines = new Map();
+
+  add(sku, qty = 1) {
+    this.#lines.set(sku, (this.#lines.get(sku) ?? 0) + qty);
+    return this;
+  }
+
+  [Symbol.iterator]() {
+    // your code here: return this.#lines.entries().map(([sku, qty]) => ({ sku, qty }))
+    // — calling entries() fresh each time is what makes walking twice work.
+    return [{}][Symbol.iterator]();
+  }
+}
+
+const cart = new Cart().add("RICE-5", 2).add("OIL-1").add("RICE-5");
+
+for (const line of cart) console.log(line);
+console.log([...cart].length, [...cart][0].qty);
+</starter>
+<hint><p>A <code>Map</code>'s <code>entries()</code> is itself iterable, and iterators from <code>@zudojs</code>-style modern JS have a <code>.map</code> helper: <code>this.#lines.entries().map(([sku, qty]) =&gt; ({ sku, qty }))</code>.</p></hint>
+<hint><p><code>[Symbol.iterator]() { return this.#lines.entries().map(([sku, qty]) =&gt; ({ sku, qty })); }</code> — return a fresh one from <code>entries()</code> every call, so a second walk is not exhausted by the first.</p></hint>
 <solution>
 <example file="cart-iterable.js">
 class Cart {
@@ -945,6 +1030,58 @@ console.log([...cart].length, [...cart][0].qty);
 </exercise>
 <exercise title="Batch inserts with chunk">
 <p>Saving 10,000 orders one row at a time is slow; databases prefer batches. Write <code>chunk(iterable, size)</code>, a lazy iterable that yields arrays of up to <code>size</code> items from any iterable, including a paginator or an infinite sequence. The last batch may be shorter.</p>
+<starter file="chunk.js">
+// Example to learn from: a lazy wrapper that pulls from another iterator
+// on demand and forwards return(), yielding overlapping pairs instead of
+// fixed-size batches.
+//
+//   function pairs(iterable) {
+//     return {
+//       [Symbol.iterator]() {
+//         const source = iterable[Symbol.iterator]();
+//         let prev = source.next();
+//         return {
+//           next() {
+//             if (prev.done) return { value: undefined, done: true };
+//             const curr = source.next();
+//             if (curr.done) { prev = curr; return { value: undefined, done: true }; }
+//             const result = { value: [prev.value, curr.value], done: false };
+//             prev = curr;
+//             return result;
+//           },
+//           return() { source.return?.(); return { value: undefined, done: true }; },
+//         };
+//       },
+//     };
+//   }
+//   console.log([...pairs([1, 2, 3, 4])]); // [[1,2],[2,3],[3,4]]
+//
+// Now do the same shape of wrapper for chunk below: pull `size` items at a
+// time instead of one pair at a time.
+
+function chunk(iterable, size) {
+  // your code here:
+  // 1. throw new RangeError("size must be a positive whole number") unless
+  //    Number.isInteger(size) && size >= 1
+  // 2. [Symbol.iterator]() should get iterable[Symbol.iterator](), then on
+  //    each next(), pull from the source in a loop building a `batch` array
+  //    until it has `size` items or the source is done; return
+  //    { value: batch, done: false } while batch has items, else
+  //    { value: undefined, done: true }
+  // 3. add a return() that forwards to source.return?.()
+  return { [Symbol.iterator]: () => [][Symbol.iterator]() };
+}
+
+const orderIds = ["ORD-1", "ORD-2", "ORD-3", "ORD-4", "ORD-5", "ORD-6", "ORD-7"];
+for (const batch of chunk(orderIds, 3)) console.log("INSERT", batch);
+
+let n = 0;
+const endless = { [Symbol.iterator]: () => ({ next: () => ({ value: ++n, done: false }) }) };
+const [firstBatch, secondBatch] = chunk(endless, 2);
+console.log(firstBatch, secondBatch);
+</starter>
+<hint><p>Inside <code>next()</code>, keep calling <code>source.next()</code> in a <code>while</code> loop, pushing values onto <code>batch</code>, until either <code>batch.length</code> reaches <code>size</code> or the source reports <code>done: true</code>.</p></hint>
+<hint><p>See the pattern in full: <code>while (batch.length &lt; size) { const result = source.next(); if (result.done) { finished = true; break; } batch.push(result.value); }</code>, then <code>return batch.length ? { value: batch, done: false } : { value: undefined, done: true };</code>. Do not forget <code>return() { finished = true; source.return?.(); return { value: undefined, done: true }; }</code>.</p></hint>
 <solution>
 <example file="chunk.js">
 function chunk(iterable, size) {

@@ -2616,7 +2616,64 @@ describe("BookService", () => {
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="try-get-user.ts" data-project="api" data-command="npx tsx try-get-user.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A private profile</h3><p>Add <code>GET /users/:id</code>. A user may read their own profile and an admin may read anyone's. Anyone else gets <strong>404</strong>, not 403, so ids cannot be probed. Write it as a function that uses the project's repository, and try it as Ada, as the admin and with no token.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="31" data-file="try-get-user.ts" data-project="api">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="try-get-user.ts" data-project="api" data-command="npx tsx try-get-user.ts" data-title="A private profile"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A private profile</h3><div class="lx-ex-task"><p>Add <code>GET /users/:id</code>. A user may read their own profile and an admin may read anyone's. Anyone else gets <strong>404</strong>, not 403, so ids cannot be probed. Write it as a function that uses the project's repository, and try it as Ada, as the admin and with no token.</p></div><script type="text/plain" class="lx-ex-starter" data-file="try-get-user.ts">// Example to learn from: the same "owner or admin, otherwise not found"
+// shape for a different resource.
+//
+//   async function getWallet(request: ApiRequest): Promise<ApiResponse<Wallet>> {
+//     const principal = requirePrincipal(await auth.principalFrom(request));
+//     const userId = toId(request.params["userId"]);
+//     const wallet = principal.userId === userId || principal.role === "admin"
+//       ? await wallets.findByUserId(userId)
+//       : undefined;
+//     if (wallet === undefined) throw new AppError({ kind: "not_found", resource: "wallet", id: userId });
+//     return { status: 200, body: wallet };
+//   }
+//
+// Deciding not to fetch at all, for someone who could never see the result,
+// is what keeps the 404 identical for "not yours" and "does not exist".
+// Now do the same for getUser below.
+
+import { randomBytes } from "node:crypto";
+
+import { Authenticator, toId } from "./src/http/http.js";
+import type { ApiRequest, ApiResponse } from "./src/http/http.js";
+import { run } from "./src/http/run.js";
+import { openDatabase } from "./src/infra/database.js";
+import { HmacTokens } from "./src/infra/security.js";
+import { PgUserRepository } from "./src/infra/user.repository.js";
+import { AppError } from "./src/shared/errors.js";
+import { requirePrincipal } from "./src/shared/policy.js";
+import { toUserResponse } from "./src/users/user.dto.js";
+import type { UserResponse } from "./src/users/user.dto.js";
+
+const db = await openDatabase();
+await db.exec(`INSERT INTO users (email, password_hash, role, created_at) VALUES
+  ('admin@bookstore.test', 'x', 'admin', '2026-01-05T08:00:00Z'),
+  ('ada@example.com', 'x', 'customer', '2026-02-01T08:00:00Z'),
+  ('bola@example.com', 'x', 'customer', '2026-03-01T08:00:00Z')`);
+const users = new PgUserRepository(db);
+const tokens = new HmacTokens(randomBytes(32).toString("hex"));
+const auth = new Authenticator(tokens, users);
+
+async function getUser(request: ApiRequest): Promise<ApiResponse<UserResponse>> {
+  // 1. const principal = requirePrincipal(await auth.principalFrom(request));
+  //    (this alone throws "unauthenticated" for a missing or bad token)
+  // 2. const id = toId(request.params["id"]);
+  // 3. only fetch the user when principal.userId === id or
+  //    principal.role === "admin"; skip the fetch for anyone else
+  // 4. missing, or skipped: throw
+  //    new AppError({ kind: "not_found", resource: "user", id })
+  // 5. return { status: 200, body: toUserResponse(user) }
+  return { status: 200, body: null as unknown as UserResponse };
+}
+
+const ada = tokens.issue(2);
+console.log(await run(getUser, { params: { id: "2" }, token: ada }));
+console.log(await run(getUser, { params: { id: "3" }, token: ada }));
+console.log(await run(getUser, { params: { id: "99" }, token: ada }));
+console.log(await run(getUser, { params: { id: "3" }, token: tokens.issue(1) }));
+console.log(await run(getUser, { params: { id: "3" } }));
+await db.close();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Start with <code>const principal = requirePrincipal(await auth.principalFrom(request));</code> and <code>const id = toId(request.params["id"]);</code>. Those two lines alone give you the 401 case.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const user = principal.userId === id || principal.role === "admin" ? await users.findById(id) : undefined;</code>, then <code>if (user === undefined) throw new AppError({ kind: "not_found", resource: "user", id });</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="31" data-file="try-get-user.ts" data-project="api">
 <figcaption class="lx-bar"><span class="lx-file">try-get-user.ts</span><button type="button" class="lx-edit" data-index="31" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> randomBytes <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:crypto"</span><span class="t-pn">;</span>
 
@@ -2700,7 +2757,53 @@ await db.close();</script>
 401 {"error":{"code":"unauthenticated","message":"Log in and send your token"}}</pre></div>
 </figure>
 <p>Ada gets the same 404 for Bola (who exists) and for user 99 (who does not), so she cannot tell them apart. Anonymous callers still get 401: telling them to log in reveals nothing.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="rate-limited.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Add a failure kind</h3><p>Add <code>{ kind: "rate_limited"; retryAfterSeconds: number }</code> to a copy of the failure union, and make the mapping compile again: status 429, a message that says when to retry, and the response should carry a <code>Retry-After</code> header value.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="32" data-file="rate-limited.ts">
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="rate-limited.ts" data-title="Add a failure kind"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Add a failure kind</h3><div class="lx-ex-task"><p>Add <code>{ kind: "rate_limited"; retryAfterSeconds: number }</code> to a copy of the failure union, and make the mapping compile again: status 429, a message that says when to retry, and the response should carry a <code>Retry-After</code> header value.</p></div><script type="text/plain" class="lx-ex-starter" data-file="rate-limited.ts">// Example to learn from: adding a new case to a discriminated union, and
+// updating every place that switches on it.
+//
+//   type Shape =
+//     | { readonly kind: "circle"; readonly radius: number }
+//     | { readonly kind: "square"; readonly side: number };
+//
+//   function area(shape: Shape): number {
+//     switch (shape.kind) {
+//       case "circle": return Math.PI * shape.radius ** 2;
+//       case "square": return shape.side ** 2;
+//     }
+//   }
+//
+// Adding { kind: "triangle"; base: number; height: number } means TypeScript
+// points at every switch missing a case for it.
+// Now add "rate_limited" to Failure below.
+
+type Failure =
+  | { readonly kind: "validation"; readonly issues: readonly string[] }
+  | { readonly kind: "not_found"; readonly resource: string };
+// add a third member here:
+//   { readonly kind: "rate_limited"; readonly retryAfterSeconds: number }
+
+const STATUS = {
+  validation: 400,
+  not_found: 404,
+  // add: rate_limited: 429,
+} as const satisfies Record<Failure["kind"], number>;
+
+function messageFor(failure: Failure): string {
+  switch (failure.kind) {
+    case "validation": return "The request is not valid";
+    case "not_found": return `No such ${failure.resource}`;
+    // add a "rate_limited" case: a message naming failure.retryAfterSeconds
+  }
+}
+
+function toResponse(failure: Failure) {
+  // when failure.kind is "rate_limited", headers should hold
+  // { "retry-after": String(failure.retryAfterSeconds) }; otherwise {}
+  const headers = {};
+  return { status: STATUS[failure.kind], headers, message: messageFor(failure) };
+}
+
+console.log(toResponse({ kind: "rate_limited", retryAfterSeconds: 30 }));
+console.log(toResponse({ kind: "not_found", resource: "book" }));</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Add the member to the <code>Failure</code> union first; TypeScript will then point at <code>STATUS</code> and the <code>switch</code>, which both need a <code>"rate_limited"</code> entry.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>case "rate_limited": return `Too many requests, try again in ${failure.retryAfterSeconds} seconds`;</code> and <code>const headers = failure.kind === "rate_limited" ? { "retry-after": String(failure.retryAfterSeconds) } : {};</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="32" data-file="rate-limited.ts">
 <figcaption class="lx-bar"><span class="lx-file">rate-limited.ts</span><button type="button" class="lx-edit" data-index="32" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="32"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">type</span> <span class="t-ty">Failure</span> <span class="t-op">=</span>
   <span class="t-op">|</span> <span class="t-pn">{</span> <span class="t-kw">readonly</span> kind<span class="t-op">:</span> <span class="t-str">"validation"</span><span class="t-pn">;</span> <span class="t-kw">readonly</span> issues<span class="t-op">:</span> <span class="t-kw">readonly</span> <span class="t-ty">string</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-pn">}</span>
@@ -2763,7 +2866,7 @@ console.log(toResponse({ kind: "not_found", resource: "book" }));</script>
 { status: 404, headers: {}, message: 'No such book' }</pre></div>
 </figure>
 <p>The compiler listed exactly the two places to change. Inside <code>failure.kind === "rate_limited"</code>, TypeScript knows <code>retryAfterSeconds</code> exists; you learned that narrowing in <a href="/learn/ts-narrowing">Narrowing</a>.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Which layer owns it?</h3><p>Place each job in a layer (DTO parser, mapper, service, repository, controller): (a) "the price must be a whole number of cents"; (b) "only admins may change prices"; (c) "turn <code>price_cents</code> into <code>priceCents</code>"; (d) "show the price as <code>12.99</code>"; (e) "a customer's second order today gets free delivery"; (f) "read the <code>Authorization</code> header".</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) The DTO parser: it is about the shape of the input. (b) The service: it depends on who is asking. (c) The repository's row mapper: only it knows column names. (d) The response mapper: presentation for the client. (e) The service: a business rule that needs data (today's orders) and knows nothing about HTTP or SQL. (f) The HTTP layer, the <code>Authenticator</code>: headers are an HTTP idea, and the service only ever sees the resulting <code>Principal</code>.</p></div></div>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Which layer owns it?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Which layer owns it?</h3><div class="lx-ex-task"><p>Place each job in a layer (DTO parser, mapper, service, repository, controller): (a) "the price must be a whole number of cents"; (b) "only admins may change prices"; (c) "turn <code>price_cents</code> into <code>priceCents</code>"; (d) "show the price as <code>12.99</code>"; (e) "a customer's second order today gets free delivery"; (f) "read the <code>Authorization</code> header".</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Ask, for each job: does it only care about the shape of the input, about column names, about presentation, or about a business rule that needs data?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(b) and (e) both need a decision that depends on who is asking or on other data; which layer is the only one that knows nothing about HTTP or SQL, yet is allowed to hold that logic?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) The DTO parser: it is about the shape of the input. (b) The service: it depends on who is asking. (c) The repository's row mapper: only it knows column names. (d) The response mapper: presentation for the client. (e) The service: a business rule that needs data (today's orders) and knows nothing about HTTP or SQL. (f) The HTTP layer, the <code>Authenticator</code>: headers are an HTTP idea, and the service only ever sees the resulting <code>Principal</code>.</p></div></div>
 </section>
 
 <section>

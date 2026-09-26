@@ -349,7 +349,7 @@ for (const [label, check] of [["newer version", () => unwrapEnvelope(fromTheFutu
   data: '{"taskId":1,"remindAt":{"$type":"Date","$value":"2026-10-05T09:00:00.000Z"}}'
 }
 true
-newer version: Unsupported envelope schema version 2: this build understands up to 1
+newer version: Unsupported envelope wire-format version 2: this build understands up to 1
 wrong format: Envelope format mismatch: expected "messagepack", got "json"
 </output>
 <p>The reader checks the envelope before it reads the data. A payload written by a newer version of the package, or in a format it does not expect, is refused with a clear error instead of being misread. The envelope's <code>version</code> belongs to the serializer: it describes the tagging format, not your data.</p>
@@ -441,6 +441,36 @@ task 1 for user-ada, due 2026-10-05T09:00:00.000Z, a Date
 <h2 id="practice">Practice</h2>
 <exercise title="Round-trip a task">
 <p>Serialize a task with a <code>createdAt</code> date, a <code>Set</code> of watcher ids and a <code>Map</code> from user id to a last-seen date, with <code>pretty: true</code>, and check that everything comes back with the right type.</p>
+<starter file="roundtrip.ts">
+// Example to learn from: round-tripping a different mix of special values.
+//
+//   const record = { seenAt: new Date("2026-09-01T08:00:00Z"), tags: new Set(["vip"]) };
+//   const text = serializer.serialize(record, { pretty: true });
+//   const back = serializer.deserialize<typeof record>(text);
+//   console.log(back.seenAt instanceof Date, back.tags.has("vip"));
+//
+// Now do the same for the task below, and log the pretty JSON text too.
+
+import { createSerializer } from "@zudojs/serialization";
+
+const serializer = createSerializer("json", { preserveTypes: true });
+const task = {
+  createdAt: new Date("2026-10-01T08:00:00Z"),
+  watchers: new Set(["user-ada", "user-linus"]),
+  lastSeen: new Map([["user-ada", new Date("2026-10-02T10:00:00Z")]]),
+};
+
+// Serialize `task` with serializer.serialize(task, { pretty: true }), and
+// log the text. Then deserialize it back with
+// serializer.deserialize<typeof task>(text) and check the three fields.
+const text = "";
+console.log(text);
+
+const back = task;
+console.log(back.createdAt instanceof Date, back.watchers.size, back.lastSeen.get("user-ada") instanceof Date);
+</starter>
+<hint><p><code>const text = serializer.serialize(task, { pretty: true });</code> gives you the text to log. <code>serializer.deserialize&lt;typeof task&gt;(text)</code> gives you a fresh value with real <code>Date</code>, <code>Set</code> and <code>Map</code> instances back.</p></hint>
+<hint><p><code>const text = serializer.serialize(task, { pretty: true }); console.log(text); const back = serializer.deserialize&lt;typeof task&gt;(text);</code>.</p></hint>
 <solution>
 <example file="roundtrip.ts">
 import { createSerializer } from "@zudojs/serialization";
@@ -491,6 +521,42 @@ true 2 true
 </exercise>
 <exercise title="Version 3">
 <p>Version 3 of the reminder adds <code>channel: "email" | "push"</code>. Extend <code>upgrade</code> so that version 1 and 2 payloads become version 3 with <code>channel: "email"</code>.</p>
+<starter file="v3.ts">
+// Example to learn from: upgrading a different payload one step at a time.
+//
+//   function upgradeProfile(p: ProfileV1 | ProfileV2): ProfileV2 {
+//     if (p.v === 2) return p;
+//     return { v: 2, name: p.name, avatarUrl: null };
+//   }
+//
+// Now write the three-version chain for reminders below.
+
+interface ReminderV1 { readonly v: 1; readonly taskId: number; readonly email: string }
+interface ReminderV2 { readonly v: 2; readonly taskId: number; readonly userId: string }
+interface ReminderV3 { readonly v: 3; readonly taskId: number; readonly userId: string; readonly channel: "email" | "push" }
+
+const usersByEmail = new Map([["ada@example.com", "user-ada"]]);
+
+function toV2(payload: ReminderV1): ReminderV2 {
+  const userId = usersByEmail.get(payload.email);
+  if (!userId) throw new Error(`No user for ${payload.email}`);
+  return { v: 2, taskId: payload.taskId, userId };
+}
+
+function upgrade(payload: ReminderV1 | ReminderV2 | ReminderV3): ReminderV3 {
+  // 1. If payload.v === 3, return it unchanged.
+  // 2. Otherwise get a v2 shape: toV2(payload) when payload.v === 1,
+  //    payload itself when it is already v2.
+  // 3. Return { v: 3, taskId: v2.taskId, userId: v2.userId, channel: "email" }.
+  return payload as ReminderV3;
+}
+
+console.log(upgrade({ v: 1, taskId: 1, email: "ada@example.com" }));
+console.log(upgrade({ v: 2, taskId: 2, userId: "user-ada" }));
+console.log(upgrade({ v: 3, taskId: 3, userId: "user-ada", channel: "push" }));
+</starter>
+<hint><p>Handle the three cases from newest to oldest: already v3, already v2, or v1 needing <code>toV2</code> first. Only the v1 and v2 cases fall through to building the v3 object.</p></hint>
+<hint><p><code>if (payload.v === 3) return payload; const v2 = payload.v === 1 ? toV2(payload) : payload; return { v: 3, taskId: v2.taskId, userId: v2.userId, channel: "email" };</code>.</p></hint>
 <solution>
 <example file="v3.ts">
 interface ReminderV1 { readonly v: 1; readonly taskId: number; readonly email: string }

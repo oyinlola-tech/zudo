@@ -602,6 +602,51 @@ utility type tests compiled
 <h2 id="practice">Practice</h2>
 <exercise title="Make some fields optional">
 <p>Write <code>Optional&lt;T, K extends keyof T&gt;</code>: the same as <code>T</code>, but with only the keys <code>K</code> made optional. Use it for a booking where <code>notes</code> and <code>roomId</code> may be filled in later, and prove it with type tests.</p>
+<starter file="optional.ts">
+// Example to learn from: the same split-and-intersect technique, making
+// different keys optional on a different interface.
+//
+//   type OptionalKeys<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
+//
+//   interface UserProfile {
+//     id: string;
+//     handle: string;
+//     avatarUrl: string;
+//     bio: string;
+//   }
+//
+//   type DraftProfile = OptionalKeys<UserProfile, "avatarUrl" | "bio">;
+//   const draft: DraftProfile = { id: "U-1", handle: "ada" };
+//   console.log(draft, "bio" in draft);   // { id: 'U-1', handle: 'ada' } false
+//
+// Now do the same for the booking below.
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+// Write Optional<T, K>: T, but every key in K becomes optional.
+type Optional<T, K extends keyof T> = T; // your code here
+
+interface Booking {
+  id: string;
+  guest: string;
+  nights: number;
+  roomId: string;
+  notes: string;
+}
+
+type DraftBooking = Optional<Booking, "roomId" | "notes">;
+
+type O1 = Expect<Equal<DraftBooking["roomId"], string | undefined>>;
+type O2 = Expect<Equal<DraftBooking["guest"], string>>;
+
+const draft: DraftBooking = { id: "B-12", guest: "Grace", nights: 2 };
+
+// Once Optional is right (and the two Expect lines are really true), add:
+// console.log(draft, "roomId" in draft);
+</starter>
+<hint><p>Split the type in two and combine with <code>&amp;</code>: <code>Omit&lt;T, K&gt;</code> keeps every key not in <code>K</code> unchanged, and <code>Partial&lt;Pick&lt;T, K&gt;&gt;</code> makes the keys in <code>K</code> optional.</p></hint>
+<hint><p><code>type Optional&lt;T, K extends keyof T&gt; = Omit&lt;T, K&gt; &amp; Partial&lt;Pick&lt;T, K&gt;&gt;;</code></p></hint>
 <solution>
 <example file="optional.ts" project="ex-optional">
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -633,6 +678,51 @@ console.log(draft, "roomId" in draft);
 </exercise>
 <exercise title="Rebuild NonNullable and Extract, then use them">
 <p>Without looking back, write <code>MyExtract</code> and <code>MyNonNullable</code>. Use them to get the refund events from the event union below, and to type a list of phone numbers with the missing ones removed.</p>
+<starter file="rebuild.ts">
+// Example to learn from: the same two conditional types, applied to a
+// shape union and a list of scores instead of payments and phone numbers.
+//
+//   type PickBy<T, U> = T extends U ? T : never;
+//   type DropNullish<T> = T extends null | undefined ? never : T;
+//
+//   type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
+//   type Circle = PickBy<Shape, { kind: "circle" }>;
+//
+//   const shapes: Shape[] = [{ kind: "circle", radius: 2 }, { kind: "square", side: 3 }];
+//   const circles = shapes.filter((s): s is Circle => s.kind === "circle");
+//   console.log(circles.map((c) => c.radius));           // [ 2 ]
+//
+// Now write the two general-purpose versions below.
+
+// MyExtract<T, U>: keep only the members of union T assignable to U.
+type MyExtract<T, U> = T; // your code here
+// MyNonNullable<T>: T without null or undefined.
+type MyNonNullable<T> = T; // your code here
+
+type PaymentEvent =
+  | { type: "payment.captured"; amountKobo: number }
+  | { type: "payment.refunded"; amountKobo: number; reason: string }
+  | { type: "payment.failed"; code: string };
+
+type RefundEvent = MyExtract<PaymentEvent, { type: "payment.refunded" }>;
+
+const events: PaymentEvent[] = [
+  { type: "payment.captured", amountKobo: 500_000 },
+  { type: "payment.refunded", amountKobo: 200_000, reason: "damaged item" },
+  { type: "payment.failed", code: "card_declined" },
+];
+
+const refunds = events.filter((event): event is RefundEvent => event.type === "payment.refunded");
+
+const phones: (string | null | undefined)[] = ["08031234567", null, "08129876543", undefined];
+const present: MyNonNullable<(typeof phones)[number]>[] = phones.filter((phone) => phone != null);
+
+// Once both types are right, add:
+// console.log(refunds.map((refund) => `${refund.amountKobo} (${refund.reason})`));
+// console.log(present);
+</starter>
+<hint><p><code>MyExtract&lt;T, U&gt;</code> is a distributive conditional type: <code>T extends U ? T : never</code>. Written over a union, it tests each member on its own.</p></hint>
+<hint><p><code>MyNonNullable&lt;T&gt;</code> is <code>T extends null | undefined ? never : T</code>. Both are exactly the shape of the <code>PayloadOf</code>-style conditional types from <a href="/learn/ts-conditional-types">Conditional types</a>.</p></hint>
 <solution>
 <example file="rebuild.ts" project="ex-rebuild">
 type MyExtract<T, U> = T extends U ? T : never;
@@ -667,6 +757,48 @@ console.log(present);
 </exercise>
 <exercise title="A typed memoize">
 <p>Write <code>memoize&lt;F extends (arg: string) =&gt; unknown&gt;(fn: F): (arg: Parameters&lt;F&gt;[0]) =&gt; ReturnType&lt;F&gt;</code> that caches results by argument. Use it on a slow exchange-rate lookup and show that the second call does not run the lookup.</p>
+<starter file="memoize.ts">
+// Example to learn from: the same caching shape for a one-argument numeric
+// function, counting how many times the real work ran.
+//
+//   function memoize<F extends (arg: number) => unknown>(fn: F): (arg: Parameters<F>[0]) => ReturnType<F> {
+//     const cache = new Map<number, ReturnType<F>>();
+//     return (arg) => {
+//       if (!cache.has(arg)) cache.set(arg, fn(arg) as ReturnType<F>);
+//       return cache.get(arg) as ReturnType<F>;
+//     };
+//   }
+//
+//   let checks = 0;
+//   function isPrime(n: number): boolean {
+//     checks++;
+//     for (let i = 2; i < n; i++) if (n % i === 0) return false;
+//     return n > 1;
+//   }
+//
+//   const cachedIsPrime = memoize(isPrime);
+//   console.log(cachedIsPrime(7), cachedIsPrime(7), "checks:", checks);   // true true checks: 1
+//
+// Now do the same for the exchange-rate lookup below.
+
+function memoize<F extends (arg: string) => unknown>(fn: F): (arg: Parameters<F>[0]) => ReturnType<F> {
+  // Keep a Map<string, ReturnType<F>>. On a call: if the argument is
+  // cached, return the cached value; otherwise call fn, cache the result,
+  // and return it.
+  return (arg) => fn(arg) as ReturnType<F>;
+}
+
+let lookups = 0;
+function rateFor(currency: string): number {
+  lookups += 1;
+  return currency === "USD" ? 1540.25 : 1950.5;
+}
+
+const cachedRate = memoize(rateFor);
+console.log(cachedRate("USD"), cachedRate("USD"), cachedRate("GBP"), "lookups:", lookups);
+</starter>
+<hint><p>Create <code>const cache = new Map&lt;string, ReturnType&lt;F&gt;&gt;()</code> outside the returned function, so it survives between calls.</p></hint>
+<hint><p>On each call, check <code>cache.has(arg)</code> first. If not, compute <code>fn(arg) as ReturnType&lt;F&gt;</code>, store it with <code>cache.set(arg, result)</code>, then return it; if it is cached, return <code>cache.get(arg)</code>.</p></hint>
 <solution>
 <example file="memoize.ts" project="ex-memo">
 function memoize<F extends (arg: string) => unknown>(fn: F): (arg: Parameters<F>[0]) => ReturnType<F> {

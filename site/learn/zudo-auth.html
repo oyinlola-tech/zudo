@@ -1368,7 +1368,7 @@ await server.stop();</script>
 8 423 retry after 900 s {"error":"Account is locked due to too many failed attempts","code":"ERR_ACCOUNT_LOCKED"}
 9 423 retry after 900 s {"error":"Account is locked due to too many failed attempts","code":"ERR_ACCOUNT_LOCKED"}
 10 423 retry after 900 s {"error":"Account is locked due to too many failed attempts","code":"ERR_ACCOUNT_LOCKED"}
-11 429  {"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}}</pre></div>
+11 429  {"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"},"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}</pre></div>
 </figure>
 <p>Guesses 1 to 5 get 401. Guesses 6 to 10 hit the account lockout: 423 with the code <code>ERR_ACCOUNT_LOCKED</code>, and a <code>Retry-After</code> header that tells a well-behaved client how long to wait. The error carries the header itself, so the server sends it without any extra code. Request 11 never reaches the login code: the rate limiter answers 429 (Too Many Requests) first. Its <code>Retry-After</code> is the number of seconds left in the current minute.</p>
 <div class="callout callout-note"><p class="lx-callout-label">NOTE</p>The memory stores count per process. If you run two copies of the server, each has its own counters, and an attacker gets twice the guesses. Real deployments keep these counters in a shared store such as Redis.</div>
@@ -1376,9 +1376,29 @@ await server.stop();</script>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="register-body.ts" data-project="register" data-command="npx tsx register-body.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Find the privilege escalation</h3><p>A teammate wrote this registration handler. What can a caller do with it, and how do you fix it?</p>
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="register-body.ts" data-project="register" data-command="npx tsx register-body.ts" data-title="Find the privilege escalation"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Find the privilege escalation</h3><div class="lx-ex-task"><p>A teammate wrote this registration handler. What can a caller do with it, and how do you fix it?</p>
 <pre><code>const body = JSON.parse(text);
-await saveUser({ email: body.email, passwordHash: await hashPassword(body.password), roles: body.roles ?? ["user"] });</code></pre><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>Anyone can register with <code>"roles": ["admin"]</code> and become an admin. The body is also not validated at all. Validate it with a schema that has no <code>roles</code> field, and let the server choose the role. A schema object drops keys it does not know:</p>
+await saveUser({ email: body.email, passwordHash: await hashPassword(body.password), roles: body.roles ?? ["user"] });</code></pre></div><script type="text/plain" class="lx-ex-starter" data-file="register-body.ts">// Example to learn from: a schema that drops a field a client must not set.
+//
+//   const UpdateProfileBody = schema.object({
+//     name: schema.string().trim().min(1).max(100),
+//   });
+//   console.log(UpdateProfileBody.parse(JSON.parse('{"name":"Ada","isAdmin":true}')));
+//   // { name: 'Ada' } - isAdmin never reaches your code
+//
+// Now write a schema for registration that leaves "roles" out entirely.
+
+import { schema } from "@zudojs/schema";
+
+const RegisterBody = schema.object({
+  // email: a trimmed, lower-cased string, up to 254 characters
+  // password: a string, 12 to 1024 characters
+  // No "roles" field here: an object schema drops keys it does not know.
+});
+
+const body = RegisterBody.parse(JSON.parse('{"email":"Mallory@Example.com","password":"a long passphrase","roles":["admin"]}'));
+console.log(body);
+console.log(RegisterBody.safeParse({ email: "x@example.com", password: "short" }).success);</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>schema.string().trim().toLowerCase().max(254)</code> for the email. For the password, <code>schema.string().min(12).max(1024)</code>: that minimum is what makes the second check <code>false</code> below.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>email: schema.string().trim().toLowerCase().max(254), password: schema.string().min(12).max(1024)</code>. The object has no <code>roles</code> key, so parsing silently drops one a client sends.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>Anyone can register with <code>"roles": ["admin"]</code> and become an admin. The body is also not validated at all. Validate it with a schema that has no <code>roles</code> field, and let the server choose the role. A schema object drops keys it does not know:</p>
 <figure class="lx-example" data-index="21" data-file="register-body.ts" data-project="register">
 <figcaption class="lx-bar"><span class="lx-file">register-body.ts</span><button type="button" class="lx-edit" data-index="21" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
@@ -1406,7 +1426,23 @@ console.log(RegisterBody.safeParse({ email: "x@example.com", password: "short" }
 false</pre></div>
 </figure>
 <p>The new user then gets <code>roles: ["user"]</code>, as in <code>registerUser</code>. The minimum length of 12 is your password policy: <code>@zudojs/auth</code> does not enforce one, so registration is where you add it.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="short-ttl.ts" data-project="task-auth" data-command="npx tsx short-ttl.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Shorter access tokens</h3><p>Change the token settings so access tokens live 5 minutes and refresh tokens 1 day. Prove it by checking that <code>exp - iat</code> in a verified access token is 300.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="22" data-file="short-ttl.ts" data-project="task-auth">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="short-ttl.ts" data-project="task-auth" data-command="npx tsx short-ttl.ts" data-title="Shorter access tokens"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Shorter access tokens</h3><div class="lx-ex-task"><p>Change the token settings so access tokens live 5 minutes and refresh tokens 1 day. Prove it by checking that <code>exp - iat</code> in a verified access token is 300.</p></div><script type="text/plain" class="lx-ex-starter" data-file="short-ttl.ts">// Example to learn from: overriding one setting from a shared config.
+//
+//   const fastRefresh = { ...tokenConfig, refreshTtl: 60 * 60 };
+//   const tokens = createTokenPair(toUserId("u-ada"), fastRefresh);
+//   console.log(tokens.expiresIn); // unchanged: only refreshTtl moved
+//
+// Now override accessTtl and refreshTtl together.
+
+import "./demo-env.js";
+import { createTokenPair, toUserId, verifyAccessToken } from "@zudojs/auth";
+import { tokenConfig } from "./token-config.js";
+
+const config = { ...tokenConfig };
+// Override config.accessTtl to 5 * 60 and config.refreshTtl to 24 * 60 * 60.
+const tokens = createTokenPair(toUserId("u-ada"), config);
+const payload = verifyAccessToken(tokens.accessToken, config).payload!;
+console.log(tokens.expiresIn, payload.exp - payload.iat);</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Spread <code>tokenConfig</code> into a new object and override the two TTLs on it: <code>{ ...tokenConfig, accessTtl: …, refreshTtl: … }</code>, in seconds.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const config = { ...tokenConfig, accessTtl: 5 * 60, refreshTtl: 24 * 60 * 60 };</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="22" data-file="short-ttl.ts" data-project="task-auth">
 <figcaption class="lx-bar"><span class="lx-file">short-ttl.ts</span><button type="button" class="lx-edit" data-index="22" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-str">"./demo-env.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createTokenPair<span class="t-pn">,</span> toUserId<span class="t-pn">,</span> verifyAccessToken <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/auth"</span><span class="t-pn">;</span>
@@ -1428,7 +1464,7 @@ console.log(tokens.expiresIn, payload.exp - payload.iat);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx short-ttl.ts</code></div><pre class="lx-no-copy">300 300</pre></div>
 </figure>
 <p>Shorter access tokens limit the damage of a stolen token. The cost is more refresh calls, which are cheap.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Sign out everywhere after a password change</h3><p>Describe the steps of a <code>POST /auth/password</code> route that lets a logged-in user change their password. Which functions from this lesson do you call, and in which order?</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ol>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Sign out everywhere after a password change"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Sign out everywhere after a password change</h3><div class="lx-ex-task"><p>Describe the steps of a <code>POST /auth/password</code> route that lets a logged-in user change their password. Which functions from this lesson do you call, and in which order?</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Where does the user id for "whose password is this" come from: the request body, or <code>currentUser(ctx)</code>? Look at how <code>/auth/logout</code> in <code>server.ts</code> answers that same question.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Which two functions from <a href="#passwords">password hashing</a> check the old password and produce the new hash? And after saving it, which function from <a href="#sessions">logout, expiry and refresh</a> makes every other device's session stop working?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ol>
 <li>Protect the route with <code>requireUser</code> and take the user id from <code>currentUser(ctx).sub</code>, never from the body.</li>
 <li>Validate the body (<code>currentPassword</code>, <code>newPassword</code> with your length rules) with a schema.</li>
 <li>Check the current password with <code>verifyPassword</code>. If it is wrong, answer the same generic 401 as login.</li>

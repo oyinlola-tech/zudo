@@ -1150,7 +1150,42 @@ Ada ₦40,000, Bola ₦15,000, Chidi ₦20,000 | total ₦75,000 | transfers 1</
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="ship.js" data-command="node ship.js"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Naturally idempotent: mark an order shipped</h3><p>Not every operation needs a key table. Write <code>markShipped(db, orderId)</code> for a table <code>orders (id, status)</code> so that calling it twice has the same effect as calling it once, and the second call is still reported as a success. Only a <code>paid</code> order may be shipped; a <code>cancelled</code> order must give an error.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>Make the state change conditional on the current state, then decide what "no row changed" means by looking at the row:</p>
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="ship.js" data-command="node ship.js" data-title="Naturally idempotent: mark an order shipped"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Naturally idempotent: mark an order shipped</h3><div class="lx-ex-task"><p>Not every operation needs a key table. Write <code>markShipped(db, orderId)</code> for a table <code>orders (id, status)</code> so that calling it twice has the same effect as calling it once, and the second call is still reported as a success. Only a <code>paid</code> order may be shipped; a <code>cancelled</code> order must give an error.</p></div><script type="text/plain" class="lx-ex-starter" data-file="ship.js">// Example to learn from: a conditional update, then working out what
+// happened by reading the current state.
+//
+//   async function markPaid(db, invoiceId) {
+//     const changed = await db.query(
+//       "UPDATE invoices SET status = 'paid' WHERE id = $1 AND status = 'sent' RETURNING id",
+//       [invoiceId],
+//     );
+//     if (changed.rows.length === 1) return "paid";
+//     const { rows: [invoice] } = await db.query("SELECT status FROM invoices WHERE id = $1", [invoiceId]);
+//     if (invoice?.status === "paid") return "already paid (ok)";
+//     return `error: invoice is ${invoice?.status ?? "missing"}`;
+//   }
+//
+// Now do the same idea for shipping an order, below.
+
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`CREATE TABLE orders (id integer PRIMARY KEY, status text NOT NULL);
+  INSERT INTO orders VALUES (1, 'paid'), (2, 'cancelled');`);
+
+async function markShipped(orderId) {
+  // 1. UPDATE orders SET status = 'shipped' WHERE id = $1 AND status = 'paid'
+  //    RETURNING id -- a conditional update
+  // 2. if that changed 1 row, return "shipped"
+  // 3. otherwise, look up the order's current status:
+  //    - if it's already "shipped", return "already shipped (ok)"
+  //    - otherwise return `error: order is ${status ?? "missing"}`
+}
+
+console.log(await markShipped(1));
+console.log(await markShipped(1));
+console.log(await markShipped(2));
+console.log(await markShipped(3));
+await db.close();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The conditional <code>UPDATE ... RETURNING</code> tells you whether <em>this call</em> made the change. Only when it did not do you need a second query to find out why.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const changed = await db.query("UPDATE orders SET status = 'shipped' WHERE id = $1 AND status = 'paid' RETURNING id", [orderId]); if (changed.rows.length === 1) return "shipped"; const { rows: [order] } = await db.query("SELECT status FROM orders WHERE id = $1", [orderId]); if (order?.status === "shipped") return "already shipped (ok)"; return `error: order is ${order?.status ?? "missing"}`;</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>Make the state change conditional on the current state, then decide what "no row changed" means by looking at the row:</p>
 <figure class="lx-example" data-index="13" data-file="ship.js">
 <figcaption class="lx-bar"><span class="lx-file">ship.js</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">PGlite</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@electric-sql/pglite"</span><span class="t-pn">;</span>
@@ -1198,7 +1233,40 @@ error: order is cancelled
 error: order is missing</pre></div>
 </figure>
 <p>This works because the target state ("shipped") says everything: repeating it changes nothing. A transfer is different: "move ₦10,000" twice is two moves, so it needs a key.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="cleanup.js" data-project="bank" data-command="node cleanup.js"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Clean up old keys</h3><p>Write the SQL for a nightly job that deletes idempotency keys older than 24 hours, but never deletes a key that is still <code>in_progress</code> with a valid lock. Run it on the bank database with three keys: a completed one from two days ago, a completed one from an hour ago, and an in-progress one from two days ago whose lock has expired.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="14" data-file="cleanup.js" data-project="bank">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="cleanup.js" data-project="bank" data-command="node cleanup.js" data-title="Clean up old keys"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Clean up old keys</h3><div class="lx-ex-task"><p>Write the SQL for a nightly job that deletes idempotency keys older than 24 hours, but never deletes a key that is still <code>in_progress</code> with a valid lock. Run it on the bank database with three keys: a completed one from two days ago, a completed one from an hour ago, and an in-progress one from two days ago whose lock has expired.</p></div><script type="text/plain" class="lx-ex-starter" data-file="cleanup.js">// Example to learn from: deleting rows that are both old enough AND
+// (used up OR expired), keeping everything else.
+//
+//   const deleted = await db.query(
+//     `DELETE FROM reset_tokens
+//      WHERE created_at < $1 AND (used = true OR expires_at < $2)
+//      RETURNING id`,
+//     [hoursAgo(24), now],
+//   );
+//
+// Now write the same shape of WHERE clause for idempotency keys, below.
+
+import { openBank } from "./bank-db.js";
+
+const db = await openBank();
+const now = new Date(Date.UTC(2026, 8, 24, 3, 0, 0));
+const hoursAgo = (h) => new Date(now.getTime() - h * 3_600_000);
+await db.query(
+  `INSERT INTO idempotency_keys (user_id, key, request_hash, status, lock_id, locked_until, created_at) VALUES
+   (1, 'old-completed', 'h', 'completed', NULL, NULL, $1),
+   (1, 'new-completed', 'h', 'completed', NULL, NULL, $2),
+   (1, 'old-stuck', 'h', 'in_progress', 'lock-1', $3, $1)`,
+  [hoursAgo(48), hoursAgo(1), hoursAgo(47)],
+);
+
+const deleted = await db.query(
+  // DELETE FROM idempotency_keys, keyed on: created_at older than 24h AND
+  // (status = 'completed' OR locked_until < now) -- RETURNING key
+  `DELETE FROM idempotency_keys WHERE false RETURNING key`, // placeholder: deletes nothing yet
+);
+console.log("deleted:", deleted.rows.map((r) => r.key));
+const { rows } = await db.query("SELECT key FROM idempotency_keys");
+console.log("kept:", rows.map((r) => r.key));
+await db.close();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Two conditions joined by <code>AND</code>: one about age (<code>created_at</code>), one about safety to delete (<code>OR</code> of "already completed" and "lock expired"). Pass <code>hoursAgo(24)</code> and <code>now</code> as <code>$1</code>/<code>$2</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>DELETE FROM idempotency_keys WHERE created_at &lt; $1 AND (status = 'completed' OR locked_until &lt; $2) RETURNING key</code>, called with <code>[hoursAgo(24), now]</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="14" data-file="cleanup.js" data-project="bank">
 <figcaption class="lx-bar"><span class="lx-file">cleanup.js</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> openBank <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./bank-db.js"</span><span class="t-pn">;</span>
 
@@ -1251,7 +1319,25 @@ await db.close();</script>
 kept: [ 'new-completed' ]</pre></div>
 </figure>
 <p>The stuck key is deleted too, because its lock expired long ago: any request that could still be holding it would already have lost the fencing check. A key in progress with a <em>valid</em> lock is never touched.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="run" data-target="0" data-file="should-retry.js"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Which responses to retry?</h3><p>Write <code>shouldRetry(outcome)</code> for the client, where <code>outcome</code> is either an HTTP status number or the string <code>"network"</code>. Test it with <code>"network"</code>, 201, 400, 409, 422, 429, 500 and 503.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="15" data-file="should-retry.js">
+<div class="lx-exercise" data-exercise="3" data-mode="run" data-target="0" data-file="should-retry.js" data-title="Which responses to retry?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Which responses to retry?</h3><div class="lx-ex-task"><p>Write <code>shouldRetry(outcome)</code> for the client, where <code>outcome</code> is either an HTTP status number or the string <code>"network"</code>. Test it with <code>"network"</code>, 201, 400, 409, 422, 429, 500 and 503.</p></div><script type="text/plain" class="lx-ex-starter" data-file="should-retry.js">// Example to learn from: classifying an outcome by checking a few
+// specific cases, then a range.
+//
+//   function isTemporary(code) {
+//     if (code === "timeout") return true;
+//     return code === 429 || code >= 500;
+//   }
+//
+// Now do the same shape, but with the specific codes a retry client cares
+// about, below.
+
+function shouldRetry(outcome) {
+  // return true for "network", for 409, for 429, and for any 5xx status;
+  // false for everything else
+}
+
+for (const outcome of ["network", 201, 400, 409, 422, 429, 500, 503]) {
+  console.log(String(outcome).padEnd(8), shouldRetry(outcome));
+}</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Handle the special string case first, then combine the numeric cases with <code>||</code>, the same shape as the worked example.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>if (outcome === "network") return true; return outcome === 409 || outcome === 429 || outcome &gt;= 500;</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="15" data-file="should-retry.js">
 <figcaption class="lx-bar"><span class="lx-file">should-retry.js</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="15"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">function</span> <span class="t-fn">shouldRetry</span><span class="t-pn">(</span>outcome<span class="t-pn">)</span> <span class="t-pn">{</span>
   <span class="t-kw">if</span> <span class="t-pn">(</span>outcome <span class="t-op">===</span> <span class="t-str">"network"</span><span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-cn">true</span><span class="t-pn">;</span>

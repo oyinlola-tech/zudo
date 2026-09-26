@@ -224,3 +224,14 @@ describe("#106 registration, context and diagnostics ergonomics", () => {
     ]);
   });
 });
+
+describe("#104 follow-up: the grace wait after a timeout holds the event loop too", () => {
+  it("a start() that never settles rejects with PluginTimeoutError instead of exiting with code 13", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { fileURLToPath } = await import("node:url");
+    const script = fileURLToPath(new URL("./fixtures/hangingStart.script.mjs", import.meta.url));
+    const run = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 20_000 });
+    expect(run.status).toBe(0);
+    expect(run.stdout.trim()).toBe("PluginTimeoutError");
+  });
+});

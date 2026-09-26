@@ -780,6 +780,26 @@ console.log(quote({ id: 1, guest: "Ada", nights: 2 }, [5000]) as number);
 <output>
 55000
 </output>
+<starter>
+import type { Transfer } from "./fees.js";
+
+interface Booking {
+  readonly id: number;
+  guest: string;
+  nights: number;
+}
+
+const RATE = 25000;
+
+export function quote(booking: Booking, extras: number[] = []): number {
+  const base = booking.nights * RATE;
+  return extras.reduce<number>((sum, x) => sum + x, base);
+}
+
+console.log(quote({ id: 1, guest: "Ada", nights: 2 }, [5000]) as number);
+</starter>
+<hint><p>Nothing here is checked automatically: write your prediction on paper first, line by line, then compile with <code>npx tsc --noEmit false --outDir dist</code> and compare.</p></hint>
+<hint><p>Anything that is only a type disappears: the <code>import type</code> line, the whole <code>interface</code>, every <code>: SomeType</code>, the <code>&lt;number&gt;</code> on <code>reduce</code>, and <code>as number</code>. A default value like <code>= []</code> stays, because it is a real value.</p></hint>
 <solution>
 <file name="dist/booking.js" project="ex-predict" check="emit">
 const RATE = 25000;
@@ -805,6 +825,43 @@ class Ledger {
 }
 
 console.log(new Ledger("Ada").settle());</code></pre>
+<starter file="ledger.ts">
+// Example to learn from: the same conversion for a membership role.
+//
+//   enum Role { Admin, Editor }                          // not erasable
+//
+//   const Role = { Admin: "admin", Editor: "editor" } as const;
+//   type Role = (typeof Role)[keyof typeof Role];
+//
+//   class Member {
+//     readonly name: string;
+//     role: Role;
+//     constructor(name: string, role: Role = Role.Editor) {
+//       this.name = name;
+//       this.role = role;
+//     }
+//   }
+//
+// Now do the same for Status and Ledger below.
+
+const Status = { Pending: "pending", Settled: "settled" } as const;
+type Status = (typeof Status)[keyof typeof Status];
+
+class Ledger {
+  // 1. declare fields: readonly owner: string, and status: Status
+  // 2. add a constructor(owner: string, status: Status = Status.Pending)
+  //    that assigns them
+
+  settle(): string {
+    this.status = Status.Settled;
+    return `${this.owner}: ${this.status}`;
+  }
+}
+
+console.log(new Ledger("Ada").settle());
+</starter>
+<hint><p>An <code>enum</code> becomes a <code>const</code> object plus a type of the same name: <code>const Status = { ... } as const; type Status = (typeof Status)[keyof typeof Status];</code>, which is already done for you here.</p></hint>
+<hint><p>A parameter property becomes a declared field plus a plain constructor parameter, assigned by hand: <code>readonly owner: string;</code> as a field, then <code>constructor(owner: string, status: Status = Status.Pending) { this.owner = owner; this.status = status; }</code>.</p></hint>
 <solution>
 <example file="ledger.ts" project="ex-erasable">
 const Status = { Pending: "pending", Settled: "settled" } as const;
@@ -835,6 +892,49 @@ Ada: settled
 </exercise>
 <exercise title="A config reader that fails closed">
 <p>Write <code>readConfig(env)</code> that takes a <code>Record&lt;string, string | undefined&gt;</code> and returns <code>{ limit: number; feePercent: number }</code>. <code>TRANSFER_LIMIT</code> must be a positive whole number. <code>FEE_PERCENT</code> is optional (default <code>0.5</code>) and must be between 0 and 5. Collect every problem and throw one error listing them all.</p>
+<starter file="config.ts">
+// Example to learn from: collecting every problem with a signup form, instead
+// of stopping at the first one.
+//
+//   interface Signup { username: string; age: number }
+//
+//   function readSignup(input: Record<string, string | undefined>): Signup {
+//     const problems: string[] = [];
+//     const username = input.username ?? "";
+//     if (username.length < 3) problems.push("username must be at least 3 characters");
+//     const age = Number(input.age);
+//     if (!Number.isInteger(age) || age < 13) problems.push("age must be a whole number of 13 or more");
+//     if (problems.length > 0) throw new Error(problems.join("; "));
+//     return { username, age };
+//   }
+//
+// Now do the same shape for the transfer config below.
+
+interface Config {
+  limit: number;
+  feePercent: number;
+}
+
+function readConfig(env: Record<string, string | undefined>): Config {
+  // 1. collect problems in a string[]
+  // 2. limit = Number(env.TRANSFER_LIMIT); push a problem if it is not a
+  //    positive whole number
+  // 3. feePercent = 0.5 when env.FEE_PERCENT is undefined, else Number(env.FEE_PERCENT);
+  //    push a problem if it is NaN or outside 0 to 5
+  // 4. if there are any problems, throw one Error joining them with "; "
+  // 5. otherwise return { limit, feePercent }
+  return { limit: 0, feePercent: 0 };
+}
+
+console.log(readConfig({ TRANSFER_LIMIT: "50000" }));
+try {
+  readConfig({ TRANSFER_LIMIT: "5O000", FEE_PERCENT: "12" });
+} catch (error) {
+  console.log(String(error));
+}
+</starter>
+<hint><p>Build a <code>const problems: string[] = []</code> first, and <code>push</code> a message onto it for each rule that fails. <code>Number(undefined)</code> is <code>NaN</code>, so a missing limit fails <code>Number.isInteger</code> without a separate check.</p></hint>
+<hint><p>At the end: <code>if (problems.length &gt; 0) throw new Error(problems.join("; "));</code>. Only after that check, <code>return { limit, feePercent };</code>.</p></hint>
 <solution>
 <example file="config.ts" project="ex-config">
 interface Config {

@@ -765,6 +765,52 @@ PASS module cache: same function -> true
 <h2 id="practice">Practice</h2>
 <exercise title="Break the payment cycle">
 <p>Fix the circular dependency between <code>base-payment.cjs</code> and <code>card-payment.cjs</code> from the lesson, so that <code>BasePayment.fromMethod("card")</code> returns a <code>CardPayment</code> that is also an instance of <code>BasePayment</code>. Keep CommonJS.</p>
+<starter file="base-payment.cjs">
+// Example to learn from: the same "require it lazily, inside the function"
+// fix, for a User/Admin pair instead of BasePayment/CardPayment.
+//
+//   // user.cjs
+//   class User {
+//     static fromRole(role) {
+//       if (role === "admin") {
+//         const { Admin } = require("./admin.cjs");   // required when called, not at load time
+//         return new Admin();
+//       }
+//       return new User();
+//     }
+//   }
+//   module.exports = { User };
+//
+//   // admin.cjs
+//   const { User } = require("./user.cjs");
+//   class Admin extends User {}
+//   module.exports = { Admin };
+//
+//   // main.cjs
+//   const { User } = require("./user.cjs");
+//   console.log(User.fromRole("admin").constructor.name); // "Admin"
+//
+// Now do the same for base-payment.cjs below: card-payment.cjs and main.cjs
+// are unchanged from the lesson (only this file's require needs to move).
+
+const { CardPayment } = require("./card-payment.cjs");
+// your code here: this require runs as soon as base-payment.cjs loads,
+// before card-payment.cjs has finished — move it inside fromMethod below,
+// so it only runs once the method is actually called with "card".
+
+class BasePayment {
+  static fromMethod(method) {
+    if (method === "card") {
+      return new CardPayment();
+    }
+    throw new Error(`unknown method ${method}`);
+  }
+}
+
+module.exports = { BasePayment };
+</starter>
+<hint><p>The module that requires the other one <em>first</em>, at the top of the file, is the one that gets the half-finished, still-empty exports back. Delaying the <code>require</code> until the method actually runs means both files have finished loading by then.</p></hint>
+<hint><p>Move <code>const { CardPayment } = require("./card-payment.cjs");</code> from the top of the file to the first line inside <code>fromMethod</code>, right before <code>if (method === "card")</code>.</p></hint>
 <solution>
 <p>The factory only needs <code>CardPayment</code> when it <em>runs</em>, not when the module loads. Move the <code>require</code> into the function, so it happens after both modules have finished loading:</p>
 <example file="base-payment.cjs" project="cycle-fixed" browser="no">
@@ -801,6 +847,50 @@ CardPayment true
 </exercise>
 <exercise title="An exports map that hides internals">
 <p>Write the <code>package.json</code> for a package <code>shop-tax</code> whose public API is the main entry (<code>src/index.js</code>, exporting <code>vatFor</code>) and a <code>shop-tax/rates</code> subpath (<code>src/rates.js</code>). Its helper <code>src/round.js</code> must not be importable from outside. Prove it with a file that imports the package by its own name.</p>
+<starter file="check.js">
+// Example to learn from: an exports map for a date-utils package that
+// publishes a main entry and one subpath, and hides everything else.
+//
+//   {
+//     "name": "date-utils",
+//     "type": "module",
+//     "exports": {
+//       ".": "./src/index.js",
+//       "./format": "./src/format.js"
+//     }
+//   }
+//   // check.mjs, in the same package:
+//   import { shortTime } from "date-utils";
+//   import { isoDate } from "date-utils/format";
+//   console.log(shortTime(new Date()), isoDate(new Date()));
+//   await import("date-utils/src/pad.js"); // rejects: ERR_PACKAGE_PATH_NOT_EXPORTED
+//
+// Now write shop-tax's package.json below so it does the same: "." and
+// "./rates" published, "./src/round.js" not.
+
+import { vatFor } from "shop-tax";
+import { RATES } from "shop-tax/rates";
+
+console.log(vatFor("NG", 1000000), RATES.GH);
+try {
+  await import("shop-tax/src/round.js");
+} catch (error) {
+  console.log(error.code);
+}
+</starter>
+<starter file="package.json">
+{
+  "name": "shop-tax",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./rates": "./src/rates.js",
+    "./src/round.js": "./src/round.js"
+  }
+}
+</starter>
+<hint><p>An <code>exports</code> map is also a whitelist: once it exists, only the paths listed in it can be imported by name from outside the package, however many other files the package has.</p></hint>
+<hint><p>The stub above still lists <code>"./src/round.js"</code>, which is exactly what should be missing: drop that entry entirely so only <code>"."</code> and <code>"./rates"</code> remain, and the deep import starts rejecting with <code>ERR_PACKAGE_PATH_NOT_EXPORTED</code>.</p></hint>
 <solution>
 <file name="package.json" project="tax-exports">
 {
@@ -844,6 +934,31 @@ ERR_PACKAGE_PATH_NOT_EXPORTED
 </exercise>
 <exercise title="Use an ESM library from an old CommonJS script">
 <p>A CommonJS script, <code>nightly.cjs</code>, must use the ESM module <code>invoice.js</code>, which has a default export and a named export. Use <code>require</code> (Node.js 24). Then explain what you would do if <code>invoice.js</code> started using top-level <code>await</code>.</p>
+<starter file="nightly.cjs">
+// Example to learn from: require()-ing an ESM module with a default and a
+// named export, for a logger instead of an invoice numberer.
+//
+//   // logger.js (ESM)
+//   export const LEVEL = "info";
+//   export default function log(message) { console.log(`[${LEVEL}] ${message}`); }
+//
+//   // old.cjs
+//   const logger = require("./logger.js");
+//   logger.default("server started");
+//   console.log(logger.LEVEL);
+//
+// Now do the same for invoice.js below (unchanged from the lesson).
+
+// your code here: const invoice = require("./invoice.js"); require() returns
+// the module's namespace object — the default export lives at
+// invoice.default, and named exports are plain properties on it.
+const invoice = {};
+const invoiceNumber = () => "";
+
+console.log(invoice.PREFIX, invoiceNumber(98), invoiceNumber(99));
+</starter>
+<hint><p><code>require</code> on an ESM file gives you back its whole namespace object, the same shape as <code>import * as invoice from "./invoice.js"</code> would. A default export has no name of its own in that object, so it is stored under the key <code>default</code>.</p></hint>
+<hint><p><code>const invoice = require("./invoice.js"); const invoiceNumber = invoice.default;</code></p></hint>
 <solution>
 <example file="invoice.js" project="nightly" browser="no">
 export const PREFIX = "INV-2026";

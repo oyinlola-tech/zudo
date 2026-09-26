@@ -609,12 +609,117 @@ undefined property runtime TypeError      first line printed: true
 const reassigned   runtime TypeError      first line printed: true
 duplicate let      early SyntaxError      first line printed: false
 </output>
+<hint><p>Ask, for each snippet: could the parser notice this is wrong just by looking at the grammar, before any line runs? Or does it need to actually execute a line and hit a bad value?</p></hint>
+<hint><p>A missing bracket and a duplicate <code>let</code> in the same scope are both grammar violations the parser rejects outright — early errors, nothing prints. Reading a property of <code>null</code> and reassigning a <code>const</code> both need a specific line to actually run before anything is wrong, so the line before it gets a chance to print first.</p></hint>
 <solution>
 <p>The missing bracket and the duplicate <code>let</code> are early errors: the grammar forbids them, so the parser rejects the code and nothing prints. Reading a property of <code>null</code> is a runtime <code>TypeError</code>. Assigning to a <code>const</code> is also a runtime <code>TypeError</code>, even though the engine could see it in the text: the specification defines it as an error at the moment of assignment. Early errors are exactly the ones the grammar and its static rules forbid.</p>
 </solution>
 </exercise>
 <exercise title="Add a min function to the rules">
 <p>Staff want <code>min(price * qty, 5_000_000)</code> to cap a line at ₦50,000. Extend the tokenizer to allow <code>min</code> and a comma, the grammar with <code>factor = "min" "(" expression "," expression ")"</code>, and the interpreter. Keep the name whitelist working.</p>
+<starter file="rules-min.js">
+// Example to learn from: the same three-layer change (tokenizer, grammar,
+// interpreter) added to a much smaller calculator, adding unary minus
+// instead of a two-argument function.
+//
+//   function tokenize(s) { return [...s.matchAll(/\d+|[+-]/g)].map((m) => m[0]); }
+//   function evaluate(tokens) {
+//     let i = 0;
+//     const factor = () => {
+//       if (tokens[i] === "-") { i++; return -factor(); }  // new grammar rule
+//       return Number(tokens[i++]);
+//     };
+//     let value = factor();
+//     while (tokens[i] === "+") { i++; value += factor(); }
+//     return value;
+//   }
+//   console.log(evaluate(tokenize("3 + -4"))); // -1
+//
+// Now do the same three-layer change for "min" below: a name the tokenizer
+// must allow, a factor rule for the grammar, and an evaluate case.
+
+function tokenize(source) {
+  const tokens = [];
+  const re = /\s*(?:(\d[\d_]*(?:\.\d+)?)|([a-zA-Z]+)|([-+*/(),]))/y;
+  let m;
+  while (re.lastIndex < source.length && (m = re.exec(source))) {
+    const pos = m.index + m[0].length - (m[1] ?? m[2] ?? m[3]).length;
+    if (m[1]) tokens.push({ type: "number", value: Number(m[1].replaceAll("_", "")), pos });
+    else if (m[2]) {
+      // your code here: also allow "min" here, alongside "price" and "qty"
+      if (!["price", "qty"].includes(m[2])) throw new SyntaxError(`unknown name "${m[2]}" at position ${pos}`);
+      tokens.push({ type: "name", value: m[2], pos });
+    } else tokens.push({ type: "op", value: m[3], pos });
+  }
+  if (re.lastIndex < source.length && source.slice(re.lastIndex).trim()) {
+    throw new SyntaxError(`unexpected "${source.slice(re.lastIndex).trim()[0]}"`);
+  }
+  tokens.push({ type: "end", pos: source.length });
+  return tokens;
+}
+
+function parse(source) {
+  const tokens = tokenize(source);
+  let pos = 0;
+  const expect = (value) => {
+    if (tokens[pos].value !== value) throw new SyntaxError(`expected "${value}" at position ${tokens[pos].pos}`);
+    pos++;
+  };
+  const expression = () => {
+    let node = term();
+    while (["+", "-"].includes(tokens[pos].value)) node = { type: "binary", op: tokens[pos++].value, left: node, right: term() };
+    return node;
+  };
+  const term = () => {
+    let node = factor();
+    while (["*", "/"].includes(tokens[pos].value)) node = { type: "binary", op: tokens[pos++].value, left: node, right: factor() };
+    return node;
+  };
+  const factor = () => {
+    const t = tokens[pos++];
+    if (t.type === "number") return { type: "number", value: t.value };
+    // your code here: before the plain name check, add a branch for
+    // t.value === "min": expect("("), parse an expression `a`, expect(","),
+    // parse an expression `b`, expect(")"), return { type: "min", args: [a, b] }
+    if (t.type === "name") return { type: "name", name: t.value };
+    if (t.value === "(") {
+      const node = expression();
+      expect(")");
+      return node;
+    }
+    throw new SyntaxError(`unexpected token at position ${t.pos}`);
+  };
+  const tree = expression();
+  if (tokens[pos].type !== "end") throw new SyntaxError(`expected an operator at position ${tokens[pos].pos}`);
+  return tree;
+}
+
+function evaluate(node, vars) {
+  if (node.type === "number") return node.value;
+  if (node.type === "name") return vars[node.name];
+  // your code here: when node.type === "min", return
+  // Math.min(...node.args.map((a) => evaluate(a, vars)))
+  const a = evaluate(node.left, vars);
+  const b = evaluate(node.right, vars);
+  return { "+": a + b, "-": a - b, "*": a * b, "/": a / b }[node.op];
+}
+
+let rule;
+try {
+  rule = parse("min(price * qty, 5_000_000)");
+  console.log(evaluate(rule, { price: 950_000, qty: 2 }), evaluate(rule, { price: 950_000, qty: 9 }));
+} catch (error) {
+  console.log("not implemented yet:", error.message);
+}
+
+try {
+  parse("min(price * qty 5_000_000)");
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<hint><p>Three separate spots need "min": the tokenizer's whitelist (so it is not rejected as an unknown name), a new branch in <code>factor()</code> that reads <code>min ( expr , expr )</code>, and a case in <code>evaluate</code> for a <code>"min"</code> node.</p></hint>
+<hint><p>Whitelist: <code>["price", "qty", "min"]</code>. Grammar: <code>if (t.value === "min") { expect("("); const a = expression(); expect(","); const b = expression(); expect(")"); return { type: "min", args: [a, b] }; }</code>. Interpreter: <code>if (node.type === "min") return Math.min(...node.args.map((a) =&gt; evaluate(a, vars)));</code>.</p></hint>
 <solution>
 <example file="rules-min.js" project="rules">
 function tokenize(source) {
@@ -703,6 +808,65 @@ expected "," at position 16
 </exercise>
 <exercise title="Find who scheduled the failing callback">
 <p>A receipt job fails inside a timer callback, and the stack trace does not show which order it was for. Change <code>scheduleReceipt</code> so that the error thrown later carries the order id and the stack of the <em>scheduling</em> call as its <code>cause</code>.</p>
+<starter file="scheduled-cause.js">
+// Example to learn from: capturing a stack when work is registered, not
+// when it fails, for an event listener instead of a timer.
+//
+//   function onReady(id, listeners) {
+//     const subscribedAt = new Error("subscribed here");   // stack captured now
+//     listeners.push(() => {
+//       try {
+//         handler(id);
+//       } catch (error) {
+//         throw new Error(`listener for id ${id} failed: ${error.message}`, { cause: subscribedAt });
+//       }
+//     });
+//   }
+//   const listeners = [];
+//   onReady(-1, listeners);
+//   try { listeners[0](); } catch (error) {
+//     console.log(error.message);        // "listener for id -1 failed: invalid id"
+//     console.log(error.cause.message);  // "subscribed here"
+//   }
+//
+// Now do the same idea for scheduleReceipt below.
+
+function framesOf(error, names) {
+  return error.stack.split("\n").slice(1).flatMap((line) => {
+    const name = names.find((n) => new RegExp(`\\b${n}\\b`).test(line));
+    return name ? [name] : [];
+  });
+}
+const names = ["handleCheckout", "scheduleReceipt", "sendReceipt"];
+
+function sendReceipt(order) {
+  if (!order.email) throw new Error("no email address");
+}
+
+function scheduleReceipt(order) {
+  // your code here:
+  // 1. const scheduledAt = new Error("scheduled here"); — captures the stack now
+  // 2. setTimeout(() => { try { sendReceipt(order); } catch (error) {
+  //    const wrapped = new Error(`receipt for order ${order.id} failed:
+  //    ${error.message}`, { cause: scheduledAt }); log wrapped.message, then
+  //    "failed in:" with framesOf(error, names), then "scheduled from:"
+  //    with framesOf(wrapped.cause, names) } }, 0);
+  setTimeout(() => {
+    try {
+      sendReceipt(order);
+    } catch (error) {
+      console.log("receipt failed:", error.message);
+    }
+  }, 0);
+}
+
+function handleCheckout(order) {
+  scheduleReceipt(order);
+}
+handleCheckout({ id: 7, email: null });
+</starter>
+<hint><p>Create the "marker" error <em>before</em> the <code>setTimeout</code>, while <code>handleCheckout</code> is still on the stack — that is the only moment its stack is available. Attach it later as <code>{ cause: scheduledAt }</code> on the error you throw from inside the timer.</p></hint>
+<hint><p><code>const scheduledAt = new Error("scheduled here"); setTimeout(() =&gt; { try { sendReceipt(order); } catch (error) { const wrapped = new Error(`receipt for order ${order.id} failed: ${error.message}`, { cause: scheduledAt }); console.log(wrapped.message); console.log("failed in:", framesOf(error, names)); console.log("scheduled from:", framesOf(wrapped.cause, names)); } }, 0);</code></p></hint>
 <solution>
 <example file="scheduled-cause.js">
 function framesOf(error, names) {

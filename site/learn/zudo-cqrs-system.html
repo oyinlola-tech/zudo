@@ -1871,7 +1871,62 @@ PASS another customer's order is not found</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="ship.ts" data-project="cq" data-command="npx tsx ship.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Ship an order</h3><p>Add a <code>ShipOrder</code> command: only a placed order can be shipped, it uses <code>expectedVersion</code> like <code>CancelOrder</code>, and it records <code>order.shipped</code>. Cancelling a shipped order must then fail. Test it on the write side, without the projector.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="19" data-file="ship.ts" data-project="cq">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="ship.ts" data-project="cq" data-command="npx tsx ship.ts" data-title="Ship an order"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Ship an order</h3><div class="lx-ex-task"><p>Add a <code>ShipOrder</code> command: only a placed order can be shipped, it uses <code>expectedVersion</code> like <code>CancelOrder</code>, and it records <code>order.shipped</code>. Cancelling a shipped order must then fail. Test it on the write side, without the projector.</p></div><script type="text/plain" class="lx-ex-starter" data-file="ship.ts">// Example to learn from: an optimistic-concurrency update that investigates
+// why it matched nothing, instead of guessing.
+//
+//   async function renameDocument(db, id, name, expectedVersion) {
+//     const row = (await db.query(
+//       "UPDATE documents SET name = $2, version = version + 1 WHERE id = $1 AND version = $3 RETURNING version",
+//       [id, name, expectedVersion])).rows[0];
+//     if (row) return row.version;
+//     const current = (await db.query("SELECT version FROM documents WHERE id = $1", [id])).rows[0];
+//     if (!current) throw new NotFoundError(`Document ${id} not found`);
+//     throw new ConflictError(`Document ${id} is at version ${current.version}, not ${expectedVersion}`);
+//   }
+//
+// Now do the same shape for ShipOrder below, with an extra status check.
+
+import { createCommandBus, createExecutionContext, withUser } from "@zudojs/cqrs";
+import type { CommandOf } from "@zudojs/cqrs";
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { Commands } from "./messages.js";
+import { createStore } from "./store.js";
+import { typed } from "./typed.js";
+import { registerWriteSide, requireUser } from "./write.js";
+
+type ShipOrder = CommandOf<"ShipOrder", { orderId: string; expectedVersion: number }>;
+interface WithShipping extends Commands {
+  ShipOrder: readonly [ShipOrder, { orderId: string; version: number }];
+}
+
+const store = await createStore();
+const { manager, db } = store;
+const commands = typed<WithShipping>(createCommandBus());
+registerWriteSide(commands, store);
+
+commands.register("ShipOrder", (command, context) => manager.run(async () => {
+  requireUser(context);
+  // conditional UPDATE: status = 'shipped', version = version + 1
+  // WHERE id = command.orderId AND status = 'placed' AND version = command.expectedVersion
+  // RETURNING version
+  // no row matched: SELECT the current status and version; missing
+  //   entirely -> NotFoundError; otherwise -> ConflictError naming the
+  //   current status and version
+  // matched: insert an "order.shipped" outbox event at the new version
+  //   (event_id `${command.orderId}.v${row.version}`), return
+  //   { orderId: command.orderId, version: row.version }
+  return { orderId: command.orderId, version: command.expectedVersion };
+}));
+
+const ada = withUser(createExecutionContext(), "cus_ada");
+await commands.execute({ type: "PlaceOrder", orderId: "ORD-1", lines: [{ sku: "OIL-5L", qty: 1 }] }, ada);
+console.log(await commands.execute({ type: "ShipOrder", orderId: "ORD-1", expectedVersion: 1 }, ada));
+for (const attempt of [
+  () => commands.execute({ type: "ShipOrder", orderId: "ORD-1", expectedVersion: 2 }, ada),
+  () => commands.execute({ type: "CancelOrder", orderId: "ORD-1", expectedVersion: 2 }, ada),
+]) {
+  await attempt().catch((error: Error) => console.log(error.name, error.message));
+}</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Model the <code>UPDATE</code> on <code>CancelOrder</code>'s, but with <code>status = 'shipped'</code> in the <code>SET</code> and <code>status = 'placed'</code> in the <code>WHERE</code> (a shipped or cancelled order does not match, so it falls into the investigation branch).</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>On success: <code>await db().query("INSERT INTO outbox (event_id, type, order_id, version, payload) VALUES ($1, 'order.shipped', $2, $3, $4)", [`${command.orderId}.v${row.version}`, command.orderId, row.version, { type: "order.shipped", orderId: command.orderId }]);</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="19" data-file="ship.ts" data-project="cq">
 <figcaption class="lx-bar"><span class="lx-file">ship.ts</span><button type="button" class="lx-edit" data-index="19" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createCommandBus<span class="t-pn">,</span> createExecutionContext<span class="t-pn">,</span> withUser <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/cqrs"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">CommandOf</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/cqrs"</span><span class="t-pn">;</span>
@@ -1965,7 +2020,40 @@ ConflictError Order ORD-1 is shipped at version 2
 ConflictError Order ORD-1 is already shipped</pre></div>
 </figure>
 <p>The map is extended with <code>interface WithShipping extends Commands</code>, so the new command is typed like the others. A real version would also check that only staff may ship (a permission, not ownership), and the projector would need an <code>order.shipped</code> branch: add it to the <code>OrderEvent</code> union and TypeScript will point at every <code>if</code> that must handle it.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="lag.ts" data-project="cq" data-command="npx tsx lag.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Projection lag</h3><p>Write <code>lag(store)</code> that returns how many outbox events have not yet been applied to <code>order_summaries</code>. An event counts as applied when the summary row for its order has a version greater than or equal to the event's version.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="20" data-file="lag.ts" data-project="cq">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="lag.ts" data-project="cq" data-command="npx tsx lag.ts" data-title="Projection lag"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Projection lag</h3><div class="lx-ex-task"><p>Write <code>lag(store)</code> that returns how many outbox events have not yet been applied to <code>order_summaries</code>. An event counts as applied when the summary row for its order has a version greater than or equal to the event's version.</p></div><script type="text/plain" class="lx-ex-starter" data-file="lag.ts">// Example to learn from: a left join that counts rows on one side that
+// have no match, or a stale match, on the other.
+//
+//   async function unsyncedCount(db) {
+//     return (await db.query(`
+//       SELECT count(*)::int AS n FROM source_rows s
+//       LEFT JOIN mirror_rows m ON m.id = s.id
+//       WHERE m.updated_at IS NULL OR m.updated_at < s.updated_at`)).rows[0]?.n ?? 0;
+//   }
+//
+// A missing mirror row and a stale one are the same problem: not caught up
+// yet. Now do the same for outbox events and order_summaries below.
+
+import { project } from "./read.js";
+import { createStore } from "./store.js";
+import type { Store } from "./store.js";
+
+async function lag({ manager, db }: Store): Promise<number> {
+  // left join outbox (o) to order_summaries (s) on order_id; count rows
+  // where the summary is missing (s.version IS NULL) or behind
+  // (s.version < o.version); run it read-only, since it only counts rows
+  return manager.run(async () => 0, { readOnly: true });
+}
+
+const store = await createStore();
+await store.manager.run(async () => {
+  await store.db().query(`INSERT INTO outbox (event_id, type, order_id, version, payload) VALUES
+    ('ORD-1.v1', 'order.placed', 'ORD-1', 1, '{"type":"order.placed","orderId":"ORD-1","customerId":"cus_ada","totalKobo":60000,"items":1}'),
+    ('ORD-1.v2', 'order.cancelled', 'ORD-1', 2, '{"type":"order.cancelled","orderId":"ORD-1"}')`);
+});
+console.log("lag before:", await lag(store));
+await project(store, { eventId: "ORD-1.v1", orderId: "ORD-1", version: 1,
+  payload: { type: "order.placed", orderId: "ORD-1", customerId: "cus_ada", totalKobo: 60_000, items: 1 } });
+console.log("lag after one event:", await lag(store));</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Start from <code>outbox o LEFT JOIN order_summaries s ON s.order_id = o.order_id</code>, then <code>count(*)</code> the rows where <code>s.version IS NULL OR s.version &lt; o.version</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>return manager.run(async () =&gt; (await db().query(`SELECT count(*)::int AS n FROM outbox o LEFT JOIN order_summaries s ON s.order_id = o.order_id WHERE s.version IS NULL OR s.version &lt; o.version`)).rows[0]?.n ?? 0, { readOnly: true });</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="20" data-file="lag.ts" data-project="cq">
 <figcaption class="lx-bar"><span class="lx-file">lag.ts</span><button type="button" class="lx-edit" data-index="20" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> project <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./read.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createStore <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./store.js"</span><span class="t-pn">;</span>
@@ -2014,7 +2102,7 @@ console.log("lag after one event:", await lag(store));</script>
 lag after one event: 1</pre></div>
 </figure>
 <p>Export this number as a gauge with the metrics from <a href="/learn/zudo-observability#metrics">the observability lesson</a>, and alert when it stays above a small number for more than a minute. Counting events is simple; production systems often also track the age of the oldest unapplied event, which says how stale the page is in seconds.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Where does it belong?</h3><p>For each piece of logic, say whether it belongs in a command handler, a projector, a query handler or the API layer: (a) "a customer may have at most 5 open orders"; (b) formatting kobo as "₦14,000.00" for the page; (c) reading the <code>If-Match</code> header; (d) the number of items in an order, shown on the list page; (e) "only show orders from the last 12 months".</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) Command handler: it is a rule that must be enforced against the current state, in the transaction. A read model may be stale, so it can never enforce a rule. (b) Neither side of the server: formatting is presentation, done by the client (or a response mapper in the API layer). The read model stores kobo. (c) API layer: HTTP details stop there; the command gets a plain <code>expectedVersion</code>. (d) Decided by the command (it has the lines), carried in the event, stored by the projector; the query only reads it. (e) Query handler: a filter on the read model, perhaps with an index on a date column the projector fills in.</p></div></div>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Where does it belong?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Where does it belong?</h3><div class="lx-ex-task"><p>For each piece of logic, say whether it belongs in a command handler, a projector, a query handler or the API layer: (a) "a customer may have at most 5 open orders"; (b) formatting kobo as "₦14,000.00" for the page; (c) reading the <code>If-Match</code> header; (d) the number of items in an order, shown on the list page; (e) "only show orders from the last 12 months".</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Which side, write or read, can actually enforce a rule against reality rather than just report on it? Which of these are really about HTTP, not about orders at all?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(d) is decided once, when the order is placed; where does that number then travel so the query side never has to compute it again?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) Command handler: it is a rule that must be enforced against the current state, in the transaction. A read model may be stale, so it can never enforce a rule. (b) Neither side of the server: formatting is presentation, done by the client (or a response mapper in the API layer). The read model stores kobo. (c) API layer: HTTP details stop there; the command gets a plain <code>expectedVersion</code>. (d) Decided by the command (it has the lines), carried in the event, stored by the projector; the query only reads it. (e) Query handler: a filter on the read model, perhaps with an index on a date column the projector fills in.</p></div></div>
 </section>
 
 <section>

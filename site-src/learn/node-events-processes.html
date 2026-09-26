@@ -917,6 +917,41 @@ PASS missing event times out
 <h2 id="practice">Practice</h2>
 <exercise title="A stock alert that cleans up after itself">
 <p>Write a function <code>watchStock(stock, sku)</code> that listens for <code>"low"</code> events on an emitter, logs only the ones for its <code>sku</code>, and returns a function that removes the listener. Show that after calling it, <code>listenerCount("low")</code> is 0 again.</p>
+<starter file="watch-stock.js">
+// Example to learn from: returning an "unsubscribe" function that removes
+// the exact listener you added.
+//
+//   function watchTemperature(sensor, room) {
+//     const listener = (reading) => {
+//       if (reading.room === room) console.log(`${room}: ${reading.celsius}°C`);
+//     };
+//     sensor.on("reading", listener);
+//     return () => sensor.off("reading", listener);
+//   }
+//
+// Now do the same idea for stock, filtering by sku, below.
+
+import { EventEmitter } from "node:events";
+
+function watchStock(stock, sku) {
+  // 1. create a listener that logs `${sku} is low: ${item.left} left`
+  //    only when item.sku === sku
+  // 2. register it: stock.on("low", listener)
+  // 3. return a function that unregisters it: () => stock.off("low", listener)
+  return () => {};
+}
+
+const stock = new EventEmitter();
+const stopWatching = watchStock(stock, "SHOE-42");
+
+stock.emit("low", { sku: "SHOE-42", left: 2 });
+stock.emit("low", { sku: "SOCK-3", left: 1 });
+stopWatching();
+stock.emit("low", { sku: "SHOE-42", left: 1 });
+console.log("listeners:", stock.listenerCount("low"));
+</starter>
+<hint><p>Keep a reference to the listener function in a variable, so you can pass that same reference to both <code>on</code> and, later, <code>off</code>.</p></hint>
+<hint><p><code>const listener = (item) =&gt; { if (item.sku === sku) console.log(...); }; stock.on("low", listener); return () =&gt; stock.off("low", listener);</code></p></hint>
 <solution>
 <example file="watch-stock.js" browser="no">
 import { EventEmitter } from "node:events";
@@ -947,6 +982,43 @@ listeners: 0
 </exercise>
 <exercise title="Check a required program at startup">
 <p>A server needs Node.js 24 or newer in its child processes. Write <code>checkNode()</code> that runs <code>node --version</code> with <code>execFile</code>, parses the major version and throws a clear error if it is too old. Also show what happens when the program is missing, by running a program name that does not exist.</p>
+<starter file="check-node.js">
+// Example to learn from: running a command and reporting whether the
+// program exists, without crashing when it does not.
+//
+//   async function checkGit() {
+//     try {
+//       const { stdout } = await run("git", ["--version"], { timeout: 5000 });
+//       return stdout.trim();
+//     } catch (error) {
+//       if (error.code === "ENOENT") return "git: not installed";
+//       throw error;
+//     }
+//   }
+//
+// Now check a minimum major version too, below.
+
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const run = promisify(execFile);
+
+async function checkProgram(file, minMajor) {
+  // 1. run `${file} --version` with run(), with a { timeout: 5000 }
+  // 2. parse the major version out of stdout: strip a leading "v", then
+  //    split on "." and take the first part, then convert with Number
+  // 3. if it is below minMajor, throw a clear Error
+  // 4. otherwise return `${file}: major version ok`
+  // 5. in catch: if error.code === "ENOENT" the program itself does not
+  //    exist, so return `${file}: not installed`; anything else, rethrow
+  return ""; // placeholder so the calls below don't crash
+}
+
+console.log(await checkProgram(process.execPath, 24).then((text) => text.replace(process.execPath, "node")));
+console.log(await checkProgram("invoice-pdf-renderer", 1));
+</starter>
+<hint><p><code>stdout.trim().replace(/^v/, "").split(".")[0]</code> gets you the major version as text; wrap it in <code>Number(...)</code>.</p></hint>
+<hint><p><code>if (major &lt; minMajor) throw new Error(`${file} ${major} is too old, need ${minMajor}+`);</code> then, in the <code>catch</code>, check <code>error.code === "ENOENT"</code> before rethrowing.</p></hint>
 <solution>
 <example file="check-node.js" browser="no">
 import { execFile } from "node:child_process";
@@ -978,6 +1050,51 @@ invoice-pdf-renderer: not installed
 </exercise>
 <exercise title="Split the report across workers">
 <p>Change the sales report so the main program starts 4 workers, each adding up a quarter of the orders (pass <code>start</code> and <code>end</code> in <code>workerData</code>), and combines the results. To keep it self-contained, use an <code>eval</code> worker that sums the numbers from <code>start</code> to <code>end - 1</code>, and check the combined total against the formula <code>n * (n - 1) / 2</code>.</p>
+<starter file="report-pool.js">
+// Example to learn from: splitting a range into equal chunks before handing
+// each one to a worker.
+//
+//   const total = 20;
+//   const workers = 3;
+//   const chunk = Math.ceil(total / workers);
+//   const ranges = Array.from({ length: workers }, (_, i) =>
+//     [i * chunk, Math.min(total, (i + 1) * chunk)],
+//   );
+//   console.log(ranges); // [ [0,7], [7,14], [14,20] ]
+//
+// Now build the same shape of ranges for 40,000,000 orders across 4 workers,
+// run each one in a worker, and add up their results, below.
+
+import { Worker } from "node:worker_threads";
+import { once } from "node:events";
+
+const code = `
+  const { parentPort, workerData } = require("node:worker_threads");
+  let sum = 0;
+  for (let i = workerData.start; i < workerData.end; i++) sum += i;
+  parentPort.postMessage(sum);
+`;
+
+function runPart(start, end) {
+  // start a Worker with { eval: true, workerData: { start, end } }, then
+  // return once(worker, "message").then(([sum]) => sum)
+}
+
+const n = 40_000_000;
+const parts = 4;
+const size = Math.ceil(n / parts);
+
+// build `ranges`: an array of `parts` [start, end] pairs, each covering
+// `size` numbers, the last one capped at n
+const ranges = [];
+console.log(ranges);
+
+const sums = await Promise.all(ranges.map(([start, end]) => runPart(start, end)));
+const total = sums.reduce((a, b) => a + b, 0);
+console.log("total:", total, "expected:", (n * (n - 1)) / 2, "match:", total === (n * (n - 1)) / 2);
+</starter>
+<hint><p>Build <code>ranges</code> the same way the worked example built its chunks, with <code>size</code> and <code>parts</code> in place of <code>chunk</code> and <code>workers</code>. Inside <code>runPart</code>, create the worker with <code>new Worker(code, { eval: true, workerData: { start, end } })</code>.</p></hint>
+<hint><p><code>Array.from({ length: parts }, (_, i) =&gt; [i * size, Math.min(n, (i + 1) * size)])</code>, and <code>return once(worker, "message").then(([sum]) =&gt; sum);</code>.</p></hint>
 <solution>
 <example file="report-pool.js" browser="no">
 import { Worker } from "node:worker_threads";

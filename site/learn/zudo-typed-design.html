@@ -690,7 +690,7 @@ export class BillingError extends BaseError {
 <ul>
 <li><strong>DTO types come from schemas.</strong> <code>Infer&lt;typeof PlaceOrderBody&gt;</code> is the type of whatever <code>parse</code> returns, so the schema (runtime) and the type (compile time) cannot drift apart. The name is used twice on purpose: <code>PlaceOrderBody</code> the value is the schema, <code>PlaceOrderBody</code> the type is its output.</li>
 <li><strong>The request carries branded types, the DTO carries strings.</strong> Between them sits the parse step in the route. A command handler never sees an unchecked id.</li>
-<li><strong>Maps are <code>type</code> aliases, not interfaces.</strong> <code>@zudojs/cqrs</code>'s <code>CommandOf</code> and <code>@zudojs/events</code>' <code>EventUnion</code> require <code>Record&lt;string, unknown&gt;</code>, which an interface does not satisfy (it has no index signature), as the next example shows.</li>
+<li><strong>Payload types may be interfaces or <code>type</code> aliases.</strong> <code>@zudojs/cqrs</code>'s <code>CommandOf</code> and <code>@zudojs/events</code>' <code>EventUnion</code> accept any object type as the payload, an interface included, as the next example shows. (Before <code>@zudojs/cqrs</code> and <code>@zudojs/events</code> 1.3.0, both required a <code>Record&lt;string, unknown&gt;</code> bound, which an interface never satisfies because it has no index signature; a module built on an older version still needs the payload written as an inline object type or a <code>type</code> alias.)</li>
 <li><strong><code>as const satisfies Record&lt;BillingErrorCode, number&gt;</code></strong> checks that every code has a status (a missing one is an error) while keeping the exact literal types, so <code>BILLING_STATUS.AMOUNT_MISMATCH</code> is <code>422</code>, not just <code>number</code>.</li>
 </ul>
 <figure class="lx-example" data-index="7" data-file="interface-payload.ts">
@@ -703,7 +703,8 @@ export class BillingError extends BaseError {
 <span class="t-pn">}</span>
 
 <span class="t-kw">type</span> <span class="t-ty">RefundOrder</span> <span class="t-op">=</span> <span class="t-ty">CommandOf</span><span class="t-op">&lt;</span><span class="t-str">"RefundOrder"</span><span class="t-pn">,</span> <span class="t-ty">RefundData</span><span class="t-op">&gt;</span><span class="t-pn">;</span>
-<span class="t-kw">type</span> <span class="t-ty">RefundOrderFixed</span> <span class="t-op">=</span> <span class="t-ty">CommandOf</span><span class="t-op">&lt;</span><span class="t-str">"RefundOrder"</span><span class="t-pn">,</span> <span class="t-pn">{</span> <span class="t-kw">readonly</span> orderId<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span> <span class="t-kw">readonly</span> reason<span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-pn">}</span><span class="t-op">&gt;</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> refund<span class="t-op">:</span> <span class="t-ty">RefundOrder</span> <span class="t-op">=</span> <span class="t-pn">{</span> <span class="t-kw">type</span><span class="t-op">:</span> <span class="t-str">"RefundOrder"</span><span class="t-pn">,</span> orderId<span class="t-op">:</span> <span class="t-str">"ord_1"</span><span class="t-pn">,</span> reason<span class="t-op">:</span> <span class="t-str">"duplicate charge"</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>refund<span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import type { CommandOf } from "@zudojs/cqrs";
 
@@ -713,17 +714,11 @@ interface RefundData {
 }
 
 type RefundOrder = CommandOf<"RefundOrder", RefundData>;
-type RefundOrderFixed = CommandOf<"RefundOrder", { readonly orderId: string; readonly reason: string }>;</script>
-<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">interface-payload.ts:8:45 - error TS2344: Type 'RefundData' does not satisfy the constraint 'Record&lt;string, unknown&gt;'.
-  Index signature for type 'string' is missing in type 'RefundData'.
-
-8 type RefundOrder = CommandOf&lt;"RefundOrder", RefundData&gt;;
-                                              ~~~~~~~~~~
-
-
-Found 1 error in interface-payload.ts:8</pre></div>
+const refund: RefundOrder = { type: "RefundOrder", orderId: "ord_1", reason: "duplicate charge" };
+console.log(refund);</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx interface-payload.ts</code> and of the browser terminal</div><pre class="lx-no-copy">{ type: 'RefundOrder', orderId: 'ord_1', reason: 'duplicate charge' }</pre></div>
 </figure>
-<p>An inline object type (or a <code>type</code> alias) is accepted, the interface is not. Keep payload and map types as aliases in contract files.</p>
+<p>The <code>type</code> key from <code>CommandOf</code>'s first argument and the fields of <code>RefundData</code> merge into one plain object, whether <code>RefundData</code> was declared as an interface or a type alias. Keeping contract payloads as <code>interface</code>s is fine; this module's maps use <code>type</code> aliases mainly so a whole map (<code>BillingCommands</code>, not one payload) can satisfy <code>Spec</code> below, which does still need an index signature.</p>
 </section>
 
 <section>
@@ -1730,7 +1725,71 @@ console.log("type tests compiled:", typeof typeTests);</script>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="cancel-order.ts" data-project="billing"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Cancel an order</h3><p>Add a <code>CancelOrder</code> command: it takes a <code>userId</code>, an <code>orderId</code> and a <code>reason</code>, and returns a <code>CancelledOrder</code>. Only the owner may cancel, and only a pending order. Write a <code>cancel(order: PendingOrder, reason)</code> transition, extend a copy of the command map, and implement the handler with the same errors as the other handlers.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="19" data-file="cancel-order.ts" data-project="billing">
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="cancel-order.ts" data-project="billing" data-title="Cancel an order"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Cancel an order</h3><div class="lx-ex-task"><p>Add a <code>CancelOrder</code> command: it takes a <code>userId</code>, an <code>orderId</code> and a <code>reason</code>, and returns a <code>CancelledOrder</code>. Only the owner may cancel, and only a pending order. Write a <code>cancel(order: PendingOrder, reason)</code> transition, extend a copy of the command map, and implement the handler with the same errors as the other handlers.</p></div><script type="text/plain" class="lx-ex-starter" data-file="cancel-order.ts">// Example to learn from: a transition and a typed handler for a similar,
+// smaller command on the same order store.
+//
+//   function archive(order: PendingOrder): CancelledOrder {
+//     return { ...order, status: "cancelled", reason: "archived" };
+//   }
+//   const more = typedCommands<{ Archive: { request: { orderId: OrderId }; result: CancelledOrder } }>({
+//     async Archive({ orderId }) {
+//       const order = await orders.findById(orderId);
+//       if (!order) throw new BillingError("ORDER_NOT_FOUND", `Order ${orderId} not found`);
+//       if (order.status !== "pending") throw new BillingError("ORDER_NOT_PENDING", `Order ${orderId} is ${order.status}`);
+//       const done = archive(order);
+//       await orders.save(done);
+//       return done;
+//     },
+//   });
+//
+// Now write cancel() and the CancelOrder handler the same way, checking
+// the owner too.
+
+import { createUserId } from "@zudojs/constants";
+import { createBillingContainer, loadBillingConfig } from "./app.js";
+import { BillingError } from "./contracts.js";
+import type { BillingCommands } from "./contracts.js";
+import type { CancelledOrder, PendingOrder } from "./model.js";
+import { TOKENS } from "./ports.js";
+import { typedCommands } from "./typed-buses.js";
+import type { OrderId, UserId } from "./values.js";
+import { parseProductId } from "./values.js";
+
+function cancel(order: PendingOrder, reason: string): CancelledOrder {
+  // Return a copy of order with status: "cancelled" and this reason.
+  return order as unknown as CancelledOrder;
+}
+
+type MoreCommands = {
+  CancelOrder: { request: { userId: UserId; orderId: OrderId; reason: string }; result: CancelledOrder };
+};
+
+const config = await loadBillingConfig({ BILLING_CURRENCY: "NGN", BILLING_PRO_PLAN_PRICE: "500000", BILLING_STORAGE_ADDON_PRICE: "200000" });
+const container = createBillingContainer(config);
+const orders = container.resolve(TOKENS.orders);
+const billing = container.resolve(TOKENS.commands);
+
+const more = typedCommands<MoreCommands>({
+  async CancelOrder({ userId, orderId }) {
+    // 1. Load the order; if missing or order.userId !== userId, throw
+    //    BillingError("ORDER_NOT_FOUND", `Order ${orderId} not found`).
+    // 2. If order.status !== "pending", throw
+    //    BillingError("ORDER_NOT_PENDING", `Order ${orderId} is ${order.status}`).
+    // 3. cancel(order, reason), await orders.save(...) on it, and return it.
+    const order = await orders.findById(orderId);
+    return order as unknown as CancelledOrder;
+  },
+});
+
+const ada = createUserId("u-ada");
+const order: BillingCommands["PlaceOrder"]["result"] = await billing.send("PlaceOrder", { userId: ada, productId: parseProductId("prd_pro-monthly") });
+const cancelled = await more.send("CancelOrder", { userId: ada, orderId: order.id, reason: "Chose the yearly plan" });
+console.log(cancelled.status, cancelled.reason);
+try {
+  await more.send("CancelOrder", { userId: ada, orderId: order.id, reason: "again" });
+} catch (error) {
+  if (error instanceof BillingError) console.log(error.statusCode, error.message);
+}</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Mirror <code>markPaid</code>: <code>cancel</code> just spreads the order and overrides two fields, <code>return { ...order, status: "cancelled", reason };</code>. In the handler, check <code>order.userId !== userId</code> next to the missing-order check, since both are "not found" from the caller's point of view.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const order = await orders.findById(orderId); if (!order || order.userId !== userId) throw new BillingError("ORDER_NOT_FOUND", ...); if (order.status !== "pending") throw new BillingError("ORDER_NOT_PENDING", ...); const done = cancel(order, reason); await orders.save(done); return done;</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="19" data-file="cancel-order.ts" data-project="billing">
 <figcaption class="lx-bar"><span class="lx-file">cancel-order.ts</span><button type="button" class="lx-edit" data-index="19" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="19"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createUserId <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/constants"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createBillingContainer<span class="t-pn">,</span> loadBillingConfig <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
@@ -1824,7 +1883,48 @@ try {
 </figure>
 <p>In the module itself you would add <code>CancelOrder</code> to <code>BillingCommands</code>; the <code>Handlers&lt;BillingCommands&gt;</code> return type of <code>commandHandlers</code> then refuses to compile until the handler exists. The narrowing after <code>order.status !== "pending"</code> is what lets <code>cancel(order, …)</code> compile.</p></div></div>
 
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="list-orders.ts" data-project="billing"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A query for the account page</h3><p>Add a <code>ListMyOrders</code> query that returns a user's orders as <code>OrderResponse</code>s, newest first. The in-memory store has no "find by user" method yet: add one to a port of your own (<code>OrderLister</code>), and implement it over a small array for the exercise.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="20" data-file="list-orders.ts" data-project="billing">
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="list-orders.ts" data-project="billing" data-title="A query for the account page"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A query for the account page</h3><div class="lx-ex-task"><p>Add a <code>ListMyOrders</code> query that returns a user's orders as <code>OrderResponse</code>s, newest first. The in-memory store has no "find by user" method yet: add one to a port of your own (<code>OrderLister</code>), and implement it over a small array for the exercise.</p></div><script type="text/plain" class="lx-ex-starter" data-file="list-orders.ts">// Example to learn from: the same sort-then-map shape for a different list.
+//
+//   const sorted = [...products].sort((a, b) => b.price - a.price);
+//   const labels = sorted.map((p) => `${p.name}: ${formatNaira(p.price)}`);
+//
+// Now sort orders newest first, and map each one through toOrderResponse.
+
+import { createTimestamp, createUserId } from "@zudojs/constants";
+import type { OrderResponse } from "./contracts.js";
+import { toOrderResponse } from "./handlers.js";
+import type { Order, Product } from "./model.js";
+import { typedQueries } from "./typed-buses.js";
+import type { OrderId, UserId } from "./values.js";
+import { kobo, parseProductId } from "./values.js";
+
+interface OrderLister {
+  listByUser(userId: UserId): Promise<readonly Order[]>;
+}
+
+type AccountQueries = {
+  ListMyOrders: { request: { userId: UserId }; result: readonly OrderResponse[] };
+};
+
+const pro: Product = { id: parseProductId("prd_pro-monthly"), name: "Pro plan (monthly)", price: kobo(500_000) };
+const ada = createUserId("u-ada");
+const rows: Order[] = [
+  { id: "ord_000000000001" as OrderId, userId: ada, productId: pro.id, total: pro.price, placedAt: createTimestamp("2026-09-01T10:00:00.000Z"), status: "cancelled", reason: "Wrong plan" },
+  { id: "ord_000000000002" as OrderId, userId: ada, productId: pro.id, total: pro.price, placedAt: createTimestamp("2026-09-02T10:00:00.000Z"), status: "pending" },
+  { id: "ord_000000000003" as OrderId, userId: createUserId("u-bola"), productId: pro.id, total: pro.price, placedAt: createTimestamp("2026-09-03T10:00:00.000Z"), status: "pending" },
+];
+const lister: OrderLister = { listByUser: async (userId) => rows.filter((o) => o.userId === userId) };
+
+const queries = typedQueries<AccountQueries>({
+  async ListMyOrders({ userId }) {
+    // Load lister.listByUser(userId), sort newest first with
+    // (a, b) => b.placedAt.localeCompare(a.placedAt), then map each order
+    // through toOrderResponse(order, pro).
+    return (await lister.listByUser(userId)) as unknown as OrderResponse[];
+  },
+});
+
+for (const order of await queries.send("ListMyOrders", { userId: ada })) console.log(order.id, order.status, order.total);</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Copy the array first so <code>sort</code> does not mutate <code>rows</code>: <code>[...(await lister.listByUser(userId))].sort(...)</code>. ISO timestamps sort correctly as plain text, so <code>localeCompare</code> works directly on <code>placedAt</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const mine = [...(await lister.listByUser(userId))].sort((a, b) =&gt; b.placedAt.localeCompare(a.placedAt)); return mine.map((order) =&gt; toOrderResponse(order, pro));</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="20" data-file="list-orders.ts" data-project="billing">
 <figcaption class="lx-bar"><span class="lx-file">list-orders.ts</span><button type="button" class="lx-edit" data-index="20" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="20"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createTimestamp<span class="t-pn">,</span> createUserId <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/constants"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">OrderResponse</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./contracts.js"</span><span class="t-pn">;</span>
@@ -1898,7 +1998,48 @@ ord_000000000001 cancelled ₦5,000.00</pre></div>
 </figure>
 <p>The result type <code>readonly OrderResponse[]</code> comes from the map, so the page code gets DTOs, never entities with internal fields. ISO timestamps sort correctly as text, which is one reason the <code>Timestamp</code> brand stores them in that format. In the real module, <code>listByUser</code> would be a paginated query service, as in <a href="/learn/zudo-data-architecture#boundaries">data architecture</a>.</p></div></div>
 
-<div class="lx-exercise" data-exercise="3" data-mode="run" data-target="0" data-file="sms-channel.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>An SMS channel</h3><p>Add an <code>"sms"</code> channel to <code>Notification</code> with a <code>phone</code> and a <code>text</code>, and write a <code>describe(notification)</code> function with an exhaustive <code>switch</code>. Show the three channels.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="21" data-file="sms-channel.ts">
+<div class="lx-exercise" data-exercise="3" data-mode="run" data-target="0" data-file="sms-channel.ts" data-title="An SMS channel"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>An SMS channel</h3><div class="lx-ex-task"><p>Add an <code>"sms"</code> channel to <code>Notification</code> with a <code>phone</code> and a <code>text</code>, and write a <code>describe(notification)</code> function with an exhaustive <code>switch</code>. Show the three channels.</p></div><script type="text/plain" class="lx-ex-starter" data-file="sms-channel.ts">// Example to learn from: adding a variant to a different exhaustive union.
+//
+//   type Shape =
+//     | { kind: "circle"; radius: number }
+//     | { kind: "square"; side: number }
+//     | { kind: "triangle"; base: number; height: number };
+//
+//   function area(shape: Shape): number {
+//     switch (shape.kind) {
+//       case "circle": return Math.PI * shape.radius ** 2;
+//       case "square": return shape.side ** 2;
+//       case "triangle": return 0.5 * shape.base * shape.height;
+//       default: return assertNever(shape);
+//     }
+//   }
+//
+// Now add an "sms" variant to Notification, and a case for it below.
+
+type Notification =
+  | { readonly channel: "email"; readonly to: string; readonly subject: string }
+  | { readonly channel: "in-app"; readonly userId: string; readonly text: string };
+  // Add: | { readonly channel: "sms"; readonly phone: string; readonly text: string };
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled notification: ${JSON.stringify(value)}`);
+}
+
+function describe(notification: Notification): string {
+  switch (notification.channel) {
+    case "email": return `e-mail to ${notification.to}: ${notification.subject}`;
+    case "in-app": return `in-app for ${notification.userId}: ${notification.text}`;
+    // Add a case "sms" here, in the same shape as the other two.
+    default: return assertNever(notification);
+  }
+}
+
+const all: Notification[] = [
+  { channel: "email", to: "ada@example.com", subject: "Payment received: ₦5,000.00" },
+  { channel: "in-app", userId: "u-ada", text: "Pro features are on." },
+  // Add a third notification here, with channel: "sms".
+];
+for (const notification of all) console.log(describe(notification));</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The union member reads <code>{ readonly channel: "sms"; readonly phone: string; readonly text: string }</code>. Add it with a <code>|</code> next to the other two, then add a matching <code>case "sms":</code> that reads <code>notification.phone</code> and <code>notification.text</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>case "sms": return `SMS to ${notification.phone}: ${notification.text.slice(0, 160)}`;</code>, and a third object in <code>all</code>: <code>{ channel: "sms", phone: "+2348012345678", text: "Your Task API Pro plan is active." }</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="21" data-file="sms-channel.ts">
 <figcaption class="lx-bar"><span class="lx-file">sms-channel.ts</span><button type="button" class="lx-edit" data-index="21" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="21"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">type</span> <span class="t-ty">Notification</span> <span class="t-op">=</span>
   <span class="t-op">|</span> <span class="t-pn">{</span> <span class="t-kw">readonly</span> channel<span class="t-op">:</span> <span class="t-str">"email"</span><span class="t-pn">;</span> <span class="t-kw">readonly</span> to<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span> <span class="t-kw">readonly</span> subject<span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-pn">}</span>

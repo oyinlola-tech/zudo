@@ -587,6 +587,41 @@ PASS total -> 1927500
 <h2 id="practice">Practice</h2>
 <exercise title="A tap for debugging pipelines">
 <p>Write <code>tap(fn)</code>: it returns a step that calls <code>fn(value)</code> for its side effect and then returns <code>value</code> unchanged. Use it to log the quote between two steps of a pipeline without changing the result.</p>
+<starter file="tap.js">
+// Example to learn from: a tap step in a temperature-conversion pipeline
+// instead of a pricing one.
+//
+//   const pipe = (...fns) => (input) => fns.reduce((value, fn) => fn(value), input);
+//   const tap = (fn) => (value) => { fn(value); return value; };
+//   const toCelsius = (f) => (f - 32) / 1.8;
+//   const round = (n) => Math.round(n);
+//   const convert = pipe(toCelsius, tap((c) => console.log("celsius:", c)), round);
+//   console.log("final:", convert(100)); // logs "celsius: 37.77...", then "final: 38"
+//
+// Now do the same idea for tap below, used in the price pipeline.
+
+const pipe = (...fns) => (input) => fns.reduce((value, fn) => fn(value), input);
+
+function tap(fn) {
+  // your code here: return a function of one argument `value` that calls
+  // fn(value) for its side effect, then returns value unchanged
+  return (value) => value;
+}
+
+const addVat = (rate) => (kobo) => Math.round(kobo * (1 + rate));
+const minusVoucher = (voucherKobo) => (kobo) => Math.max(kobo - voucherKobo, 0);
+
+const price = pipe(
+  minusVoucher(200000),
+  tap((kobo) => console.log("after voucher:", kobo)),
+  addVat(0.075),
+  tap((kobo) => console.log("after VAT:", kobo)),
+);
+
+console.log("final:", price(1700000));
+</starter>
+<hint><p><code>tap</code> must return a function that both calls <code>fn</code> and returns its argument — the side effect (logging) and the value passed on are two separate things.</p></hint>
+<hint><p><code>function tap(fn) { return (value) =&gt; { fn(value); return value; }; }</code></p></hint>
 <solution>
 <example file="tap.js">
 const pipe = (...fns) => (input) => fns.reduce((value, fn) => fn(value), input);
@@ -617,6 +652,36 @@ final: 1612500
 </exercise>
 <exercise title="Per-country price calculators">
 <p>Write a curried <code>priceFor(taxRate)(discountPercent)(kobo)</code> that applies the discount first, then the tax, rounding once at the end. Build calculators for a Nigerian customer with no discount (7.5%), a Ghanaian customer with no discount (15%) and a Nigerian staff member with 20% off, and price ₦10,000 for each.</p>
+<starter file="price-for.js">
+// Example to learn from: a curried calculator for shipping fees by zone
+// and weight class, instead of prices by tax and discount.
+//
+//   const feeFor = (zoneRate) => (baseFee) => (kg) => Math.round(kg * zoneRate + baseFee);
+//   const lagos = feeFor(50);
+//   const calculators = { "Lagos light": lagos(500), "Lagos heavy": lagos(1500) };
+//   for (const [who, fee] of Object.entries(calculators)) console.log(who.padEnd(12), fee(3));
+//
+// Now do the same shape of currying for priceFor below.
+
+const priceFor = (taxRate) => (discountPercent) => (kobo) => {
+  // your code here: Math.round(kobo * (1 - discountPercent / 100) * (1 + taxRate))
+};
+
+const nigeria = priceFor(0.075);
+const ghana = priceFor(0.15);
+
+const calculators = {
+  "NG customer": nigeria(0),
+  "GH customer": ghana(0),
+  "NG staff": nigeria(20),
+};
+
+for (const [who, price] of Object.entries(calculators)) {
+  console.log(who.padEnd(12), price(1000000));
+}
+</starter>
+<hint><p>Three arrows in a row, each taking one argument: <code>(taxRate) =&gt; (discountPercent) =&gt; (kobo) =&gt; ...</code>. Apply the discount to <code>kobo</code> first, then the tax to that result, then round once.</p></hint>
+<hint><p><code>Math.round(kobo * (1 - discountPercent / 100) * (1 + taxRate))</code></p></hint>
 <solution>
 <example file="price-for.js">
 const priceFor = (taxRate) => (discountPercent) => (kobo) => Math.round(kobo * (1 - discountPercent / 100) * (1 + taxRate));
@@ -644,6 +709,42 @@ NG staff     860000
 </exercise>
 <exercise title="Remove a line immutably">
 <p>Write <code>removeLine(cart, sku)</code> that returns a new cart without that line and with a new <code>updatedAt</code> passed in by the caller. The original cart must be unchanged, and lines that were not removed must be the same objects (structural sharing). If the SKU is not in the cart, return the original cart unchanged, so callers can detect "nothing happened" with <code>===</code>.</p>
+<starter file="remove-line.js">
+// Example to learn from: an immutable update that returns the same array
+// back when nothing needed to change, marking a task done instead of
+// removing a cart line.
+//
+//   function markDone(list, id, updatedAt) {
+//     const index = list.findIndex((task) => task.id === id);
+//     if (index === -1) return list;
+//     return list.with(index, { ...list[index], done: true, updatedAt });
+//   }
+//   const tasks = Object.freeze([{ id: 1, title: "Buy milk", done: false }]);
+//   console.log(markDone(tasks, 9, "x") === tasks); // true: nothing matched, same array back
+//
+// Now do the same idea for removeLine below.
+
+function removeLine(cart, sku, updatedAt) {
+  // your code here:
+  // 1. const index = cart.lines.findIndex((line) => line.sku === sku);
+  // 2. if (index === -1) return cart; (nothing to remove: hand back the same object)
+  // 3. return { ...cart, lines: cart.lines.toSpliced(index, 1), updatedAt };
+  return cart;
+}
+
+const cart = Object.freeze({
+  id: "CART-1",
+  updatedAt: "2026-09-24T09:00:00Z",
+  lines: Object.freeze([{ sku: "RICE-5", qty: 2 }, { sku: "OIL-1", qty: 1 }, { sku: "SALT", qty: 4 }]),
+});
+
+const next = removeLine(cart, "OIL-1", "2026-09-24T09:05:00Z");
+console.log(next.lines.map((l) => l.sku), next.updatedAt);
+console.log(cart.lines.length, next.lines[1] === cart.lines[2]);
+console.log(removeLine(cart, "TV-32", "2026-09-24T09:06:00Z") === cart);
+</starter>
+<hint><p><code>cart.lines.findIndex((line) =&gt; line.sku === sku)</code> gives you the position to remove, or <code>-1</code> when it is not there — handle that case by returning <code>cart</code> itself, unchanged.</p></hint>
+<hint><p><code>const index = cart.lines.findIndex((line) =&gt; line.sku === sku); if (index === -1) return cart; return { ...cart, lines: cart.lines.toSpliced(index, 1), updatedAt };</code></p></hint>
 <solution>
 <example file="remove-line.js">
 function removeLine(cart, sku, updatedAt) {

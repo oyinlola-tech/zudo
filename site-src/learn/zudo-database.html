@@ -832,6 +832,51 @@ ready: false
 <h2 id="practice">Practice</h2>
 <exercise title="Add a due date">
 <p>Write migration 3, <code>add-task-due-date</code>, that adds a nullable <code>due_date date</code> column to <code>tasks</code>, with a <code>down</code> that removes it. Run all migrations and print the column names of <code>tasks</code> from <code>information_schema.columns</code>.</p>
+<starter file="due-date.ts">
+// Example to learn from: a migration that adds a column to a different table.
+//
+//   const addAuthorBio: Migration = {
+//     version: 12,
+//     name: "add-author-bio",
+//     up: async (tx) => {
+//       await tx.$executeRawUnsafe("ALTER TABLE authors ADD COLUMN bio text");
+//     },
+//     down: async (tx) => {
+//       await tx.$executeRawUnsafe("ALTER TABLE authors DROP COLUMN bio");
+//     },
+//   };
+//
+// Now do the same for tasks below.
+
+import { createMigrationRunner } from "@zudojs/database";
+import type { Migration } from "@zudojs/database";
+import { openDatabase } from "./database.js";
+import { migrations } from "./migrations.js";
+
+const addDueDate: Migration = {
+  version: 3,
+  name: "add-task-due-date",
+  up: async (tx) => {
+    // add a nullable due_date date column to tasks
+  },
+  down: async (tx) => {
+    // remove the due_date column
+  },
+};
+
+const { client } = await openDatabase();
+const result = await createMigrationRunner(client, [...migrations, addDueDate]).migrate();
+console.log(result.applied.map((m) => m.version));
+
+const columns = await client.queryRawUnsafe<{ column_name: string }[]>(
+  "SELECT column_name FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position",
+  ["tasks"],
+);
+console.log(columns.map((c) => c.column_name));
+await client.disconnect();
+</starter>
+<hint><p>A migration is an object with <code>version</code>, <code>name</code>, <code>up</code> and <code>down</code>. Inside each, <code>tx.$executeRawUnsafe(sql)</code> runs one statement, the same way <code>migrations.ts</code> does for the <code>tasks</code> table itself.</p></hint>
+<hint><p><code>up</code>: <code>ALTER TABLE tasks ADD COLUMN due_date date</code>. <code>down</code>: <code>ALTER TABLE tasks DROP COLUMN due_date</code>. Add <code>addDueDate</code> after the existing migrations, as <code>[...migrations, addDueDate]</code> already does.</p></hint>
 <solution>
 <example file="due-date.ts" project="db" browser="no">
 import { createMigrationRunner } from "@zudojs/database";
@@ -879,6 +924,48 @@ await client.disconnect();
 
 <exercise title="Open tasks by priority">
 <p>Add a method <code>openByPriority(priority)</code> to <code>TaskRepository</code> that returns the tasks that are not done and have that priority, newest first, using the query builder. Mark task 4 done and try it.</p>
+<starter file="open-by-priority.ts">
+// Example to learn from: a query-builder method for a different filter.
+//
+//   class Books extends BookRepository {
+//     byGenre(genre: Book["genre"]): Promise<readonly Book[]> {
+//       const query = createQueryBuilder<keyof Book>()
+//         .where("genre", genre)
+//         .where("inStock", true)
+//         .orderByDesc("rating")
+//         .orderByDesc("id");
+//       return this.findByQuery(query);
+//     }
+//   }
+//
+// Now add a method that filters tasks the same way.
+
+import { createQueryBuilder } from "@zudojs/database";
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { setup } from "./setup.js";
+import { TaskRepository } from "./task.repository.js";
+
+class Tasks extends TaskRepository {
+  openByPriority(priority: Task["priority"]): Promise<readonly Task[]> {
+    // Build a query with createQueryBuilder<keyof Task>(): filter "done" to
+    // false, filter "priority" to the priority given here, sort by
+    // "createdAt" descending then "id" descending, and return
+    // this.findByQuery(query).
+    return Promise.resolve([]);
+  }
+}
+
+const { pg, client } = await setup();
+const tasks = new Tasks(modelDelegate<Task>(pg, TASK_MODEL));
+await tasks.update(4, { done: true });
+console.log((await tasks.openByPriority("normal")).map((t) => t.id));
+console.log((await tasks.openByPriority("high")).map((t) => t.id));
+await client.disconnect();
+</starter>
+<hint><p>Chain <code>createQueryBuilder&lt;keyof Task&gt;().where("done", false).where("priority", priority)</code>, then hand the query to <code>this.findByQuery(query)</code>, as <code>query.ts</code> did earlier in this lesson.</p></hint>
+<hint><p>Add <code>.orderByDesc("createdAt").orderByDesc("id")</code> before <code>this.findByQuery(query)</code>. The second sort key matters: the seed created every task in one transaction, so several share a <code>createdAt</code>.</p></hint>
 <solution>
 <example file="open-by-priority.ts" project="db" browser="no">
 import { createQueryBuilder } from "@zudojs/database";
@@ -916,6 +1003,54 @@ await client.disconnect();
 
 <exercise title="A safe page request">
 <p>Clients send <code>page</code> and <code>limit</code> as strings in the query string. Write <code>listTasks(query)</code> that validates them with <code>@zudojs/schema</code> (whole numbers, page at least 1, limit 1 to 50, both optional) and returns a page of tasks sorted by id. Try it with <code>{ page: "2", limit: "2" }</code> and with <code>{ limit: "5000" }</code>.</p>
+<starter file="list-tasks.ts">
+// Example to learn from: the same idea for a search box's inputs.
+//
+//   const SearchQuery = schema.object({
+//     q: schema.string().trim().min(1).max(100),
+//     page: schema.coerce.number().int().min(1).default(1),
+//   });
+//   const { q, page } = SearchQuery.parse({ q: "milk", page: "2" });
+//   console.log(q, page); // "milk" 2
+//
+// Now build the schema for a task list's query string below.
+
+import { SchemaError } from "@zudojs/errors";
+import { schema } from "@zudojs/schema";
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { setup } from "./setup.js";
+import { TaskRepository } from "./task.repository.js";
+
+const PageQuery = schema.object({
+  // page: a whole number, at least 1, default 1
+  // limit: a whole number, from 1 to 50, default 10
+  // Both arrive as strings from the query string: use schema.coerce.number().
+});
+
+const { pg, client } = await setup();
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+
+async function listTasks(query: unknown) {
+  const { page, limit } = PageQuery.parse(query) as { page: number; limit: number };
+  const result = await tasks.findPaginated(undefined, {
+    pagination: { page, limit },
+    sort: [{ field: "id", direction: "asc" }],
+  });
+  return { tasks: result.data.map((t) => t.title), total: result.meta.total, pages: result.meta.totalPages };
+}
+
+console.log(await listTasks({ page: "2", limit: "2" }));
+try {
+  await listTasks({ limit: "5000" });
+} catch (error) {
+  if (error instanceof SchemaError) console.log(error.statusCode, error.message);
+}
+await client.disconnect();
+</starter>
+<hint><p><code>schema.coerce.number()</code> turns the incoming string into a number before the other checks run. Chain <code>.int()</code>, then <code>.min(1)</code> for <code>page</code>.</p></hint>
+<hint><p><code>page: schema.coerce.number().int().min(1).default(1)</code> and <code>limit: schema.coerce.number().int().min(1).max(50).default(10)</code>. Both fields are only checked, never required, because <code>.default(...)</code> fills in a value when one is missing.</p></hint>
 <solution>
 <example file="list-tasks.ts" project="db" browser="no">
 import { SchemaError } from "@zudojs/errors";

@@ -499,7 +499,7 @@ dead-lettered: 1</pre></div>
 <ul>
 <li><strong>Alert</strong> when the count grows. A dead-letter queue nobody looks at is just a slower way to lose data. Every queue has an <code>events</code> emitter: <code>queue.events?.on("job:failed", ({ job, error }) =&gt; …)</code> runs on every failed attempt, and <code>getStats().deadLettered</code> gives the count. The <a href="/learn/zudo-observability">observability lesson</a> shows how to count and alert.</li>
 <li><strong>Fix and replay.</strong> If a bug caused the failures, fix it, then add the jobs again with <code>queue.add(dead.job.name, dead.job.data)</code>.</li>
-<li><strong>Stop early for permanent errors.</strong> Retrying "mailbox does not exist" three times wastes time. A processor can check the error and give up at once, for example by marking the reminder as failed in the database and returning normally.</li>
+<li><strong>Stop early for permanent errors.</strong> Retrying "mailbox does not exist" three times wastes time. Since <code>@zudojs/queue</code> 1.3.0, throw <code>createUnrecoverableJobError(message)</code> (or wrap your own error with <code>markUnrecoverable(error)</code>) and the job is dead-lettered on this attempt, however many <code>attempts</code> it was allowed. <code>isUnrecoverableJobError</code> reads the mark back off a dead letter's error. Before that, the only way to stop retrying a permanent error was to swallow it and return normally, which recorded the job as <code>completed</code>, hiding the failure from <code>getStats().deadLettered</code> and from anyone watching the dead-letter queue.</li>
 </ul>
 </section>
 
@@ -781,60 +781,122 @@ task 1: nothing to do</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="permanent.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Give up on permanent errors</h3><p>Change the dead-letter example so that a "does not exist" error does not waste retries: the processor records the bad address in a <code>failedAddresses</code> list and returns normally, while other errors are still thrown for a retry.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="10" data-file="permanent.ts">
-<figcaption class="lx-bar"><span class="lx-file">permanent.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="10"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createInMemoryQueue<span class="t-pn">,</span> createQueueName<span class="t-pn">,</span> createFixedBackoff <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/queue"</span><span class="t-pn">;</span>
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="permanent.ts" data-title="Give up on permanent errors"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Give up on permanent errors</h3><div class="lx-ex-task"><p>Change the dead-letter example so that a "does not exist" error does not waste retries: throw <code>createUnrecoverableJobError</code> so the job dead-letters on this first attempt, while other errors are still thrown for a retry as before.</p></div><script type="text/plain" class="lx-ex-starter" data-file="permanent.ts">// Example to learn from: giving up at once for a different permanent
+// failure, instead of letting attempts run out.
+//
+//   queue.process("charge-card", async (job) => {
+//     if (job.data.cardNumber.length !== 16) {
+//       throw createUnrecoverableJobError(`card number ${job.data.cardNumber} is invalid`);
+//     }
+//     // ... charge the card, which can fail for temporary reasons too
+//   });
+//
+// Now do the same for a bad e-mail address below.
 
-<span class="t-kw">const</span> wait <span class="t-op">=</span> <span class="t-pn">(</span>ms<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Promise</span><span class="t-pn">(</span><span class="t-pn">(</span>resolve<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">setTimeout</span><span class="t-pn">(</span>resolve<span class="t-pn">,</span> ms<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> queue <span class="t-op">=</span> createInMemoryQueue<span class="t-op">&lt;</span><span class="t-pn">{</span> email<span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-pn">}</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-fn">createQueueName</span><span class="t-pn">(</span><span class="t-str">"reminders"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> failedAddresses<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
-<span class="t-kw">let</span> tries <span class="t-op">=</span> <span class="t-num">0</span><span class="t-pn">;</span>
-
-queue<span class="t-pn">.</span><span class="t-fn">process</span><span class="t-pn">(</span><span class="t-str">"send-reminder"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span>job<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-  tries <span class="t-op">+=</span> <span class="t-num">1</span><span class="t-pn">;</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span>job<span class="t-pn">.</span><span class="t-prop">data</span><span class="t-pn">.</span><span class="t-prop">email</span><span class="t-pn">.</span><span class="t-fn">endsWith</span><span class="t-pn">(</span><span class="t-str">"@example.invalid"</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-    failedAddresses<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span>job<span class="t-pn">.</span><span class="t-prop">data</span><span class="t-pn">.</span><span class="t-prop">email</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">return</span><span class="t-pn">;</span>
-  <span class="t-pn">}</span>
-<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-
-<span class="t-kw">await</span> queue<span class="t-pn">.</span><span class="t-fn">add</span><span class="t-pn">(</span><span class="t-str">"send-reminder"</span><span class="t-pn">,</span> <span class="t-pn">{</span> email<span class="t-op">:</span> <span class="t-str">"nobody@example.invalid"</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span>
-  attempts<span class="t-op">:</span> <span class="t-num">3</span><span class="t-pn">,</span>
-  backoff<span class="t-op">:</span> <span class="t-fn">createFixedBackoff</span><span class="t-pn">(</span><span class="t-num">10</span><span class="t-pn">)</span><span class="t-pn">,</span>
-<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">await</span> <span class="t-fn">wait</span><span class="t-pn">(</span><span class="t-num">300</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"tries:"</span><span class="t-pn">,</span> tries<span class="t-pn">,</span> <span class="t-str">"failed addresses:"</span><span class="t-pn">,</span> failedAddresses<span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"dead-lettered:"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-kw">await</span> queue<span class="t-pn">.</span><span class="t-fn">getStats</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">deadLettered</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">await</span> queue<span class="t-pn">.</span><span class="t-fn">close</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-</code></pre>
-<script type="text/plain" class="lx-src">import { createInMemoryQueue, createQueueName, createFixedBackoff } from "@zudojs/queue";
+import { createFixedBackoff, createInMemoryQueue, createQueueName, createUnrecoverableJobError } from "@zudojs/queue";
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const queue = createInMemoryQueue<{ email: string }>(createQueueName("reminders"));
-const failedAddresses: string[] = [];
 let tries = 0;
 
 queue.process("send-reminder", async (job) => {
   tries += 1;
   if (job.data.email.endsWith("@example.invalid")) {
-    failedAddresses.push(job.data.email);
-    return;
+    // Throw createUnrecoverableJobError with a message naming the address,
+    // instead of an ordinary Error.
+    throw new Error(`mailbox ${job.data.email} does not exist`);
   }
 });
 
-await queue.add("send-reminder", { email: "nobody@example.invalid" }, {
+const job = await queue.add("send-reminder", { email: "nobody@example.invalid" }, {
   attempts: 3,
   backoff: createFixedBackoff(10),
 });
 await wait(300);
-console.log("tries:", tries, "failed addresses:", failedAddresses);
+console.log("tries:", tries, "state:", (await queue.getJob(job.id))?.state);
+console.log("dead-lettered:", (await queue.getStats()).deadLettered);
+await queue.close();</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Only the thrown value changes: <code>throw createUnrecoverableJobError(\`mailbox ${job.data.email} does not exist\`);</code> in place of <code>throw new Error(...)</code>. Nothing else in the processor or the <code>queue.add</code> options needs to change.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>With an ordinary <code>Error</code>, the queue retries up to <code>attempts</code> times before dead-lettering the job, so <code>tries</code> ends at 3. <code>createUnrecoverableJobError</code> skips straight to <code>dead_letter</code> on the first attempt, so <code>tries</code> stays at 1.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="10" data-file="permanent.ts">
+<figcaption class="lx-bar"><span class="lx-file">permanent.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="10"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createFixedBackoff<span class="t-pn">,</span> createInMemoryQueue<span class="t-pn">,</span> createQueueName<span class="t-pn">,</span> createUnrecoverableJobError <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/queue"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> wait <span class="t-op">=</span> <span class="t-pn">(</span>ms<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Promise</span><span class="t-pn">(</span><span class="t-pn">(</span>resolve<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">setTimeout</span><span class="t-pn">(</span>resolve<span class="t-pn">,</span> ms<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> queue <span class="t-op">=</span> createInMemoryQueue<span class="t-op">&lt;</span><span class="t-pn">{</span> email<span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-pn">}</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-fn">createQueueName</span><span class="t-pn">(</span><span class="t-str">"reminders"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">let</span> tries <span class="t-op">=</span> <span class="t-num">0</span><span class="t-pn">;</span>
+
+queue<span class="t-pn">.</span><span class="t-fn">process</span><span class="t-pn">(</span><span class="t-str">"send-reminder"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span>job<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+  tries <span class="t-op">+=</span> <span class="t-num">1</span><span class="t-pn">;</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span>job<span class="t-pn">.</span><span class="t-prop">data</span><span class="t-pn">.</span><span class="t-prop">email</span><span class="t-pn">.</span><span class="t-fn">endsWith</span><span class="t-pn">(</span><span class="t-str">"@example.invalid"</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">throw</span> <span class="t-fn">createUnrecoverableJobError</span><span class="t-pn">(</span><span class="t-tpl">`mailbox <span class="t-op">${</span><span class="t-prop">job.data.email</span><span class="t-op">}</span> does not exist`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> job <span class="t-op">=</span> <span class="t-kw">await</span> queue<span class="t-pn">.</span><span class="t-fn">add</span><span class="t-pn">(</span><span class="t-str">"send-reminder"</span><span class="t-pn">,</span> <span class="t-pn">{</span> email<span class="t-op">:</span> <span class="t-str">"nobody@example.invalid"</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span>
+  attempts<span class="t-op">:</span> <span class="t-num">3</span><span class="t-pn">,</span>
+  backoff<span class="t-op">:</span> <span class="t-fn">createFixedBackoff</span><span class="t-pn">(</span><span class="t-num">10</span><span class="t-pn">)</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> <span class="t-fn">wait</span><span class="t-pn">(</span><span class="t-num">300</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"tries:"</span><span class="t-pn">,</span> tries<span class="t-pn">,</span> <span class="t-str">"state:"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-kw">await</span> queue<span class="t-pn">.</span><span class="t-fn">getJob</span><span class="t-pn">(</span>job<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-prop">state</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"dead-lettered:"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-kw">await</span> queue<span class="t-pn">.</span><span class="t-fn">getStats</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">deadLettered</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> queue<span class="t-pn">.</span><span class="t-fn">close</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { createFixedBackoff, createInMemoryQueue, createQueueName, createUnrecoverableJobError } from "@zudojs/queue";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const queue = createInMemoryQueue<{ email: string }>(createQueueName("reminders"));
+let tries = 0;
+
+queue.process("send-reminder", async (job) => {
+  tries += 1;
+  if (job.data.email.endsWith("@example.invalid")) {
+    throw createUnrecoverableJobError(`mailbox ${job.data.email} does not exist`);
+  }
+});
+
+const job = await queue.add("send-reminder", { email: "nobody@example.invalid" }, {
+  attempts: 3,
+  backoff: createFixedBackoff(10),
+});
+await wait(300);
+console.log("tries:", tries, "state:", (await queue.getJob(job.id))?.state);
 console.log("dead-lettered:", (await queue.getStats()).deadLettered);
 await queue.close();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx permanent.ts</code> and of the browser terminal</div><pre class="lx-no-copy">tries: 1 failed addresses: [ 'nobody@example.invalid' ]
-dead-lettered: 0</pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx permanent.ts</code> and of the browser terminal</div><pre class="lx-no-copy">tries: 1 state: dead_letter
+dead-lettered: 1</pre></div>
 </figure>
-<p>One try instead of three. In the Task API, write the failure to the database so the user can see "reminder could not be delivered" and fix their address.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="middleware.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Queue middleware</h3><p>Queue middleware wraps every job, like the other middleware you have met. It receives <code>ctx</code> with <code>ctx.job</code> and <code>ctx.next()</code>. Write one that prints <code>start</code> and <code>end</code> with the job name, and pass it in the <code>middleware</code> option of the queue.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="11" data-file="middleware.ts">
+<p>One try instead of three, and the job is honestly recorded as dead-lettered rather than quietly marked <code>completed</code>. In the Task API, still write the failure to the database in the processor before returning, so the user can see "reminder could not be delivered" and fix their address; <code>isUnrecoverableJobError(dead.error)</code> lets a dead-letter watcher tell this apart from a temporary outage.</p></div></div>
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="middleware.ts" data-title="Queue middleware"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Queue middleware</h3><div class="lx-ex-task"><p>Queue middleware wraps every job, like the other middleware you have met. It receives <code>ctx</code> with <code>ctx.job</code> and <code>ctx.next()</code>. Write one that prints <code>start</code> and <code>end</code> with the job name, and pass it in the <code>middleware</code> option of the queue.</p></div><script type="text/plain" class="lx-ex-starter" data-file="middleware.ts">// Example to learn from: the same start/end wrapper shape for message
+// middleware instead of queue middleware.
+//
+//   const logMessages: MessageMiddleware = async (ctx, next) => {
+//     console.log("start", ctx.message.type);
+//     try {
+//       return await next();
+//     } finally {
+//       console.log("end", ctx.message.type);
+//     }
+//   };
+//
+// Now write `log` the same way, for queue middleware: ctx.job instead of
+// ctx.message, and ctx.next() taking no arguments.
+
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+import type { QueueMiddleware } from "@zudojs/queue";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const log: QueueMiddleware = async (ctx) => {
+  // Log "start" with ctx.job.name, then await ctx.next() inside a
+  // try/finally that logs "end" with ctx.job.name afterwards, and return
+  // what ctx.next() resolved to.
+  return ctx.next();
+};
+
+const queue = createInMemoryQueue<{ taskId: number }>(createQueueName("reminders"), { middleware: [log] });
+queue.process("send-reminder", async (job) => console.log("  sending for task", job.data.taskId));
+
+await queue.add("send-reminder", { taskId: 1 });
+await wait(200);
+await queue.close();</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Log before calling <code>ctx.next()</code>, then wrap the call in <code>try</code>/<code>finally</code> so the closing log runs even if the job throws: <code>console.log("start", ctx.job.name); try { return await ctx.next(); } finally { console.log("end", ctx.job.name); }</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>The full body: <code>console.log("start", ctx.job.name); try { return await ctx.next(); } finally { console.log("end", ctx.job.name); }</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="11" data-file="middleware.ts">
 <figcaption class="lx-bar"><span class="lx-file">middleware.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createInMemoryQueue<span class="t-pn">,</span> createQueueName <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/queue"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">QueueMiddleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/queue"</span><span class="t-pn">;</span>
@@ -881,7 +943,7 @@ await queue.close();</script>
   sending for task 1
 end send-reminder</pre></div>
 </figure></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Which tool?</h3><p>For each, choose a direct call, an event, or a job: (a) checking a password at login; (b) generating a 200-page PDF export; (c) clearing the cache after a task changes; (d) calling a partner's webhook that is often slow.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) A direct call: the user needs the answer now, and it is fast. (b) A job: slow, and the user can get a link when it is ready. (c) An event: fast, in-process, and several parts may care. (d) A job, with retries and backoff: slow and unreliable, and a failure must not be lost.</p></div></div>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Which tool?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Which tool?</h3><div class="lx-ex-task"><p>For each, choose a direct call, an event, or a job: (a) checking a password at login; (b) generating a 200-page PDF export; (c) clearing the cache after a task changes; (d) calling a partner's webhook that is often slow.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Ask two questions of each: does the caller need the answer right now, and can the work fail and need a retry without anyone waiting for it?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(a) is fast and the caller needs the result immediately. (b) is slow, with no other reaction to it. (c) is fast, in-process, and one of possibly several reactions. (d) is slow and can fail for reasons outside your control.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) A direct call: the user needs the answer now, and it is fast. (b) A job: slow, and the user can get a link when it is ready. (c) An event: fast, in-process, and several parts may care. (d) A job, with retries and backoff: slow and unreliable, and a failure must not be lost.</p></div></div>
 </section>
 
 <section>

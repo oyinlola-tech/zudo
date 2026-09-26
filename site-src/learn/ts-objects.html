@@ -373,6 +373,39 @@ admin
 <h2 id="practice">Practice</h2>
 <exercise title="Add a deleted state">
 <p>Add a third account state, <code>{ kind: "deleted"; deletedAt: string }</code>, to the <code>AccountState</code> union in <code>account.ts</code>, and run <code>npx tsc --noEmit</code>. What does the compiler report, and why is that good? Then handle the new case.</p>
+<starter file="deleted.ts">
+// Example to learn from: adding a new case to a discriminated union and its switch.
+//
+//   type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
+//   function area(shape: Shape): number {
+//     switch (shape.kind) {
+//       case "circle": return Math.PI * shape.radius ** 2;
+//       case "square": return shape.side ** 2;
+//       default: { const unreachable: never = shape; return unreachable; }
+//     }
+//   }
+//
+// Now add a "deleted" state to AccountState below, and a case for it.
+
+type AccountState = { kind: "active"; lastLogin: string };
+// add: | { kind: "deleted"; deletedAt: string }
+
+function describeState(state: AccountState): string {
+  switch (state.kind) {
+    case "active":
+      return `active, last login ${state.lastLogin}`;
+    // add a "deleted" case here: `deleted on ${state.deletedAt}`
+    default: {
+      const unreachable: never = state;
+      return String(unreachable);
+    }
+  }
+}
+
+console.log(describeState({ kind: "deleted", deletedAt: "2026-09-01" }));
+</starter>
+<hint><p>Add the new member to the union with <code>|</code>: <code>type AccountState = { kind: "active"; lastLogin: string } | { kind: "deleted"; deletedAt: string };</code>.</p></hint>
+<hint><p>Add a matching case before <code>default</code>: <code>case "deleted": return \`deleted on ${state.deletedAt}\`;</code>. Run <code>npx tsc --noEmit</code> first, without this case, to see the <code>never</code> error point at the missing branch.</p></hint>
 <solution>
 <p>The <code>default</code> branch of <code>describeState</code> fails with an error like <code>Type '{ kind: "deleted"; deletedAt: string; }' is not assignable to type 'never'</code>, which points at every <code>switch</code> that forgot the new state. Add a case:</p>
 <example file="deleted.ts" project="ex-deleted">
@@ -402,6 +435,37 @@ deleted on 2026-09-01
 </exercise>
 <exercise title="Shapes for a payment">
 <p>Model a payment method as a discriminated union: a card (<code>last4</code>, <code>expires</code>), a bank transfer (<code>iban</code>) or cash. Write <code>label(method)</code> that prints e.g. <code>card ending 4242</code>. Why is a card number's last four digits a <code>string</code>, not a <code>number</code>?</p>
+<starter file="payment.ts">
+// Example to learn from: a discriminated union with a switch, for delivery options.
+//
+//   type Delivery = { kind: "pickup"; branch: string } | { kind: "courier"; trackingId: string };
+//   function summarize(delivery: Delivery): string {
+//     switch (delivery.kind) {
+//       case "pickup": return `pickup at ${delivery.branch}`;
+//       case "courier": return `courier, tracking ${delivery.trackingId}`;
+//     }
+//   }
+//
+// Now build PaymentMethod the same way: card, bank or cash.
+
+// type PaymentMethod =
+//   | { kind: "card"; last4: string; expires: string }
+//   | { kind: "bank"; iban: string }
+//   | { kind: "cash" };
+
+function label(method: any): string {
+  // "card" -> `card ending ${method.last4} (expires ${method.expires})`
+  // "bank" -> `bank transfer from ${method.iban.slice(0, 4)}…`
+  // "cash" -> "cash on delivery"
+  return "";
+}
+
+console.log(label({ kind: "card", last4: "0042", expires: "12/28" }));
+console.log(label({ kind: "bank", iban: "GB33BUKB20201555555555" }));
+console.log(label({ kind: "cash" }));
+</starter>
+<hint><p>Uncomment the <code>PaymentMethod</code> union, give <code>label</code> the parameter type <code>PaymentMethod</code>, and <code>switch (method.kind)</code> the way <code>summarize</code> does above.</p></hint>
+<hint><p>Each case returns one template literal, listed in the comments in the stub. A <code>switch</code> with no <code>default</code> still compiles once every case returns.</p></hint>
 <solution>
 <example file="payment.ts" project="ex-payment">
 type PaymentMethod =
@@ -434,6 +498,50 @@ cash on delivery
 </exercise>
 <exercise title="Who may suspend whom?">
 <p>In the user module, <code>suspend</code> checks that the actor is an admin, but not that the actor is active. A suspended admin can still suspend others. Fix it, and make sure an admin cannot suspend another admin either.</p>
+<starter file="suspend.ts">
+// Example to learn from: one "allowed" condition combining every rule,
+// deny by default.
+//
+//   interface Doc { ownerId: number; locked: boolean }
+//   function canEdit(userId: number, doc: Doc): boolean {
+//     return doc.ownerId === userId && !doc.locked;
+//   }
+//
+// suspend below needs the same kind of condition, with more rules.
+
+type Role = "member" | "editor" | "admin";
+type AccountState = { kind: "active" } | { kind: "suspended"; reason: string };
+interface User {
+  readonly id: number;
+  role: Role;
+  state: AccountState;
+}
+
+function suspend(actor: User, target: User, reason: string): void {
+  // allowed only when: actor is an admin, actor is active, target is not
+  // an admin, and actor is not suspending themselves
+  if (actor.role !== "admin" || actor.id === target.id) {
+    throw new Error(`user ${actor.id} may not suspend user ${target.id}`);
+  }
+  target.state = { kind: "suspended", reason };
+}
+
+const ada: User = { id: 1, role: "admin", state: { kind: "active" } };
+const bob: User = { id: 2, role: "admin", state: { kind: "suspended", reason: "audit" } };
+const eve: User = { id: 3, role: "member", state: { kind: "active" } };
+
+const attempts: [User, User][] = [[bob, eve], [ada, bob], [ada, eve]];
+for (const [actor, target] of attempts) {
+  try {
+    suspend(actor, target, "spam");
+    console.log(`user ${target.id} suspended`);
+  } catch (error) {
+    console.log(String(error));
+  }
+}
+</starter>
+<hint><p>Build one boolean: <code>const allowed = actor.role === "admin" &amp;&amp; actor.state.kind === "active" &amp;&amp; target.role !== "admin" &amp;&amp; actor.id !== target.id;</code>.</p></hint>
+<hint><p>Then <code>if (!allowed) throw new Error(...);</code>, and only after that line, apply the change. Every rule must hold; there is no other way in.</p></hint>
 <solution>
 <example file="suspend.ts" project="ex-suspend">
 type Role = "member" | "editor" | "admin";

@@ -672,6 +672,37 @@ log: 200
 <h2 id="practice">Practice</h2>
 <exercise title="Add a strategy for heavy goods">
 <p>The shop starts selling 50 kg bags of rice. Add a <code>freight</code> strategy: available only for orders of 30 kg or more, ₦10,000 plus ₦150 per kg. Without editing <code>shipping.ts</code>, show the options for a 40 kg order outside Lagos and prove freight is not offered for 29.5 kg.</p>
+<starter file="freight.ts">
+// Example to learn from: adding a new strategy object, without touching the
+// list or the function that picks from it.
+//
+//   interface DiscountRule { readonly id: string; applies(spendKobo: number): boolean; percent(): number; }
+//   const silver: DiscountRule = { id: "silver", applies: (s) => s >= 1_000_000, percent: () => 5 };
+//   const gold: DiscountRule = { id: "gold", applies: (s) => s >= 5_000_000, percent: () => 10 };
+//   const rules = [silver, gold];
+//   console.log(rules.filter((r) => r.applies(6_000_000)).map((r) => r.id));
+//
+// Now do the same for the freight strategy below.
+
+import { allStrategies, shippingOptions, type ShippingStrategy } from "./shipping.js";
+
+const freight: ShippingStrategy = {
+  id: "freight",
+  // available for orders of 30 kg or more
+  available: (order) => false, // your code here
+  // NGN 10,000 (1_000_000 kobo) plus NGN 150 (15_000 kobo) per kg, rounded up
+  feeKobo: (order) => 0, // your code here
+};
+
+const strategies = [...allStrategies, freight];
+const now = new Date("2026-03-02T09:00:00Z");
+
+console.log(shippingOptions({ subtotalKobo: 4_000_000, zone: "other", weightKg: 40 }, now, strategies));
+const light = shippingOptions({ subtotalKobo: 4_000_000, zone: "other", weightKg: 29.5 }, now, strategies);
+console.log(light.some((o) => o.id === "freight") ? "FAIL freight offered" : "PASS no freight under 30 kg");
+</starter>
+<hint><p><code>available</code> is a simple comparison: <code>(order) =&gt; order.weightKg &gt;= 30</code>.</p></hint>
+<hint><p><code>feeKobo</code>: <code>(order) =&gt; 1_000_000 + Math.ceil(order.weightKg) * 15_000</code>. <code>Math.ceil</code> matches how <code>express</code> rounds weight up above.</p></hint>
 <solution>
 <example file="freight.ts" project="shipping">
 import { allStrategies, shippingOptions, type ShippingStrategy } from "./shipping.js";
@@ -704,6 +735,69 @@ PASS no freight under 30 kg
 
 <exercise title="An undoable deactivation">
 <p>Write a <code>deactivateProduct(store, sku)</code> command for a store that tracks which products are active. Undo must restore the <em>previous</em> state, even if the product was already inactive. Run it through <code>CommandHistory</code> and show the audit log.</p>
+<starter file="deactivate.ts">
+// Example to learn from: a command that captures the previous value, so
+// undo is exact instead of just "flip it back".
+//
+//   interface FlagStore { get(name: string): boolean; set(name: string, value: boolean): void; }
+//   function disableFlag(store: FlagStore, name: string): Command {
+//     let wasOn: boolean | undefined;
+//     return {
+//       description: `disable ${name}`,
+//       execute() {
+//         wasOn = store.get(name);
+//         store.set(name, false);
+//       },
+//       undo() {
+//         if (wasOn === undefined) throw new Error("cannot undo a command that never ran");
+//         store.set(name, wasOn);
+//       },
+//     };
+//   }
+//
+// Now do the same for deactivating a product below.
+
+import { CommandHistory, type Command } from "./commands.js";
+
+class ProductStore {
+  readonly #active = new Map<string, boolean>([["RICE-5KG", true], ["OIL-1L", false]]);
+  isActive(sku: string): boolean {
+    return this.#active.get(sku) ?? false;
+  }
+  setActive(sku: string, active: boolean): void {
+    this.#active.set(sku, active);
+  }
+}
+
+function deactivateProduct(store: ProductStore, sku: string): Command {
+  let wasActive: boolean | undefined;
+  return {
+    description: `deactivate ${sku}`,
+    execute() {
+      wasActive = store.isActive(sku);
+      store.setActive(sku, false);
+    },
+    undo() {
+      // If wasActive is undefined (execute never ran), throw:
+      //   new Error("cannot undo a command that never ran")
+      // Otherwise restore it: store.setActive(sku, wasActive). Do not just
+      // set it to true: OIL-1L was already inactive before this command ran.
+      // your code here
+    },
+  };
+}
+
+const store = new ProductStore();
+const history = new CommandHistory();
+history.run(deactivateProduct(store, "RICE-5KG"), "musa");
+history.run(deactivateProduct(store, "OIL-1L"), "musa");
+history.undo("ngozi");
+history.undo("ngozi");
+console.log(store.isActive("RICE-5KG"), store.isActive("OIL-1L"));
+console.log(history.audit);
+</starter>
+<hint><p><code>execute</code>: <code>wasActive = store.isActive(sku); store.setActive(sku, false);</code>, the same two lines as <code>disableFlag</code> above.</p></hint>
+<hint><p><code>undo</code>: <code>if (wasActive === undefined) throw new Error("cannot undo a command that never ran"); store.setActive(sku, wasActive);</code>.</p></hint>
 <solution>
 <example file="deactivate.ts" project="admin">
 import { CommandHistory, type Command } from "./commands.js";
@@ -757,6 +851,48 @@ true false
 
 <exercise title="A rate-limit link">
 <p>Write <code>rateLimit(max)</code>, a middleware for the chain above that allows at most <code>max</code> requests per token (or per <code>"anonymous"</code>) and answers 429 after that. Put it where it also protects against password guessing, and show a fourth anonymous attempt being refused before authentication runs.</p>
+<starter file="rate-limit.ts">
+// Example to learn from: a middleware that keeps state in a closure across
+// calls, and short-circuits once a threshold is crossed.
+//
+//   function circuitBreaker(maxFailures: number): Middleware {
+//     let failures = 0;
+//     return async (ctx, next) => {
+//       if (failures >= maxFailures) return { status: 503, body: "circuit open" };
+//       const response = await next();
+//       failures = response.status >= 500 ? failures + 1 : 0;
+//       return response;
+//     };
+//   }
+//
+// Now write a per-token rate limiter below (counts never reset, unlike the
+// circuit breaker above).
+
+import { authenticate, chain, handleErrors, type Middleware } from "./chain.js";
+
+function rateLimit(max: number): Middleware {
+  const counts = new Map<string, number>();
+  return async (ctx, next) => {
+    // key = ctx.token, or "anonymous" when there is none
+    // increment counts.get(key) (default 0) and store it back
+    // if the new count is over max, return { status: 429, body: "too many requests" }
+    // otherwise call and return next()
+    // your code here
+    return next();
+  };
+}
+
+const users = new Map([["t-ngozi", { name: "ngozi", role: "admin" as const }]]);
+const route = chain([handleErrors, rateLimit(3), authenticate(users)], async (ctx) => ({ status: 200, body: `hi ${ctx.user?.name}` }));
+
+for (let attempt = 1; attempt <= 4; attempt++) {
+  const response = await route({ path: "/admin", token: undefined });
+  console.log(attempt, response.status);
+}
+console.log(await route({ path: "/admin", token: "t-ngozi" }));
+</starter>
+<hint><p><code>const key = ctx.token ?? "anonymous"; const count = (counts.get(key) ?? 0) + 1; counts.set(key, count);</code>.</p></hint>
+<hint><p><code>if (count &gt; max) return { status: 429, body: "too many requests" }; return next();</code>.</p></hint>
 <solution>
 <example file="rate-limit.ts" project="chain">
 import { authenticate, chain, handleErrors, type Middleware } from "./chain.js";

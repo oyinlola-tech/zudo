@@ -904,6 +904,8 @@ Found 40 packages.
 <h2 id="practice">Practice</h2>
 <exercise title="Add a payments package">
 <p>The shop needs <code>@shop/payments</code>: it charges an order through a payment provider, uses <code>Order</code> and <code>DomainError</code> from <code>core</code> and a <code>Logger</code>, and <code>http</code> will call it. List every file you must create or change, choose its tier, and say what <code>buildLevels</code> will print afterwards.</p>
+<hint><p>Every package needs the same four things: a <code>package.json</code>, a <code>tsconfig.json</code> with references, an entry in the root solution file, and a tier in <code>tools/rules.ts</code>. Then find who must now depend on it.</p></hint>
+<hint><p><code>payments</code> sits at the same tier as <code>auth</code> and <code>database</code> (it needs <code>core</code> and <code>logger</code>, and is needed by <code>http</code>), so it builds alongside them, one level after the leaves.</p></hint>
 <solution>
 <ul>
 <li><code>packages/payments/package.json</code>: name <code>@shop/payments</code>, the same <code>exports</code> shape, dependencies on <code>@shop/core</code> and <code>@shop/logger</code>.</li>
@@ -918,6 +920,61 @@ Found 40 packages.
 </exercise>
 <exercise title="Name the cycle">
 <p><code>buildLevels</code> reports "cycle among: @shop/auth, @shop/http", which lists every package it could not build, including ones that are only stuck <em>behind</em> a cycle. Write <code>findCycle(graph)</code> that returns the actual loop, such as <code>@shop/auth -> @shop/http -> @shop/auth</code>, using depth-first search.</p>
+<starter file="cycle.ts">
+// Example to learn from: the same three-colour depth-first search (done,
+// visiting, unseen), finding a circular reference in a spreadsheet's
+// formulas instead of a package graph.
+//
+//   function findFormulaCycle(cells: Map<string, string[]>): string[] | null {
+//     const state = new Map<string, "visiting" | "done">();
+//     const path: string[] = [];
+//     function visit(cell: string): string[] | null {
+//       if (state.get(cell) === "done") return null;
+//       if (state.get(cell) === "visiting") return [...path.slice(path.indexOf(cell)), cell];
+//       state.set(cell, "visiting");
+//       path.push(cell);
+//       for (const ref of cells.get(cell) ?? []) {
+//         const cycle = visit(ref);
+//         if (cycle) return cycle;
+//       }
+//       path.pop();
+//       state.set(cell, "done");
+//       return null;
+//     }
+//     for (const cell of cells.keys()) {
+//       const cycle = visit(cell);
+//       if (cycle) return cycle;
+//     }
+//     return null;
+//   }
+//
+// Now write findCycle the same way, below.
+
+type Graph = Map<string, string[]>;
+
+function findCycle(graph: Graph): string[] | null {
+  // Depth-first search with three states per node: unseen (not in the
+  // map), "visiting" (on the current path) and "done" (fully explored, no
+  // cycle found through it). Reaching a "visiting" node again means the
+  // path looped back to it.
+  return null;
+}
+
+const shop: Graph = new Map([
+  ["@shop/core", []],
+  ["@shop/logger", []],
+  ["@shop/auth", ["@shop/core", "@shop/logger", "@shop/http"]],
+  ["@shop/database", ["@shop/core", "@shop/logger"]],
+  ["@shop/http", ["@shop/auth", "@shop/core", "@shop/database"]],
+  ["@shop/reports", ["@shop/http"]],
+]);
+console.log(findCycle(shop)?.join(" -> ") ?? "no cycle");
+
+shop.set("@shop/auth", ["@shop/core", "@shop/logger"]);
+console.log(findCycle(shop)?.join(" -> ") ?? "no cycle");
+</starter>
+<hint><p>Keep a <code>path: string[]</code> of the nodes on the current call stack, and a <code>state</code> map. If a node is already <code>"visiting"</code>, the loop is the part of <code>path</code> from that node onwards, plus the node again.</p></hint>
+<hint><p>Recurse into each dependency with <code>visit(dep)</code> before marking the current node <code>"done"</code>; return the first cycle any recursive call finds, all the way back up.</p></hint>
 <solution>
 <example file="cycle.ts" project="ex-cycle">
 type Graph = Map<string, string[]>;
@@ -969,6 +1026,8 @@ no cycle
 </exercise>
 <exercise title="Where does the type go?">
 <p>Three new types are needed: (a) <code>Money</code> (an amount in kobo plus a currency), used by <code>database</code>, <code>auth</code> (for spending limits) and <code>http</code>; (b) <code>RouteParams</code>, used only inside <code>http</code>; (c) <code>AuditEvent</code>, produced by <code>auth</code> and stored by <code>database</code>. Which package should own each?</p>
+<hint><p>A type used by only one package belongs in that package. A type shared by packages at the <em>same</em> tier, with neither depending on the other, cannot live in either of them.</p></hint>
+<hint><p>Ask where each type would have to sit so that every package that needs it is <em>above</em> it in the dependency graph, without adding a sideways dependency between peers.</p></hint>
 <solution>
 <ul>
 <li>(a) <code>@shop/core</code>. Several packages across layers need it, and <code>core</code> is below all of them.</li>

@@ -1145,6 +1145,42 @@ await runTests("tests/platform.test.ts");
 <h2 id="practice">Practice</h2>
 <exercise title="A loyalty service">
 <p>Marketing wants a loyalty service: one point per ₦1,000 on every paid order. It must not have an API that orders calls; it listens to <code>order.paid</code>. Write its consumer so that duplicate deliveries do not award points twice. Deliver order 7 (₦28,500) three times and order 8 (₦3,500) once, and print the points.</p>
+<starter file="ex-loyalty.ts">
+// Example to learn from: a consumer that counts something once per id, no
+// matter how many times the event arrives — here, unique visits per page.
+//
+//   const visits = new Map<string, number>();
+//   const seen = new Set<string>();
+//   broker.subscribe("page.viewed", async (message) => {
+//     const event = decodeEvent<PageViewedV1>(message.body);
+//     const key = `${event.visitId}:${event.path}`;
+//     if (event.v !== 1 || seen.has(key)) return;
+//     seen.add(key);
+//     visits.set(event.path, (visits.get(event.path) ?? 0) + 1);
+//   });
+//
+// Now do the same for loyalty points below.
+
+import { createBroker, decodeEvent, encodeEvent } from "./broker.js";
+import type { OrderPaidV1 } from "./orders.service.js";
+
+const broker = createBroker();
+const points = new Map<string, number>();
+const credited = new Set<number>();
+
+broker.subscribe("order.paid", async (message) => {
+  // Decode the event. Ignore an event whose version is not 1, or whose
+  // orderId is already in `credited`. Otherwise mark it credited and add
+  // Math.floor(totalKobo / 100_000) points to that email's running total.
+});
+
+const paid: OrderPaidV1 = { v: 1, orderId: 7, email: "ada@example.ng", totalKobo: 2_850_000, paidAt: new Date("2026-10-05T09:00:00Z") };
+for (let delivery = 1; delivery <= 3; delivery++) await broker.publish("order.paid", { body: encodeEvent(paid) });
+await broker.publish("order.paid", { body: encodeEvent({ ...paid, orderId: 8, totalKobo: 350_000 }) });
+console.log(points);
+</starter>
+<hint><p><code>decodeEvent&lt;OrderPaidV1&gt;(message.body)</code> gives you the event; check <code>event.v !== 1 || credited.has(event.orderId)</code> first and <code>return</code> before touching anything else.</p></hint>
+<hint><p>After adding <code>event.orderId</code> to <code>credited</code>, update the map with <code>points.set(event.email, (points.get(event.email) ?? 0) + Math.floor(event.totalKobo / 100_000))</code> — one point per ₦1,000, which is 100,000 kobo.</p></hint>
 <solution>
 <example file="ex-loyalty.ts" project="shop" browser="no">
 import { createBroker, decodeEvent, encodeEvent } from "./broker.js";
@@ -1174,12 +1210,17 @@ Map(1) { 'ada@example.ng' => 31 }
 </exercise>
 <exercise title="Users is down">
 <p>With the code as it is, what does <code>POST /orders</code> answer while the users service is down, and is anything left behind in the orders database? Suggest two different ways to keep taking orders during a users outage, and the price of each.</p>
+<hint><p>Walk the four steps of <code>orders.place</code> in order: which one calls users, and has anything been written to the orders database before that call runs?</p></hint>
+<hint><p>What does <code>serviceClient</code> turn an unreachable RPC call into, and what status does the gateway give that error?</p></hint>
+<hint><p>For the two alternatives: what could orders keep a local copy of, kept fresh by which event(s)? And separately, which step could be deferred to a later service instead of blocking the request?</p></hint>
 <solution>
 <p>Orders calls <code>users.get</code> before inserting anything. The call cannot connect, <code>serviceClient</code> rethrows that as <code>RPCUnavailableError</code>, orders passes it on to the gateway with its code, and the gateway answers <code>503 Service Unavailable</code> (the HTTP package does not send the text of 5xx errors to clients). No order row is written: nothing to clean up, but also no sale. Option 1: keep a local copy of each customer's e-mail in orders, filled from <code>user.registered</code> and <code>user.updated</code> events. Orders then never calls users while placing an order; the price is a copy that can be seconds out of date, and another event consumer to run. Option 2: save the order without the e-mail and let notifications look the address up when it sends the receipt, retrying with backoff if users is still down. The price is that the receipt waits for users, and notifications gains a dependency.</p>
 </solution>
 </exercise>
 <exercise title="Read the outage trace">
 <p>In the outage trace, why is <code>publish order.paid</code> a child of the second <code>retry payment</code> span, and not of <code>orders.place</code>? What would the trace look like if the retry job did not carry the <code>traceparent</code>?</p>
+<hint><p>The outbox row that <code>publish order.paid</code> reads back was written inside which span — the original request, or one of the retries? A child follows whichever span was active when its data was created, not whichever span started the whole story.</p></hint>
+<hint><p>Without a stored <code>traceparent</code>, what does a retry job have to hand a new span builder, and what does <code>withSpan</code> do when it is given nothing to continue?</p></hint>
 <solution>
 <p>The outbox row stores the <code>traceparent</code> that was current when the row was written, and the row was written inside the retry that charged the card; the relay continues the trace from that stored value. Without the <code>traceparent</code> in the job, each retry would start a new trace of its own: the customer's trace would end at a failed call, and the successful charge, the event and the receipt would sit in an unrelated trace that nobody would find from the trace id support was given.</p>
 </solution>

@@ -45,9 +45,11 @@ export class AbandonedHooks {
     this.#hooks.delete(registered);
 
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Ref'd on purpose: the caller awaits this wait, and an unref'd timer
+    // let Node exit mid-await (code 13) when the abandoned hook never
+    // settles. It is cleared as soon as the race is decided.
     const pending = new Promise<AbandonedOutcome>((resolve) => {
       timer = setTimeout(() => resolve("pending"), graceMs);
-      timer.unref?.();
     });
 
     try {

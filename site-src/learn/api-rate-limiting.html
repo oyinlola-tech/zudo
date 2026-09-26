@@ -451,6 +451,44 @@ seed 3: sliding log worst 20, fixed window worst 26 (limit 20)
 <h2 id="practice">Practice</h2>
 <exercise title="Fail open or fail closed">
 <p>Write <code>withFallback(check, mode)</code> that wraps an async limiter check. If the check throws (the store is down), it returns <code>{ allowed: true }</code> in <code>"open"</code> mode and <code>{ allowed: false, retryAfterMs: 1000 }</code> in <code>"closed"</code> mode, and logs a warning either way. Use it for a general API limit and a log-in limit while the store is down.</p>
+<starter file="fallback.js">
+// Example to learn from: wrapping a risky call so failure becomes a
+// specific fallback value, chosen by a mode flag, with a logged warning.
+//
+//   function withCacheFallback(read, mode) {
+//     return async (key) => {
+//       try {
+//         return await read(key);
+//       } catch (error) {
+//         console.log(`warning: cache failed (${error.message}); using ${mode}`);
+//         return mode === "stale" ? { cached: true, value: null } : null;
+//       }
+//     };
+//   }
+//
+// Now do the same shape for a rate limit check, with "open" and "closed"
+// modes, below.
+
+function withFallback(check, mode) {
+  return async (key, now) => {
+    // 1. try calling check(key, now) and return its result
+    // 2. if it throws: console.log a warning naming error.message and mode,
+    //    then return { allowed: true } in "open" mode, or
+    //    { allowed: false, retryAfterMs: 1000 } in "closed" mode
+  };
+}
+
+const storeDown = async () => {
+  throw new Error("connection refused");
+};
+
+const apiLimit = withFallback(storeDown, "open");
+const loginLimit = withFallback(storeDown, "closed");
+console.log("GET /rates:", await apiLimit("user:ada", 0));
+console.log("POST /sessions:", await loginLimit("ip:102.89.4.17", 0));
+</starter>
+<hint><p>The whole risky part is <code>await check(key, now)</code>, in a <code>try</code>. Everything else is choosing what to return once you're in the <code>catch</code>.</p></hint>
+<hint><p><code>try { return await check(key, now); } catch (error) { console.log(`warning: rate limit store failed (${error.message}); failing ${mode}`); return mode === "open" ? { allowed: true } : { allowed: false, retryAfterMs: 1000 }; }</code></p></hint>
 <solution>
 <example file="fallback.js">
 function withFallback(check, mode) {
@@ -484,6 +522,50 @@ POST /sessions: { allowed: false, retryAfterMs: 1000 }
 </exercise>
 <exercise title="Forget full buckets">
 <p>An in-memory token bucket keeps an entry for every key it has seen. Add a <code>sweep(now)</code> function that deletes every bucket that would be <em>full</em> at <code>now</code>. Explain why deleting a full bucket changes nothing for that client, then show the map shrinking.</p>
+<starter file="sweep.js">
+// Example to learn from: iterating a Map, deleting entries that meet a
+// condition, and returning how many are left.
+//
+//   function evictExpired(cache, now) {
+//     for (const [key, entry] of cache) {
+//       if (entry.expiresAt <= now) cache.delete(key);
+//     }
+//     return cache.size;
+//   }
+//
+// Now do the same idea for token buckets that have refilled all the way
+// back to full, below.
+
+function tokenBucket({ capacity, refillPerSecond }) {
+  const buckets = new Map();
+  const refill = (bucket, now) => Math.min(capacity, bucket.tokens + ((now - bucket.at) / 1000) * refillPerSecond);
+  return {
+    take(key, now) {
+      const bucket = buckets.get(key) ?? { tokens: capacity, at: now };
+      bucket.tokens = refill(bucket, now);
+      bucket.at = now;
+      buckets.set(key, bucket);
+      if (bucket.tokens < 1) return false;
+      bucket.tokens -= 1;
+      return true;
+    },
+    sweep(now) {
+      // delete every entry from `buckets` whose refill(bucket, now) would
+      // be >= capacity (it would be full by now); return buckets.size
+    },
+  };
+}
+
+const limiter = tokenBucket({ capacity: 10, refillPerSecond: 1 });
+for (let ip = 1; ip <= 1_000; ip++) limiter.take(`ip:10.0.${ip >> 8}.${ip & 255}`, 0);
+for (let i = 0; i < 10; i++) limiter.take("ip:198.51.100.66", 5_000);
+
+console.log("after 5 s:", limiter.sweep(5_000), "buckets");
+console.log("after 9 s:", limiter.sweep(9_000), "buckets");
+console.log("after 15 s:", limiter.sweep(15_000), "buckets");
+</starter>
+<hint><p>Call the existing <code>refill</code> helper for each bucket to find out what it would hold <em>right now</em>, without changing the bucket itself, then compare that to <code>capacity</code>.</p></hint>
+<hint><p><code>for (const [key, bucket] of buckets) { if (refill(bucket, now) &gt;= capacity) buckets.delete(key); } return buckets.size;</code></p></hint>
 <solution>
 <example file="sweep.js">
 function tokenBucket({ capacity, refillPerSecond }) {
@@ -526,6 +608,49 @@ after 15 s: 0 buckets
 </exercise>
 <exercise title="A daily quota">
 <p>A free plan allows 1,000 requests per day (UTC), counted with a fixed window. Write <code>dailyQuota(limit)</code> returning <code>(key, now)</code> decisions with a <code>retryAfterSeconds</code> that points at the next UTC midnight. Test it at 23:59:30 UTC with the quota already used up.</p>
+<starter file="daily.js">
+// Example to learn from: counting uses within a period, keyed by a
+// computed period id, with a countdown to the next boundary.
+//
+//   function hourlyQuota(limit) {
+//     const used = new Map();
+//     const HOUR = 3600_000;
+//     return (key, now) => {
+//       const hour = Math.floor(now / HOUR);
+//       const id = `${key}:${hour}`;
+//       const count = used.get(id) ?? 0;
+//       if (count >= limit) return { allowed: false, retryAfterSeconds: Math.ceil(((hour + 1) * HOUR - now) / 1000) };
+//       used.set(id, count + 1);
+//       return { allowed: true, remaining: limit - count - 1 };
+//     };
+//   }
+//
+// Now do the same shape for a full day instead of an hour, below.
+
+const DAY = 24 * 60 * 60 * 1000;
+
+function dailyQuota(limit) {
+  const used = new Map();
+  return (key, now) => {
+    // 1. day = Math.floor(now / DAY); id combines key and day, so
+    //    yesterday's count is never read again
+    // 2. count = how many were used so far today (default 0)
+    // 3. if count >= limit, return { allowed: false, retryAfterSeconds }
+    //    counting down to the next UTC midnight:
+    //    Math.ceil(((day + 1) * DAY - now) / 1000)
+    // 4. otherwise record one more use and return
+    //    { allowed: true, remaining: limit - count - 1 }
+  };
+}
+
+const quota = dailyQuota(1_000);
+const lateNight = Date.UTC(2026, 8, 24, 23, 59, 30);
+for (let i = 0; i < 1_000; i++) quota("key:free-plan-17", lateNight - 3_600_000);
+console.log(quota("key:free-plan-17", lateNight));
+console.log(quota("key:free-plan-17", lateNight + 31_000));
+</starter>
+<hint><p>The id needs both the key and the day number, exactly like the worked example's <code>id</code>, just built from <code>DAY</code> instead of <code>HOUR</code>.</p></hint>
+<hint><p><code>const day = Math.floor(now / DAY); const id = `${key}:${day}`; const count = used.get(id) ?? 0; if (count &gt;= limit) return { allowed: false, retryAfterSeconds: Math.ceil(((day + 1) * DAY - now) / 1000) }; used.set(id, count + 1); return { allowed: true, remaining: limit - count - 1 };</code></p></hint>
 <solution>
 <example file="daily.js">
 const DAY = 24 * 60 * 60 * 1000;

@@ -901,6 +901,41 @@ PASS mail down: the failure is logged
 <h2 id="practice">Practice</h2>
 <exercise title="Separate the delivery fee">
 <p>The shop adds delivery: free for orders of ₦20,000 or more after discount, otherwise ₦1,500 in Lagos and ₦3,500 elsewhere. A developer wants to add these lines inside <code>createOrderService</code>. Instead, write the rule as a pure function <code>deliveryFeeKobo(afterDiscountKobo, state)</code> and test the edges: exactly ₦20,000, one kobo below, and a state other than Lagos.</p>
+<starter file="delivery.ts">
+// Example to learn from: a pure function with its own free-threshold rule,
+// tested right at the edge.
+//
+//   function shippingDays(distanceKm: number, express: boolean): number {
+//     if (express) return 1;
+//     return distanceKm > 500 ? 5 : 2;
+//   }
+//
+//   function check(name: string, ok: boolean): void {
+//     console.log(`${ok ? "PASS" : "FAIL"} ${name}`);
+//   }
+//
+//   check("exactly 500km is not slow", shippingDays(500, false) === 2);
+//   check("over 500km takes longer", shippingDays(501, false) === 5);
+//
+// Now do the same for the delivery fee below.
+
+function deliveryFeeKobo(afterDiscountKobo: number, state: string): number {
+  // Free (return 0) once afterDiscountKobo is 2_000_000 (NGN 20,000) or more.
+  // Otherwise: 150_000 kobo when state === "Lagos", 350_000 kobo otherwise.
+  // your code here
+  return 0;
+}
+
+function check(name: string, ok: boolean): void {
+  console.log(`${ok ? "PASS" : "FAIL"} ${name}`);
+}
+
+check("exactly NGN 20,000 is free", deliveryFeeKobo(2_000_000, "Oyo") === 0);
+check("one kobo below pays", deliveryFeeKobo(1_999_999, "Lagos") === 150_000);
+check("outside Lagos costs more", deliveryFeeKobo(500_000, "Kano") === 350_000);
+</starter>
+<hint><p>Check the threshold first: <code>if (afterDiscountKobo &gt;= 2_000_000) return 0;</code>. The boundary test needs <code>&gt;=</code>, not <code>&gt;</code>.</p></hint>
+<hint><p>After the threshold check, return a ternary: <code>state === "Lagos" ? 150_000 : 350_000</code>.</p></hint>
 <solution>
 <example file="delivery.ts">
 function deliveryFeeKobo(afterDiscountKobo: number, state: string): number {
@@ -927,6 +962,64 @@ PASS outside Lagos costs more
 
 <exercise title="Encapsulate a wallet">
 <p>Customers get a shop wallet. Today it is <code>{ balanceKobo: number }</code>, and three features change the balance directly; one of them once made a balance negative. Write a <code>Wallet</code> class whose balance can only change through <code>deposit</code> and <code>pay</code>, where amounts must be positive whole kobo and a payment may not exceed the balance. Test both refusals.</p>
+<starter file="wallet.ts">
+// Example to learn from: state that can only change through guarded methods.
+//
+//   class Stock {
+//     #units = 0;
+//     get units(): number { return this.#units; }
+//     receive(n: number): void {
+//       if (!Number.isInteger(n) || n <= 0) throw new Error(`must be positive whole units, got ${n}`);
+//       this.#units += n;
+//     }
+//     ship(n: number): void {
+//       if (!Number.isInteger(n) || n <= 0) throw new Error(`must be positive whole units, got ${n}`);
+//       if (n > this.#units) throw new Error(`only ${this.#units} in stock`);
+//       this.#units -= n;
+//     }
+//   }
+//
+// Now do the same for the wallet below.
+
+class Wallet {
+  #balanceKobo = 0;
+
+  get balanceKobo(): number {
+    return this.#balanceKobo;
+  }
+
+  deposit(amountKobo: number): void {
+    // Reject a non-positive or non-whole amount (see pay below for the message shape),
+    // otherwise add it to the balance.
+    // your code here
+  }
+
+  pay(amountKobo: number): void {
+    if (!Number.isSafeInteger(amountKobo) || amountKobo <= 0) {
+      throw new Error(`amount must be positive whole kobo, got ${amountKobo}`);
+    }
+    // Reject with `insufficient funds: balance <balance>, needed <amountKobo>`
+    // when amountKobo is more than the balance, otherwise subtract it.
+    // your code here
+  }
+}
+
+const wallet = new Wallet();
+wallet.deposit(1_000_000);
+wallet.pay(483_750);
+console.log(wallet.balanceKobo);
+
+for (const attempt of [() => wallet.pay(600_000), () => wallet.deposit(-50), () => wallet.deposit(10.5)]) {
+  try {
+    attempt();
+  } catch (error) {
+    console.log((error as Error).message);
+  }
+}
+console.log(wallet.balanceKobo);
+</starter>
+<hint><p>Both methods need the same "positive whole number" check. Write it once and call it from each, the way <code>pay</code> already does.</p></hint>
+<hint><p><code>deposit</code>: <code>this.#balanceKobo += amountKobo;</code> after the check. <code>pay</code>: throw <code>new Error(`insufficient funds: balance ${this.#balanceKobo}, needed ${amountKobo}`)</code> when <code>amountKobo &gt; this.#balanceKobo</code>, otherwise <code>this.#balanceKobo -= amountKobo;</code>.</p></hint>
 <solution>
 <example file="wallet.ts">
 class Wallet {
@@ -979,6 +1072,47 @@ amount must be positive whole kobo, got 10.5
 
 <exercise title="Compose a logging notifier">
 <p>Support wants a record of every message sent, including which channel sent it. Without editing <code>createOrderService</code> or <code>outboxNotifier</code>, write a <code>logged(name, notifier, log)</code> wrapper that logs <code>"&lt;name&gt; -&gt; &lt;to&gt;"</code> before sending, and compose it with the notifiers you already have.</p>
+<starter file="logged-notifier.ts">
+// Example to learn from: a wrapper with the same shape as the thing it wraps,
+// so wrappers of this kind stack on top of each other.
+//
+//   interface Fetcher { get(url: string): Promise<string>; }
+//
+//   function traced(name: string, fetcher: Fetcher, log: (line: string) => void): Fetcher {
+//     return {
+//       async get(url) {
+//         log(`${name} -> ${url}`);
+//         return fetcher.get(url);
+//       },
+//     };
+//   }
+//
+// Now do the same for the notifier below.
+
+import { allOf, bestEffort, outboxNotifier } from "./notifiers.js";
+import type { Notifier } from "./ports.js";
+
+function logged(name: string, notifier: Notifier, log: (line: string) => void): Notifier {
+  // Return a Notifier whose send(to, message):
+  //   1. calls log(`${name} -> ${to}`)
+  //   2. then calls notifier.send(to, message) and returns/awaits it
+  // your code here
+  return notifier;
+}
+
+const outbox: string[] = [];
+const lines: string[] = [];
+const notifier = allOf(
+  logged("email", bestEffort(outboxNotifier("email", outbox), (l) => lines.push(l)), (l) => lines.push(l)),
+  logged("sms", bestEffort(outboxNotifier("sms", outbox, true), (l) => lines.push(l)), (l) => lines.push(l)),
+);
+
+await notifier.send("ada@shop.ng", "order ORD-7 confirmed");
+console.log(lines);
+console.log(outbox);
+</starter>
+<hint><p><code>logged</code> must return an object with a <code>send</code> method, exactly like <code>outboxNotifier</code> does: <code>{ async send(to, message) { ... } }</code>.</p></hint>
+<hint><p>Inside <code>send</code>: <code>log(`${name} -&gt; ${to}`);</code> first, then <code>await notifier.send(to, message);</code>.</p></hint>
 <solution>
 <example file="logged-notifier.ts" project="orders">
 import { allOf, bestEffort, outboxNotifier } from "./notifiers.js";

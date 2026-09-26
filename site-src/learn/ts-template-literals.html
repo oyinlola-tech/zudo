@@ -683,6 +683,45 @@ PASS order.paid ~ order.placed = false
 <h2 id="practice">Practice</h2>
 <exercise title="Environment variable names">
 <p>Config keys in code are camelCase (<code>paystackSecretKey</code>), and environment variables are SCREAMING_SNAKE_CASE (<code>PAYSTACK_SECRET_KEY</code>). <a href="/learn/ts-mapped-types#remapping">Mapped types</a> used plain <code>Uppercase</code> and got <code>WALLET_BALANCEKOBO</code>; this time, put an underscore before each word. Write <code>EnvName&lt;S&gt;</code> that converts one to the other, one character at a time, and a runtime <code>envName</code> that does the same. Check both.</p>
+<starter file="env-name.ts">
+// Example to learn from: the same one-character-at-a-time recursion,
+// converting camelCase to kebab-case instead of SCREAMING_SNAKE_CASE.
+//
+//   type KebabCase<S extends string> =
+//     S extends `${infer C}${infer Rest}`
+//       ? `${C extends Lowercase<C> ? C : `-${Lowercase<C>}`}${KebabCase<Rest>}`
+//       : "";
+//
+//   function kebabCase<S extends string>(key: S): KebabCase<S> {
+//     return key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`) as KebabCase<S>;
+//   }
+//
+//   console.log(kebabCase("borderRadius"));   // border-radius
+//
+// Now do the same for environment variable names below.
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+// One character at a time: lowercase (or a digit) is just uppercased;
+// anything else gets an underscore first. The base case is "".
+type EnvName<S extends string> = Uppercase<S>; // your code here
+
+type E1 = Expect<Equal<EnvName<"paystackSecretKey">, "PAYSTACK_SECRET_KEY">>;
+type E2 = Expect<Equal<EnvName<"port">, "PORT">>;
+type E3 = Expect<Equal<EnvName<"smtp2Host">, "SMTP2_HOST">>;
+
+function envName<S extends string>(key: S): EnvName<S> {
+  // Put an underscore before every uppercase letter, then uppercase the
+  // whole string: replace, then .toUpperCase().
+  return key.toUpperCase() as EnvName<S>;
+}
+
+const name = envName("paystackSecretKey");
+console.log(name, envName("smtp2Host"));
+</starter>
+<hint><p><code>envName</code> only needs one regex: <code>key.replace(/[A-Z]/g, (letter) =&gt; `_${letter}`)</code> inserts the underscore before each capital, then <code>.toUpperCase()</code> finishes the job.</p></hint>
+<hint><p>For the type, match one character with <code>S extends `${infer C}${infer Rest}`</code> (an <code>infer</code> right before another captures just one), test it with <code>C extends Lowercase&lt;C&gt;</code>, and recurse on <code>Rest</code>; the empty string is the base case.</p></hint>
 <solution>
 <example file="env-name.ts" project="ex-env">
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -712,6 +751,37 @@ PAYSTACK_SECRET_KEY SMTP2_HOST
 </exercise>
 <exercise title="Parse a money string">
 <p>Prices in a product feed look like <code>"1500.50 NGN"</code>. Write <code>ParseMoney&lt;S&gt;</code> that gives a tuple <code>[amount, currency]</code> with a number literal and one of <code>"NGN" | "USD"</code>, or <code>never</code> for anything else.</p>
+<starter file="money.ts">
+// Example to learn from: capturing a constrained number and a fixed set of
+// suffixes from a different shape of string.
+//
+//   type ParseDimensions<S> = S extends `${infer W extends number}x${infer H extends number}` ? [W, H] : never;
+//
+//   type D1 = Expect<Equal<ParseDimensions<"1920x1080">, [1920, 1080]>>;
+//   type D2 = Expect<Equal<ParseDimensions<"abcxdef">, never>>;
+//
+// Now do the same for "amount currency" strings below.
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+type Currency = "NGN" | "USD";
+// Match "<number> <Currency>", capturing both, constrained so the match
+// only succeeds when they really are a number and a known currency.
+type ParseMoney<S> = never; // your code here
+
+type M1 = Expect<Equal<ParseMoney<"1500.5 NGN">, [1500.5, "NGN"]>>;
+type M2 = Expect<Equal<ParseMoney<"20 USD">, [20, "USD"]>>;
+type M3 = Expect<Equal<ParseMoney<"20 EUR">, never>>;
+type M4 = Expect<Equal<ParseMoney<"twenty USD">, never>>;
+
+const sample: ParseMoney<"1500.5 NGN"> = [1500.5, "NGN"];
+
+// Once ParseMoney is right (and all four lines are really true), add:
+// console.log(sample);
+</starter>
+<hint><p>A template literal type can capture a typed hole: <code>${infer Amount extends number}</code> only matches when that piece of text is a valid number literal.</p></hint>
+<hint><p><code>type ParseMoney&lt;S&gt; = S extends `${infer Amount extends number} ${infer C extends Currency}` ? [Amount, C] : never;</code></p></hint>
 <solution>
 <example file="money.ts" project="ex-money">
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -736,6 +806,45 @@ console.log(sample);
 </exercise>
 <exercise title="Typed query keys">
 <p>A cache stores values under keys like <code>user:42</code>, <code>order:ORD-1042</code> and <code>cart:42:items</code>. Write a type <code>CacheKey</code> that accepts exactly those three shapes (numbers for user and cart IDs, <code>ORD-</code> plus a number for orders), and one small builder function per shape that returns the exact key. Show one call per shape and one key the type rejects.</p>
+<starter file="cache-key.ts">
+// Example to learn from: a union of template-literal route shapes, each
+// with its own <const T> builder that returns an exact literal.
+//
+//   type Route = `/users/${number}` | `/posts/${string}`;
+//
+//   function userRoute<const Id extends number>(id: Id) {
+//     return `/users/${id}` as const;
+//   }
+//
+//   const routes: Route[] = [userRoute(42)];
+//   console.log(routes);   // [ '/users/42' ]
+//
+// Now do the same for cache keys below.
+
+type CacheKey = `user:${number}` | `order:ORD-${number}` | `cart:${number}:items`;
+
+function userKey<const Id extends number>(id: Id) {
+  // Return the exact literal "user:<id>".
+  return "user:0" as const;
+}
+
+function orderKey<const Ref extends `ORD-${number}`>(reference: Ref) {
+  // Return the exact literal "order:<reference>".
+  return "order:ORD-0" as const;
+}
+
+function cartKey<const Id extends number>(id: Id) {
+  // Return the exact literal "cart:<id>:items".
+  return "cart:0:items" as const;
+}
+
+const keys: CacheKey[] = [userKey(42), orderKey("ORD-1042"), cartKey(42)];
+// @ts-expect-error: carts are cached by numeric user id only
+const wrong: CacheKey = "cart:ada:items";
+console.log(keys);
+</starter>
+<hint><p>Each builder is one line: a template literal with the argument spliced in, marked <code>as const</code> so the return type is the exact string, not <code>string</code>.</p></hint>
+<hint><p><code>userKey(id)</code> returns <code>`user:${id}` as const</code>. <code>orderKey</code> and <code>cartKey</code> follow the same shape with their own prefix and suffix.</p></hint>
 <solution>
 <example file="cache-key.ts" project="ex-cache">
 type CacheKey = `user:${number}` | `order:ORD-${number}` | `cart:${number}:items`;

@@ -1060,6 +1060,77 @@ PASS bad wiring fails at construction -> "gateway needs charge()"
 <h2 id="practice">Practice</h2>
 <exercise title="A cart with a limit, as a wrapper">
 <p>The shop limits some promotions to 5 items per customer. Write <code>LimitedCart</code>, a forwarding wrapper around any object with <code>add(sku, priceKobo, qty)</code> and a <code>lines()</code> method, that throws when the total quantity would go above the limit. Do not use <code>extends</code>. It should offer <code>add</code>, <code>lines</code> and a <code>quantity</code> getter.</p>
+<starter file="limited-cart.js">
+// Example to learn from: a forwarding wrapper that checks a limit before
+// passing the call on, for an energy meter instead of a cart.
+//
+//   class Meter {
+//     #kwh = 0;
+//     add(kwh) { this.#kwh += kwh; }
+//     reading() { return this.#kwh; }
+//   }
+//   class CappedMeter {
+//     #meter; #cap;
+//     constructor(meter, cap) { this.#meter = meter; this.#cap = cap; }
+//     add(kwh) {
+//       if (this.#meter.reading() + kwh > this.#cap) throw new Error("over cap");
+//       this.#meter.add(kwh);
+//     }
+//     reading() { return this.#meter.reading(); }
+//   }
+//
+// Now do the same for LimitedCart below.
+
+class Cart {
+  #lines = [];
+  add(sku, priceKobo, qty = 1) {
+    this.#lines.push({ sku, priceKobo, qty });
+    return this;
+  }
+  lines() {
+    return this.#lines.map((line) => ({ ...line }));
+  }
+}
+
+class LimitedCart {
+  #cart;
+  #limit;
+
+  constructor(cart, limit) {
+    this.#cart = cart;
+    this.#limit = limit;
+  }
+
+  get quantity() {
+    // your code here: sum line.qty across this.#cart.lines()
+    return 0;
+  }
+
+  add(sku, priceKobo, qty = 1) {
+    // your code here: throw new Error(`limit is ${this.#limit} items, cart
+    // has ${this.quantity}`) when this.quantity + qty > this.#limit,
+    // otherwise this.#cart.add(sku, priceKobo, qty) and return this
+    return this;
+  }
+
+  lines() {
+    return this.#cart.lines();
+  }
+}
+
+const cart = new LimitedCart(new Cart(), 5);
+cart.add("SOAP", 50000, 3).add("TOOTHPASTE", 90000, 2);
+console.log(cart.quantity);
+
+try {
+  cart.add("SOAP", 50000, 1);
+} catch (error) {
+  console.log(error.message);
+}
+console.log(cart.lines().length);
+</starter>
+<hint><p><code>this.#cart.lines()</code> gives you every line with its <code>qty</code>. Sum them with <code>reduce</code> for the <code>quantity</code> getter.</p></hint>
+<hint><p>In <code>add</code>: <code>if (this.quantity + qty &gt; this.#limit) throw new Error(...)</code>, else <code>this.#cart.add(sku, priceKobo, qty); return this;</code>. Check the limit before forwarding, so a refused item never reaches the real cart.</p></hint>
 <solution>
 <example file="limited-cart.js">
 class Cart {
@@ -1155,6 +1226,66 @@ console.log(stock.log);
 <output>
 [ 'set RICE=10', 'restock RICE+5', 'set RICE=15' ]
 </output>
+<starter file="audited-wrapper.js">
+// Example to learn from: wrapping instead of extending, so an inner
+// self-call (sendAll calling this.send) stays inside the wrapped object.
+//
+//   class Notifier {
+//     send(msg) { return `sent: ${msg}`; }
+//     sendAll(msgs) { return msgs.map((m) => this.send(m)); }
+//   }
+//   class LoggingNotifier {
+//     #notifier; #log = [];
+//     constructor(notifier) { this.#notifier = notifier; }
+//     send(msg) { this.#log.push(`send ${msg}`); return this.#notifier.send(msg); }
+//     sendAll(msgs) { this.#log.push(`sendAll ${msgs.length}`); return this.#notifier.sendAll(msgs); }
+//     get log() { return [...this.#log]; }
+//   }
+//
+// Now do the same for the stock below.
+
+class Stock {
+  #levels = new Map();
+  set(sku, qty) {
+    this.#levels.set(sku, qty);
+  }
+  restock(sku, qty) {
+    this.set(sku, this.level(sku) + qty);
+  }
+  level(sku) {
+    return this.#levels.get(sku) ?? 0;
+  }
+}
+
+class AuditedStock {
+  #stock;
+  #log = [];
+  constructor(stock) {
+    this.#stock = stock;
+  }
+  set(sku, qty) {
+    // your code here: push `set ${sku}=${qty}` onto this.#log, then call
+    // this.#stock.set(sku, qty)
+  }
+  restock(sku, qty) {
+    // your code here: push `restock ${sku}+${qty}` onto this.#log, then call
+    // this.#stock.restock(sku, qty)
+  }
+  level(sku) {
+    return this.#stock.level(sku);
+  }
+  get log() {
+    return [...this.#log];
+  }
+}
+
+const stock = new AuditedStock(new Stock());
+stock.set("RICE", 10);
+stock.restock("RICE", 5);
+console.log(stock.log, stock.level("RICE"));
+</starter>
+<hint><p>Each wrapper method should log, then call the <em>same-named</em> method on <code>this.#stock</code> — never on <code>this</code>. That is what stops an inner call like <code>restock</code> calling <code>set</code> from reaching the wrapper again.</p></hint>
+<hint><p><code>set(sku, qty) { this.#log.push(`set ${sku}=${qty}`); this.#stock.set(sku, qty); }</code> and the same shape for <code>restock</code>.</p></hint>
 <solution>
 <p><code>Stock.restock</code> calls <code>this.set</code>. Because <code>this</code> is the audited stock, the call reaches <code>AuditedStock.set</code>, which logs a second entry for the same restock. The wrapper calls methods on the stock it holds, so the inner self-call stays inside that object:</p>
 <example file="audited-wrapper.js">
@@ -1208,6 +1339,46 @@ console.log(stock.log, stock.level("RICE"));
 
 <exercise title="A new delivery strategy and a rule">
 <p>Using the <code>Checkout</code> idea from the delegation section, add a "pickup" strategy (always free) and a pricing rule <code>freeDeliveryWeekend</code> that removes a ₦2,500 fee when <code>order.day</code> is <code>"Sat"</code> or <code>"Sun"</code>. Write both without changing any existing function, and print the totals for a ₦30,000 order on a Tuesday and on a Saturday, with flat-rate delivery and with pickup.</p>
+<starter file="weekend.js">
+// Example to learn from: adding a new rule to an existing reduce-based
+// pricing pipeline, without touching the pipeline itself.
+//
+//   const percentOff = { name: "10% off", apply: (amount) => amount * 0.9 };
+//   const roundToNaira = { name: "round", apply: (amount) => Math.round(amount / 100) * 100 };
+//   function priceWith(amount, rules) {
+//     return rules.reduce((total, rule) => rule.apply(total), amount);
+//   }
+//   console.log(priceWith(105050, [percentOff]));               // 94545
+//   console.log(priceWith(105050, [percentOff, roundToNaira])); // 94500
+//
+// Now do the same: add a strategy and a rule below, without changing total.
+
+const flatRate = { name: "flat rate", feeKobo: () => 250000 };
+const pickup = {
+  name: "pickup",
+  feeKobo: () => undefined, // your code here: always return 0
+};
+
+const freeDeliveryWeekend = (amount, order, feeKobo) => {
+  // your code here: when order.day is "Sat" or "Sun", return amount - feeKobo;
+  // otherwise return amount unchanged.
+  return amount;
+};
+
+function total(order, delivery, rules) {
+  const fee = delivery.feeKobo(order);
+  return rules.reduce((amount, rule) => rule(amount, order, fee), order.subtotalKobo + fee);
+}
+
+for (const day of ["Tue", "Sat"]) {
+  for (const delivery of [flatRate, pickup]) {
+    const order = { subtotalKobo: 3000000, day };
+    console.log(`${day} ${delivery.name}: ₦${total(order, delivery, [freeDeliveryWeekend]) / 100}`);
+  }
+}
+</starter>
+<hint><p><code>pickup</code> needs the same shape as <code>flatRate</code>: a <code>feeKobo</code> function, just one that always returns <code>0</code>.</p></hint>
+<hint><p><code>freeDeliveryWeekend</code> receives the fee as its third argument: <code>(order.day === "Sat" || order.day === "Sun") ? amount - feeKobo : amount</code>.</p></hint>
 <solution>
 <example file="weekend.js">
 const flatRate = { name: "flat rate", feeKobo: () => 250000 };

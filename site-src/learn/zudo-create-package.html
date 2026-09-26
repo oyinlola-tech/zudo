@@ -236,6 +236,7 @@ const declined = new PaymentDeclinedError("ORD-1001", "Insufficient Funds");
 const down = new PaymentProviderError("paystack", "ORD-1002", new Error("ECONNRESET"));
 
 console.log(serializePublicError(declined));
+console.log(serializePublicError(declined, { publicMetadataKeys: ["reason"] }));
 console.log(serializePublicError(down));
 console.log(String(down), "| cause for the log:", (down.cause as Error).message);
 console.log(isPaymentError(down), isPaymentError(new Error("other")));
@@ -245,8 +246,14 @@ console.log(isPaymentError(down), isPaymentError(new Error("other")));
   code: 'ERR_PAYMENT_DECLINED',
   message: 'Payment ORD-1001 was declined: Insufficient Funds',
   category: 'business',
+  statusCode: 402
+}
+{
+  code: 'ERR_PAYMENT_DECLINED',
+  message: 'Payment ORD-1001 was declined: Insufficient Funds',
+  category: 'business',
   statusCode: 402,
-  metadata: { reference: 'ORD-1001', reason: 'Insufficient Funds' }
+  metadata: { reason: 'Insufficient Funds' }
 }
 {
   code: 'ERR_PAYMENT_PROVIDER',
@@ -257,7 +264,8 @@ console.log(isPaymentError(down), isPaymentError(new Error("other")));
 PaymentProviderError [ERR_PAYMENT_PROVIDER]: Provider paystack failed for payment ORD-1002. | cause for the log: ECONNRESET
 true false
 </output>
-<p>The declined card is exposed with its reason, because the customer needs to know to try another card. The provider failure is reduced to a generic message: "ECONNRESET" and the provider's name mean nothing to a customer and tell an attacker about your infrastructure. The full detail stays on the error for your logs. The <a href="/learn/zudo-errors#serialize">error system lesson</a> explains both views. One gap to know: <code>serializePublicError</code> leaves out a <code>ValidationError</code>'s <code>issues</code>, so an app's error handler adds them to the response itself, as the Task API's handler in that lesson does. Say so in your README, because the issues are the useful part of <code>ERR_PAYMENT_INVALID</code>.</p>
+<p>Since <code>@zudojs/errors</code> 1.3, <code>expose: true</code> only says the <em>message</em> is safe for a client; metadata is left out by default even on an exposed error, because plenty of exposed errors carry decline codes, upstream ids or other internal state alongside the message. The bare <code>serializePublicError(declined)</code> call above shows that: no <code>reason</code>, even though <code>PaymentDeclinedError</code> is a 402 the customer must act on. Your host app opts a field in by name, with <code>publicMetadataKeys</code>, at the point it serializes the error, not inside your package: <code>serializePublicError(declined, { publicMetadataKeys: ["reason"] })</code> reveals <code>reason</code> and nothing else, not even <code>reference</code> (which is already in the message anyway). The alternative, <code>exposeMetadata: true</code>, reveals every metadata key on every exposed error, which is usually more than you want to promise. Document which keys are safe to allow-list per error code in your README, exactly like the codes and statuses table already there.</p>
+<p>The provider failure is reduced to a generic message: "ECONNRESET" and the provider's name mean nothing to a customer and tell an attacker about your infrastructure. The full detail stays on the error for your logs, via <code>.cause</code>, regardless of any serializer options. The <a href="/learn/zudo-errors#serialize">error system lesson</a> explains both views. One more gap to know: <code>serializePublicError</code> leaves out a <code>ValidationError</code>'s <code>issues</code> unless you ask for them the same way, so an app's error handler adds them to the response itself, as the Task API's handler in that lesson does. Say so in your README, because the issues are the useful part of <code>ERR_PAYMENT_INVALID</code>.</p>
 </section>
 
 <section>
@@ -829,12 +837,15 @@ tags: [payments, errors]
 ---
 # Errors
 
-| Code | Class | Status | Shown to clients |
-| --- | --- | --- | --- |
-| ERR_PAYMENT_INVALID | InvalidPaymentError | 400 | yes, with issues |
-| ERR_PAYMENT_DECLINED | PaymentDeclinedError | 402 | yes, with the reason |
-| ERR_PAYMENT_CONFLICT | PaymentConflictError | 409 | yes |
-| ERR_PAYMENT_PROVIDER | PaymentProviderError | 502 | no, generic message |
+| Code | Class | Status | Shown to clients | Safe `publicMetadataKeys` |
+| --- | --- | --- | --- | --- |
+| ERR_PAYMENT_INVALID | InvalidPaymentError | 400 | yes, with issues | — (pass the error's own `issues` instead) |
+| ERR_PAYMENT_DECLINED | PaymentDeclinedError | 402 | yes, with the reason | `["reason"]` |
+| ERR_PAYMENT_CONFLICT | PaymentConflictError | 409 | yes | none needed: the reference is already in the message |
+| ERR_PAYMENT_PROVIDER | PaymentProviderError | 502 | no, generic message | none: never allow-list this one |
+
+Pass the listed keys to `serializePublicError(error, { publicMetadataKeys: [...] })`
+in your own error handler. `@zudojs/errors` never exposes metadata on its own.
 
 Back to the [README](../README.md).
 </file>
@@ -1002,6 +1013,34 @@ $ npm publish --access public --provenance
 <h2 id="practice">Practice</h2>
 <exercise title="Test the amount limit">
 <p><code>maxAmountKobo</code> is documented but untested. Add a Vitest test: with <code>maxAmountKobo: 100_000</code>, a charge of 100,001 kobo fails with <code>ERR_PAYMENT_INVALID</code> and an issue on <code>amountKobo</code>, and exactly 100,000 kobo succeeds.</p>
+<starter file="tests/limit.test.ts">
+// Example to learn from: the same "assert both sides of a numeric
+// boundary" shape, testing a free-shipping threshold instead of a payment
+// limit.
+//
+//   it("charges shipping only below the free threshold", () => {
+//     expect(shippingFor(4999)).toBe(500);   // one kobo under: still charged
+//     expect(shippingFor(5000)).toBe(0);      // exactly at it: free
+//   });
+//
+// Now do the same two-sided check for the payment limit below.
+
+import { expect, it } from "vitest";
+import { PaymentErrorCode, createPaymentService } from "../src/index.js";
+import { createFakeProvider } from "../src/testing/index.js";
+
+const base = { email: "ada@example.com", authorizationCode: "AUTH_ok" };
+
+it("enforces maxAmountKobo at the boundary", async () => {
+  const payments = createPaymentService({ provider: createFakeProvider(), maxAmountKobo: 100_000 });
+  // a charge of 100_001 kobo (reference "A") should reject with
+  // code: PaymentErrorCode.INVALID and an issue on field "amountKobo"
+  // a charge of exactly 100_000 kobo (reference "B") should resolve
+  await expect(payments.charge({ ...base, reference: "A", amountKobo: 100_001 })).resolves.toBeTruthy();
+});
+</starter>
+<hint><p>Two assertions: <code>await expect(payments.charge({ ...base, reference: "A", amountKobo: 100_001 })).rejects.toMatchObject({ code, issues })</code>, then the mirror <code>.resolves.toMatchObject(...)</code> for exactly 100,000 kobo.</p></hint>
+<hint><p><code>await expect(payments.charge({ ...base, reference: "A", amountKobo: 100_001 })).rejects.toMatchObject({ code: PaymentErrorCode.INVALID, issues: [{ field: "amountKobo", message: "must be at most 100000" }] }); await expect(payments.charge({ ...base, reference: "B", amountKobo: 100_000 })).resolves.toMatchObject({ amountKobo: 100_000 });</code></p></hint>
 <solution>
 <file name="tests/limit.test.ts" project="payments">
 import { expect, it } from "vitest";
@@ -1032,6 +1071,8 @@ await runTests("tests/limit.test.ts");
 </exercise>
 <exercise title="Which version?">
 <p>The package is at 1.4.2. Give the next version for each release, on its own: (a) the Paystack adapter now retries once on HTTP 503; (b) <code>PaymentDeclinedError</code> gets a new <code>retryable</code> property; (c) the default <code>maxAmountKobo</code> drops from ₦5,000,000 to ₦1,000,000; (d) <code>createFakeProvider</code> moves from <code>/testing</code> to the main entry, and <code>/testing</code> is removed.</p>
+<hint><p>For each change, ask: does existing, correctly-typed calling code stop compiling, or start behaving differently, without any change on its own part? That question is the line between minor and major.</p></hint>
+<hint><p>The versioning table earlier in this lesson already covers the closest match for three of these four: a new field, a changed default, and removing or moving an export. Find the matching row before you decide (a), the one case not already in the table.</p></hint>
 <solution>
 <ul>
 <li>(a) <strong>1.4.3</strong> or <strong>1.5.0</strong>. Retrying a failed call is a behaviour change callers do not have to adapt to; most teams call it a patch. If you document it as a feature ("adapters now retry"), a minor is fine.</li>
@@ -1043,6 +1084,44 @@ await runTests("tests/limit.test.ts");
 </exercise>
 <exercise title="A provider that hangs">
 <p>The adapter aborts a call after <code>timeoutMs</code>. Prove it: give the provider a fake <code>fetch</code> that never answers until its signal aborts, set <code>timeoutMs: 50</code>, and show that the service turns the timeout into <code>ERR_PAYMENT_PROVIDER</code> with the <code>TimeoutError</code> as its cause.</p>
+<starter file="timeout.ts">
+// Example to learn from: the same "never resolve on its own; reject only
+// when the caller's AbortSignal fires" shape, faking a sensor that never
+// answers until its own timeout aborts it.
+//
+//   function fakeSensorRead(signal) {
+//     return new Promise((_resolve, reject) => {
+//       signal.addEventListener("abort", () => reject(signal.reason));
+//     });
+//   }
+//   const controller = new AbortController();
+//   setTimeout(() => controller.abort(new Error("sensor timed out")), 20);
+//   await fakeSensorRead(controller.signal).catch((e) => console.log(e.message)); // sensor timed out
+//
+// Now do the same for the fake fetch below, using init.signal instead of a
+// controller you create yourself.
+
+import { createPaymentService, createPaystackProvider, isPaymentError } from "@mycompany/zudo-payments";
+
+const hangs: typeof fetch = (_url, init) =>
+  new Promise((_resolve, reject) => {
+    // never resolve on its own; when init.signal aborts, reject with its reason
+    reject(new Error("not implemented"));
+  });
+
+const provider = createPaystackProvider({ secretKey: "sk_test_x", fetch: hangs, timeoutMs: 50 });
+const payments = createPaymentService({ provider });
+const keepAlive = setInterval(() => {}, 1_000);
+try {
+  await payments.charge({ reference: "ORD-5", email: "ada@example.com", amountKobo: 50_000, authorizationCode: "AUTH_ok" });
+} catch (error) {
+  if (isPaymentError(error)) console.log(error.code, error.statusCode, "cause:", (error.cause as Error).name);
+} finally {
+  clearInterval(keepAlive);
+}
+</starter>
+<hint><p>Add an <code>abort</code> listener on <code>init.signal</code> inside the promise executor, and reject with the signal's own reason when it fires. Do not resolve or reject any other way.</p></hint>
+<hint><p><code>init?.signal?.addEventListener("abort", () =&gt; reject(init.signal!.reason));</code> — and remove the placeholder <code>reject(new Error("not implemented"))</code> below it.</p></hint>
 <solution>
 <example file="timeout.ts" project="payments" browser="no">
 import { createPaymentService, createPaystackProvider, isPaymentError } from "@mycompany/zudo-payments";

@@ -1102,6 +1102,64 @@ PASS audit entry
 <h2 id="practice">Practice</h2>
 <exercise title="@deprecated, warned once">
 <p>Write a decorator factory <code>deprecated(replacement)</code> for methods. The first call to a deprecated method logs <code>"NAME is deprecated, use REPLACEMENT"</code>; later calls stay silent. Put it on a <code>getBalance</code> method whose replacement is <code>balanceKobo</code>.</p>
+<starter file="deprecated.ts">
+// Example to learn from: a method decorator factory with a flag in its
+// closure, logging only on the first call, for an audit log instead of a
+// deprecation notice.
+//
+//   function logOnce(label: string) {
+//     return function <This, Args extends unknown[], R>(
+//       method: (this: This, ...args: Args) => R,
+//       context: ClassMethodDecoratorContext<This, (this: This, ...args: Args) => R>,
+//     ) {
+//       let logged = false;
+//       return function (this: This, ...args: Args): R {
+//         if (!logged) {
+//           logged = true;
+//           console.log(`${label}: ${String(context.name)} called`);
+//         }
+//         return method.apply(this, args);
+//       };
+//     };
+//   }
+//
+//   class Report {
+//     @logOnce("audit") generate(): string { return "report ready"; }
+//   }
+//   new Report().generate();
+//   new Report().generate();   // logs nothing the second time (shared flag)
+//
+// Now write deprecated the same way, below.
+
+function deprecated(replacement: string) {
+  return function <This, Args extends unknown[], R>(
+    method: (this: This, ...args: Args) => R,
+    context: ClassMethodDecoratorContext<This, (this: This, ...args: Args) => R>,
+  ) {
+    // Keep a `warned` flag in this closure. On the first call, log
+    // "<name> is deprecated, use <replacement>", then always call method.
+    return function (this: This, ...args: Args): R {
+      return method.apply(this, args);
+    };
+  };
+}
+
+class Account {
+  balanceKobo = 2_500_000;
+
+  @deprecated("balanceKobo")
+  getBalance(): string {
+    return `₦${this.balanceKobo / 100}`;
+  }
+}
+
+const a = new Account();
+const b = new Account();
+console.log(a.getBalance());
+console.log(b.getBalance());
+</starter>
+<hint><p>Declare <code>let warned = false;</code> just above the returned function. Check and set it inside: <code>if (!warned) { warned = true; console.log(...); }</code>, before calling <code>method.apply(this, args)</code>.</p></hint>
+<hint><p>The message is <code>`${String(context.name)} is deprecated, use ${replacement}`</code>. The flag lives in the decorator's closure, shared by every instance, which is why the second account does not warn again.</p></hint>
 <solution>
 <example file="deprecated.ts" project="ex-deprecated">
 function deprecated(replacement: string) {
@@ -1144,6 +1202,56 @@ getBalance is deprecated, use balanceKobo
 </exercise>
 <exercise title="@memoize with a cache per instance">
 <p>Shipping fees are expensive to compute. Write <code>@memoize</code> for one-argument methods: it caches results per instance and per argument. Use a <code>WeakMap</code> from instance to cache so that dropped instances can be garbage-collected. Show that the second call with the same destination does not recompute.</p>
+<starter file="memoize.ts">
+// Example to learn from: one WeakMap entry per instance, so state does not
+// leak between instances or block garbage collection, for a call counter
+// instead of a cache.
+//
+//   function countCalls<This extends object, Args extends unknown[], R>(
+//     method: (this: This, ...args: Args) => R,
+//     _context: ClassMethodDecoratorContext<This, (this: This, ...args: Args) => R>,
+//   ) {
+//     const counts = new WeakMap<This, number>();
+//     return function (this: This, ...args: Args): R {
+//       counts.set(this, (counts.get(this) ?? 0) + 1);
+//       return method.apply(this, args);
+//     };
+//   }
+//
+//   class Api { @countCalls ping(): string { return "pong"; } }
+//   const api = new Api();
+//   api.ping(); api.ping();   // counted against `api` only, in its own WeakMap entry
+//
+// Now write memoize below: one Map per instance, keyed by the argument.
+
+function memoize<This extends object, A, R>(
+  method: (this: This, arg: A) => R,
+  _context: ClassMethodDecoratorContext<This, (this: This, arg: A) => R>,
+) {
+  // One WeakMap<This, Map<A, R>>. On each call: get (or create) this
+  // instance's Map, then get (or compute and store) the result for `arg`.
+  return function (this: This, arg: A): R {
+    return method.call(this, arg);
+  };
+}
+
+class ShippingCalculator {
+  computed = 0;
+
+  @memoize
+  feeKobo(state: string): number {
+    this.computed++;
+    return state === "Lagos" ? 150_000 : 350_000;
+  }
+}
+
+const shipping = new ShippingCalculator();
+console.log(shipping.feeKobo("Lagos"), shipping.feeKobo("Kano"), shipping.feeKobo("Lagos"));
+console.log("computed", shipping.computed, "times");
+console.log(new ShippingCalculator().feeKobo("Lagos"));
+</starter>
+<hint><p>Declare <code>const caches = new WeakMap&lt;This, Map&lt;A, R&gt;&gt;();</code> outside the returned function. Inside, <code>let cache = caches.get(this); if (!cache) caches.set(this, (cache = new Map()));</code>.</p></hint>
+<hint><p><code>if (!cache.has(arg)) cache.set(arg, method.call(this, arg)); return cache.get(arg)!;</code></p></hint>
 <solution>
 <example file="memoize.ts" project="ex-memoize">
 function memoize<This extends object, A, R>(
@@ -1184,6 +1292,61 @@ computed 2 times
 </exercise>
 <exercise title="An accessor that limits length">
 <p>Write <code>maxLength(n)</code> for <code>accessor</code> fields of type <code>string</code>: it trims the value and throws a <code>RangeError</code> if the result is longer than <code>n</code>, both for the initial value and for later assignments. Use it on a customer's display name.</p>
+<starter file="max-length.ts">
+// Example to learn from: the same accessor-decorator shape (a check
+// function used for both init and set), enforcing a different rule.
+//
+//   function positive<This>(
+//     target: ClassAccessorDecoratorTarget<This, number>,
+//     context: ClassAccessorDecoratorContext<This, number>,
+//   ): ClassAccessorDecoratorResult<This, number> {
+//     const check = (value: number) => {
+//       if (value < 0) throw new RangeError(`${String(context.name)} must not be negative`);
+//       return value;
+//     };
+//     return { init: check, set(value) { target.set.call(this, check(value)); } };
+//   }
+//
+//   class Wallet { @positive accessor balance = 0; }
+//   const wallet = new Wallet();
+//   wallet.balance = -5;   // throws RangeError
+//
+// Now write maxLength below: it trims a string and checks its length.
+
+function maxLength(limit: number) {
+  return function <This>(
+    target: ClassAccessorDecoratorTarget<This, string>,
+    context: ClassAccessorDecoratorContext<This, string>,
+  ): ClassAccessorDecoratorResult<This, string> {
+    // check(value): trim it, throw RangeError if longer than `limit`,
+    // otherwise return the trimmed value. Use check for both init and set.
+    const check = (value: string) => value;
+    return {
+      init: check,
+      set(value) {
+        target.set.call(this, check(value));
+      },
+    };
+  };
+}
+
+class Customer {
+  @maxLength(12) accessor displayName = "  Ada  ";
+}
+
+const customer = new Customer();
+console.log(JSON.stringify(customer.displayName));
+customer.displayName = " Chiamaka E. ";
+console.log(customer.displayName);
+try {
+  customer.displayName = "Oluwatobiloba Adeyemi";
+} catch (error) {
+  console.log(String(error));
+}
+console.log(customer.displayName);
+</starter>
+<hint><p><code>check</code> should trim first: <code>const trimmed = value.trim();</code>, then compare <code>trimmed.length</code> against <code>limit</code>.</p></hint>
+<hint><p><code>const trimmed = value.trim(); if (trimmed.length &gt; limit) throw new RangeError(`${String(context.name)} is longer than ${limit} characters`); return trimmed;</code></p></hint>
 <solution>
 <example file="max-length.ts" project="ex-max-length">
 function maxLength(limit: number) {

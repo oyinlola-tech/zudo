@@ -814,6 +814,56 @@ PASS rows before the error were written -> 3
 <h2 id="practice">Practice</h2>
 <exercise title="Batches as a generator">
 <p>The previous lesson's <code>chunk(iterable, size)</code> needed a hand-written <code>next()</code> and <code>return()</code>. Write <code>batches(iterable, size)</code> as a generator: it yields arrays of up to <code>size</code> items, the last one possibly shorter. Validate <code>size</code> before any iteration happens. Check that stopping early also stops the source.</p>
+<starter file="batches.js">
+// Example to learn from: a generator that accumulates items and yields
+// (then resets) the accumulator, grouping consecutive equal items instead
+// of fixed-size batches.
+//
+//   function* runs(iterable) {
+//     let current = [];
+//     for (const item of iterable) {
+//       if (current.length === 0 || current.at(-1) === item) current.push(item);
+//       else { yield current; current = [item]; }
+//     }
+//     if (current.length > 0) yield current;
+//   }
+//   console.log([...runs(["a", "a", "b", "b", "b", "c"])]);
+//   // [ ['a','a'], ['b','b','b'], ['c'] ]
+//
+// Now do the same shape of generator for batches below: reset every `size`
+// items instead of on a change.
+
+function batches(iterable, size) {
+  // your code here:
+  // 1. throw new RangeError("size must be a positive whole number") unless
+  //    Number.isInteger(size) && size >= 1 — before any iteration
+  // 2. return (function* () { ... })(): an inner generator that walks
+  //    `iterable` with for...of, pushing onto a `batch` array; once
+  //    batch.length === size, yield it and start a new empty batch; after
+  //    the loop, yield any leftover batch
+  return [];
+}
+
+for (const batch of batches(["ORD-1", "ORD-2", "ORD-3", "ORD-4", "ORD-5"], 2)) console.log("INSERT", batch);
+
+function* source() {
+  try {
+    for (let n = 1; ; n++) yield n;
+  } finally {
+    console.log("source closed");
+  }
+}
+const [firstBatch] = batches(source(), 3);
+console.log(firstBatch);
+
+try {
+  batches([], 0);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</starter>
+<hint><p>Validate <code>size</code> first, outside the generator — a generator's body does not run until it is first iterated, so a plain <code>if</code>/<code>throw</code> at the top of <code>batches</code> runs immediately.</p></hint>
+<hint><p><code>return (function* () { let batch = []; for (const item of iterable) { batch.push(item); if (batch.length === size) { yield batch; batch = []; } } if (batch.length &gt; 0) yield batch; })();</code></p></hint>
 <solution>
 <example file="batches.js">
 function batches(iterable, size) {
@@ -862,6 +912,56 @@ RangeError: size must be a positive whole number
 </exercise>
 <exercise title="Retry with backoff">
 <p>Write <code>retry(task, delays)</code>, where <code>task</code> is a function that may throw and <code>delays</code> is any iterable of wait times (such as <code>backoff().take(3)</code>). Call <code>task</code>; if it throws, take the next delay, log it and try again. When the delays run out, throw the last error. To keep the example fast, log the delays instead of waiting.</p>
+<starter file="retry.js">
+// Example to learn from: pulling wait times from a separate generator,
+// polling a condition instead of catching an error.
+//
+//   function* linearDelays({ startMs = 100, stepMs = 100 } = {}) {
+//     for (let delay = startMs; ; delay += stepMs) yield delay;
+//   }
+//   function pollUntil(check, delays) {
+//     const waits = delays[Symbol.iterator]();
+//     for (let attempt = 1; ; attempt++) {
+//       if (check(attempt)) return true;
+//       const next = waits.next();
+//       if (next.done) return false;
+//       console.log(`attempt ${attempt} not ready, waiting ${next.value} ms`);
+//     }
+//   }
+//   let ready = 0;
+//   console.log(pollUntil(() => ++ready >= 3, linearDelays().take(5)));
+//
+// Now do the same shape for backoff and retry below: catch an error instead
+// of polling a condition.
+
+function* backoff({ firstMs = 200, factor = 2, maxMs = 5000 } = {}) {
+  // your code here: yield firstMs, then repeatedly yield the previous delay
+  // times factor, capped at maxMs, forever —
+  // for (let delay = firstMs; ; delay = Math.min(delay * factor, maxMs)) yield delay;
+}
+
+function retry(task, delays) {
+  // your code here:
+  // 1. const waits = delays[Symbol.iterator]();
+  // 2. loop attempt = 1, 2, 3, … forever: try { return task(attempt); }
+  //    catch (error) { const next = waits.next(); if (next.done) throw error;
+  //    log `attempt ${attempt} failed (${error.message}), waiting ${next.value} ms` }
+}
+
+const flaky = (attempt) => {
+  if (attempt < 3) throw new Error("gateway timeout");
+  return "charged";
+};
+console.log(retry(flaky, backoff().take(5)));
+
+try {
+  retry(() => { throw new Error("card declined"); }, backoff().take(2));
+} catch (error) {
+  console.log("gave up:", error.message);
+}
+</starter>
+<hint><p><code>delays[Symbol.iterator]()</code> gives you an iterator you can call <code>.next()</code> on by hand, one delay at a time, independent of the retry loop's own counter.</p></hint>
+<hint><p><code>for (let attempt = 1; ; attempt++) { try { return task(attempt); } catch (error) { const next = waits.next(); if (next.done) throw error; console.log(...); } }</code>, and <code>backoff</code> is <code>for (let delay = firstMs; ; delay = Math.min(delay * factor, maxMs)) yield delay;</code>.</p></hint>
 <solution>
 <example file="retry.js">
 function* backoff({ firstMs = 200, factor = 2, maxMs = 5000 } = {}) {
@@ -906,6 +1006,46 @@ gave up: card declined
 </exercise>
 <exercise title="Paths to every file">
 <p>A storage bucket is a tree of folders with <code>files</code> (names) and <code>folders</code>. Write a generator <code>filePaths(folder, prefix)</code> that yields the full path of every file, depth first, using <code>yield*</code> for subfolders. Then use it to find the first <code>.pdf</code> without walking the rest.</p>
+<starter file="file-paths.js">
+// Example to learn from: yield* for recursion, flattening nested arrays
+// instead of walking a folder tree.
+//
+//   function* flatten(list) {
+//     for (const item of list) {
+//       if (Array.isArray(item)) yield* flatten(item);
+//       else yield item;
+//     }
+//   }
+//   console.log([...flatten([1, [2, 3, [4]], 5])]); // [1, 2, 3, 4, 5]
+//
+// Now do the same idea for filePaths below: recurse into folders instead
+// of nested arrays.
+
+const bucket = {
+  name: "invoices",
+  files: ["readme.txt"],
+  folders: [
+    { name: "2025", files: ["jan.csv", "feb.pdf"], folders: [] },
+    { name: "2026", files: ["mar.pdf"], folders: [{ name: "drafts", files: ["apr.txt"], folders: [] }] },
+  ],
+};
+
+let visited = 0;
+function* filePaths(folder, prefix = "") {
+  // your code here:
+  // 1. visited += 1;
+  // 2. const here = `${prefix}${folder.name}/`;
+  // 3. yield here + file, for each file in folder.files
+  // 4. yield* filePaths(sub, here), for each sub in folder.folders
+  return [];
+}
+
+console.log([...filePaths(bucket)]);
+visited = 0;
+console.log(filePaths(bucket).find((path) => path.endsWith(".pdf")), "folders visited:", visited);
+</starter>
+<hint><p><code>yield* filePaths(sub, here)</code> delegates to a nested call, forwarding every path it yields — that is what walks the whole tree without an explicit stack.</p></hint>
+<hint><p><code>visited += 1; const here = `${prefix}${folder.name}/`; for (const file of folder.files) yield here + file; for (const sub of folder.folders) yield* filePaths(sub, here);</code></p></hint>
 <solution>
 <example file="file-paths.js">
 const bucket = {

@@ -654,6 +654,49 @@ All connections closed. Bye.
 <h2 id="practice">Practice</h2>
 <exercise title="Count requests">
 <p>Write a middleware <code>countRequests(counter)</code> that adds 1 to <code>counter.total</code> for every request, and to <code>counter.failed</code> when the final status is 400 or higher. Try it with <code>compose</code> and a handler that sets <code>ctx.status</code>.</p>
+<starter file="count.js">
+// Example to learn from: a middleware that counts before next() runs, and
+// checks the outcome only after next() has set it.
+//
+//   const tallyOutcome = (tally) => async (ctx, next) => {
+//     tally.attempts += 1;
+//     await next();
+//     if (ctx.outcome === "declined") tally.declined += 1;
+//   };
+//   const tally = { attempts: 0, declined: 0 };
+//   const app = compose([tallyOutcome(tally)], async (ctx) => {
+//     ctx.outcome = ctx.amount > 100 ? "declined" : "approved";
+//   });
+//   for (const amount of [50, 500, 20]) await app({ amount });
+//   console.log(tally); // { attempts: 3, declined: 1 }
+//
+// Now do the same idea for request status codes below.
+
+function compose(middlewares, handler) {
+  return function run(ctx, index = 0) {
+    if (index === middlewares.length) return handler(ctx);
+    return middlewares[index](ctx, () => run(ctx, index + 1));
+  };
+}
+
+const countRequests = (counter) => async (ctx, next) => {
+  // 1. add 1 to counter.total
+  // 2. await next()
+  // 3. after that, if ctx.status is 400 or more, add 1 to counter.failed
+};
+
+const counter = { total: 0, failed: 0 };
+const app = compose([countRequests(counter)], async (ctx) => {
+  ctx.status = ctx.path === "/tasks" ? 200 : 404;
+});
+
+for (const path of ["/tasks", "/nope", "/tasks", "/missing"]) {
+  await app({ path });
+}
+console.log(counter);
+</starter>
+<hint><p>Increment <code>counter.total</code> before calling <code>next()</code>. <code>ctx.status</code> is only set once the handler, further down the chain, has run — which is after <code>next()</code> resolves.</p></hint>
+<hint><p><code>counter.total += 1; await next(); if (ctx.status &gt;= 400) counter.failed += 1;</code></p></hint>
 <solution>
 <example file="count.js">
 function compose(middlewares, handler) {
@@ -687,6 +730,46 @@ console.log(counter);
 </exercise>
 <exercise title="Limit the list">
 <p>Add a <code>limit</code> query parameter to <code>GET /tasks</code>: a whole number from 1 to 100, default 20. Anything else is a 400. Write the check as a function you can test on its own.</p>
+<starter file="limit.js">
+// Example to learn from: the same validate-then-throw shape, for a
+// different setting.
+//
+//   function readRetentionDays(searchParams) {
+//     const text = searchParams.get("days") ?? "30";
+//     const days = Number(text);
+//     if (!/^[0-9]{1,3}$/.test(text) || days < 1 || days > 365) {
+//       throw new HttpError(400, "days must be a whole number from 1 to 365");
+//     }
+//     return days;
+//   }
+//
+// Now do the same for `limit`, capped at 100, below.
+
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function readLimit(searchParams) {
+  const text = searchParams.get("limit") ?? "20";
+  // 1. if text is not 1-3 digits (/^[0-9]{1,3}$/), or the number it
+  //    represents is below 1 or above 100, throw
+  //    new HttpError(400, "limit must be a whole number from 1 to 100")
+  // 2. otherwise return the number
+}
+
+for (const query of ["", "?limit=5", "?limit=0", "?limit=1000", "?limit=ten"]) {
+  try {
+    console.log(query || "(none)", readLimit(new URLSearchParams(query)));
+  } catch (error) {
+    console.log(query, error.status, error.message);
+  }
+}
+</starter>
+<hint><p>Convert <code>text</code> to a number first, but keep the original text around too: the regex check and the range check both matter, and either one failing should throw.</p></hint>
+<hint><p><code>const limit = Number(text); if (!/^[0-9]{1,3}$/.test(text) || limit &lt; 1 || limit &gt; 100) throw new HttpError(400, "limit must be a whole number from 1 to 100"); return limit;</code></p></hint>
 <solution>
 <example file="limit.js">
 class HttpError extends Error {
@@ -725,6 +808,8 @@ for (const query of ["", "?limit=5", "?limit=0", "?limit=1000", "?limit=ten"]) {
 </exercise>
 <exercise title="Which pain point bit you?">
 <p>Look back over the files you wrote. Find one place where you repeated yourself, and one place where forgetting a line would have created a security problem. Which items in the 20,000-lines list do they belong to?</p>
+<hint><p>Look at <code>app.js</code> route by route: which few lines appear, in slightly different words, in more than one handler?</p></hint>
+<hint><p>For the security half, ask what a client could send that the code doesn't explicitly check for, in <code>app.js</code>'s <code>PATCH</code> route and in <code>middleware.js</code>'s <code>requireApiKey</code>.</p></hint>
 <solution>
 <p>Some possible answers:</p>
 <ul>

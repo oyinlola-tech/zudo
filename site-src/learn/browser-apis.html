@@ -733,6 +733,35 @@ shown: [ 'Pay the electricity bill' ]
 <h2 id="practice">Practice</h2>
 <exercise title="Build a search address">
 <p>Write <code>searchUrl(base, filters)</code> that returns the address for a product search. <code>filters</code> has optional <code>q</code> (text), <code>tags</code> (an array), <code>maxPriceKobo</code> (a number) and <code>page</code> (a number, left out when it is 1). Leave out empty values.</p>
+<starter file="search-url.js">
+// Example to learn from: building a URL, only adding parameters that
+// matter, and using set vs append correctly.
+//
+//   function sortUrl(base, { by = "date", tags = [] } = {}) {
+//     const url = new URL("/orders", base);
+//     if (by !== "date") url.searchParams.set("sort", by);
+//     for (const tag of tags) url.searchParams.append("tag", tag);
+//     return url.href;
+//   }
+//   console.log(sortUrl("https://shop.example", { by: "price", tags: ["urgent"] }));
+//
+// Now do the same idea for a product search, below.
+
+function searchUrl(base, { q, tags = [], maxPriceKobo, page = 1 } = {}) {
+  const url = new URL("/search", base);
+  // 1. if q is given and non-blank after trim(), set "q" to the trimmed text
+  // 2. for each tag in tags, append it as "tag" (there can be several)
+  // 3. if maxPriceKobo is given, set "max" to String(maxPriceKobo)
+  // 4. if page isn't 1, set "page" to String(page)
+  return url.href;
+}
+
+console.log(searchUrl("https://shop.example", { q: " palm oil ", tags: ["local", "5L & up"], page: 2 }));
+console.log(searchUrl("https://shop.example/products/rice", { q: "", maxPriceKobo: 900_000 }));
+console.log(searchUrl("https://shop.example"));
+</starter>
+<hint><p><code>set</code> replaces a single value, <code>append</code> adds another with the same name. Check each optional value before adding it, the same way the worked example checked <code>by !== "date"</code>.</p></hint>
+<hint><p><code>if (q?.trim()) url.searchParams.set("q", q.trim()); for (const tag of tags) url.searchParams.append("tag", tag); if (maxPriceKobo !== undefined) url.searchParams.set("max", String(maxPriceKobo)); if (page !== 1) url.searchParams.set("page", String(page));</code></p></hint>
 <solution>
 <example file="search-url.js">
 function searchUrl(base, { q, tags = [], maxPriceKobo, page = 1 } = {}) {
@@ -758,6 +787,51 @@ https://shop.example/search
 </exercise>
 <exercise title="A storage helper that never throws">
 <p>Write <code>readJson(storage, key, fallback)</code> and <code>writeJson(storage, key, value)</code>. Reading returns <code>fallback</code> when the key is missing or holds invalid JSON; writing returns <code>true</code> or <code>false</code> instead of throwing. Test them with a fake storage object.</p>
+<starter file="safe-storage.js">
+// Example to learn from: wrapping a risky read so it returns a safe value
+// instead of throwing.
+//
+//   function readNumber(storage, key, fallback) {
+//     try {
+//       const text = storage.getItem(key);
+//       return text === null ? fallback : Number(text);
+//     } catch {
+//       return fallback;
+//     }
+//   }
+//
+// Now do the same shape for JSON, and add a writer that reports success as
+// a boolean instead of throwing, below.
+
+function readJson(storage, key, fallback) {
+  // 1. try: read storage.getItem(key); if it's null, return fallback;
+  //    otherwise JSON.parse it and return that
+  // 2. catch: return fallback (broken JSON counts as "nothing saved")
+}
+
+function writeJson(storage, key, value) {
+  // 1. try: storage.setItem(key, JSON.stringify(value)); return true
+  // 2. catch: return false
+}
+
+const data = new Map([["prefs", '{"theme":"dark"}'], ["broken", "{oops"]]);
+const fakeStorage = {
+  getItem: (key) => data.get(key) ?? null,
+  setItem(key, value) {
+    if (value.length > 20) throw new Error("QuotaExceededError");
+    data.set(key, value);
+  },
+};
+
+console.log(readJson(fakeStorage, "prefs", {}));
+console.log(readJson(fakeStorage, "broken", { theme: "light" }));
+console.log(readJson(fakeStorage, "missing", []));
+console.log(writeJson(fakeStorage, "cart", { rice: 2 }));
+console.log(writeJson(fakeStorage, "cart", { rice: 2, garri: 1, palmOil: 3 }));
+console.log(readJson(fakeStorage, "cart", null));
+</starter>
+<hint><p>Both functions share one shape: attempt the risky call inside <code>try</code>, and turn any thrown error into a safe return value in <code>catch</code>, never re-throwing.</p></hint>
+<hint><p><code>readJson</code>: <code>const text = storage.getItem(key); return text === null ? fallback : JSON.parse(text);</code> wrapped in <code>try/catch { return fallback; }</code>. <code>writeJson</code>: <code>storage.setItem(key, JSON.stringify(value)); return true;</code> wrapped in <code>try/catch { return false; }</code>.</p></hint>
 <solution>
 <example file="safe-storage.js">
 function readJson(storage, key, fallback) {
@@ -807,6 +881,44 @@ false
 </exercise>
 <exercise title="Count up a total">
 <p>A checkout page shows the order total counting up from ₦0 to the final amount in 400 ms. Write <code>countUp(element, totalKobo, durationMs)</code> with <code>requestAnimationFrame</code>, so the last frame always shows the exact total.</p>
+<starter file="count-up.js">
+// Example to learn from: animating a value over time with
+// requestAnimationFrame, capping progress at 1 so the last frame is exact.
+//
+//   function fadeIn(element, durationMs) {
+//     return new Promise((resolve) => {
+//       let start;
+//       requestAnimationFrame(function step(now) {
+//         start ??= now;
+//         const progress = Math.min((now - start) / durationMs, 1);
+//         element.style.opacity = String(progress);
+//         if (progress < 1) requestAnimationFrame(step);
+//         else resolve();
+//       });
+//     });
+//   }
+//
+// Now animate a naira total instead of an opacity, below.
+
+const naira = (kobo) => `₦${(kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`;
+
+function countUp(element, totalKobo, durationMs) {
+  return new Promise((resolve) => {
+    // 1. track a `start` timestamp, set on the first frame
+    // 2. requestAnimationFrame a step(now) function that:
+    //    - works out progress = Math.min((now - start) / durationMs, 1)
+    //    - sets element.textContent to naira(Math.round(totalKobo * progress))
+    //    - if progress < 1, requests another frame; otherwise resolve()
+    resolve(); // placeholder so awaiting this below doesn't hang forever
+  });
+}
+
+const label = document.querySelector("#bar-label");
+await countUp(label, 4_530_050, 400);
+console.log(label.textContent);
+</starter>
+<hint><p><code>start ??= now</code> records the timestamp of the first frame only. Every later frame computes <code>progress</code> from how far <code>now</code> is past that first timestamp.</p></hint>
+<hint><p><code>let start; requestAnimationFrame(function step(now) { start ??= now; const progress = Math.min((now - start) / durationMs, 1); element.textContent = naira(Math.round(totalKobo * progress)); if (progress &lt; 1) requestAnimationFrame(step); else resolve(); });</code></p></hint>
 <solution>
 <example file="count-up.js" project="apis" runtime="dom">
 const naira = (kobo) => `₦${(kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`;

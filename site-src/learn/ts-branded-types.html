@@ -404,13 +404,14 @@ RangeError: kobo must be a whole number, got NaN
 import { createEmailAddress, createTenantId, createTimestamp, createUserId, InvalidConstantError } from "@zudojs/constants";
 import type { TenantId, UserId } from "@zudojs/constants";
 
-const unchecked: UserId = createUserId("");
+const unchecked: UserId = createUserId("legacy-user-42");
 console.log(JSON.stringify(unchecked), typeof unchecked);
 
 const tenant: TenantId = createTenantId("  Mama-Put-Kitchen ");
 console.log(tenant);
 
 const attempts = [
+  () => createUserId(""),
   () => createTenantId("acme/../billing"),
   () => createEmailAddress("ada@"),
   () => createTimestamp("2026-02-30T10:00:00Z"),
@@ -425,15 +426,16 @@ for (const attempt of attempts) {
 console.log(createTimestamp("2026-09-24T19:05:00Z"), createEmailAddress("ada@example.com"));
 </example>
 <output>
-"" string
+"legacy-user-42" string
 mama-put-kitchen
+InvalidConstantError: UserId must be a non-empty string.
 InvalidConstantError: Invalid tenant id: "acme/../billing"
 InvalidConstantError: Invalid email address: "ada@"
 InvalidConstantError: Invalid ISO 8601 timestamp: "2026-02-30T10:00:00Z"
 2026-09-24T19:05:00Z ada@example.com
 </output>
 <ul>
-<li><code>createUserId</code> (and <code>createEventId</code>, <code>createRequestId</code>, <code>createSessionId</code> and the other id constructors) accept any string, even an empty one. They are a labelled cast: use them where the id was already checked, for example after <code>@zudojs/auth</code> verified a token, or wrap them in your own smart constructor that validates your id format first.</li>
+<li><code>createUserId</code> (and <code>createEventId</code>, <code>createRequestId</code>, <code>createCorrelationId</code>, <code>createSessionId</code>, <code>createMessageId</code>, <code>createMessageCausationId</code> and <code>createTokenId</code>) reject an empty string or a non-string with <code>InvalidConstantError</code>, but otherwise accept anything: they are mostly a labelled cast. Use them where the id was already checked, for example after <code>@zudojs/auth</code> verified a token, or wrap them in your own smart constructor that validates your id format first. (Before <code>@zudojs/constants</code> 1.2.0, they accepted even an empty string.)</li>
 <li><code>createTenantId</code> is a real smart constructor. It normalises (Unicode NFKC, trim, lower case) so two spellings of one tenant cannot become two tenants, and rejects anything that could act as a path segment or separator, because tenant ids end up in cache keys, schema names and file paths.</li>
 <li><code>createEmailAddress</code>, <code>createTimestamp</code> and <code>createUrl</code> validate too, and throw <code>InvalidConstantError</code> (owned by <code>@zudojs/errors</code>). <code>createTimestamp</code> even rejects 30 February, which <code>Date.parse</code> would quietly roll over into March.</li>
 <li>Because the brand is a string key, <code>unchecked.__brand</code> type-checks (as <code>"UserId"</code>) and is <code>undefined</code> at runtime. Do not read it.</li>
@@ -722,6 +724,46 @@ type tests compiled: true
 <h2 id="practice">Practice</h2>
 <exercise title="A normalising email constructor">
 <p>Write <code>parseEmail(raw: string): Result&lt;Email, string&gt;</code> for a brand <code>Email</code>. It trims and lower-cases the input, rejects anything over 254 characters, and accepts only a simple <code>local@domain.tld</code> shape. Two spellings of the same address must produce the same <code>Email</code>.</p>
+<starter file="email.ts">
+// Example to learn from: the same normalise-then-validate constructor,
+// for a URL slug instead of an email address.
+//
+//   type Slug = Brand<string, "Slug">;
+//
+//   const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+//
+//   function parseSlug(raw: string): Result<Slug, string> {
+//     const value = raw.trim().toLowerCase().replace(/\s+/g, "-");
+//     if (!SLUG.test(value)) return { ok: false, error: `not a slug: ${JSON.stringify(raw)}` };
+//     return { ok: true, value: value as Slug };
+//   }
+//
+//   const s = parseSlug(" Hello World ");
+//   console.log(s.ok, s.ok && s.value);   // true hello-world
+//
+// Now do the same for email addresses below.
+
+declare const brand: unique symbol;
+type Brand<T, Name extends string> = T & { readonly [brand]: Name };
+type Email = Brand<string, "Email">;
+type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function parseEmail(raw: string): Result<Email, string> {
+  // Trim and lower-case raw. Reject it (ok: false) if it is over 254
+  // characters, or does not match EMAIL. Otherwise ok: true with the
+  // normalised value, branded as Email.
+  return { ok: false, error: "not implemented" };
+}
+
+const a = parseEmail("  Ada@Example.com ");
+const b = parseEmail("ada@example.com");
+console.log(a.ok && b.ok && a.value === b.value, a.ok && a.value);
+console.log(parseEmail("ada@example").ok, parseEmail(`${"a".repeat(250)}@x.ng`).ok);
+</starter>
+<hint><p>Normalise first: <code>const value = raw.trim().toLowerCase();</code>. Two differently-cased spellings must normalise to the same string, so check the pattern and length <em>after</em> normalising.</p></hint>
+<hint><p><code>if (value.length &gt; 254) return { ok: false, error: "email is too long" };</code> then <code>if (!EMAIL.test(value)) return { ok: false, error: ... };</code> and finally <code>return { ok: true, value: value as Email };</code>.</p></hint>
 <solution>
 <example file="email.ts">
 declare const brand: unique symbol;
@@ -752,6 +794,47 @@ false false
 </exercise>
 <exercise title="Split a bill without losing a kobo">
 <p>Three friends split a ₦10,000 bill. <code>10000 / 3</code> is not a whole number of kobo. Write <code>splitKobo(total: Kobo, parts: number): readonly Kobo[]</code> that returns amounts that differ by at most one kobo and always add up to exactly <code>total</code>.</p>
+<starter file="split.ts">
+// Example to learn from: the same largest-remainder allocation, splitting
+// a block of seats into rows instead of a bill into shares.
+//
+//   type Seats = number & { readonly [brand]: "Seats" };
+//
+//   function seats(n: number): Seats {
+//     if (!Number.isSafeInteger(n)) throw new RangeError(`seats must be a whole number, got ${n}`);
+//     return n as Seats;
+//   }
+//
+//   function splitSeats(total: Seats, rows: number): readonly Seats[] {
+//     const base = Math.floor(total / rows);
+//     const extra = total - base * rows;
+//     return Array.from({ length: rows }, (_, i) => seats(base + (i < extra ? 1 : 0)));
+//   }
+//
+//   console.log(splitSeats(seats(100), 3));   // [ 34, 33, 33 ]
+//
+// Now do the same for splitting a bill into kobo shares below.
+
+declare const brand: unique symbol;
+type Kobo = number & { readonly [brand]: "Kobo" };
+
+function kobo(amount: number): Kobo {
+  if (!Number.isSafeInteger(amount)) throw new RangeError(`kobo must be a whole number, got ${amount}`);
+  return amount as Kobo;
+}
+
+function splitKobo(total: Kobo, parts: number): readonly Kobo[] {
+  // Give each part Math.floor(total / parts), then hand the leftover kobo
+  // (total - base * parts of them) one each to the first people.
+  return [];
+}
+
+const shares = splitKobo(kobo(1000000), 3);
+console.log(shares, shares.reduce((sum, share) => sum + share, 0));
+console.log(splitKobo(kobo(100), 7));
+</starter>
+<hint><p>Compute <code>base = Math.floor(total / parts)</code> and <code>extra = total - base * parts</code> (how many kobo are left over, always less than <code>parts</code>).</p></hint>
+<hint><p><code>Array.from({ length: parts }, (_, i) =&gt; kobo(base + (i &lt; extra ? 1 : 0)))</code>: the first <code>extra</code> people get one kobo more than the rest.</p></hint>
 <solution>
 <example file="split.ts">
 declare const brand: unique symbol;
@@ -785,6 +868,48 @@ console.log(splitKobo(kobo(100), 7));
 </exercise>
 <exercise title="Basis points for rates">
 <p>Interest and VAT rates cause unit bugs too: is <code>7.5</code> a percent or a fraction? Add a brand <code>BasisPoints</code> (1 basis point = 0.01%, so 7.5% is 750 bp), a constructor that accepts whole numbers from 0 to 10,000, and <code>applyRate(amount: Kobo, rate: BasisPoints): Kobo</code>. Show that passing a plain <code>7.5</code> is a compile error.</p>
+<starter file="rates.ts">
+// Example to learn from: a brand that turns a "which unit is this?"
+// bug into a compile error, for distances instead of rates.
+//
+//   type Meters = Brand<number, "Meters">;
+//
+//   const meters = (value: number): Meters => {
+//     if (value < 0) throw new RangeError(`meters must not be negative, got ${value}`);
+//     return value as Meters;
+//   };
+//
+//   const distanceToKobo = (distance: Meters, ratePerMeter: number): number =>
+//     Math.round(distance * ratePerMeter);
+//
+//   console.log(distanceToKobo(meters(120), 500));   // 60000
+//   console.log(distanceToKobo(120, 500));            // compile error: plain number
+//
+// Now add the BasisPoints brand below, so passing a plain 7.5 fails to
+// compile. Run `npx tsc --noEmit` on your computer and paste what it prints.
+
+declare const brand: unique symbol;
+type Brand<T, Name extends string> = T & { readonly [brand]: Name };
+type Kobo = Brand<number, "Kobo">;
+// Add a BasisPoints brand: 1 basis point = 0.01%, so 7.5% is 750.
+type BasisPoints = number;
+
+const kobo = (amount: number): Kobo => {
+  if (!Number.isSafeInteger(amount)) throw new RangeError(`kobo must be a whole number, got ${amount}`);
+  return amount as Kobo;
+};
+
+// Accept only whole numbers from 0 to 10,000.
+const basisPoints = (value: number): BasisPoints => value;
+
+const applyRate = (amount: Kobo, rate: BasisPoints): Kobo => kobo(Math.round((amount * rate) / 10000));
+
+const VAT = basisPoints(750);
+console.log(applyRate(kobo(1000000), VAT));
+console.log(applyRate(kobo(1000000), 7.5));
+</starter>
+<hint><p>Brand <code>BasisPoints</code> the same way as <code>Kobo</code>: <code>type BasisPoints = Brand&lt;number, "BasisPoints"&gt;;</code>. Its constructor should throw for anything that is not a whole number from 0 to 10,000.</p></hint>
+<hint><p><code>const basisPoints = (value: number): BasisPoints =&gt; { if (!Number.isInteger(value) || value &lt; 0 || value &gt; 10000) throw new RangeError(...); return value as BasisPoints; };</code></p></hint>
 <solution>
 <example file="rates.ts" check="tsc-error">
 declare const brand: unique symbol;

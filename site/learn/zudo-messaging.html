@@ -719,7 +719,37 @@ bus.dispose();</script>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="timing.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Time every message</h3><p>Write a middleware that stores the start time in <code>ctx.state</code> before <code>next()</code>, and after it prints the message type and whether the dispatch threw. Test it with one handler that works and one that throws.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="10" data-file="timing.ts">
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="timing.ts" data-title="Time every message"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Time every message</h3><div class="lx-ex-task"><p>Write a middleware that stores the start time in <code>ctx.state</code> before <code>next()</code>, and after it prints the message type and whether the dispatch threw. Test it with one handler that works and one that throws.</p></div><script type="text/plain" class="lx-ex-starter" data-file="timing.ts">// Example to learn from: the same before/after middleware shape, timing
+// the dispatch instead of reporting success or failure.
+//
+//   bus.use(async (ctx, next) => {
+//     const startedAt = Date.now();
+//     const value = await next();
+//     console.log(`${ctx.message.type} took ${Date.now() - startedAt}ms`);
+//     return value;
+//   });
+//
+// Now store the start time in ctx.state, and log success or failure instead.
+
+import { createMessageBus } from "@zudojs/messaging";
+
+const bus = createMessageBus();
+
+bus.use(async (ctx, next) => {
+  // Store Date.now() in ctx.state.set("startedAt", ...). Then, inside
+  // try/catch: await next(), on success log `${ctx.message.type}: ok` and
+  // return the value; on failure log `${ctx.message.type}: failed` and
+  // re-throw the error.
+  return next();
+});
+
+bus.on("task.count", async () => 3, { id: "count" });
+bus.on("task.explode", async () => {
+  throw new Error("boom");
+}, { id: "explode" });
+
+console.log((await bus.send({ type: "task.count", payload: null })).value);
+console.log((await bus.send({ type: "task.explode", payload: null })).success);</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>ctx.state.set("startedAt", Date.now())</code> is a plain <code>Map</code> write. Wrap <code>await next()</code> in <code>try</code>/<code>catch</code>: log and return on success, log and re-throw on failure.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>ctx.state.set("startedAt", Date.now()); try { const value = await next(); console.log(`${ctx.message.type}: ok`); return value; } catch (error) { console.log(`${ctx.message.type}: failed`); throw error; }</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="10" data-file="timing.ts">
 <figcaption class="lx-bar"><span class="lx-file">timing.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="10"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createMessageBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/messaging"</span><span class="t-pn">;</span>
 
@@ -774,8 +804,36 @@ task.explode: failed
 false</pre></div>
 </figure>
 <p>A handler's error reaches the middleware as a thrown error, so a middleware sees failures too. Re-throw it, so the result still reports the failure.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Messages or events?</h3><p>Which fits each case: (a) "user.registered", which starts a welcome email, an analytics entry and a Slack notice; (b) "tax.calculate", which needs the tax amount back for an invoice?</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) An event: something happened, several independent reactions, and nobody needs an answer. (b) A message: it asks for a result and needs exactly one handler, so use a bus with <code>allowMultipleHandlers: false</code>. The next lesson, CQRS, builds on this split between "do something" and "tell me something".</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="run" data-target="0" data-file="respect.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Respect the signal</h3><p>This handler ignores its signal: <code>async () =&gt; { await wait(300); return "done"; }</code>. Rewrite it so a dispatch with <code>timeout: 45</code> stops it soon after the timeout, by waiting in steps of 30 ms.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="11" data-file="respect.ts">
+<div class="lx-exercise" data-exercise="2" data-mode="think" data-title="Messages or events?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Messages or events?</h3><div class="lx-ex-task"><p>Which fits each case: (a) "user.registered", which starts a welcome email, an analytics entry and a Slack notice; (b) "tax.calculate", which needs the tax amount back for an invoice?</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Look at the table under <a href="#why">events tell, messages ask</a>: how many handlers does each case need, and does the caller need a value back?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(a) has three independent reactions and nobody waits for a result. (b) has exactly one answer that the caller cannot proceed without.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) An event: something happened, several independent reactions, and nobody needs an answer. (b) A message: it asks for a result and needs exactly one handler, so use a bus with <code>allowMultipleHandlers: false</code>. The next lesson, CQRS, builds on this split between "do something" and "tell me something".</p></div></div>
+<div class="lx-exercise" data-exercise="3" data-mode="run" data-target="0" data-file="respect.ts" data-title="Respect the signal"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Respect the signal</h3><div class="lx-ex-task"><p>This handler ignores its signal: <code>async () =&gt; { await wait(300); return "done"; }</code>. Rewrite it so a dispatch with <code>timeout: 45</code> stops it soon after the timeout, by waiting in steps of 30 ms.</p></div><script type="text/plain" class="lx-ex-starter" data-file="respect.ts">// Example to learn from: checking the signal between steps of different work.
+//
+//   bus.on("report.build", async (message, context) => {
+//     for (let page = 1; page <= 10; page++) {
+//       context.signal.throwIfAborted();
+//       await wait(20);
+//     }
+//     return "report ready";
+//   }, { id: "build-report" });
+//
+// Now write slow.job the same way: steps of 30 ms, checking the signal
+// before each one, counting how many ran in `steps`.
+
+import { createMessageBus } from "@zudojs/messaging";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const bus = createMessageBus();
+let steps = 0;
+
+bus.on("slow.job", async (message, context) => {
+  // Replace this with a loop of 10 steps: before each wait(30), check
+  // context.signal.throwIfAborted(), then increment steps.
+  await wait(300);
+  return "done";
+}, { id: "slow-job" });
+
+const result = await bus.send({ type: "slow.job", payload: null }, { timeout: 45 });
+await wait(100);
+console.log("success:", result.success, "steps done:", steps);</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Turn the single <code>wait(300)</code> into a loop: <code>for (let i = 0; i &lt; 10; i++) { ...; await wait(30); steps += 1; }</code>, and check the signal at the top of each iteration.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>for (let i = 0; i &lt; 10; i++) { context.signal.throwIfAborted(); await wait(30); steps += 1; } return "done";</code>. <code>throwIfAborted()</code> throws once the signal is aborted, which stops the loop from inside.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="11" data-file="respect.ts">
 <figcaption class="lx-bar"><span class="lx-file">respect.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createMessageBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/messaging"</span><span class="t-pn">;</span>
 

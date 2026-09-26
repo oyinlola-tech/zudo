@@ -848,9 +848,39 @@ try {
   console.log(String(error));
 }
 </example>
-<output>
-TypeError: limit.toUpperCase is not a function
-</output>
+<starter file="settings.ts">
+// Example to learn from: keyof ties the key you pass to the value's real type.
+//
+//   interface Theme { fontSizePx: number; darkMode: boolean }
+//   const theme: Theme = { fontSizePx: 16, darkMode: true };
+//   function getTheme<K extends keyof Theme>(key: K): Theme[K] {
+//     return theme[key];
+//   }
+//   console.log(getTheme("fontSizePx") + 2, getTheme("darkMode"));
+//
+// Now redesign getSetting the same way, with a Settings interface.
+
+// interface Settings {
+//   dailyLimitKobo: number;
+//   currency: "NGN" | "USD";
+//   smsAlerts: boolean;
+// }
+
+const store: Record<string, unknown> = { dailyLimitKobo: 50000000, currency: "NGN", smsAlerts: true };
+
+function getSetting<T>(key: string): T {
+  return store[key] as T;
+}
+
+const limit = getSetting<string>("dailyLimitKobo");
+try {
+  console.log(limit.toUpperCase());
+} catch (error) {
+  console.log(String(error));
+}
+</starter>
+<hint><p>Uncomment <code>Settings</code>, annotate <code>store: Settings</code> instead of <code>Record&lt;string, unknown&gt;</code>, and change <code>getSetting</code> to <code>&lt;K extends keyof Settings&gt;(key: K): Settings[K]</code>, returning <code>store[key]</code> with no <code>as</code>.</p></hint>
+<hint><p>Call it as <code>getSetting("dailyLimitKobo")</code> and <code>getSetting("currency")</code>, with no type argument. Print <code>limit / 100</code> and <code>currency.toLowerCase()</code>, plus <code>getSetting("smsAlerts")</code>.</p></hint>
 <solution>
 <example file="settings.ts" project="ex-settings">
 interface Settings {
@@ -877,6 +907,63 @@ console.log(limit / 100, currency.toLowerCase(), getSetting("smsAlerts"));
 </exercise>
 <exercise title="Add once() to the emitter">
 <p>Add a method <code>once&lt;K extends keyof Events&gt;(name: K, listener: (payload: Events[K]) =&gt; void): void</code> to <code>TypedEmitter</code> that runs the listener for the first event only. Build it on top of <code>on</code>.</p>
+<starter file="once.ts">
+// Example to learn from: a listener that unsubscribes itself before running,
+// built on top of an existing on().
+//
+//   class Ticker {
+//     private listeners: Array<(tick: number) => void> = [];
+//     on(listener: (tick: number) => void): () => void {
+//       this.listeners.push(listener);
+//       return () => {
+//         const i = this.listeners.indexOf(listener);
+//         if (i >= 0) this.listeners.splice(i, 1);
+//       };
+//     }
+//     onceOnly(listener: (tick: number) => void): void {
+//       const stop = this.on((tick) => {
+//         stop();
+//         listener(tick);
+//       });
+//     }
+//     tick(value: number): void {
+//       for (const listener of [...this.listeners]) listener(value);
+//     }
+//   }
+//
+// TypedEmitter's once is the same idea, generic over the event map.
+
+class TypedEmitter<Events extends object> {
+  private readonly listeners: { [K in keyof Events]?: Array<(payload: Events[K]) => void> } = {};
+
+  on<K extends keyof Events>(name: K, listener: (payload: Events[K]) => void): () => void {
+    const list = (this.listeners[name] ??= []);
+    list.push(listener);
+    return () => {
+      const index = list.indexOf(listener);
+      if (index >= 0) list.splice(index, 1);
+    };
+  }
+
+  once<K extends keyof Events>(name: K, listener: (payload: Events[K]) => void): void {
+    // call this.on(name, ...), and inside the wrapper listener, unsubscribe
+    // before calling the real listener
+  }
+
+  emit<K extends keyof Events>(name: K, payload: Events[K]): number {
+    const list = this.listeners[name] ?? [];
+    for (const listener of [...list]) listener(payload);
+    return list.length;
+  }
+}
+
+const events = new TypedEmitter<{ "account.opened": { owner: string } }>();
+events.once("account.opened", (e) => console.log(`welcome e-mail to ${e.owner}`));
+events.emit("account.opened", { owner: "Ada" });
+events.emit("account.opened", { owner: "Tunde" });
+</starter>
+<hint><p><code>const stop = this.on(name, (payload) =&gt; { ... });</code>, the same way <code>onceOnly</code> wraps <code>on</code> above.</p></hint>
+<hint><p>Inside the wrapper, call <code>stop()</code> first, then <code>listener(payload)</code>. Unsubscribing before calling means a listener that emits the same event again does not run itself twice.</p></hint>
 <solution>
 <example file="once.ts" project="ex-once">
 class TypedEmitter<Events extends object> {
@@ -918,6 +1005,37 @@ welcome e-mail to Ada
 </exercise>
 <exercise title="Combine a list of Results">
 <p>Write <code>all&lt;T, E&gt;(results: readonly Result&lt;T, E&gt;[]): Result&lt;T[], E&gt;</code> that returns every value when all succeeded, or the <em>first</em> error. Use it to validate a batch of transfer amounts.</p>
+<starter file="all.ts">
+// Example to learn from: collecting values while any result might fail,
+// stopping at the first failure.
+//
+//   type Result<T, E = string> = { ok: true; value: T } | { ok: false; error: E };
+//   function combine<T, E>(results: readonly Result<T, E>[]): Result<T[], E> {
+//     const values: T[] = [];
+//     for (const result of results) {
+//       if (!result.ok) return result;
+//       values.push(result.value);
+//     }
+//     return { ok: true, value: values };
+//   }
+//
+// all is the exact same function, just named for this exercise.
+
+type Result<T, E = string> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+
+function all<T, E>(results: readonly Result<T, E>[]): Result<T[], E> {
+  return { ok: true, value: [] };
+}
+
+function checkAmount(kobo: number): Result<number, "invalid-amount"> {
+  return Number.isInteger(kobo) && kobo > 0 ? { ok: true, value: kobo } : { ok: false, error: "invalid-amount" };
+}
+
+console.log(all([5000, 1200, 700].map(checkAmount)));
+console.log(all([5000, -1, 0].map(checkAmount)));
+</starter>
+<hint><p>Loop over <code>results</code>, collecting into <code>const values: T[] = [];</code>. As soon as one <code>!result.ok</code>, return that failed result unchanged: it fits <code>Result&lt;T[], E&gt;</code> because a failure carries no value.</p></hint>
+<hint><p>When the loop finishes without returning, every result succeeded: <code>return { ok: true, value: values };</code>.</p></hint>
 <solution>
 <example file="all.ts" project="ex-all">
 type Result<T, E = string> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };

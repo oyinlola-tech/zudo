@@ -644,6 +644,48 @@ phase: shutdown
 <h2 id="practice">Practice</h2>
 <exercise title="Attachments with safe keys">
 <p>Write <code>saveAttachment(taskId, fileName, bytes)</code> that stores the file under <code>tasks/&lt;taskId&gt;/&lt;random id&gt;</code>, keeps the original name in the metadata, and returns the key. <code>taskId</code> must be a positive whole number. Save <code>"../../secret.txt"</code> and show that its name is kept but its key is safe.</p>
+<starter file="save-attachment.ts">
+// Example to learn from: a safe key for a different kind of file.
+//
+//   async function saveAvatar(userId: number, bytes: Uint8Array): Promise<string> {
+//     if (!Number.isSafeInteger(userId) || userId < 1) {
+//       throw new RangeError("userId must be a positive whole number");
+//     }
+//     const key = `avatars/${userId}/${randomUUID()}`;
+//     await files.put(key, bytes, { contentType: "image/png" });
+//     return key;
+//   }
+//
+// Now write saveAttachment the same way, for tasks and file names.
+
+import { randomUUID } from "node:crypto";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { LocalObjectStorage } from "@zudojs/storage";
+
+const files = new LocalObjectStorage(await mkdtemp(join(tmpdir(), "task-files-")));
+
+async function saveAttachment(taskId: number, fileName: string, bytes: Uint8Array): Promise<string> {
+  // 1. If taskId is not a positive whole number, throw a RangeError.
+  // 2. Build the key `tasks/${taskId}/${randomUUID()}`.
+  // 3. files.put(key, bytes, { metadata: { fileName } }) (trim fileName to
+  //    200 characters first).
+  // 4. Return the key.
+  return "tasks/stub/not-implemented";
+}
+
+const key = await saveAttachment(1, "../../secret.txt", new TextEncoder().encode("hello"));
+console.log(/^tasks\/1\/[0-9a-f-]{36}$/.test(key));
+console.log((await files.metadata(key))?.metadata);
+try {
+  await saveAttachment(-1, "a.txt", new Uint8Array(1));
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<hint><p>Check <code>taskId</code> with <code>Number.isSafeInteger(taskId) &amp;&amp; taskId &gt;= 1</code>; when it fails, <code>throw new RangeError(...)</code>. Build the key as a template literal: <code>`tasks/${taskId}/${randomUUID()}`</code>.</p></hint>
+<hint><p><code>await files.put(key, bytes, { metadata: { fileName: fileName.slice(0, 200) } })</code>, then <code>return key</code>. The key never contains <code>fileName</code>, so a value like <code>"../../secret.txt"</code> cannot climb out of the folder; it only ever ends up in the metadata.</p></hint>
 <solution>
 <example file="save-attachment.ts" project="st" browser="no">
 import { randomUUID } from "node:crypto";
@@ -682,6 +724,39 @@ taskId must be a positive whole number
 
 <exercise title="A per-task lock helper">
 <p>Write <code>withTaskLock(taskId, work)</code> that acquires <code>task:&lt;id&gt;</code> with a 5 second TTL and a 1 second wait, runs <code>work(fence)</code>, and always releases the lock, even when <code>work</code> throws. Run two calls for the same task at the same time and print the order they run in.</p>
+<starter file="task-lock.ts">
+// Example to learn from: the same acquire/work/release shape for a printer queue.
+//
+//   async function withPrinterLock<T>(printerId: string, job: () => Promise<T>): Promise<T> {
+//     const lock = await locks.acquire(`printer:${printerId}`, { ttl: 10_000, timeout: 2_000 });
+//     try {
+//       return await job();
+//     } finally {
+//       await lock.release();
+//     }
+//   }
+//
+// Now write withTaskLock the same way, and pass the fence to `work`.
+
+import { InMemoryLockManager } from "@zudojs/storage";
+
+const locks = new InMemoryLockManager();
+
+async function withTaskLock<T>(taskId: number, work: (fence: number) => Promise<T>): Promise<T> {
+  // Acquire `task:${taskId}` with { ttl: 5_000, timeout: 1_000 }, run
+  // work(lock.fence) and return its result, and release the lock in a
+  // finally block so it is always freed, even when work throws.
+  return work(0);
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+await Promise.all([
+  withTaskLock(1, async (fence) => { console.log("A starts, fence", fence); await pause(30); console.log("A ends"); }),
+  withTaskLock(1, async (fence) => { console.log("B starts, fence", fence); console.log("B ends"); }),
+]);
+</starter>
+<hint><p><code>const lock = await locks.acquire(`task:${taskId}`, { ttl: 5_000, timeout: 1_000 });</code> gives you the lock and its <code>fence</code>. Wrap the call to <code>work</code> in <code>try</code>/<code>finally</code>.</p></hint>
+<hint><p><code>try { return await work(lock.fence); } finally { await lock.release(); }</code>. Because B's <code>acquire</code> waits for A's lock, B only starts after A calls <code>release()</code>, which happens right after A's <code>work</code> settles.</p></hint>
 <solution>
 <example file="task-lock.ts" project="st" browser="no">
 import { InMemoryLockManager } from "@zudojs/storage";

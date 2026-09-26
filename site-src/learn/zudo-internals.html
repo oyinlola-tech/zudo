@@ -194,19 +194,19 @@ for (const name of ["adapters", "plugins", "container", "events", "errors", "htt
 }
 </example>
 <output>
-adapters      20 names   index.js: 0 "export *", 4 "export { … }"
-plugins       36 names   index.js: 0 "export *", 12 "export { … }"
+adapters      25 names   index.js: 0 "export *", 4 "export { … }"
+plugins       37 names   index.js: 0 "export *", 12 "export { … }"
 container     84 names   index.js: 9 "export *", 1 "export { … }"
-events       142 names   index.js: 8 "export *", 0 "export { … }"
+events       143 names   index.js: 8 "export *", 0 "export { … }"
 errors       548 names   index.js: 5 "export *", 0 "export { … }"
-http        1379 names   index.js: 44 "export *", 20 "export { … }"
+http        1392 names   index.js: 44 "export *", 20 "export { … }"
 </output>
 <p><code>@zudojs/adapters</code> and <code>@zudojs/plugins</code> list their public names one by one: small, deliberate surfaces. <code>@zudojs/http</code> re-exports whole folders and ends up with well over a thousand names, including the internal machinery of its router. Those names are reachable, but nobody promised to keep them.</p>
 <h3>3. The signals that say "internal"</h3>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Signal</th><th>Example in the published packages</th><th>Treat it as</th></tr></thead>
 <tbody>
-<tr><td>Not in the <code>exports</code> map</td><td><code>withRetry</code> in <code>@zudojs/adapters</code></td><td>Private. You cannot import it anyway.</td></tr>
+<tr><td>Not in the <code>exports</code> map</td><td><code>retryAttempts</code> in <code>@zudojs/adapters</code></td><td>Private. You cannot import it anyway.</td></tr>
 <tr><td><code>@internal</code> in the JSDoc</td><td><code>resolveInScope</code> on the container</td><td>Private, even though TypeScript lets you call it.</td></tr>
 <tr><td>A folder or class named "internal", or a low-level engine class</td><td><code>lifecycleInternal/</code> (re-exported as <code>topologicalSort</code>, <code>withTimeout</code>), <code>ContainerResolver</code></td><td>Private unless the README documents it.</td></tr>
 <tr><td>Documented in the README and the site's package page</td><td><code>createRouter</code>, <code>createContainer</code>, <code>getOrSet</code></td><td>Public: covered by semantic versioning.</td></tr>
@@ -260,7 +260,7 @@ const questions: [string, string][] = [
   ["@zudojs/http", "matchCompiledRoute"],
   ["@zudojs/container", "CircularDependencyError"],
   ["@zudojs/container", "ScopedResolutionError"],
-  ["@zudojs/adapters", "withRetry"],
+  ["@zudojs/adapters", "retryAttempts"],
 ];
 for (const [pkg, name] of questions) {
   const chain = findExport(pkg, name);
@@ -284,7 +284,7 @@ for (const [pkg, name] of questions) {
   dist/index.js
   -> dist/containerResolution/index.js
   -> dist/containerResolution/containerResolution.error.js
-@zudojs/adapters withRetry
+@zudojs/adapters retryAttempts
   not exported
 </output>
 <p>Every answer is a place to start reading. The third says <code>@zudojs/container</code> does not define <code>CircularDependencyError</code> at all: it passes on the class from <code>@zudojs/errors</code>. The fourth says the container <em>does</em> define <code>ScopedResolutionError</code> itself. Both facts matter in the next section. The regular expressions only understand the shapes <code>tsc</code> emits, which is all you need for these packages; a general tool would parse the JavaScript properly.</p>
@@ -381,16 +381,17 @@ console.log("instanceof BaseError:", byInstanceof);
 console.log("isBaseError():", byBrand);
 </example>
 <output>
-instanceof BaseError: [
-  'cqrs/cqrsErrors/cqrsError.base.js',
-  'cqrs/cqrsMiddleware/cqrsMiddleware.core.js'
-]
+instanceof BaseError: []
 isBaseError(): [
+  'cqrs/cqrsErrors/cqrsError.base.js',
+  'cqrs/cqrsMiddleware/cqrsMiddleware.core.js',
   'database/databaseClient/databaseClient.errors.js',
-  'rpc/rpc/server/rpcBaseErrorMapping.helper.js'
+  'rpc/rpc/server/rpcBaseErrorMapping.helper.js',
+  'schema/schemaBase/schemaBase.result.js',
+  'storage/repository/baseRepository.errors.js'
 ]
 </output>
-<p><code>rpc</code> and <code>database</code> use the safe check; <code>cqrs</code> uses <code>instanceof</code>. With two copies of <code>@zudojs/errors</code> installed, the CQRS middleware would not recognise a <code>NotFoundError</code> from the other copy and would wrap it in a generic <code>CqrsError</code>, losing its code and status. It is a small bug with a clear reproduction: exactly the kind of finding you report upstream rather than work around.</p>
+<p>Every package that checks here now uses the safe brand check; the <code>instanceof BaseError</code> list is empty. That is a change worth noticing on its own: an earlier release had the CQRS middleware comparing with <code>instanceof</code>, so with two copies of <code>@zudojs/errors</code> installed it would not have recognised a <code>NotFoundError</code> from the other copy and would have wrapped it in a generic <code>CqrsError</code>, losing its code and status. Whoever filed that finding was right at the time, and the fix landed without anyone updating this lesson by hand, which is exactly why you re-run the scan after every upgrade instead of trusting a finding (yours or a blog post's) from a previous release.</p>
 </section>
 
 <section>
@@ -529,10 +530,10 @@ for (const path of ["/admin/a/b/c", "/acme/reports/2026/7", "/payments/42"]) {
 <output>
 /admin/a/b/c           -> /admin/*rest {"rest":"a/b/c"}
 /acme/reports/2026/7   -> /:org/:page/:section/:id {"org":"acme","page":"reports","section":"2026","id":"7"}
-/payments/42           -> /payments/:reference {"reference":"42"}
+/payments/42           -> /payments/:id(\d+) {"id":"42"}
 </output>
-<p>The admin route wins although it was registered second and has fewer segments, and registering it first would change nothing: order only breaks ties. <code>/payments/42</code> goes to <code>:reference</code>: the constrained <code>:id(\d+)</code> route tied, lost on registration order, and can never run. The <a href="/learn/zudo-routing#matching">routing lesson</a> shows how to catch such dead routes in a test.</p>
-<h3>An exported matcher that disagrees with the router</h3>
+<p>The admin route wins although it was registered second and has fewer segments, and registering it first would change nothing: order only breaks ties. <code>/payments/42</code> goes to <code>:id(\d+)</code>: a constrained parameter now outranks an unconstrained one at the same position, so the digits-only route is considered more specific than the catch-all reference. A non-digit reference such as <code>PSK-42</code> still falls through to <code>:reference</code> (the next trace shows exactly that path). Before this rule existed, the tie was broken by registration order, so a constrained route registered after its unconstrained sibling could quietly never run at all; that is why registering a route another route already shadows now throws <code>RouteConflictError</code> at startup instead of failing silently at request time (pass <code>createRouter({ shadowedRoutes: "ignore" })</code> to keep the old behaviour). No error fires here, because both routes still get real traffic: one for digits, one for everything else. The <a href="/learn/zudo-routing#matching">routing lesson</a> shows how to catch a route that really is unreachable.</p>
+<h3>An exported matcher, still unused by the router</h3>
 <p><a href="/learn/framework-read-source">Reading framework source</a>'s search found that <code>RouteTree</code>, exported from the barrel as <code>createRouteTree</code>, is mentioned only inside its own folder: the router never uses it. Unused is one thing. Is it at least correct? Someone who finds it in the export list will assume it matches like the router:</p>
 <example file="route-tree.ts" project="inside" browser="no">
 import { createRouteTree } from "@zudojs/http";
@@ -548,11 +549,12 @@ for (const path of ["/admin/a/b/c", "/payments/PSK-42", "/PAYMENTS/PSK-42"]) {
 }
 </example>
 <output>
-/admin/a/b/c -> tenant page {"id":"c"}
+/admin/a/b/c -> admin {"rest":"a/b/c"}
 /payments/PSK-42 -> payment {"reference":"PSK-42"}
-/PAYMENTS/PSK-42 -> no match
+/PAYMENTS/PSK-42 -> payment {"reference":"PSK-42"}
 </output>
-<p>It does not. The tree sends <code>/admin/a/b/c</code> to the tenant page, reports only one of its four parameters, and treats paths as case-sensitive, while the router matches <code>/PAYMENTS/PSK-42</code> by default. Nothing breaks in your app, because the router does not call it, but anyone who finds <code>createRouteTree</code> in the export list and builds on it gets the old admin bypass back. This is why you trace from the entry point you actually use: a promising exported name proves nothing.</p>
+<p>It agrees, in the version this lesson installed. That is new: an earlier <code>@zudojs/http</code> sent <code>/admin/a/b/c</code> to the tenant page, reported only one of its four parameters, and matched paths case-sensitively while the router does not, which brought the old admin-bypass ordering back for anyone who built on <code>createRouteTree</code> instead of the router. The current release brought the tree's matching in line with the router's on every case above: named wildcards, every parameter reported, and case-insensitive literals by default.</p>
+<p>That agreement is still worth distrusting a little. The router still never calls <code>createRouteTree</code>, so nothing forces the two to stay in step on the <em>next</em> release; the only reason you can say they agree today is that you ran both and compared. A promising exported name proves nothing by itself, correct or not, until you trace from the entry point you actually use and check. The exercises turn today's agreement into a test that will complain the day it stops being true.</p>
 </section>
 
 <section>
@@ -730,14 +732,17 @@ try {
 } catch (error) {
   const all = error as AggregateError;
   console.log(all.message, all.errors.map((e: Error) => e.message));
+  console.log("original message:", (all.errors[0] as Error & { cause?: Error }).cause?.message);
 }
 </example>
 <output>
 started paystack-webhooks
 started metrics
-One or more adapters failed to start. [ 'http-server: port 8080 is in use' ]
+One or more adapters failed to start. [ 'Adapter "http-server" operation "start" failed.' ]
+original message: http-server: port 8080 is in use
 </output>
 <p>Two adapters are running and nobody will stop them unless you call <code>registry.stopAll()</code> in that <code>catch</code>. Compare this with <code>PluginManager</code> in <a href="/learn/zudo-plugins#rollback">the plugins lesson</a> and <code>createLifecycleManager</code> in <a href="/learn/zudo-lifecycle#rollback">the lifecycle lesson</a>: both roll back what they started. Neither choice is wrong, but you must know which one you are calling, and only the code tells you.</p>
+<p>Notice, too, that the failure inside <code>all.errors</code> is no longer the bare <code>Error</code> the adapter threw: it is a structured <code>AdapterOperationError</code> with its own <code>code</code> (<code>ERR_ADAPTER_OPERATION_FAILED</code>) and a generic message that names the adapter and the operation, not the reason. The original error survives as <code>.cause</code>. If your code logs <code>all.errors[i].message</code> expecting the adapter's own text, log <code>.cause</code> instead.</p>
 <p>The lifecycle package has one more lesson in package boundaries. Its state machine class holds the <em>behaviour</em>, but the table of allowed transitions is <em>data</em> in <code>@zudojs/constants</code>, so any package can check a state change without depending on the lifecycle engine:</p>
 <example file="transitions.ts" project="inside" browser="no">
 import { LIFECYCLE_VALID_TRANSITIONS } from "@zudojs/constants";
@@ -819,6 +824,39 @@ PASS concurrent getOrSet misses share one load
 <h2 id="practice">Practice</h2>
 <exercise title="Who is affected by a change to middleware?">
 <p>A security fix lands in <code>@zudojs/middleware</code>. Use the graph tools to list every package that depends on it directly or through other packages, so you know which ones need a new release.</p>
+<starter file="affected.ts">
+// Example to learn from: the same "repeat until nothing new is found"
+// transitive-closure shape, applied to spreadsheet formulas instead of
+// package manifests.
+//
+//   function cellDependents(formulas, target) {
+//     const found = new Set();
+//     let changed = true;
+//     while (changed) {
+//       changed = false;
+//       for (const [cell, refs] of Object.entries(formulas)) {
+//         if (found.has(cell)) continue;
+//         if (refs.some((r) => r === target || found.has(r))) { found.add(cell); changed = true; }
+//       }
+//     }
+//     return [...found].sort();
+//   }
+//   console.log(cellDependents({ B1: ["A1"], C1: ["B1"], D1: ["Z1"] }, "A1")); // [ 'B1', 'C1' ]
+//
+// Now use graph and dependents (already written above in this project) to
+// answer the same kind of question for @zudojs/middleware.
+
+import { dependents, readGraph } from "./tools/graph.js";
+
+const graph = readGraph();
+// direct: every package name whose dependency record has a "middleware" key
+const direct: string[] = [];
+console.log("direct:", direct.join(", "));
+// all affected: everything dependents() finds for "middleware"
+console.log("all affected:", "");
+</starter>
+<hint><p><code>direct</code> is every entry of <code>[...graph]</code> whose dependency record has a <code>"middleware"</code> key, mapped down to just the name. "All affected" is one call: <code>dependents(graph, "middleware")</code>.</p></hint>
+<hint><p><code>const direct = [...graph].filter(([, deps]) =&gt; "middleware" in deps).map(([name]) =&gt; name); console.log("all affected:", dependents(graph, "middleware").join(", "));</code></p></hint>
 <solution>
 <example file="affected.ts" project="inside" browser="no">
 import { dependents, readGraph } from "./tools/graph.js";
@@ -837,6 +875,41 @@ all affected: auth, cqrs, events, http, messaging, permissions, runtime, tenancy
 </exercise>
 <exercise title="Do two namespaces share one load?">
 <p>Using the <code>getOrSet</code> code above, predict: two concurrent calls with the same key but namespaces <code>"ngn"</code> and <code>"ghs"</code>. How many loads? Then check with <code>findExport</code> where <code>CacheService</code> lives, and prove your prediction.</p>
+<starter file="namespaces.ts">
+// Example to learn from: the same "run two concurrent operations, count how
+// many times the underlying work actually happened" shape, checking whether
+// two memoized fetches under different namespaces share one call.
+//
+//   const inFlight = new Map();
+//   let calls = 0;
+//   async function memoFetch(ns, key) {
+//     const full = `${ns}:${key}`;
+//     if (inFlight.has(full)) return inFlight.get(full);
+//     const p = (async () => { calls++; return "value"; })();
+//     inFlight.set(full, p);
+//     return p;
+//   }
+//   await Promise.all([memoFetch("a", "x"), memoFetch("b", "x")]);
+//   console.log(calls);                                          // 2
+//
+// Now do the same shape with cache.getOrSet below, using namespace options
+// instead of a hand-written key prefix.
+
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+import { findExport } from "./tools/find-export.js";
+
+console.log(findExport("@zudojs/cache", "CacheService")?.join(" -> "));
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+let loads = 0;
+const load = async () => { loads++; return "rate"; };
+// two concurrent cache.getOrSet("usd", load, ...) calls, one with
+// { namespace: "ngn" } and one with { namespace: "ghs" }, both awaited
+// together with Promise.all
+console.log("loads:", loads);
+</starter>
+<hint><p>Call <code>cache.getOrSet("usd", load, { namespace: "ngn" })</code> and <code>cache.getOrSet("usd", load, { namespace: "ghs" })</code> at the same time, and <code>await</code> both with <code>Promise.all</code>.</p></hint>
+<hint><p><code>await Promise.all([cache.getOrSet("usd", load, { namespace: "ngn" }), cache.getOrSet("usd", load, { namespace: "ghs" })]);</code></p></hint>
 <solution>
 <example file="namespaces.ts" project="inside" browser="no">
 import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
@@ -860,19 +933,34 @@ loads: 2
 <p>Two loads. The in-flight map is keyed by <code>fullKey</code>, which <code>buildKey</code> makes from the namespace and the key, so the two calls never see each other's promise. That is what you want: they are different values.</p>
 </solution>
 </exercise>
-<exercise title="Write the bug report for the route tree">
-<p>Write the issue you would open for <code>createRouteTree</code>: a title, the versions, a reproduction of at most fifteen lines, the actual and expected output, and why it matters.</p>
+<exercise title="Pin today's agreement with a characterization test">
+<p><code>createRouteTree</code> now agrees with <code>createRouter</code> on every case this lesson tried, but the router still never calls it, and an earlier release disagreed in exactly the ways you'd fear (wildcard route losing, params missing, case-sensitive matching). Write the assertions you would add to <code>zudojs-behaviour.test.ts</code> so that a future release which reintroduces a mismatch fails the suite instead of surprising whoever built on <code>createRouteTree</code>.</p>
+<hint><p>Reuse the exact inputs already run in this lesson: the <code>route-tree.ts</code> and <code>trace-routing.ts</code> examples between them cover the admin wildcard, the case difference, and the four-parameter tenant page. Each is already a case worth asserting on.</p></hint>
+<hint><p>Assert each tree lookup against <code>router.match(...)</code> called with the same path, not against a hand-copied expected value, so the test still catches a regression even if the router's own behaviour changes on the next release too.</p></hint>
 <solution>
-<p>A good report is short and runnable:</p>
-<blockquote>
-<p><strong>createRouteTree disagrees with createRouter: wildcard route loses, params missing, case-sensitive</strong></p>
-<p>Versions: <code>@zudojs/http</code> as shown by <code>npm ls @zudojs/http</code>, Node 24.</p>
-<p>Reproduction: the <code>route-tree.ts</code> script from this lesson.</p>
-<p>Actual: <code>/admin/a/b/c</code> matches <code>/:org/:page/:section/:id</code> with only <code>{"id":"c"}</code>; <code>/ADMIN/a/b/c</code> matches nothing.</p>
-<p>Expected: the same result as <code>createRouter().match</code>: <code>/admin/*rest</code> with <code>{"rest":"a/b/c"}</code>, case-insensitive by default.</p>
-<p>Why it matters: <code>createRouteTree</code> is exported and typed as a public API, and anyone who uses it gets the admin-bypass ordering that <code>compareSegmentSpecificity</code> fixed. Either make it match the router, or stop exporting it.</p>
-</blockquote>
-<p>Notice what the report does not contain: a guess at the fix inside the tree's code. The maintainers know their code; your job is to make the problem impossible to misunderstand.</p>
+<p>Three assertions, built the same way as the <code>characterization.ts</code> checks earlier in this lesson: build one router and one route tree from the same patterns, then compare their answers to the same paths directly, so the test never has to trust a value written by hand.</p>
+<pre>
+["admin wildcard: tree agrees with router", () => {
+  const router = createRouter();
+  router.get("/admin/*rest", () => "admin");
+  const tree = createRouteTree();
+  tree.insert("/admin/*rest", "admin", ["GET"]);
+  const path = "/admin/a/b/c";
+  assert.equal(tree.lookup(path, "GET")?.handler, router.match("GET", path).route?.handler);
+}],
+["tree reports every parameter, not just the last one", () => {
+  const tree = createRouteTree();
+  tree.insert("/:org/:page/:section/:id", "tenant", ["GET"]);
+  assert.deepEqual(tree.lookup("/acme/reports/2026/7", "GET")?.params,
+    { org: "acme", page: "reports", section: "2026", id: "7" });
+}],
+["tree matches literals case-insensitively, like the router", () => {
+  const tree = createRouteTree();
+  tree.insert("/payments/:reference", "payment", ["GET"]);
+  assert.ok(tree.lookup("/PAYMENTS/PSK-42", "GET"));
+}],
+</pre>
+<p>None of these prove <code>createRouteTree</code> is correct in general, only that it still agrees with the router on the three cases this lesson found interesting. That is the point of a characterization test: it does not certify the code, it freezes today's observed behaviour so the next dependency upgrade has to explain itself.</p>
 </solution>
 </exercise>
 </section>
@@ -883,7 +971,7 @@ loads: 2
 <li>The code that runs is in <code>node_modules/@zudojs/*/dist</code>: readable <code>tsc</code> output plus <code>.d.ts</code> declarations, with no <code>src</code> and no source maps. Read that, not the repository's main branch.</li>
 <li>Compute the dependency graph from the manifests. <code>errors</code> and <code>types</code> are at the bottom; every internal dependency is an exact pin, so keep all packages from one release and check for duplicates.</li>
 <li>Public means exported <em>and</em> documented. The <code>exports</code> map is enforced by Node; barrels with <code>export *</code> make internals reachable without making them public.</li>
-<li>Trace from the entry point you use, not from a promising name. <code>createRouteTree</code> is exported, unused by the router and wrong.</li>
+<li>Trace from the entry point you use, not from a promising name. <code>createRouteTree</code> is exported, unused by the router, and happens to agree with it today — a fact worth pinning with a test, not trusting because the export list looks official.</li>
 <li>All errors are <code>BaseError</code>s from <code>@zudojs/errors</code>; use <code>isBaseError</code> and <code>code</code> across package boundaries. Each context package owns its own <code>AsyncLocalStorage</code>.</li>
 <li>Reading gives a hypothesis, a script proves it, a characterization test keeps it proven.</li>
 </ul>

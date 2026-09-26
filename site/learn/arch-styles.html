@@ -1472,7 +1472,65 @@ trace-3
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="saga.ts" data-project="styles"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A saga with compensation</h3><p>Placing an order across two services: inventory reserves copies, then payments charges. If the charge fails or times out, release the copies. Simulate 8 orders (every 4th one over the card limit, payments losing 20% of requests) and check at the end that stock left plus copies held by confirmed orders still equals the starting stock.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="16" data-file="saga.ts" data-project="styles">
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="saga.ts" data-project="styles" data-title="A saga with compensation"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A saga with compensation</h3><div class="lx-ex-task"><p>Placing an order across two services: inventory reserves copies, then payments charges. If the charge fails or times out, release the copies. Simulate 8 orders (every 4th one over the card limit, payments losing 20% of requests) and check at the end that stock left plus copies held by confirmed orders still equals the starting stock.</p></div><script type="text/plain" class="lx-ex-starter" data-file="saga.ts">// Example to learn from: try a step, then undo the previous one if it
+// fails, the same shape as a saga's compensation.
+//
+//   async function bookVenueThenCaterer(network: Network): Promise<string> {
+//     const venue = await network.call<string>("venue", {}, 100);
+//     if (!venue.ok || venue.value !== "booked") return "rejected";
+//     const caterer = await network.call<string>("caterer", {}, 100);
+//     if (caterer.ok && caterer.value === "booked") return "confirmed";
+//     await network.call("venue", { op: "cancel" }, 100);
+//     return "compensated";
+//   }
+//
+// Now write placeOrder below: reserve, then charge, and release on failure.
+
+import { Network } from "./sim.js";
+
+const network = new Network(21);
+let stock = 20;
+const held = new Map<string, number>();
+
+network.register("inventory", (m: { op: "reserve" | "release"; orderId: string; quantity: number }) => {
+  if (m.op === "release") {
+    stock += held.get(m.orderId) ?? 0;
+    held.delete(m.orderId);
+    return "released";
+  }
+  if (held.has(m.orderId)) return "reserved";
+  if (stock < m.quantity) return "out_of_stock";
+  stock -= m.quantity;
+  held.set(m.orderId, m.quantity);
+  return "reserved";
+}, { latencyMs: [10, 40] });
+
+network.register("payments", (m: { orderId: string; amountKobo: number }) => (m.amountKobo > 2_000_000 ? "declined" : "charged"), {
+  latencyMs: [20, 90],
+  loseRequest: 0.2,
+});
+
+async function placeOrder(orderId: string, quantity: number, amountKobo: number): Promise<string> {
+  // 1. reserve: await network.call<string>("inventory", { op: "reserve", orderId, quantity }, 100).
+  //    If it failed, or its value isn't "reserved", return "rejected".
+  // 2. charge: await network.call<string>("payments", { orderId, amountKobo }, 100).
+  //    If it succeeded with value "charged", return "confirmed".
+  // 3. Otherwise release: await network.call("inventory", { op: "release", orderId, quantity }, 100).
+  //    Return "compensated (declined)" when the charge call succeeded (but
+  //    was declined), or "compensated (payments timed out)" when the charge
+  //    call itself failed.
+  // your code here
+  return "rejected";
+}
+
+const outcomes = new Map<string, number>();
+for (let i = 1; i <= 8; i++) {
+  const outcome = await placeOrder(`ord-${i}`, 2, i % 4 === 0 ? 3_000_000 : 900_000);
+  outcomes.set(outcome, (outcomes.get(outcome) ?? 0) + 1);
+}
+const confirmedCopies = [...held.values()].reduce((a, b) => a + b, 0);
+console.log(Object.fromEntries(outcomes));
+console.log("stock left:", stock, "| held by confirmed orders:", confirmedCopies, "| adds up:", stock + confirmedCopies === 20);</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Reserve first: <code>const reserved = await network.call&lt;string&gt;("inventory", { op: "reserve", orderId, quantity }, 100); if (!reserved.ok || reserved.value !== "reserved") return "rejected";</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Then charge, and branch on both the call's own success and its value: <code>const charged = await network.call&lt;string&gt;("payments", { orderId, amountKobo }, 100); if (charged.ok &amp;&amp; charged.value === "charged") return "confirmed";</code>, otherwise release and return <code>charged.ok ? "compensated (declined)" : "compensated (payments timed out)"</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="16" data-file="saga.ts" data-project="styles">
 <figcaption class="lx-bar"><span class="lx-file">saga.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="16"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">Network</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./sim.js"</span><span class="t-pn">;</span>
 
@@ -1569,7 +1627,44 @@ console.log("stock left:", stock, "| held by confirmed orders:", confirmedCopies
 stock left: 10 | held by confirmed orders: 10 | adds up: true</pre></div>
 </figure>
 <p>This is an <strong>orchestrated saga</strong>: one place runs the steps and their compensations. The stock adds up, but look at "payments timed out". This fake only loses requests, so releasing was right. If a <em>response</em> had been lost, the customer would have been charged and their copies released. A real saga therefore does not compensate on a timeout directly: it retries the charge with the same idempotency key, or asks payments for the charge's status, and compensates only when it knows the charge did not happen.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="projector-fix.ts" data-project="styles"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>An idempotent projection</h3><p>Run the best-sellers projection on a broker that duplicates 30% of deliveries. Show that the counts are wrong, then fix the projector so each event counts once.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="17" data-file="projector-fix.ts" data-project="styles">
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="projector-fix.ts" data-project="styles" data-title="An idempotent projection"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>An idempotent projection</h3><div class="lx-ex-task"><p>Run the best-sellers projection on a broker that duplicates 30% of deliveries. Show that the counts are wrong, then fix the projector so each event counts once.</p></div><script type="text/plain" class="lx-ex-starter" data-file="projector-fix.ts">// Example to learn from: skipping a message already handled, using a Set of
+// seen ids, the same technique a real broker consumer needs.
+//
+//   function countUniqueVisits(events: { id: string; page: string }[]): Map<string, number> {
+//     const seen = new Set<string>();
+//     const counts = new Map<string, number>();
+//     for (const event of events) {
+//       if (seen.has(event.id)) continue;
+//       seen.add(event.id);
+//       counts.set(event.page, (counts.get(event.page) ?? 0) + 1);
+//     }
+//     return counts;
+//   }
+//   console.log(countUniqueVisits([{ id: "e1", page: "/" }, { id: "e1", page: "/" }]));
+//
+// Now make the best-sellers projector idempotent below.
+
+import { Broker } from "./broker.js";
+import type { Message } from "./broker.js";
+
+async function project(idempotent: boolean): Promise<Map<string, number>> {
+  const broker = new Broker(8, 0.3);
+  const soldCopies = new Map<string, number>();
+  const seen = new Set<string>();
+  broker.subscribe("order.placed", (message: Message<{ title: string; quantity: number }>) => {
+    // When idempotent is true, skip a message.id already in `seen`, and
+    // record new ids in it, the same way countUniqueVisits does above.
+    // your code here
+    soldCopies.set(message.payload.title, (soldCopies.get(message.payload.title) ?? 0) + message.payload.quantity);
+  });
+  const orders = [["Things Fall Apart", 2], ["Purple Hibiscus", 1], ["Things Fall Apart", 1], ["Purple Hibiscus", 3], ["Things Fall Apart", 2]] as const;
+  orders.forEach(([title, quantity], i) => broker.publish({ id: `evt-${i + 1}`, topic: "order.placed", payload: { title, quantity } }));
+  await broker.drain();
+  return soldCopies;
+}
+
+console.log("counts every delivery:", Object.fromEntries(await project(false)));
+console.log("counts every event once:", Object.fromEntries(await project(true)));</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>The guard goes first, and only when <code>idempotent</code> is true: <code>if (idempotent) { if (seen.has(message.id)) return; seen.add(message.id); }</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Returning early skips the <code>soldCopies.set(...)</code> line below for a message whose id was already seen, so a redelivered duplicate changes nothing.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="17" data-file="projector-fix.ts" data-project="styles">
 <figcaption class="lx-bar"><span class="lx-file">projector-fix.ts</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="17"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">Broker</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./broker.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Message</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./broker.js"</span><span class="t-pn">;</span>
@@ -1620,7 +1715,7 @@ console.log("counts every event once:", Object.fromEntries(await project(true)))
 counts every event once: { 'Things Fall Apart': 5, 'Purple Hibiscus': 4 }</pre></div>
 </figure>
 <p><em>Things Fall Apart</em> sold 5 copies, not 7. Projections are consumers like any other, so they must be idempotent too. Some projections are idempotent by nature ("set the order's status to paid"); counters and sums never are.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Draw the BookStore's boundaries</h3><p>The BookStore has these features: book pages and search, prices and discounts, carts, orders, payments, stock, delivery, receipts by e-mail, reviews, and a sales dashboard. Group them into modules, say which could become separate services first and why, and name the events that cross the boundaries.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>One reasonable answer (there are others):</p>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Draw the BookStore's boundaries"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Draw the BookStore's boundaries</h3><div class="lx-ex-task"><p>The BookStore has these features: book pages and search, prices and discounts, carts, orders, payments, stock, delivery, receipts by e-mail, reviews, and a sales dashboard. Group them into modules, say which could become separate services first and why, and name the events that cross the boundaries.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Group by what changes together and who owns the rule, the same test <a href="/learn/design-principles#cohesion">Design principles</a> used for cohesion. Stock and orders both need strong consistency ("an order reserves stock"): should they live in the same module?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>A good early service candidate is owned by a different team, has different security or scaling needs, or can fail without breaking checkout. Which of payments, notifications and reviews fit that description? Name each cross-boundary fact in the past tense, like <code>order.placed</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>One reasonable answer (there are others):</p>
 <ul>
 <li><strong>Catalog</strong>: book pages, search, prices, discounts. Read-heavy; the first candidate for caching, maybe later a service. Publishes <code>price.changed</code>.</li>
 <li><strong>Ordering</strong>: carts, orders, and stock reservation. Stock stays here because "an order reserves stock" must be strongly consistent. Publishes <code>order.placed</code>, <code>order.cancelled</code>.</li>

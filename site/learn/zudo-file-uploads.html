@@ -784,7 +784,8 @@ refused  413 The file is larger than 2 MB</pre></div>
       <span class="t-kw">return</span> <span class="t-fn">toAttachmentResponse</span><span class="t-pn">(</span>row<span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
       <span class="t-kw">await</span> <span class="t-kw">this</span><span class="t-pn">.</span><span class="t-prop">files</span><span class="t-pn">.</span><span class="t-kw">delete</span><span class="t-pn">(</span>key<span class="t-pn">)</span><span class="t-pn">;</span>
-      <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-pn">(</span>error <span class="t-kw">as</span> <span class="t-pn">{</span> code<span class="t-op">?:</span> <span class="t-ty">string</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">code</span> <span class="t-op">===</span> <span class="t-str">"23503"</span><span class="t-pn">)</span> <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">NotFoundError</span><span class="t-pn">(</span><span class="t-tpl">`Task <span class="t-op">${</span><span class="t-prop">taskId</span><span class="t-op">}</span> not found`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+      <span class="t-kw">const</span> metadata <span class="t-op">=</span> <span class="t-pn">(</span>error <span class="t-kw">as</span> <span class="t-pn">{</span> metadata<span class="t-op">?:</span> <span class="t-pn">{</span> databaseCode<span class="t-op">?:</span> <span class="t-ty">string</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">metadata</span><span class="t-pn">;</span>
+      <span class="t-kw">if</span> <span class="t-pn">(</span>metadata<span class="t-op">?</span><span class="t-pn">.</span><span class="t-prop">databaseCode</span> <span class="t-op">===</span> <span class="t-str">"23503"</span><span class="t-pn">)</span> <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">NotFoundError</span><span class="t-pn">(</span><span class="t-tpl">`Task <span class="t-op">${</span><span class="t-prop">taskId</span><span class="t-op">}</span> not found`</span><span class="t-pn">)</span><span class="t-pn">;</span>
       <span class="t-kw">throw</span> error<span class="t-pn">;</span>
     <span class="t-pn">}</span>
   <span class="t-pn">}</span>
@@ -869,7 +870,8 @@ export class AttachmentService {
       return toAttachmentResponse(row);
     } catch (error) {
       await this.files.delete(key);
-      if ((error as { code?: string }).code === "23503") throw new NotFoundError(`Task ${taskId} not found`);
+      const metadata = (error as { metadata?: { databaseCode?: string } }).metadata;
+      if (metadata?.databaseCode === "23503") throw new NotFoundError(`Task ${taskId} not found`);
       throw error;
     }
   }
@@ -1174,7 +1176,7 @@ await send("JSON body:", '{"file":"aGVsbG8="}', { "content-type": "application/j
 console.log("objects stored:", (await files.list("tasks/")).objects.length);
 await server.stop();
 await db.disconnect();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx try-limits.ts</code></div><pre class="lx-no-copy">8 MB body:           413 {"error":"Payload Too Large"}
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx try-limits.ts</code></div><pre class="lx-no-copy">8 MB body:           413 {"error":"Payload Too Large","code":"PAYLOAD_TOO_LARGE"}
 3 MB file:           413 {"error":"Uploaded file exceeds the configured file size limit.","code":"ERR_HTTP_MULTIPART_LIMIT"}
 4 files:             413 {"error":"Maximum number of uploaded files exceeded.","code":"ERR_HTTP_MULTIPART_LIMIT"}
 wrong field:         400 {"error":"Send at least one file in the field \"file\"","code":"BAD_REQUEST"}
@@ -1681,7 +1683,36 @@ PASS stored bytes match their recorded hash</pre></div>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="gif.ts" data-command="npx tsx gif.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Accept GIF images</h3><p>Add GIF to the allow-list. A GIF starts with the text <code>GIF87a</code> or <code>GIF89a</code>, so it needs two signatures. Write the new <code>SIGNATURES</code> entries and show that <code>sniff</code> recognises both versions and still refuses <code>GIF90a</code>.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="16" data-file="gif.ts">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="gif.ts" data-command="npx tsx gif.ts" data-title="Accept GIF images"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Accept GIF images</h3><div class="lx-ex-task"><p>Add GIF to the allow-list. A GIF starts with the text <code>GIF87a</code> or <code>GIF89a</code>, so it needs two signatures. Write the new <code>SIGNATURES</code> entries and show that <code>sniff</code> recognises both versions and still refuses <code>GIF90a</code>.</p></div><script type="text/plain" class="lx-ex-starter" data-file="gif.ts">// Example to learn from: a signature list for a different format.
+//
+//   const AUDIO: Signature[] = [
+//     { type: "audio/mpeg", ext: "mp3", magic: [0x49, 0x44, 0x33] },  // "ID3"
+//     { type: "audio/wav", ext: "wav", magic: ascii("RIFF") },
+//   ];
+//
+// Now add two GIF signatures to SIGNATURES below.
+
+interface Signature {
+  readonly type: string;
+  readonly ext: string;
+  readonly magic: readonly number[];
+}
+
+const ascii = (text: string) => [...text].map((c) => c.charCodeAt(0));
+const SIGNATURES: readonly Signature[] = [
+  { type: "image/png", ext: "png", magic: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
+  // add an image/gif entry for "GIF87a"
+  // add an image/gif entry for "GIF89a"
+];
+
+function sniff(data: Uint8Array): Signature | undefined {
+  return SIGNATURES.find((s) => s.magic.every((byte, i) => data[i] === byte));
+}
+
+for (const start of ["GIF87a", "GIF89a", "GIF90a"]) {
+  const bytes = new TextEncoder().encode(start + "\x01\x00\x01\x00");
+  console.log(start, "->", sniff(bytes)?.type ?? "refused");
+}</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>A signature is <code>{ type, ext, magic }</code>, where <code>magic</code> is an array of byte values. <code>ascii("GIF87a")</code> turns that text into the array of character codes <code>sniff</code> compares byte by byte.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Add two entries: <code>{ type: "image/gif", ext: "gif", magic: ascii("GIF87a") }</code> and the same with <code>"GIF89a"</code>. <code>GIF90a</code> matches neither, so it still falls through to <code>refused</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="16" data-file="gif.ts">
 <figcaption class="lx-bar"><span class="lx-file">gif.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">interface</span> <span class="t-ty">Signature</span> <span class="t-pn">{</span>
   <span class="t-kw">readonly</span> <span class="t-kw">type</span><span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span>
@@ -1732,7 +1763,55 @@ GIF90a -&gt; refused</pre></div>
 </figure>
 <p>Writing the magic number as text with <code>ascii()</code> keeps it readable. Animated GIFs can be large and slow to decode; if you accept them, keep the size limit strict.</p></div></div>
 
-<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="quota.ts" data-project="up" data-command="npx tsx quota.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A per-task quota</h3><p>Limit each task to 5 attachments. Add a check to <code>AttachmentService.uploadAll</code> that counts the task's existing attachments and answers <strong>409</strong> with a clear message when the new files would go over. Which race does a count-then-insert check still have, and how would you close it?</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="17" data-file="quota.ts" data-project="up">
+<div class="lx-exercise" data-exercise="2" data-mode="paste" data-target="0" data-file="quota.ts" data-project="up" data-command="npx tsx quota.ts" data-title="A per-task quota"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A per-task quota</h3><div class="lx-ex-task"><p>Limit each task to 5 attachments. Add a check to <code>AttachmentService.uploadAll</code> that counts the task's existing attachments and answers <strong>409</strong> with a clear message when the new files would go over. Which race does a count-then-insert check still have, and how would you close it?</p></div><script type="text/plain" class="lx-ex-starter" data-file="quota.ts">// Example to learn from: the same "check, then delegate" shape for a
+// different limit.
+//
+//   class LimitedCartService extends CartService {
+//     override async addItem(cartId: number, item: Item): Promise<Cart> {
+//       const items = await this.count(cartId);
+//       if (items >= 20) throw new ConflictError(`Cart ${cartId} is full`);
+//       return super.addItem(cartId, item);
+//     }
+//   }
+//
+// Now do the same for attachments below.
+
+import { ConflictError } from "@zudojs/errors";
+import { AttachmentService } from "./attachment.service.js";
+import type { AttachmentResponse } from "./attachment.service.js";
+import type { AttachmentRepository } from "./attachments.js";
+import { setup } from "./setup.js";
+import type { IncomingFile } from "./upload-policy.js";
+
+const MAX_PER_TASK = 5;
+
+class QuotaAttachmentService extends AttachmentService {
+  constructor(files: ConstructorParameters<typeof AttachmentService>[0], private readonly repo: AttachmentRepository) {
+    super(files, repo);
+  }
+
+  override async uploadAll(taskId: number, incoming: readonly IncomingFile[]): Promise<AttachmentResponse[]> {
+    // Count this task's existing attachments with
+    // this.repo.count({ task_id: taskId }). If existing + incoming.length
+    // is over MAX_PER_TASK, throw a ConflictError naming both numbers.
+    // Otherwise delegate to super.uploadAll(taskId, incoming).
+    return super.uploadAll(taskId, incoming);
+  }
+}
+
+const { db, files, attachments } = await setup();
+const service = new QuotaAttachmentService(files, attachments);
+const pdf = new TextEncoder().encode("%PDF-1.7\n");
+const many = (n: number) => Array.from({ length: n }, (_, i) => ({ filename: `page-${i}.pdf`, contentType: "application/pdf", data: pdf }));
+
+console.log((await service.uploadAll(1, many(3))).length, "saved");
+try {
+  await service.uploadAll(1, many(3));
+} catch (error) {
+  if (error instanceof ConflictError) console.log(error.statusCode, error.message);
+}
+console.log((await service.uploadAll(1, many(2))).length, "saved, total", await attachments.count({ task_id: 1 }));
+await db.disconnect();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Count first: <code>const existing = await this.repo.count({ task_id: taskId });</code>. Compare <code>existing + incoming.length</code> with <code>MAX_PER_TASK</code> before calling <code>super.uploadAll(...)</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>if (existing + incoming.length &gt; MAX_PER_TASK) throw new ConflictError(`Task ${taskId} already has ${existing} of ${MAX_PER_TASK} attachments`);</code>, then <code>return super.uploadAll(taskId, incoming);</code> when the check passes.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="17" data-file="quota.ts" data-project="up">
 <figcaption class="lx-bar"><span class="lx-file">quota.ts</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConflictError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">AttachmentService</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./attachment.service.js"</span><span class="t-pn">;</span>
@@ -1813,7 +1892,44 @@ await db.disconnect();</script>
 </figure>
 <p>Two requests for the same task can both count 3 and both add 2, ending at 7. To close the race, take the count under a lock on the task (the per-task cover lock above, or <code>SELECT … FOR UPDATE</code> on the task row in a transaction), or keep an <code>attachment_count</code> column updated atomically with a <code>CHECK (attachment_count &lt;= 5)</code>, so the database refuses the sixth.</p></div></div>
 
-<div class="lx-exercise" data-exercise="3" data-mode="paste" data-target="0" data-file="delete-route.ts" data-project="up" data-command="npx tsx delete-route.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Delete an attachment</h3><p>Add a <code>DELETE /attachments/:id</code> route that removes the row and the object and answers <strong>204</strong>, and 404 for an unknown id. Show that the object is gone afterwards.</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="delete-route.ts" data-project="up">
+<div class="lx-exercise" data-exercise="3" data-mode="paste" data-target="0" data-file="delete-route.ts" data-project="up" data-command="npx tsx delete-route.ts" data-title="Delete an attachment"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Delete an attachment</h3><div class="lx-ex-task"><p>Add a <code>DELETE /attachments/:id</code> route that removes the row and the object and answers <strong>204</strong>, and 404 for an unknown id. Show that the object is gone afterwards.</p></div><script type="text/plain" class="lx-ex-starter" data-file="delete-route.ts">// Example to learn from: the same "call the service, answer with no body"
+// shape for a different route.
+//
+//   router.delete("/notes/:id", async (ctx) => {
+//     await notes.remove(Number(ctx.params.id));
+//     return createResponseContext().setStatus(204);
+//   });
+//
+// Now register a DELETE route for attachments the same way.
+
+import { createNodeHttpAdapter, createResponseContext } from "@zudojs/http";
+import { AttachmentService } from "./attachment.service.js";
+import { createUploadRouter } from "./server.js";
+import { setup } from "./setup.js";
+
+const { db, files, attachments } = await setup();
+const service = new AttachmentService(files, attachments);
+const router = createUploadRouter(service);
+
+// Register: router.delete("/attachments/:id", async (ctx) => { ... }) that
+// calls service.remove(Number(ctx.params.id)) and returns
+// createResponseContext().setStatus(204). service.remove already throws a
+// NotFoundError for an unknown id, which the router turns into a 404.
+
+const adapter = createNodeHttpAdapter({
+  host: "127.0.0.1",
+  port: 0,
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await adapter.start();
+const url = `http://127.0.0.1:${adapter.address?.port}`;
+
+const [saved] = await service.uploadAll(1, [{ filename: "old.pdf", contentType: "application/pdf", data: new TextEncoder().encode("%PDF-1.7\n") }]);
+console.log((await fetch(url + saved!.url, { method: "DELETE" })).status);
+console.log((await fetch(url + saved!.url, { method: "DELETE" })).status);
+console.log("objects left:", (await files.list("tasks/")).objects.length);
+await adapter.stop();
+await db.disconnect();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>router.delete(path, handler)</code> registers a route the same way <code>router.post</code> and <code>router.get</code> already do above. Inside, call <code>service.remove(Number(ctx.params.id))</code> and return a response with no body.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>router.delete("/attachments/:id", async (ctx) =&gt; { await service.remove(Number(ctx.params.id)); return createResponseContext().setStatus(204); });</code> registered before <code>adapter.start()</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="18" data-file="delete-route.ts" data-project="up">
 <figcaption class="lx-bar"><span class="lx-file">delete-route.ts</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">AttachmentService</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./attachment.service.js"</span><span class="t-pn">;</span>

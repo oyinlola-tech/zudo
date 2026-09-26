@@ -643,6 +643,38 @@ contract drift in response: [ '$.amountKobo: expected integer, got string' ]
 <h2 id="practice">Practice</h2>
 <exercise title="A reference field">
 <p>Partners want to attach their own payment reference to a transfer. Add an optional <code>reference</code> (string, at most 64 characters) to <code>TransferRequest</code>, and a <code>reference</code> of type <code>["string", "null"]</code> to <code>Transfer</code>. Run the compatibility checker on both. Is this safe to ship without a new version?</p>
+<starter file="add-reference.js">
+// Example to learn from: an optional field is safe to add; the same field
+// marked required is not.
+//
+//   const before = { type: "object", required: ["title"], properties: { title: { type: "string" } } };
+//   const afterOptional = structuredClone(before);
+//   afterOptional.properties.priority = { type: "string" };
+//   console.log(breakingChanges(before, afterOptional, "request")); // []
+//
+//   const afterRequired = structuredClone(before);
+//   afterRequired.properties.priority = { type: "string" };
+//   afterRequired.required.push("priority");
+//   console.log(breakingChanges(before, afterRequired, "request")); // ['priority: new required request field']
+//
+// Now add "reference" to the transfer schemas the safe way, below.
+
+import { breakingChanges } from "./compat.js";
+import { contract } from "./contract.js";
+
+const { TransferRequest, Transfer } = contract.components.schemas;
+const request = structuredClone(TransferRequest);
+request.properties.reference = { type: "string", maxLength: 64 };
+request.required.push("reference"); // TODO: reference should be OPTIONAL — remove this line
+
+const response = structuredClone(Transfer);
+response.properties.reference = { type: ["string", "null"] };
+
+console.log("request:", breakingChanges(TransferRequest, request, "request"));
+console.log("response:", breakingChanges(Transfer, response, "response"));
+</starter>
+<hint><p>Compare your two versions of <code>request</code> against the worked example's <code>afterOptional</code> and <code>afterRequired</code>: which one matches what you have right now?</p></hint>
+<hint><p>Delete the <code>request.required.push("reference");</code> line entirely. A field you never add to <code>required</code> is optional by default.</p></hint>
 <solution>
 <example file="add-reference.js" project="contract">
 import { breakingChanges } from "./compat.js";
@@ -666,6 +698,38 @@ response: []
 </exercise>
 <exercise title="The notifications service's expectations">
 <p>The notifications service sends "You sent ₦10,000 to account 2". Write its consumer expectation (the request it relies on, the status, and the fields and types it reads), and verify it against both handlers.</p>
+<starter file="notifications-contract.js">
+// Example to learn from: a consumer expectation is just data: the request
+// it sends, the status it expects, and only the fields it actually reads.
+//
+//   const expectation = {
+//     request: { title: "Buy milk" },
+//     status: 201,
+//     fields: { id: "string" },
+//   };
+//
+// Now write the notifications service's own expectation, below.
+
+import { handlerWithPg, handlerWithPglite } from "./handlers.js";
+
+const typeOf = (v) => (v === null ? "null" : Number.isInteger(v) ? "integer" : typeof v);
+const expectation = {
+  request: { from: 1, to: 2, amountKobo: 1000000 }, // a valid request body, so the handler doesn't crash
+  // 1. status: the status code notifications expects (a successful transfer)
+  // 2. fields: only the fields the message actually reads, with their
+  //    expected types — it needs the amount and who received it
+};
+
+for (const [label, handler] of [["current", handlerWithPglite], ["candidate", handlerWithPg]]) {
+  const response = await handler({ body: expectation.request });
+  const broken = Object.entries(expectation.fields ?? {}).filter(([field, type]) => typeOf(response.body[field]) !== type);
+  const ok = response.status === expectation.status && broken.length === 0;
+  const message = ok ? `ok: You sent ₦${(response.body.amountKobo / 100).toLocaleString("en-NG")} to account ${response.body.to}` : `BROKEN: ${broken.map(([f]) => f)}`;
+  console.log(label.padEnd(10), message);
+}
+</starter>
+<hint><p>The message says "You sent ₦&lt;amount&gt; to account &lt;to&gt;", so the fields notifications depends on are exactly the ones that message reads.</p></hint>
+<hint><p><code>status: 201, fields: { amountKobo: "integer", to: "integer" }</code></p></hint>
 <solution>
 <example file="notifications-contract.js" project="contract">
 import { handlerWithPg, handlerWithPglite } from "./handlers.js";
@@ -694,6 +758,50 @@ candidate  BROKEN: amountKobo
 </exercise>
 <exercise title="Safe JSON for money and ids">
 <p>Write a <code>replacer</code> for <code>JSON.stringify</code> that writes <code>BigInt</code> values as strings, and a <code>toTransfer(row)</code> mapper that accepts <code>amount_kobo</code> as a number, a numeric string or a <code>BigInt</code>, and always returns a safe integer (throwing otherwise). Test it with the PGlite row, the <code>pg</code> row and an amount too large to be safe.</p>
+<starter file="safe-json.js">
+// Example to learn from: a JSON.stringify replacer that special-cases one
+// type, and a converter that accepts several input shapes but always
+// returns one safe, validated type.
+//
+//   const replacer = (key, value) => (typeof value === "symbol" ? value.description : value);
+//   console.log(JSON.stringify({ tag: Symbol("urgent") }, replacer));
+//
+//   function toPositiveInt(value, field) {
+//     const n = typeof value === "string" ? Number(value) : value;
+//     if (!Number.isInteger(n) || n <= 0) throw new Error(`${field} must be a positive whole number`);
+//     return n;
+//   }
+//
+// Now do the same shape, but for BigInt values and safe-integer kobo
+// amounts, below.
+
+const replacer = (key, value) => {
+  // return value.toString() when value is a bigint; otherwise return value unchanged
+};
+
+function toSafeInteger(value, field) {
+  // 1. turn value into a plain number: Number(value) whether it started
+  //    as a numeric string, a bigint, or already a number
+  // 2. if the result is not Number.isSafeInteger, throw
+  //    new Error(`${field} is not a safe integer: ${value}`)
+  // 3. otherwise return it
+}
+
+function toTransfer(row) {
+  return { id: String(row.id), amountKobo: toSafeInteger(row.amount_kobo, "amount_kobo") };
+}
+
+console.log(JSON.stringify({ ledgerId: 9007199254740993n }, replacer));
+for (const amount of [1000000, "1000000", 1000000n, "90071992547409930"]) {
+  try {
+    console.log(JSON.stringify(toTransfer({ id: 41, amount_kobo: amount })));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<hint><p><code>typeof value === "bigint"</code> is the one case the replacer treats specially, the same shape as checking <code>"symbol"</code> in the worked example. <code>Number(value)</code> converts a numeric string, a number or a bigint the same way.</p></hint>
+<hint><p><code>return typeof value === "bigint" ? value.toString() : value;</code> and <code>const n = Number(value); if (!Number.isSafeInteger(n)) throw new Error(`${field} is not a safe integer: ${value}`); return n;</code></p></hint>
 <solution>
 <example file="safe-json.js">
 const replacer = (key, value) => (typeof value === "bigint" ? value.toString() : value);

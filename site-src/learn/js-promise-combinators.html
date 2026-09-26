@@ -612,6 +612,39 @@ console.log(customer.name, quote.kobo, "| most requests in flight at once:", pea
 <output>
 Bola 250000 | most requests in flight at once: 1
 </output>
+<starter file="order-page-fast.js">
+// Example to learn from: starting two independent lookups together on a
+// product page, once the product itself is known.
+//
+//   const product = await getProduct(1);
+//   const [reviews, price] = await Promise.all([getReviews(product.id), getPrice(product.id)]);
+//   console.log(reviews.length, price, "| peak:", peak); // peak: 2
+//
+// Now do the same for the order page below: getCustomer and getShippingQuote
+// both need `order`, but not each other.
+
+let inFlight = 0;
+let peak = 0;
+const wait = async (ms, value) => {
+  peak = Math.max(peak, ++inFlight);
+  await new Promise((resolve) => setTimeout(resolve, ms));
+  inFlight--;
+  return value;
+};
+const getOrder = (id) => wait(30, { id, customerId: 4, city: "Ibadan" });
+const getCustomer = (id) => wait(30, { id, name: "Bola" });
+const getShippingQuote = (city) => wait(30, { city, kobo: 250_000 });
+
+const order = await getOrder(7);
+// your code here: start getCustomer(order.customerId) and
+// getShippingQuote(order.city) together with Promise.all, instead of
+// awaiting them one after another.
+const customer = await getCustomer(order.customerId);
+const quote = await getShippingQuote(order.city);
+console.log(customer.name, quote.kobo, "| most requests in flight at once:", peak);
+</starter>
+<hint><p><code>customer</code> and <code>quote</code> both depend on <code>order</code>, which is why <code>getOrder</code> must finish first — but they do not depend on each other, so nothing stops them from running at the same time.</p></hint>
+<hint><p><code>const [customer, quote] = await Promise.all([getCustomer(order.customerId), getShippingQuote(order.city)]);</code></p></hint>
 <solution>
 <p>The order must come first. After that, the customer and the quote are independent, so start them together. The page now takes two rounds of 30 ms instead of three:</p>
 <example file="order-page-fast.js">
@@ -639,6 +672,48 @@ Bola 250000 | most requests in flight at once: 2
 </exercise>
 <exercise title="A deadline for a whole group">
 <p>Write <code>allWithin(promises, ms)</code>: like <code>Promise.allSettled</code>, but any promise that has not settled after <code>ms</code> gets the report <code>{ status: "timeout" }</code>. The function itself must finish after at most about <code>ms</code>. Test it with a fast success, a fast failure and a slow promise.</p>
+<starter file="all-within.js">
+// Example to learn from: one shared deadline promise raced against every
+// input, used here to report which ones are still pending, instead of a
+// full settled/timeout report for each.
+//
+//   function stillPendingAfter(promises, ms) {
+//     const PENDING = Symbol("pending");
+//     const deadline = wait(ms, PENDING);
+//     return Promise.all(
+//       promises.map((p, i) => Promise.race([p.then(() => null), deadline]).then((r) => (r === PENDING ? i : null))),
+//     ).then((results) => results.filter((r) => r !== null));
+//   }
+//   console.log(await stillPendingAfter([wait(10, "a"), wait(100, "b"), wait(5, "c")], 50)); // [ 1 ]
+//
+// Now do the same shape of shared deadline for allWithin below, reporting
+// every promise's outcome instead of just which ones are late.
+
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+
+function allWithin(promises, ms) {
+  // your code here:
+  // 1. a unique TIMEOUT symbol and a `deadline` promise that resolves to it
+  //    after `ms` (keep the timer so you can clearTimeout it later)
+  // 2. map each promise to Promise.race([reportOf(p), deadline]), where
+  //    reportOf(p) is Promise.resolve(p).then(value => ({status:"fulfilled",value}),
+  //    reason => ({status:"rejected", reason: reason.message})) — it never rejects
+  // 3. turn a raced TIMEOUT result into { status: "timeout" }
+  // 4. Promise.all the reports, and .finally clear the timer
+  for (const p of promises) Promise.resolve(p).catch(() => {});
+  return Promise.all(promises.map(() => ({ status: "timeout" })));
+}
+
+const start = Date.now();
+const reports = await allWithin(
+  [wait(10, "sales"), wait(10).then(() => { throw new Error("503"); }), wait(1_000, "refunds")],
+  50,
+);
+console.log(reports);
+console.log("finished long before the 1-second promise:", Date.now() - start < 500);
+</starter>
+<hint><p>Turn every promise into one that never rejects first — a report object either way — so racing it against the deadline with <code>Promise.all</code> is safe: nothing can reject and skip the rest.</p></hint>
+<hint><p><code>Promise.race([Promise.resolve(p).then((value) =&gt; ({ status: "fulfilled", value }), (reason) =&gt; ({ status: "rejected", reason: reason.message })), deadline]).then((r) =&gt; (r === TIMEOUT ? { status: "timeout" } : r))</code>, mapped over every promise, then <code>Promise.all(...)​.finally(() =&gt; clearTimeout(timer))</code>.</p></hint>
 <solution>
 <example file="all-within.js">
 const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
@@ -682,6 +757,41 @@ finished long before the 1-second promise: true
 </exercise>
 <exercise title="First working mirror, with a time limit each">
 <p>Product images are stored on three mirrors. Using <code>Promise.any</code> and <code>withTimeout</code> from the kit, get the first image URL from a mirror that answers within 40 ms. Print the winner, and for a second call where no mirror answers in time, print each reason.</p>
+<starter file="mirrors.js">
+// Example to learn from: withTimeout plus Promise.any, picking the first
+// fast currency-rate provider instead of the first fast image mirror.
+//
+//   import { withTimeout } from "./with-timeout.js";
+//   const provider = (name, ms, rate) => () => wait(ms, rate);
+//   async function bestRate(providers) {
+//     return Promise.any(providers.map((ask, i) => withTimeout(ask(), 30, `provider ${i + 1}`)));
+//   }
+//   console.log(await bestRate([provider("slow", 80, 1500), provider("fast", 15, 1490)])); // 1490
+//
+// Now do the same idea for firstImage below.
+
+import { withTimeout } from "./with-timeout.js";
+
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+const mirror = (name, ms) => () => wait(ms, `https://${name}.example.com/rice-5kg.webp`);
+
+async function firstImage(mirrors) {
+  // your code here: return Promise.any(mirrors.map((ask, i) =>
+  // withTimeout(ask(), 40, `mirror ${i + 1}`))) — the first mirror that both
+  // answers and beats its own 40 ms timeout wins.
+  return "";
+}
+
+console.log(await firstImage([mirror("lagos", 90), mirror("abuja", 25), mirror("accra", 30)]));
+
+try {
+  await firstImage([mirror("lagos", 90), mirror("abuja", 60)]);
+} catch (error) {
+  console.log(error.errors.map((e) => e.message));
+}
+</starter>
+<hint><p>Wrap each mirror's call with <code>withTimeout</code> before handing the array to <code>Promise.any</code> — each one gets its own clock, and a mirror that answers too slowly is treated as a failure, just like <code>any</code> treats a rejection.</p></hint>
+<hint><p><code>return Promise.any(mirrors.map((ask, i) =&gt; withTimeout(ask(), 40, `mirror ${i + 1}`)));</code></p></hint>
 <solution>
 <example file="mirrors.js" project="kit">
 import { withTimeout } from "./with-timeout.js";

@@ -349,6 +349,8 @@ server.listen(0, async () => {
 <h2 id="practice">Practice</h2>
 <exercise title="Fix the URLs">
 <p>Rewrite these endpoints in REST style: (a) <code>GET /getAllTasks</code>; (b) <code>POST /tasks/7/markDone</code>; (c) <code>GET /task?id=7</code>; (d) <code>POST /deleteTask</code> with <code>{"id": 7}</code>; (e) <code>GET /projects/3/tasks/7</code>.</p>
+<hint><p>A REST URL names a resource (a noun, usually plural); the HTTP method is the verb. Look for verbs hiding inside the path or the body.</p></hint>
+<hint><p>For (b) and (d), which method means "change part of a resource", and which means "remove it"? For (e), does the task's own id already say everything the server needs to find it?</p></hint>
 <solution>
 <p>(a) <code>GET /tasks</code>. (b) <code>PATCH /tasks/7</code> with <code>{"done": true}</code>. (c) <code>GET /tasks/7</code>. (d) <code>DELETE /tasks/7</code>. (e) <code>GET /tasks/7</code>: the task has its own id, so it does not need the project in its URL.</p>
 </solution>
@@ -356,6 +358,46 @@ server.listen(0, async () => {
 
 <exercise title="Filter by date">
 <p>Add a <code>since</code> parameter to <code>parseListQuery</code> and <code>listTasks</code>: only tasks with <code>createdAt</code> on or after that date. Accept only the form <code>YYYY-MM-DD</code>, and report anything else as an error. Test it with <code>since=2026-09-05</code> and <code>since=yesterday</code>.</p>
+<starter file="since.js">
+// Example to learn from: wrapping an existing search function to add a
+// validated filter, without changing the original.
+//
+//   function parseWithCategory(params, parseQuery) {
+//     const { errors, query } = parseQuery(params);
+//     const category = params.get("category");
+//     if (category !== null && !["food", "tools"].includes(category)) {
+//       errors.push({ param: "category", message: "must be food or tools" });
+//     }
+//     return { errors, query: { ...query, category } };
+//   }
+//
+// Now do the same for `since` below.
+
+import { listTasks, parseListQuery, tasks } from "./tasks.js";
+
+function parseWithSince(params) {
+  const { errors, query } = parseListQuery(params);
+  const since = params.get("since");
+  // since is not null and does not match YYYY-MM-DD: push an error
+  //   { param: "since", message: "must be a date like 2026-09-05" }
+  return { errors, query: { ...query, since } };
+}
+
+function listSince(all, query) {
+  // Keep every task when query.since is null, otherwise only tasks whose
+  // createdAt is on or after query.since (plain string comparison works
+  // for YYYY-MM-DD dates).
+  const recent = all;
+  return listTasks(recent, query);
+}
+
+for (const qs of ["since=2026-09-05", "since=yesterday"]) {
+  const { errors, query } = parseWithSince(new URLSearchParams(qs));
+  console.log(qs, errors.length ? errors : listSince(tasks, query).data.map((t) => t.id));
+}
+</starter>
+<hint><p>Test the format with a regular expression: <code>/^\d{4}-\d{2}-\d{2}$/.test(since)</code>. Only check it when <code>since !== null</code>.</p></hint>
+<hint><p><code>YYYY-MM-DD</code> strings compare correctly with <code>&gt;=</code>: <code>all.filter((t) =&gt; t.createdAt &gt;= query.since)</code>.</p></hint>
 <solution>
 <example file="since.js" project="api">
 import { listTasks, parseListQuery, tasks } from "./tasks.js";
@@ -389,6 +431,8 @@ since=yesterday [ { param: 'since', message: 'must be a date like 2026-09-05' } 
 
 <exercise title="Offset or cursor?">
 <p>Which pagination would you pick for: (a) an activity feed in a mobile app with infinite scroll; (b) an admin screen that shows "page 4 of 30"; (c) a job that copies every task to another system overnight?</p>
+<hint><p>Does the caller need to jump to an arbitrary page number, or only ever move forward one page at a time?</p></hint>
+<hint><p>For (c), what happens if a row is inserted or deleted while the job is halfway through, and the pagination is offset-based?</p></hint>
 <solution>
 <p>(a) Cursor: new activity arrives all the time, and the user only scrolls forward. (b) Offset: people want page numbers, and the table is small enough. (c) Cursor: it must not skip or repeat a task, and the table may be large.</p>
 </solution>

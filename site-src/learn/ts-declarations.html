@@ -864,6 +864,37 @@ function typeClaims: compiled, never called
 <h2 id="practice">Practice</h2>
 <exercise title="Declare a slug helper">
 <p>Your shop uses an untyped CommonJS package <code>slugger</code> whose whole API is one function: <code>slugger(text, { separator = "-", maxLength })</code> returns a lowercase URL slug, and returns an empty string for text with no letters or digits. Write <code>types/slugger.d.ts</code> so that <code>import slugger from "slugger"</code> is fully typed, and name the one thing about the result that a type cannot express.</p>
+<starter file="types/slugger.d.ts">
+// Example to learn from: the same "declare module, export =" shape, for a
+// different single-function CommonJS package.
+//
+//   declare module "titlecase" {
+//     interface TitleCaseOptions {
+//       /** Keep these words lowercase unless they start the title. */
+//       smallWords?: readonly string[];
+//     }
+//     /** Turns "the great gatsby" into "The Great Gatsby". */
+//     function titlecase(text: string, options?: TitleCaseOptions): string;
+//     export = titlecase;
+//   }
+//
+// Now declare slugger the same way, below.
+
+declare module "slugger" {
+  interface SlugOptions {
+    // separator?: put between words, default "-".
+    // maxLength?: cut the slug to at most this many characters.
+  }
+
+  // slugger(text, options?): returns a lowercase URL slug, or "" when
+  // nothing is left.
+  function slugger(text: string, options?: SlugOptions): string;
+
+  export = slugger;
+}
+</starter>
+<hint><p>Give <code>SlugOptions</code> two optional properties: <code>separator?: string;</code> and <code>maxLength?: number;</code>, each with a doc comment saying what it does and its default.</p></hint>
+<hint><p>A type cannot say "this string may be empty" versus "this string is never empty" — write that fact in a comment on <code>slugger</code>'s return, and check for <code>""</code> in code before using the result as a URL.</p></hint>
 <solution>
 <file name="types/slugger.d.ts" project="ex-slugger">
 declare module "slugger" {
@@ -885,6 +916,50 @@ declare module "slugger" {
 </exercise>
 <exercise title="Type the logged-in user once">
 <p>Several handlers write <code>(req as any).tenantId</code>. Replace those assertions with an augmentation of <code>node:http</code>'s <code>IncomingMessage</code> that adds an optional <code>tenantId</code>, and write a function <code>requireTenant(req)</code> that returns the tenant id as a <code>string</code> or throws.</p>
+<starter file="tenant.ts">
+// Example to learn from: the same module augmentation, adding a different
+// optional field, read with a default instead of a throw.
+//
+//   import { IncomingMessage } from "node:http";
+//   declare module "node:http" {
+//     interface IncomingMessage {
+//       locale?: string;
+//     }
+//   }
+//   function preferredLocale(req: IncomingMessage): string {
+//     return req.locale ?? "en";
+//   }
+//
+// Now add tenantId the same way, below, and write requireTenant so it
+// throws instead of falling back. Run `npx tsx tenant.ts` on your computer
+// and paste what it prints.
+
+import { IncomingMessage } from "node:http";
+import { Socket } from "node:net";
+
+declare module "node:http" {
+  interface IncomingMessage {
+    // Add an optional tenantId: string here.
+  }
+}
+
+export function requireTenant(req: IncomingMessage): string {
+  // Throw new Error("No tenant on this request") if req.tenantId is not
+  // set; otherwise return it.
+  return "";
+}
+
+const req = new IncomingMessage(new Socket());
+try {
+  requireTenant(req);
+} catch (error) {
+  console.log((error as Error).message);
+}
+req.tenantId = "shop-lagos";
+console.log(requireTenant(req));
+</starter>
+<hint><p>Inside <code>declare module "node:http" { interface IncomingMessage { ... } }</code>, add <code>tenantId?: string;</code>. It is optional because a request that has not passed the tenant middleware does not have it.</p></hint>
+<hint><p><code>if (!req.tenantId) throw new Error("No tenant on this request"); return req.tenantId;</code></p></hint>
 <solution>
 <example file="tenant.ts" project="ex-tenant" browser="no">
 import { IncomingMessage } from "node:http";
@@ -919,6 +994,32 @@ shop-lagos
 </exercise>
 <exercise title="Catch a lying declaration">
 <p>A teammate "simplified" the formatter's declaration to <code>export declare function parseNaira(text: string): number;</code>, and now the compiler lets callers skip the null check. The type check passes everywhere. Write a behaviour check that fails because of this declaration, and say which layer (types or tests) found it.</p>
+<starter file="parse.contract.ts">
+// Example to learn from: the same "run it and check the real type" test,
+// for an ISBN parser whose declaration also lies (says string, really
+// returns string | null).
+//
+//   declare function parseISBN(text: string): string;
+//   const fakeParseISBN = ((text: string) => (/^\d{10}(\d{3})?$/.test(text) ? text : null)) as typeof parseISBN;
+//
+//   for (const input of ["9780141439518", "not-a-code"]) {
+//     const result = fakeParseISBN(input);
+//     const ok = typeof result === "string";
+//     console.log(`${ok ? "PASS" : "FAIL"} parseISBN(${JSON.stringify(input)}) -> ${result}`);
+//   }
+//
+// Now write the same kind of check for parseNaira below, using the real
+// (lying) declaration from vendor/naira-format.
+
+import { parseNaira } from "./vendor/naira-format/index.js";
+
+for (const input of ["₦2,500", "two thousand", "-5"]) {
+  // Call parseNaira(input), check typeof result === "number", and log
+  // "PASS" or "FAIL", the input, the result and "(declared: number)".
+}
+</starter>
+<hint><p>Loop as the ISBN example does: <code>const result = parseNaira(input); const ok = typeof result === "number";</code>.</p></hint>
+<hint><p><code>console.log(`${ok ? "PASS" : "FAIL"} parseNaira(${JSON.stringify(input)}) -&gt; ${result} (declared: number)`);</code></p></hint>
 <solution>
 <file name="vendor/naira-format/index.js" project="ex-lie">
 export function parseNaira(text) {

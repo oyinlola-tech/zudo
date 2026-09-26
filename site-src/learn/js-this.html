@@ -739,6 +739,39 @@ setTimeout(notifier.remind, 0);
 <output>
 Reminder for undefined
 </output>
+<starter file="timer-fix.js">
+// Example to learn from: forEach hands its callback to another function
+// too, which loses `this` the same way a bare method reference does.
+//
+//   class Logger {
+//     constructor(prefix) { this.prefix = prefix; }
+//     log(message) { console.log(`${this.prefix}: ${message}`); }
+//   }
+//   const logger = new Logger("APP");
+//   ["ready", "listening"].forEach((line) => logger.log(line));  // arrow keeps the dot
+//   ["down"].forEach(logger.log.bind(logger));                  // bind fixes it too
+//
+// Now do the same for the timer below.
+
+class Notifier {
+  constructor(customer) {
+    this.customer = customer;
+  }
+  remind() {
+    console.log(`Reminder for ${this.customer}`);
+  }
+}
+
+const notifier = new Notifier("Ada");
+
+// setTimeout calls the function itself, with no dot in front of it, so
+// notifier.remind loses its `this`. Fix it two ways, each printing
+// "Reminder for Ada":
+// 1. setTimeout(<an arrow function that calls notifier.remind()>, 0);
+// 2. setTimeout(<notifier.remind bound to notifier>, 0);
+</starter>
+<hint><p><code>this</code> depends on how a function is <em>called</em>, not where it is defined. <code>setTimeout(notifier.remind, 0)</code> passes the bare function, detached from <code>notifier</code>, so the call site has no dot.</p></hint>
+<hint><p>Wrap it so the dot survives: <code>setTimeout(() =&gt; notifier.remind(), 0)</code>. Or fix <code>this</code> permanently with <code>setTimeout(notifier.remind.bind(notifier), 0)</code>.</p></hint>
 <solution>
 <p><code>setTimeout</code> receives only the function and calls it itself, so <code>this</code> is not <code>notifier</code>. (In Node.js it is the timer object, which has no <code>customer</code>; in a browser it is <code>window</code>.) Give the call its dot back with a wrapper, or bind:</p>
 <example file="timer-fix.js">
@@ -763,6 +796,42 @@ Reminder for Ada
 </exercise>
 <exercise title="Borrow a method">
 <p>A <code>receipt</code> object has a <code>total()</code> method that adds up <code>this.lines</code>. A plain object <code>{ lines: [500, 1500] }</code> from an old API has no methods. Without copying the method onto it, use <code>call</code> to compute its total, then use <code>bind</code> to make a reusable <code>oldApiTotal</code> function.</p>
+<starter file="borrow.js">
+// Example to learn from: borrowing a method for one call versus borrowing
+// it permanently.
+//
+//   const car = {
+//     brand: "Toyota",
+//     describe() { return `a ${this.brand}`; },
+//   };
+//   const bike = { brand: "Trek" };
+//
+//   console.log(car.describe.call(bike));       // one-off borrow: "a Trek"
+//   const describeBike = car.describe.bind(bike); // permanent borrow
+//   console.log(describeBike());                 // "a Trek", every time
+//
+// Now do the same for the receipt below.
+
+const receipt = {
+  lines: [850000, 320000],
+  total() {
+    return this.lines.reduce((sum, kobo) => sum + kobo, 0);
+  },
+};
+
+const fromOldApi = { lines: [500, 1500] };
+
+// Call receipt.total with `this` set to fromOldApi, without copying it there.
+console.log(); // your code here: receipt.total.call(fromOldApi)
+
+// Make a reusable function bound to fromOldApi.
+const oldApiTotal = () => {}; // your code here: receipt.total.bind(fromOldApi)
+
+fromOldApi.lines.push(250);
+console.log(oldApiTotal(), receipt.total());
+</starter>
+<hint><p><code>someFn.call(thisValue)</code> runs <code>someFn</code> once with <code>this</code> set to <code>thisValue</code>, without moving or copying the function anywhere.</p></hint>
+<hint><p><code>receipt.total.call(fromOldApi)</code> for the one-off call. <code>const oldApiTotal = receipt.total.bind(fromOldApi);</code> for the reusable one — it keeps using <code>fromOldApi</code>, even the line pushed onto it afterwards.</p></hint>
 <solution>
 <example file="borrow.js">
 const receipt = {
@@ -788,6 +857,46 @@ console.log(oldApiTotal(), receipt.total());
 </exercise>
 <exercise title="Callbacks inside a method">
 <p>Finish <code>priceList()</code> so it returns lines like <code>"Rice 5kg: ₦8500.00"</code> using <code>this.format</code> for each product. Write it once with an arrow callback and once with a <code>function</code> callback plus <code>map</code>'s <code>thisArg</code>.</p>
+<starter file="price-list.js">
+// Example to learn from: building strings from a method's own data, with
+// an arrow callback and then a function callback plus thisArg.
+//
+//   const team = {
+//     name: "Falcons",
+//     players: ["Ada", "Chidi"],
+//     roster() {
+//       return this.players.map((p) => `${p} (${this.name})`);
+//     },
+//     rosterThisArg() {
+//       return this.players.map(function (p) {
+//         return `${p} (${this.name})`;
+//       }, this);
+//     },
+//   };
+//
+// Now do the same for the shop below.
+
+const shop = {
+  symbol: "₦",
+  products: [{ name: "Rice 5kg", kobo: 850000 }, { name: "Oil 1L", kobo: 320000 }],
+  format(kobo) {
+    return `${this.symbol}${(kobo / 100).toFixed(2)}`;
+  },
+  priceList() {
+    // your code here: this.products.map with an arrow callback, returning
+    // `${p.name}: ${this.format(p.kobo)}` for each product p.
+  },
+  priceListThisArg() {
+    // your code here: the same result, but with a `function` callback and
+    // map's second argument (thisArg) set to `this`.
+  },
+};
+
+console.log(shop.priceList());
+console.log(shop.priceListThisArg());
+</starter>
+<hint><p>An arrow callback does not have its own <code>this</code>, so inside <code>this.products.map((p) =&gt; ...)</code>, <code>this</code> is still <code>shop</code>.</p></hint>
+<hint><p><code>this.products.map((p) =&gt; `${p.name}: ${this.format(p.kobo)}`)</code>. For the <code>function</code> version, <code>map(function (p) { return ...this.format(p.kobo)... }, this)</code> — the second argument to <code>map</code> becomes the callback's <code>this</code>.</p></hint>
 <solution>
 <example file="price-list.js">
 const shop = {

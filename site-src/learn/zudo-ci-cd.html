@@ -1125,6 +1125,8 @@ from f93800b, schema 4: none: fix forward
 <h2 id="practice">Practice</h2>
 <exercise title="Fix the hasty workflow">
 <p>Rewrite the workflow that actionlint complained about so that it passes: fix the <code>needs</code>, the step key, and pass the commit message and the deploy key through <code>env</code> instead of pasting them into the scripts.</p>
+<hint><p>Re-read actionlint's three messages one at a time: a job name that does not exist, an unknown step key (a typo), and an expression pasted straight into a shell command.</p></hint>
+<hint><p><code>needs: test</code> (not <code>tests</code>), <code>timeout-minutes</code> (not <code>timeout-minute</code>), and an <code>env:</code> block on the step so the script reads <code>$MESSAGE</code> and <code>$DEPLOY_KEY</code> instead of <code>${{ … }}</code> being substituted into the command text.</p></hint>
 <solution>
 <pre class="lx-json">name: Deploy
 on:
@@ -1155,6 +1157,33 @@ jobs:
 
 <exercise title="Stale exceptions">
 <p>Extend the audit gate idea: an exception for a package that is no longer in the report is dead weight that could hide a future problem with the same package. Write <code>staleExceptions(report, exceptions)</code> that returns the package names of exceptions that match nothing in the report.</p>
+<starter file="stale-exceptions.ts">
+// Example to learn from: keeping only the names that still appear somewhere.
+//
+//   function stillOpen(report: { open: string[] }, names: string[]): string[] {
+//     return names.filter((name) => !report.open.includes(name));
+//   }
+//   console.log(stillOpen({ open: ["a"] }, ["a", "b"]));   // [ 'b' ]
+//
+// Now write staleExceptions(report, exceptions): an exception is stale
+// when its package name is not a key in report.vulnerabilities.
+
+interface Exception { readonly packageName: string; readonly expires: string }
+
+function staleExceptions(report: { vulnerabilities: Record<string, unknown> }, exceptions: Exception[]): string[] {
+  // your code here
+}
+
+const afterOverrides = { vulnerabilities: {} };
+const exceptions = [
+  { packageName: "mysql2", expires: "2026-10-15" },
+  { packageName: "deepmerge-ts", expires: "2026-09-01" },
+];
+console.log(staleExceptions(afterOverrides, exceptions));
+console.log(staleExceptions({ vulnerabilities: { mysql2: { severity: "high" } } }, exceptions));
+</starter>
+<hint><p>Take the package name of each exception, then keep only the ones that are <em>not</em> a key of <code>report.vulnerabilities</code>. The <code>in</code> operator asks whether a key exists.</p></hint>
+<hint><p><code>return exceptions.map((e) =&gt; e.packageName).filter((name) =&gt; !(name in report.vulnerabilities));</code></p></hint>
 <solution>
 <example file="stale-exceptions.ts">
 interface Exception { readonly packageName: string; readonly expires: string }
@@ -1181,6 +1210,8 @@ console.log(staleExceptions({ vulnerabilities: { mysql2: { severity: "high" } } 
 
 <exercise title="Plan a rename">
 <p>The team wants to rename <code>tasks.name</code> to <code>tasks.title</code>. Plan the releases so that every deploy can be rolled back to the release before it, and say what each migration and each release does.</p>
+<hint><p>A rename cannot be one release: the old code must still work on the new schema until nothing older is running. Split it into expand, migrate reads, then contract, as the deployment lesson's migration rules describe.</p></hint>
+<hint><p>Ask, for each release: if I rolled back to the one before it right now, which column would the rolled-back code expect, and is that column still being written?</p></hint>
 <solution>
 <ol>
 <li><strong>Release A (expand).</strong> Migration: add nullable <code>title</code>. Code: writes both <code>name</code> and <code>title</code>, reads <code>name</code>. Rolling back to the previous release is safe: it ignores <code>title</code>.</li>

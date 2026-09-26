@@ -334,6 +334,48 @@ await db.close();
 <h2 id="practice">Practice</h2>
 <exercise title="A task store">
 <p>Write a module with <code>createTask(db, userId, title)</code>, <code>listOpen(db, userId)</code> and <code>completeTask(db, userId, id)</code>. <code>completeTask</code> returns the updated task, or <code>null</code> when no such task exists for that user. Use placeholders everywhere, and test that user 2 cannot complete user 1's task.</p>
+<starter file="store.js">
+// Example to learn from: checking ownership in the WHERE clause so a user
+// can only change their own row.
+//
+//   async function deleteNote(db, userId, id) {
+//     const { rows } = await db.query(
+//       "delete from notes where id = $1 and user_id = $2 returning id",
+//       [id, userId],
+//     );
+//     return rows[0] ?? null;      // null when no row matched (wrong owner or missing)
+//   }
+//
+// Now do the same for creating, listing and completing tasks below.
+
+import { openDb } from "./db.js";
+
+async function createTask(db, userId, title) {
+  // insert into tasks (user_id, title) values ($1, $2), then
+  // "returning id, title, done" to get the new row back.
+  return { id: -1, title, done: false };
+}
+
+async function listOpen(db, userId) {
+  // select id, title from tasks where user_id = $1 and not done, order by id
+  return [];
+}
+
+async function completeTask(db, userId, id) {
+  // update tasks set done = true where id = $1 and user_id = $2 (both must
+  // match, so one user cannot complete another's task), returning id, title, done
+  return null;
+}
+
+const db = await openDb();
+const task = await createTask(db, 1, "Plan trip");
+console.log(await listOpen(db, 1));
+console.log("user 2 tries:", await completeTask(db, 2, task.id));
+console.log("user 1 tries:", await completeTask(db, 1, task.id));
+await db.close();
+</starter>
+<hint><p>Every query needs a placeholder, never a pasted-in value: <code>db.query("... $1 ...", [value])</code>. Add <code>returning</code> to get a row back after <code>insert</code> or <code>update</code>.</p></hint>
+<hint><p><code>completeTask</code>'s <code>where</code> needs both <code>id = $1 and user_id = $2</code>. When nothing matches, <code>rows</code> is empty, so return <code>rows[0] ?? null</code>.</p></hint>
 <solution>
 <example file="store.js" project="crud" browser="no">
 import { openDb } from "./db.js";
@@ -374,6 +416,8 @@ user 1 tries: { id: 6, title: 'Plan trip', done: true }
 
 <exercise title="Spot the injection">
 <p>Which of these are safe? (a) <code>db.query("select * from tasks where id = " + Number(id))</code>; (b) <code>db.query(`select * from tasks order by ${sort}`)</code> where <code>sort</code> comes from the query string; (c) <code>db.query("select * from tasks where title = $1", [title])</code>; (d) <code>db.query("select * from tasks where title = '" + title.replaceAll("'", "") + "'")</code>.</p>
+<hint><p>Only one of these uses a placeholder. Are the others building the SQL text out of a value that came from the caller?</p></hint>
+<hint><p>(a) is safe today only because <code>Number</code> can never produce anything but a number. (b) names a column, which a placeholder cannot quote for you: what should you check it against instead?</p></hint>
 <solution>
 <p>Only (c) is right. (a) happens to be safe because <code>Number</code> can only produce a number, but it is fragile: the next person edits it and drops <code>Number</code>. (b) is injectable: check <code>sort</code> against an allow-list. (d) tries to clean the input by hand; that approach fails sooner or later (and it also breaks titles such as <code>Ada's book</code>). Use placeholders.</p>
 </solution>

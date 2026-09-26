@@ -700,6 +700,55 @@ PASS unknown name from untyped code
 <h2 id="practice">Practice</h2>
 <exercise title="A wallet top-up command">
 <p>Add a <code>"wallet.topUp"</code> command to a new spec: input <code>{ walletId: string; kobo: number }</code>, result <code>Result&lt;{ balanceKobo: number }, "invalid-amount" | "wallet-not-found"&gt;</code>. Write the handler table and run three top-ups: a valid one, a negative amount and an unknown wallet.</p>
+<starter file="wallet.ts">
+// Example to learn from: the same shape (validate, then look up, then
+// mutate) for a loyalty-points redemption instead of a wallet top-up.
+//
+//   type Result<T, E extends string> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+//   type RedeemResult = Result<{ pointsLeft: number }, "invalid-amount" | "member-not-found">;
+//
+//   const balances = new Map([["MEM-1", 500]]);
+//
+//   function redeem({ memberId, points }: { memberId: string; points: number }): RedeemResult {
+//     if (!Number.isInteger(points) || points <= 0) return { ok: false, error: "invalid-amount" };
+//     const balance = balances.get(memberId);
+//     if (balance === undefined || balance < points) return { ok: false, error: "member-not-found" };
+//     balances.set(memberId, balance - points);
+//     return { ok: true, value: { pointsLeft: balance - points } };
+//   }
+//
+// Now write the wallet top-up handler below, the same way.
+
+import { Bus } from "./bus.js";
+import type { Handlers } from "./cqrs-types.js";
+import type { Result } from "./shop-spec.js";
+
+interface WalletCommands {
+  "wallet.topUp": {
+    input: { walletId: string; kobo: number };
+    result: Result<{ balanceKobo: number }, "invalid-amount" | "wallet-not-found">;
+  };
+}
+
+const balances = new Map([["WAL-1", 50_000]]);
+
+const handlers: Handlers<WalletCommands> = {
+  "wallet.topUp": ({ walletId, kobo }) => {
+    // Reject a non-positive or non-integer kobo amount first. Then look up
+    // the wallet; if it exists, add kobo to its balance and return the new
+    // balance; otherwise report "wallet-not-found".
+    return { ok: false, error: "invalid-amount" };
+  },
+};
+
+const wallets = new Bus<WalletCommands>("command", handlers);
+for (const [walletId, kobo] of [["WAL-1", 150_000], ["WAL-1", -500], ["WAL-9", 1_000]] as const) {
+  const result = await wallets.execute({ type: "wallet.topUp", walletId, kobo });
+  console.log(result.ok ? `balance ₦${result.value.balanceKobo / 100}` : result.error);
+}
+</starter>
+<hint><p>Check the amount first: <code>if (!Number.isInteger(kobo) || kobo &lt;= 0) return { ok: false, error: "invalid-amount" };</code>, exactly as <code>redeem</code> checks <code>points</code> before touching the map.</p></hint>
+<hint><p>Then <code>const balance = balances.get(walletId); if (balance === undefined) return { ok: false, error: "wallet-not-found" };</code>, and finally <code>balances.set(walletId, balance + kobo); return { ok: true, value: { balanceKobo: balance + kobo } };</code>.</p></hint>
 <solution>
 <example file="wallet.ts" project="cqrs">
 import { Bus } from "./bus.js";
@@ -741,6 +790,60 @@ wallet-not-found
 </exercise>
 <exercise title="A query cache with one justified cast">
 <p>Write a <code>Middleware&lt;ShopQueries&gt;</code> that caches query results by <code>JSON.stringify(query)</code>. Explain why its one cast is safe, and show that the second identical query does not reach the handler.</p>
+<starter file="query-cache.ts">
+// Example to learn from: the same "key by JSON.stringify, cache the
+// result" middleware, over a generic request/response pipeline.
+//
+//   type Next<R> = () => Promise<R>;
+//   type Middleware<Req, R> = (req: Req, next: Next<R>) => Promise<R>;
+//
+//   function withCache<Req, R>(): Middleware<Req, R> {
+//     const cache = new Map<string, R>();
+//     return async (req, next) => {
+//       const key = JSON.stringify(req);
+//       if (cache.has(key)) return cache.get(key) as R;
+//       const result = await next();
+//       cache.set(key, result);
+//       return result;
+//     };
+//   }
+//
+//   let calls = 0;
+//   const cached = withCache<{ id: string }, string>();
+//   const fetchData = (req: { id: string }) => cached(req, async () => { calls++; return `data for ${req.id}`; });
+//   console.log(await fetchData({ id: "42" }), await fetchData({ id: "42" }), "calls:", calls);
+//
+// Now write the query bus's cache the same way, below.
+
+import { Bus } from "./bus.js";
+import { queryHandlers } from "./handlers.js";
+import { ShopStore } from "./store.js";
+import type { Middleware, ResultOf } from "./cqrs-types.js";
+import type { ShopQueries } from "./shop-spec.js";
+
+const cache = new Map<string, unknown>();
+const cached: Middleware<ShopQueries> = async (query, next) => {
+  // Key by JSON.stringify(query). If cached, return the cached value (cast
+  // to ResultOf<ShopQueries, typeof query.type>). Otherwise run next(),
+  // cache its result, and return it.
+  return next();
+};
+
+let handlerCalls = 0;
+const store = new ShopStore();
+store.orders.set("ORD-7", { orderId: "ORD-7", customerId: "cus_ada", totalKobo: 7_500_000, status: "placed" });
+const counting: Middleware<ShopQueries> = async (_query, next) => {
+  handlerCalls++;
+  return next();
+};
+
+const queries = new Bus<ShopQueries>("query", queryHandlers(store.orders)).use(cached).use(counting);
+console.log((await queries.execute({ type: "order.get", orderId: "ORD-7" }))?.status);
+console.log((await queries.execute({ type: "order.get", orderId: "ORD-7" }))?.status);
+console.log("handler calls:", handlerCalls);
+</starter>
+<hint><p>Build the key once, <code>const key = JSON.stringify(query);</code>, and check <code>cache.has(key)</code> before calling <code>next()</code>.</p></hint>
+<hint><p><code>if (cache.has(key)) return cache.get(key) as ResultOf&lt;ShopQueries, typeof query.type&gt;;</code> then <code>const result = await next(); cache.set(key, result); return result;</code>.</p></hint>
 <solution>
 <example file="query-cache.ts" project="cqrs">
 import { Bus } from "./bus.js";
@@ -781,6 +884,46 @@ handler calls: 1
 </exercise>
 <exercise title="Refuse to start with a missing handler">
 <p>Plugins register command handlers at runtime, so the compiler cannot check that all of them exist. Write <code>assertComplete(expected, registered)</code> that throws one error listing every missing name, and call it at startup with a list derived from a spec type using <code>satisfies</code>, so the list itself cannot miss a name.</p>
+<starter file="startup-check.ts">
+// Example to learn from: a satisfies-checked list of expected names,
+// compared at runtime against what was actually registered, for webhook
+// handlers instead of commands.
+//
+//   type WebhookEvent = "invoice.paid" | "invoice.voided";
+//   const allEvents = { "invoice.paid": true, "invoice.voided": true } as const satisfies Record<WebhookEvent, true>;
+//
+//   function assertAllRegistered(expected: readonly string[], registered: readonly string[]): void {
+//     const missing = expected.filter((name) => !registered.includes(name));
+//     if (missing.length > 0) throw new Error(`missing webhook handlers: ${missing.join(", ")}`);
+//   }
+//
+//   assertAllRegistered(Object.keys(allEvents), ["invoice.paid"]);   // throws: missing invoice.voided
+//
+// Now do the same for command handlers below.
+
+import type { RequestName } from "./cqrs-types.js";
+import type { ShopCommands } from "./shop-spec.js";
+
+const allCommands = {
+  "order.place": true,
+  "order.cancel": true,
+} as const satisfies Record<RequestName<ShopCommands>, true>;
+
+function assertComplete(expected: readonly string[], registered: readonly string[]): void {
+  // Find every name in `expected` that is missing from `registered`, and
+  // throw one Error listing them all, comma-separated.
+}
+
+const registeredByPlugins = ["order.place"];
+try {
+  assertComplete(Object.keys(allCommands), registeredByPlugins);
+  console.log("all handlers present");
+} catch (error) {
+  console.log(String(error));
+}
+</starter>
+<hint><p><code>const missing = expected.filter((name) =&gt; !registered.includes(name));</code> finds every expected name that was never registered.</p></hint>
+<hint><p><code>if (missing.length &gt; 0) throw new Error(`missing handlers: ${missing.join(", ")}`);</code></p></hint>
 <solution>
 <example file="startup-check.ts" project="cqrs">
 import type { RequestName } from "./cqrs-types.js";

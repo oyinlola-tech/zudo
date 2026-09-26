@@ -1231,7 +1231,45 @@ with idempotency keys: charged twice in 0 of 500 runs, first failing seed none, 
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="in-order.ts" data-project="dist"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>In-order delivery on top of an unordered network</h3><p>Using the simulator with seed 8 (loss 0 this time, duplicates 0.1), make the inventory service process messages 1 to 10 exactly once and in order, whatever order they arrive in. Hold back a message until the one before it has been processed, and ignore numbers already processed.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="15" data-file="in-order.ts" data-project="dist">
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="in-order.ts" data-project="dist" data-title="In-order delivery on top of an unordered network"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>In-order delivery on top of an unordered network</h3><div class="lx-ex-task"><p>Using the simulator with seed 8 (loss 0 this time, duplicates 0.1), make the inventory service process messages 1 to 10 exactly once and in order, whatever order they arrive in. Hold back a message until the one before it has been processed, and ignore numbers already processed.</p></div><script type="text/plain" class="lx-ex-starter" data-file="in-order.ts">// Example to learn from: the same reorder-buffer technique, applied to a
+// plain scrambled list instead of a live network simulation.
+//
+//   const arrived = [1, 4, 2, 3, 6, 5];
+//   const processed: number[] = [];
+//   const waiting = new Set<number>();
+//   let next = 1;
+//   for (const n of arrived) {
+//     if (n < next) continue;
+//     waiting.add(n);
+//     while (waiting.has(next)) {
+//       waiting.delete(next);
+//       processed.push(next);
+//       next++;
+//     }
+//   }
+//   console.log(processed); // [ 1, 2, 3, 4, 5, 6 ]
+//
+// Now do the same for the inventory node below, receiving over the
+// simulated network instead of a fixed list.
+
+import { Sim } from "./sim.js";
+
+const sim = new Sim(8, { latency: [10, 120], duplicate: 0.1 });
+const arrived: number[] = [];
+const processed: number[] = [];
+const waiting = new Set<number>();
+let next = 1;
+
+sim.node("inventory", (m) => {
+  const n = (m.body as { n: number }).n;
+  arrived.push(n);
+  // Hold back n until every number before it has been processed, and
+  // ignore a number already processed (n < next). See the example above.
+});
+for (let n = 1; n <= 10; n++) sim.after(n * 10, () => sim.send("orders", "inventory", { n }));
+sim.run();
+console.log("arrived:  ", arrived.join(" "));
+console.log("processed:", processed.join(" "));</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p><code>n &lt; next</code> means this number was already processed — ignore it. Otherwise add it to <code>waiting</code>, then drain <code>waiting</code> while it holds <code>next</code>, in order.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>waiting.add(n); while (waiting.has(next)) { waiting.delete(next); processed.push(next); next++; }</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="15" data-file="in-order.ts" data-project="dist">
 <figcaption class="lx-bar"><span class="lx-file">in-order.ts</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="15"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">Sim</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./sim.js"</span><span class="t-pn">;</span>
 
@@ -1284,8 +1322,43 @@ console.log("processed:", processed.join(" "));</script>
 processed: 1 2 3 4 5 6 7 8 9 10</pre></div>
 </figure>
 <p>The <code>waiting</code> set is a reorder buffer, and <code>next</code> is the sequence number the receiver expects. A duplicate is either already processed (<code>n &lt; next</code>) or already in the buffer (adding it to a <code>Set</code> twice changes nothing). With loss, this receiver would wait forever for a missing number, so real protocols add acknowledgements and retransmission, which is what TCP does.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Pick N, W and R</h3><p>ShopFlow's wallet balances live on 5 replicas. (a) Which W and R make every read see the latest confirmed write while tolerating 2 unavailable replicas for both reads and writes? (b) The product catalogue is read 1,000 times more often than it is written and may be a little stale. What would you choose, and what do you give up?</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) W = 3 and R = 3: 3 + 3 &gt; 5, so every read overlaps every write, and with 2 replicas down 3 are still reachable for both. W = 5, R = 1 would make reads cheap but a single down replica would block every write. (b) For example W = 5, R = 1, or simply asynchronous replication with reads from any follower. Reads become as cheap as possible. You give up linearizable reads (a follower may be slightly behind), and with W = 5 you give up write availability when any replica is down, which is acceptable for data edited by staff a few times a day. Add session guarantees for the staff member who just edited a product.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="run" data-target="0" data-file="by-hand.ts" data-project="dist"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Lamport clocks by hand</h3><p>Three services start with Lamport clocks at 0. Orders has a local event (a), then sends message m1 to payments. Payments has a local event (b), then receives m1 (c), then sends m2 to shipping. Shipping has two local events (d, e), then receives m2 (f). Write down the Lamport time of every event. Which pairs of events are concurrent?</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="16" data-file="by-hand.ts" data-project="dist">
+<div class="lx-exercise" data-exercise="2" data-mode="think" data-title="Pick N, W and R"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Pick N, W and R</h3><div class="lx-ex-task"><p>ShopFlow's wallet balances live on 5 replicas. (a) Which W and R make every read see the latest confirmed write while tolerating 2 unavailable replicas for both reads and writes? (b) The product catalogue is read 1,000 times more often than it is written and may be a little stale. What would you choose, and what do you give up?</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>For every read to overlap every write, <code>W + R</code> must be more than <code>N</code> (5 replicas here). Which pairs satisfy that while still leaving 3 replicas reachable when 2 are down, for both reads and writes?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>For (b), read cost matters far more than write cost or freshness. Which extreme of <code>W</code> and <code>R</code> makes a read touch only one replica, and what does that trade away?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) W = 3 and R = 3: 3 + 3 &gt; 5, so every read overlaps every write, and with 2 replicas down 3 are still reachable for both. W = 5, R = 1 would make reads cheap but a single down replica would block every write. (b) For example W = 5, R = 1, or simply asynchronous replication with reads from any follower. Reads become as cheap as possible. You give up linearizable reads (a follower may be slightly behind), and with W = 5 you give up write availability when any replica is down, which is acceptable for data edited by staff a few times a day. Add session guarantees for the staff member who just edited a product.</p></div></div>
+<div class="lx-exercise" data-exercise="3" data-mode="run" data-target="0" data-file="by-hand.ts" data-project="dist" data-title="Lamport clocks by hand"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Lamport clocks by hand</h3><div class="lx-ex-task"><p>Three services start with Lamport clocks at 0. Orders has a local event (a), then sends message m1 to payments. Payments has a local event (b), then receives m1 (c), then sends m2 to shipping. Shipping has two local events (d, e), then receives m2 (f). Write down the Lamport time of every event. Which pairs of events are concurrent?</p></div><script type="text/plain" class="lx-ex-starter" data-file="by-hand.ts">// Example to learn from: the same three Lamport rules (tick, send, receive)
+// for a shorter, two-service scenario.
+//
+//   const catalog = new LamportClock();
+//   const search = new LamportClock();
+//   const x = catalog.tick();       // 1
+//   const msg = catalog.send();     // 2
+//   const y = search.tick();        // 1
+//   const z = search.receive(msg);  // max(1, 2) + 1 = 3
+//   console.log({ x, msg, y, z });
+//
+// Now work out the three-service scenario from the task below.
+
+import { LamportClock } from "./lamport.js";
+
+const orders = new LamportClock();
+const payments = new LamportClock();
+const shipping = new LamportClock();
+
+// a: orders has a local event -> orders.tick()
+// m1: orders sends to payments -> orders.send()
+// b: payments has a local event -> payments.tick()
+// c: payments receives m1 -> payments.receive(m1)
+// m2: payments sends to shipping -> payments.send()
+// d, e: shipping has two local events -> shipping.tick(), twice
+// f: shipping receives m2 -> shipping.receive(m2)
+
+const a = 0;
+const m1 = 0;
+const b = 0;
+const c = 0;
+const m2 = 0;
+const d = 0;
+const e = 0;
+const f = 0;
+console.log({ a, m1, b, c, m2, d, e, f });</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Each line is one of the three rules: <code>tick()</code> for a local event, <code>send()</code> (which is just <code>tick()</code>), and <code>receive(remoteTime)</code>, which jumps to <code>max(local, remote)</code> before counting the event.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const a = orders.tick(); const m1 = orders.send(); const b = payments.tick(); const c = payments.receive(m1); const m2 = payments.send(); const d = shipping.tick(); const e = shipping.tick(); const f = shipping.receive(m2);</code></p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="16" data-file="by-hand.ts" data-project="dist">
 <figcaption class="lx-bar"><span class="lx-file">by-hand.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="16"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">LamportClock</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./lamport.js"</span><span class="t-pn">;</span>
 

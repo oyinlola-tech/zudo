@@ -773,6 +773,59 @@ PASS empty pops and a zero capacity throw RangeError
 <h2 id="practice">Practice</h2>
 <exercise title="A stack that knows its minimum">
 <p>A price tracker pushes each day's price for a product onto a stack and pops when a day's entry is corrected. It must answer "what is the lowest price currently on the stack?" in O(1). Write <code>MinStack</code> with <code>push</code>, <code>pop</code> and <code>min</code>.</p>
+<starter file="min-stack.js">
+// Example to learn from: a second stack that tracks a running aggregate at
+// each height, kept in sync with push and pop — here the maximum instead of
+// the minimum, for a stack of temperature readings.
+//
+//   class MaxStack {
+//     #items = [];
+//     #maxes = [];
+//     push(temp) {
+//       this.#items.push(temp);
+//       this.#maxes.push(this.#maxes.length === 0 ? temp : Math.max(temp, this.#maxes.at(-1)));
+//     }
+//     pop() { this.#maxes.pop(); return this.#items.pop(); }
+//     max() { return this.#maxes.at(-1); }
+//   }
+//   const temps = new MaxStack();
+//   [21, 30, 18, 33].forEach((t) => temps.push(t));
+//   console.log(temps.max());                          // 33
+//
+// Now do the same shape for MinStack below, tracking the minimum.
+
+class MinStack {
+  #items = [];
+  #mins = []; // mins[i] = smallest of items[0..i]
+
+  push(price) {
+    this.#items.push(price);
+    // push the smaller of `price` and the previous minimum onto #mins
+    // (or just `price` when #mins is empty)
+  }
+
+  pop() {
+    if (this.#items.length === 0) throw new RangeError("pop from an empty stack");
+    this.#mins.pop();
+    return this.#items.pop();
+  }
+
+  min() {
+    return this.#mins.at(-1);
+  }
+}
+
+const prices = new MinStack();
+for (const kobo of [52000, 49000, 55000, 47000]) prices.push(kobo);
+console.log(prices.min());
+prices.pop(); // correct the last entry
+console.log(prices.min());
+prices.pop();
+prices.pop();
+console.log(prices.min());
+</starter>
+<hint><p>Keep <code>#mins</code> the same length as <code>#items</code>: every <code>push</code> should add one entry to each, the new one being the smallest value seen so far.</p></hint>
+<hint><p><code>this.#mins.push(this.#mins.length === 0 ? price : Math.min(price, this.#mins.at(-1)));</code></p></hint>
 <solution>
 <example file="min-stack.js">
 class MinStack {
@@ -816,6 +869,69 @@ console.log(prices.min());
 
 <exercise title="Back and forward">
 <p>An admin dashboard has Back and Forward buttons. Write <code>History</code> with <code>visit(page)</code>, <code>back()</code> and <code>forward()</code>, each returning the current page. Visiting a new page after going back must clear the forward history, like a browser.</p>
+<starter file="history.js">
+// Example to learn from: two stacks and a "new action clears the other
+// stack" rule, used for a photo viewer's previous/next instead of a URL bar.
+//
+//   class Gallery {
+//     #prev = [];
+//     #next = [];
+//     current;
+//     constructor(first) { this.current = first; }
+//     open(photo) {
+//       this.#prev.push(this.current);
+//       this.current = photo;
+//       this.#next.length = 0;              // a new photo forgets any "skipped forward" ones
+//       return this.current;
+//     }
+//     previous() {
+//       if (this.#prev.length) {
+//         this.#next.push(this.current);
+//         this.current = this.#prev.pop();
+//       }
+//       return this.current;
+//     }
+//   }
+//   const g = new Gallery("IMG-1");
+//   g.open("IMG-2"); g.open("IMG-3");
+//   console.log(g.previous(), g.previous());            // IMG-2 IMG-1
+//
+// Now do the same shape for History below, adding forward() as the mirror of back().
+
+class History {
+  #back = [];
+  #forward = [];
+  current;
+
+  constructor(start) {
+    this.current = start;
+  }
+
+  visit(page) {
+    // remember the current page on #back, move to page, and clear #forward
+    return this.current;
+  }
+
+  back() {
+    // if #back has an entry: remember current on #forward, then pop #back into current
+    return this.current;
+  }
+
+  forward() {
+    // the mirror of back(): swap #forward and #back
+    return this.current;
+  }
+}
+
+const nav = new History("/dashboard");
+nav.visit("/orders");
+nav.visit("/orders/ORD-7");
+console.log(nav.back(), nav.back(), nav.back());
+console.log(nav.forward());
+console.log(nav.visit("/customers"), nav.forward());
+</starter>
+<hint><p><code>visit</code>: push <code>this.current</code> onto <code>#back</code> before changing it, then set <code>#forward.length = 0</code>.</p></hint>
+<hint><p><code>back() { if (this.#back.length) { this.#forward.push(this.current); this.current = this.#back.pop(); } return this.current; }</code>. <code>forward()</code> is the same code with <code>#back</code> and <code>#forward</code> swapped.</p></hint>
 <solution>
 <example file="history.js">
 class History {
@@ -869,6 +985,62 @@ console.log(nav.visit("/customers"), nav.forward());
 
 <exercise title="Evaluate a postfix formula">
 <p>Some calculators and pricing engines store formulas in <strong>postfix</strong> (reverse Polish) notation, where the operator comes after its two operands: <code>"2 3 + 4 *"</code> means <code>(2 + 3) * 4</code>. There are no brackets to check. Write <code>evaluate(formula)</code> with a stack: numbers are pushed; an operator pops two numbers, applies itself and pushes the result. Throw a clear error for a malformed formula.</p>
+<starter file="postfix.js">
+// Example to learn from: the same "push a value, or pop and combine" shape,
+// scoring a baseball inning where "C" cancels the previous point total.
+//
+//   function inningScore(rounds) {
+//     const stack = [];
+//     for (const token of rounds) {
+//       if (token === "C") stack.pop();
+//       else stack.push(Number(token));
+//     }
+//     return stack.reduce((sum, points) => sum + points, 0);
+//   }
+//   console.log(inningScore(["2", "3", "C", "5"])); // 7  (2 + 5; the 3 was cancelled)
+//
+// Now do the same shape for evaluate below, popping two operands per operator.
+
+const OPS = new Map([
+  ["+", (a, b) => a + b],
+  ["-", (a, b) => a - b],
+  ["*", (a, b) => a * b],
+  ["/", (a, b) => a / b],
+]);
+
+function evaluate(formula) {
+  const stack = [];
+  for (const token of formula.split(/\s+/).filter(Boolean)) {
+    if (OPS.has(token)) {
+      if (stack.length < 2) throw new SyntaxError(`"${token}" needs two numbers`);
+      // pop b, then a (b is the right operand: it was pushed last)
+      // push OPS.get(token)(a, b) instead of this placeholder
+      stack.pop();
+      stack.pop();
+      stack.push(0);
+    } else {
+      const value = Number(token);
+      if (Number.isNaN(value)) throw new SyntaxError(`unknown token "${token}"`);
+      stack.push(value);
+    }
+  }
+  if (stack.length !== 1) throw new SyntaxError(`expected one result, found ${stack.length}`);
+  return stack[0];
+}
+
+console.log(evaluate("2 3 + 4 *"));
+console.log(evaluate("150000 7.5 100 / * 150000 +")); // price plus 7.5% VAT, in kobo
+console.log(evaluate("10 4 -"));
+for (const bad of ["1 +", "1 2", "2 x *"]) {
+  try {
+    evaluate(bad);
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<hint><p>Pop the top of the stack first — that is the <em>right</em> operand, because it was pushed most recently — then pop again for the left operand.</p></hint>
+<hint><p><code>const b = stack.pop(); const a = stack.pop(); stack.push(OPS.get(token)(a, b));</code> Without this order, <code>"10 4 -"</code> would compute <code>4 - 10</code> instead of <code>10 - 4</code>.</p></hint>
 <solution>
 <example file="postfix.js">
 const OPS = new Map([

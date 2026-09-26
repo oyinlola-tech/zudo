@@ -927,6 +927,57 @@ PASS a v1 payload labelled v2 is rejected
 <h2 id="practice">Practice</h2>
 <exercise title="A loyalty-points consumer">
 <p>Add a <code>loyalty</code> consumer that gives the customer 1 point per ₦100 of the order total, stored in a <code>points</code> table keyed by email. It must be idempotent. Deliver one v1 and one v2 event, then deliver the v2 event again, and print the points table.</p>
+<starter file="loyalty.ts">
+// Example to learn from: the same "handleOnce, then upsert a running
+// total" shape, for a different consumer.
+//
+//   const referrals: Consumer = {
+//     name: "referrals",
+//     handle(db, envelope) {
+//       const referrerId = (envelope.payload as { referrerId: string }).referrerId;
+//       return handleOnce(db, "referrals", envelope.id, async (tx) => {
+//         await tx.query(
+//           `INSERT INTO referral_counts (referrer_id, signups) VALUES ($1, 1)
+//            ON CONFLICT (referrer_id) DO UPDATE SET signups = referral_counts.signups + 1`,
+//           [referrerId],
+//         );
+//       });
+//     },
+//   };
+//
+// Now do the same for order.created and loyalty points below.
+
+import type { Consumer } from "./consumers.js";
+import type { Envelope } from "./contracts.js";
+import { createDb } from "./db.js";
+import { handleOnce } from "./once.js";
+import { readOrderCreated } from "./upcast.js";
+
+const loyalty: Consumer = {
+  name: "loyalty",
+  handle(db, envelope) {
+    const order = readOrderCreated(envelope);
+    // 1 point per ₦100: Math.floor(order.totalKobo / 10_000)
+    const points = 0;
+    // wrap the write in handleOnce(db, "loyalty", envelope.id, ...) for
+    // idempotency; inside it, upsert into points: on conflict on email, add
+    // to the existing total instead of overwriting it
+    return handleOnce(db, "loyalty", envelope.id, async (tx) => {});
+  },
+};
+
+const db = await createDb();
+await db.exec("CREATE TABLE points (email text PRIMARY KEY, points integer NOT NULL)");
+const v1: Envelope = { id: "evt-ORD-0999", type: "order.created", version: 1,
+  payload: { orderId: "ORD-0999", email: "ada@shop.ng", totalKobo: 900_050 } };
+const v2: Envelope = { id: "evt-ORD-1001", type: "order.created", version: 2,
+  payload: { orderId: "ORD-1001", customer: { email: "ada@shop.ng", name: "Ada" }, totalKobo: 2_500_000, currency: "NGN" } };
+
+for (const envelope of [v1, v2, v2]) console.log(envelope.id, await loyalty.handle(db, envelope));
+console.log((await db.query("SELECT email, points FROM points")).rows);
+</starter>
+<hint><p><code>const points = Math.floor(order.totalKobo / 10_000);</code>, computed before the <code>handleOnce</code> call so the transaction only needs to write it.</p></hint>
+<hint><p>Inside <code>handleOnce</code>'s callback: <code>await tx.query("INSERT INTO points (email, points) VALUES ($1, $2) ON CONFLICT (email) DO UPDATE SET points = points.points + EXCLUDED.points", [order.customer.email, points]);</code>.</p></hint>
 <solution>
 <example file="loyalty.ts" project="shop" browser="no">
 import type { Consumer } from "./consumers.js";
@@ -971,6 +1022,35 @@ evt-ORD-1001 duplicate
 </exercise>
 <exercise title="Version 3: the sales channel">
 <p>The product team wants to know whether an order came from the web or the app. Design <code>order.created</code> v3 with a <code>channel: "web" | "app" | "unknown"</code> field. Write the 2 → 3 upcaster. What value does it give old events, and why not <code>"web"</code>?</p>
+<starter file="v3.ts">
+// Example to learn from: extending a previous version's interface with a
+// new field, and choosing what value an upcaster gives history.
+//
+//   interface TicketCreatedV2 extends TicketCreatedV1 {
+//     readonly priority: "low" | "normal" | "high";
+//   }
+//   const upcast1to2 = (payload: unknown): TicketCreatedV2 =>
+//     ({ ...(payload as TicketCreatedV1), priority: "normal" });
+//
+// "normal" is a neutral default: nobody recorded a priority, so guessing
+// "high" would make every old ticket look urgent. Now do the same for
+// order.created's channel below.
+
+import type { OrderCreatedV2 } from "./contracts.js";
+
+interface OrderCreatedV3 extends OrderCreatedV2 {
+  readonly channel: "web" | "app" | "unknown";
+}
+
+// spread the old payload and add the new field; old events never recorded
+// a channel, so what should it default to?
+const upcast2to3 = (payload: unknown): OrderCreatedV3 => ({ ...(payload as OrderCreatedV2), channel: "web" });
+
+const old: OrderCreatedV2 = { orderId: "ORD-1001", customer: { email: "ada@shop.ng", name: "Ada" }, totalKobo: 2_500_000, currency: "NGN" };
+console.log(upcast2to3(old).channel);
+</starter>
+<hint><p>The default must not silently claim something nobody recorded. Is <code>"web"</code> a fact about old orders, or just a guess?</p></hint>
+<hint><p><code>channel: "unknown"</code>. Filling in a specific channel would make every historical report of "web vs app" wrong.</p></hint>
 <solution>
 <example file="v3.ts" project="shop">
 import type { OrderCreatedV2 } from "./contracts.js";
@@ -992,6 +1072,8 @@ unknown
 </exercise>
 <exercise title="Transient or permanent?">
 <p>For each failure, decide whether the consumer should throw (so the queue retries) or park the event: (a) the database connection was reset; (b) the payload fails the contract because <code>totalKobo</code> is <code>-5</code>; (c) the payment provider answers 429 Too Many Requests; (d) the SMS provider says the phone number is not a valid Nigerian number.</p>
+<hint><p>Will trying again, unchanged, a moment later plausibly succeed? Or is the event itself wrong, so every retry would fail the exact same way?</p></hint>
+<hint><p>(b) never becomes valid by waiting; who can actually fix it, and how would they know it happened?</p></hint>
 <solution>
 <p>(a) Throw: a reset connection usually works on the next try. (b) Park, although it arrives there through a few retries in this lesson's code. A negative total is a bug in the producer, and no retry fixes it; it needs a developer, and the dead letter is the evidence. (c) Throw, with backoff: 429 means "later", and backoff with jitter is exactly the right answer. (d) Park: the number will not become valid by waiting. Tell a person, or the customer, so it can be corrected.</p>
 </solution>

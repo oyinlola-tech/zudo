@@ -1117,7 +1117,9 @@ import { createLogger } from "@zudojs/logger";
 const logger = createLogger({
   name: "bookstore",
   level: "info",
-  transports: [(entry) => console.log(entry.levelName, entry.message, JSON.stringify(entry.metadata))],
+  transports: [
+    (entry) => console.log(entry.levelName, entry.message, JSON.stringify(entry.metadata, (key, value) => (key === "stack" ? undefined : value))),
+  ],
 });
 
 logger.debug("cache miss", { key: "book:b1" });
@@ -1127,9 +1129,9 @@ request.error("payment failed", { orderId: "ord-1", cause: new Error("card decli
 </example>
 <output>
 info login {"requestId":"req-7","user":"ada","password":"[REDACTED]"}
-error payment failed {"requestId":"req-7","orderId":"ord-1","cause":{}}
+error payment failed {"requestId":"req-7","orderId":"ord-1","cause":{"name":"Error","message":"card declined"}}
 </output>
-<p>Levels, child loggers and redaction work like yours. Two differences are worth knowing. Transports receive a rich entry (numeric <code>level</code>, <code>levelName</code>, <code>metadata</code>, an id and a timestamp), so formatting is a separate, pluggable step. And an <code>Error</code> nested inside the metadata arrives as <code>{}</code>, the <code>JSON.stringify</code> problem your logger solved: log <code>error.message</code> explicitly, or read <a href="/learn/zudo-logging">Structured logging</a> for its error handling.</p>
+<p>Levels, child loggers and redaction work like yours. Two differences are worth knowing. Transports receive a rich entry (numeric <code>level</code>, <code>levelName</code>, <code>metadata</code>, an id and a timestamp), so formatting is a separate, pluggable step. And an <code>Error</code> nested inside the metadata is normalised into plain data before a transport ever sees it — <code>name</code>, <code>message</code> and <code>stack</code> first, since those are non-enumerable on the error itself, which is why a bare <code>JSON.stringify(error)</code> is <code>{}</code>. A custom transport that prints the raw <code>stack</code> would print a different, multi-line value on every machine, which is why the <code>JSON.stringify</code> replacer above drops it; the built-in formatters have an <code>includeStackTrace</code> option for the same reason. Read <a href="/learn/zudo-logging">Structured logging</a> for the rest of its error handling.</p>
 <h3>Lifecycle: @zudojs/lifecycle</h3>
 <example file="zudo-lifecycle.ts" project="fw" browser="no">
 import { createLifecycleManager } from "@zudojs/lifecycle";
@@ -1164,7 +1166,6 @@ for (const [id, status] of manager.getStatus()) console.log(`  ${id}: ${status.s
 <output>
 start database
 start queue
-stop  http
 stop  queue
 stop  database
 LifecycleStartError: Failed to start component "http".
@@ -1173,7 +1174,7 @@ state: disposed
   queue: disposed
   database: disposed
 </output>
-<p>The same rollback, with one deliberate difference: ZudoJS also calls <code>stop</code> on <code>http</code>, the component whose start failed, in case it half-started (bound a port, opened a file) before throwing. That is safer for resources and asks more of you: every <code>stop</code> must work even if its <code>start</code> did not finish. The manager also has <code>initialize</code>, <code>ready</code> and <code>dispose</code> phases, priorities, retries with backoff and per-component timeouts; <a href="/learn/zudo-lifecycle">The lifecycle in ZudoJS</a> covers them.</p>
+<p>The same rollback as yours: <code>stop</code> runs only for components whose <code>start</code> actually completed, in reverse. <code>http</code> itself is never asked to stop, because its <code>start</code> never finished — an earlier version of this package called <code>stop</code> on the failing component too, defensively, but that meant every <code>stop</code> had to work even when its matching <code>start</code> had not, for a benefit (cleaning up whatever a half-finished <code>start</code> left behind) that a component-level timeout and its own internal cleanup handle more reliably. The manager also has <code>initialize</code>, <code>ready</code> and <code>dispose</code> phases, priorities, retries with backoff and per-component timeouts; <a href="/learn/zudo-lifecycle">The lifecycle in ZudoJS</a> covers them.</p>
 <h3>Application: @zudojs/core</h3>
 <example file="zudo-core.ts" project="fw" browser="no">
 import { createApplication, createModule, defineModule } from "@zudojs/core";
@@ -1229,17 +1230,16 @@ after stop: stopped
   initialize database
   destroy    catalog
   destroy    database
-  destroy    http
 RuntimeInitializationError: Runtime module initializing failed. -> state failed
 </output>
-<p><code>createApplication</code> plays the part of your <code>createApp</code>: modules with dependencies, initialized in order and shut down in reverse. On a failed start it calls the <code>onDestroy</code> hooks as its rollback. Notice that <code>http</code>'s <code>onDestroy</code> ran although its <code>onInitialize</code> never did: write destroy hooks that are safe to call on a module that never started. <a href="/learn/zudo-core">@zudojs/core</a> covers modules in full.</p>
+<p><code>createApplication</code> plays the part of your <code>createApp</code>: modules with dependencies, initialized in order and shut down in reverse. On a failed start it calls <code>onDestroy</code> only for modules whose <code>onInitialize</code> actually ran: <code>catalog</code> and <code>database</code>, in reverse, but not <code>http</code>, whose <code>onInitialize</code> threw before it did anything to undo. <a href="/learn/zudo-core">@zudojs/core</a> covers modules in full.</p>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Job</th><th>Your mini framework</th><th>ZudoJS</th></tr></thead>
 <tbody>
 <tr><td>Container</td><td><code>Token</code>, three lifetimes, captive check, disposal; about 80 lines</td><td><code>@zudojs/container</code>: the same, plus class and alias providers, optional resolution, snapshots for tests, typed errors; default lifetime transient</td></tr>
 <tr><td>Configuration</td><td>One schema gives parsing, checking, types and secrets; environment-variable layers</td><td><code>@zudojs/config</code>: prioritised sources (defaults, memory, environment with prefixes, custom), on-demand typed getters, key- and value-based redaction; validate with <code>@zudojs/schema</code></td></tr>
 <tr><td>Logger</td><td>JSON lines, levels, child fields, redaction by name, error serialisation</td><td><code>@zudojs/logger</code>: entries with ids and timestamps, formatters and transports, child loggers, redaction; errors passed on their own, not nested</td></tr>
-<tr><td>Lifecycle</td><td>Order, timeouts, rollback without the failed component, idempotent stop</td><td><code>@zudojs/lifecycle</code>: five phases, priorities, retries, concurrency, events, signal handling; rollback includes the failed component</td></tr>
+<tr><td>Lifecycle</td><td>Order, timeouts, rollback without the failed component, idempotent stop</td><td><code>@zudojs/lifecycle</code>: five phases, priorities, retries, concurrency, events, signal handling; rollback also skips a component whose <code>start</code> never completed, the same rule</td></tr>
 <tr><td>Application</td><td><code>createApp</code> with modules and <code>stopOnSignals</code></td><td><code>@zudojs/core</code> with <code>@zudojs/runtime</code>: modules, readiness and health, runtime events, signal handling</td></tr>
 </tbody>
 </table></div>
@@ -1262,6 +1262,55 @@ RuntimeInitializationError: Runtime module initializing failed. -> state failed
 <h2 id="practice">Practice</h2>
 <exercise title="Start in parallel groups">
 <p>Write <code>startLevels(components)</code>: it returns groups of component names such that each group depends only on earlier groups. Every group could then start with <code>Promise.all</code>. Reuse <code>startOrder</code>.</p>
+<starter file="levels.ts">
+// Example to learn from: assigning each item a "wave" number, one more than
+// the highest wave of anything it depends on.
+//
+//   function waveOf(steps: { name: string; needs?: string[] }[]): Map<string, number> {
+//     const wave = new Map<string, number>();
+//     for (const step of steps) {
+//       const deps = (step.needs ?? []).map((name) => wave.get(name)!);
+//       wave.set(step.name, deps.length === 0 ? 0 : Math.max(...deps) + 1);
+//     }
+//     return wave;
+//   }
+//   console.log(waveOf([{ name: "a" }, { name: "b", needs: ["a"] }]));
+//
+// Now do the same for component levels below.
+
+import { startOrder } from "./mini/lifecycle.js";
+import type { Component } from "./mini/lifecycle.js";
+
+function startLevels(components: readonly Component[]): string[][] {
+  const level = new Map<string, number>();
+  for (const component of startOrder(components)) {
+    // A component's level is one more than the highest level of its
+    // dependencies (0 when it has none). Walking in startOrder guarantees
+    // every dependency's level is already in `level`.
+    // your code here
+  }
+  const levels: string[][] = [];
+  for (const [name, n] of level) (levels[n] ??= []).push(name);
+  return levels;
+}
+
+const components: Component[] = [
+  { name: "http", dependsOn: ["catalog", "orders"] },
+  { name: "orders", dependsOn: ["database", "queue"] },
+  { name: "catalog", dependsOn: ["database", "cache"] },
+  { name: "database" },
+  { name: "cache" },
+  { name: "queue" },
+  { name: "mailer", dependsOn: ["queue"] },
+];
+
+const levels = startLevels(components);
+levels.forEach((names, i) => console.log(`level ${i}: ${names.join(", ")}`));
+
+console.log(`${components.length} components, ${levels.length} rounds instead of ${components.length}`);
+</starter>
+<hint><p>Map each dependency's name to its already-known level: <code>const deps = (component.dependsOn ?? []).map((name) =&gt; level.get(name)!);</code>.</p></hint>
+<hint><p>Then <code>level.set(component.name, deps.length === 0 ? 0 : Math.max(...deps) + 1);</code>, the same shape as <code>waveOf</code> above.</p></hint>
 <solution>
 <example file="levels.ts" project="fw">
 import { startOrder } from "./mini/lifecycle.js";
@@ -1304,6 +1353,68 @@ level 2: http
 </exercise>
 <exercise title="A .env file source">
 <p>Write <code>parseEnvFile(text)</code> that turns a <code>.env</code> file into an <code>Env</code> layer: skip blank lines and <code>#</code> comments, allow an <code>export</code> prefix, strip matching quotes, drop a trailing comment on unquoted values, and throw with the line number on a line without <code>=</code>. Use it as the middle layer of <code>loadConfig</code>.</p>
+<starter file="env-file.ts">
+// Example to learn from: turning simple text lines into a record, skipping
+// blanks/comments and trimming quotes.
+//
+//   function parseFlags(text: string): Record<string, boolean> {
+//     const flags: Record<string, boolean> = {};
+//     for (const raw of text.split("\n")) {
+//       const line = raw.trim();
+//       if (line === "" || line.startsWith(";")) continue;
+//       const [name, value] = line.split("=").map((s) => s.trim());
+//       flags[name!] = value === "true";
+//     }
+//     return flags;
+//   }
+//   console.log(parseFlags("; comment\nbeta=true\ndark_mode = false"));
+//
+// Now write parseEnvFile below.
+
+import { schema } from "./shop-config.js";
+import { loadConfig, safeView } from "./mini/config.js";
+import type { Env } from "./mini/config.js";
+
+function parseEnvFile(text: string): Env {
+  const env: Record<string, string> = {
+    // safe placeholders, so loadConfig below can still run while you build
+    // the real parser: your finished loop should overwrite these from `text`
+    DATABASE_URL: "postgres://placeholder",
+    SESSION_SECRET: "x".repeat(32),
+  };
+  for (const [index, rawLine] of text.split(/\r?\n/).entries()) {
+    // 1. trim rawLine and strip a leading "export " prefix
+    // 2. skip if blank or starts with "#"
+    // 3. split on the first "=" into key/value; if there is no "=" (or it
+    //    is at position 0), throw new Error(`.env line ${index + 1}: expected KEY=value`)
+    // 4. if value is wrapped in matching quotes ('...' or "..."), strip
+    //    them; otherwise drop a trailing " #comment"
+    // 5. env[key] = value
+    // your code here
+  }
+  return env;
+}
+
+const file = `
+# local development
+PORT=8080
+export LOG_LEVEL=debug   # chatty on purpose
+DATABASE_URL="postgres://dev:dev@localhost/shop?sslmode=disable"
+SESSION_SECRET='dev-only-secret-that-is-32-chars!'
+`;
+
+const fromFile = parseEnvFile(file);
+console.log(fromFile);
+const config = loadConfig(schema, fromFile, { LOG_LEVEL: "warn" });
+console.log(safeView(schema, config));
+try {
+  parseEnvFile("PORT 8080");
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<hint><p>Strip the prefix and skip early: <code>const line = rawLine.trim().replace(/^export\s+/, ""); if (line === "" || line.startsWith("#")) continue;</code>. Find <code>=</code> with <code>line.indexOf("=")</code>, and throw when it is <code>&lt;= 0</code>.</p></hint>
+<hint><p>Quotes: <code>const quoted = /^(["'])(.*)\1$/.exec(value); if (quoted) value = quoted[2]!; else value = value.replace(/\s+#.*$/, "");</code>, then <code>env[key] = value;</code>.</p></hint>
 <solution>
 <example file="env-file.ts" project="fw">
 import { schema } from "./shop-config.js";
@@ -1365,6 +1476,8 @@ try {
 </exercise>
 <exercise title="Pick the lifetime">
 <p>For each BookStore service, choose singleton, scoped or transient, and say who disposes it: the PostgreSQL connection pool; the current user of a request; a password hasher with no state; the database transaction of a request; the typed config; a logger with the request's id bound to it.</p>
+<hint><p>Ask two questions of each service: does its state belong to the whole app, to one request, or to nobody? And who created it is usually who must dispose of it.</p></hint>
+<hint><p>A service with no state at all does not need a lifetime that recreates it; the interesting decisions are the two that are scoped to one request, and why sharing them more widely would leak data between customers.</p></hint>
 <solution>
 <ul>
 <li><strong>Connection pool:</strong> singleton. Expensive to create, safe to share; the container closes it at shutdown.</li>

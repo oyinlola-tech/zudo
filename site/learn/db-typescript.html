@@ -1292,7 +1292,63 @@ console.log("type tests compiled");</script>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="payments.ts" data-command="npx tsx payments.ts"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Type the payments table</h3><p>A <code>payments</code> table has <code>id integer</code>, <code>order_id integer not null</code>, <code>amount numeric(12, 2) not null</code> (in naira, from an old integration), <code>failure_reason text</code> (null when the payment succeeded) and <code>paid_at timestamptz</code> (null until paid). Write <code>PaymentRow</code>, a <code>Payment</code> entity with <code>amountKobo: number</code>, and <code>toPayment</code>, converting the naira string to kobo exactly (no floating point).</p><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="21" data-file="payments.ts">
+<div class="lx-exercise" data-exercise="1" data-mode="paste" data-target="0" data-file="payments.ts" data-command="npx tsx payments.ts" data-title="Type the payments table"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Type the payments table</h3><div class="lx-ex-task"><p>A <code>payments</code> table has <code>id integer</code>, <code>order_id integer not null</code>, <code>amount numeric(12, 2) not null</code> (in naira, from an old integration), <code>failure_reason text</code> (null when the payment succeeded) and <code>paid_at timestamptz</code> (null until paid). Write <code>PaymentRow</code>, a <code>Payment</code> entity with <code>amountKobo: number</code>, and <code>toPayment</code>, converting the naira string to kobo exactly (no floating point).</p></div><script type="text/plain" class="lx-ex-starter" data-file="payments.ts">// Example to learn from: the same raw-row-to-entity shape, with an exact
+// text-to-integer conversion, for a discount's percentage instead of a
+// payment's amount.
+//
+//   interface DiscountRow { id: number; code: string; percent: string; }  // "10.50"
+//   interface Discount { readonly id: number; readonly code: string; readonly basisPoints: number; }
+//   function percentToBasisPoints(percent: string): number {
+//     const match = /^(\d+)\.(\d{2})$/.exec(percent);
+//     if (!match) throw new RangeError(`not a percent with 2 decimals: ${percent}`);
+//     return Number(match[1]) * 100 + Number(match[2]);
+//   }
+//   function toDiscount(row: DiscountRow): Discount {
+//     return { id: row.id, code: row.code, basisPoints: percentToBasisPoints(row.percent) };
+//   }
+//   console.log(toDiscount({ id: 1, code: "SAVE10", percent: "10.50" }));
+//   // { id: 1, code: 'SAVE10', basisPoints: 1050 }
+//
+// Now do the same shape for PaymentRow, Payment and toPayment below.
+
+import { PGlite } from "@electric-sql/pglite";
+
+// your code here: interface PaymentRow matching the raw table columns —
+// id: number; order_id: number; amount: string; failure_reason: string | null; paid_at: Date | null;
+interface PaymentRow {
+  id: number;
+}
+
+// your code here: interface Payment, the camelCase entity — readonly id:
+// number; readonly orderId: number; readonly amountKobo: number; readonly
+// failureReason: string | null; readonly paidAt: Date | null;
+interface Payment {
+  readonly id: number;
+}
+
+function nairaToKobo(amount: string): number {
+  // your code here: parse a string like "1150.15" as digits, never as a
+  // float — /^(\d+)\.(\d{2})$/, then Number(naira) * 100 + Number(kobo),
+  // throwing a RangeError when it doesn't match or overflows a safe integer.
+  return 0;
+}
+
+function toPayment(row: PaymentRow): Payment {
+  // your code here: map every snake_case column on row to its camelCase
+  // field on Payment, converting amount with nairaToKobo.
+  return { id: row.id } as Payment;
+}
+
+const db = new PGlite();
+await db.exec(`
+  create table payments (id integer primary key, order_id integer not null, amount numeric(12, 2) not null,
+                         failure_reason text, paid_at timestamptz);
+  insert into payments values (1, 1, 1150.15, 'card declined', null), (2, 1, 1150.15, null, '2026-09-01 09:31:00+00');
+`);
+const { rows } = await db.query<PaymentRow>("select * from payments order by id");
+console.log(rows.map(toPayment));
+console.log(Number("1150.15") * 100, nairaToKobo("1150.15"));
+await db.close();</script><p class="lx-ex-how">Write it in the editor, run it on your computer, then press <strong>Check</strong> and paste what it printed. Hints and the solution open up once you have checked your output.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Parsing the amount as text and multiplying its whole-naira part by 100 keeps every kobo exact; letting <code>Number("1150.15") * 100</code> do the conversion is the bug the last line of output is there to show.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const match = /^(\d+)\.(\d{2})$/.exec(amount); if (!match) throw new RangeError(...); const kobo = Number(match[1]) * 100 + Number(match[2]); if (!Number.isSafeInteger(kobo)) throw new RangeError(...); return kobo;</code> — then <code>toPayment</code> just renames each field, calling <code>nairaToKobo(row.amount)</code> for <code>amountKobo</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="21" data-file="payments.ts">
 <figcaption class="lx-bar"><span class="lx-file">payments.ts</span><button type="button" class="lx-edit" data-index="21" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">PGlite</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@electric-sql/pglite"</span><span class="t-pn">;</span>
 
@@ -1407,9 +1463,9 @@ await db.close();</script>
 </figure>
 <p>The last line shows why the string is parsed as digits: floating-point arithmetic on the naira value can be off by a fraction of a kobo, which is enough to break an equality check against the provider's amount.</p></div></div>
 
-<div class="lx-exercise" data-exercise="2" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Stop the leak</h3><p>A teammate writes <code>return { ...customer, orderCount }</code> in a handler whose return type is <code>CustomerSummary { id; fullName; orderCount }</code>. It compiles. What goes out in the response, why does TypeScript allow it, and how do you fix it so the compiler protects you next time?</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>The response contains every property of the customer entity, including <code>email</code>, <code>phone</code> and <code>passwordHash</code>, plus <code>orderCount</code>. The excess property check does not fire, because properties that come from a spread are not checked as excess, and structurally the object has everything <code>CustomerSummary</code> needs. Fix it by listing fields: <code>return { id: customer.id, fullName: customer.fullName, orderCount }</code>. Now any extra property someone adds to that literal is a compile error, and add a <code>// @ts-expect-error</code> type test that reads <code>passwordHash</code> from a <code>CustomerSummary</code>, plus a response test that asserts the exact set of JSON keys.</p></div></div>
+<div class="lx-exercise" data-exercise="2" data-mode="think" data-title="Stop the leak"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Stop the leak</h3><div class="lx-ex-task"><p>A teammate writes <code>return { ...customer, orderCount }</code> in a handler whose return type is <code>CustomerSummary { id; fullName; orderCount }</code>. It compiles. What goes out in the response, why does TypeScript allow it, and how do you fix it so the compiler protects you next time?</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>TypeScript's excess property check only looks closely at object <em>literals</em> written directly where a type is expected. Ask what kind of value <code>{ ...customer, orderCount }</code> actually is once the spread has run.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>A spread's result is structurally compatible with <code>CustomerSummary</code> (it has at least those fields), so the assignment is allowed even though it also carries <code>email</code>, <code>phone</code> and <code>passwordHash</code>. List the fields by hand instead — <code>{ id: customer.id, fullName: customer.fullName, orderCount }</code> — so that specific object literal <em>is</em> checked for excess properties.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>The response contains every property of the customer entity, including <code>email</code>, <code>phone</code> and <code>passwordHash</code>, plus <code>orderCount</code>. The excess property check does not fire, because properties that come from a spread are not checked as excess, and structurally the object has everything <code>CustomerSummary</code> needs. Fix it by listing fields: <code>return { id: customer.id, fullName: customer.fullName, orderCount }</code>. Now any extra property someone adds to that literal is a compile error, and add a <code>// @ts-expect-error</code> type test that reads <code>passwordHash</code> from a <code>CustomerSummary</code>, plus a response test that asserts the exact set of JSON keys.</p></div></div>
 
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Choose the approach</h3><p>Pick an approach for each team: (a) two developers building an admin panel with mostly CRUD screens, no SQL experience; (b) a payments team whose statements use <code>for update</code>, CTEs and serializable retries; (c) a reporting service with 40 complex read-only queries; (d) an API with dynamic filters and sorting chosen by the client.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) An ORM such as Prisma or Drizzle: fast CRUD and migrations, with the indexes and N+1 queries watched. (b) Typed raw SQL, or a query builder with raw fragments: they need exact control over locks, isolation and statement shape, and the lessons' repositories fit that well. (c) Raw SQL with codegen (pgtyped or sqlc): every report query gets exact result types without rewriting SQL in another API. (d) A query builder such as Kysely: composable, typed conditions, with sort columns from an allow-list rather than pasted text.</p></div></div>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Choose the approach"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Choose the approach</h3><div class="lx-ex-task"><p>Pick an approach for each team: (a) two developers building an admin panel with mostly CRUD screens, no SQL experience; (b) a payments team whose statements use <code>for update</code>, CTEs and serializable retries; (c) a reporting service with 40 complex read-only queries; (d) an API with dynamic filters and sorting chosen by the client.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Ask, for each team: how much of their work is plain CRUD versus SQL only an expert would write by hand? Do queries need to compose at runtime, or are they mostly fixed and numerous?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(a) favours an ORM's generated CRUD over hand-written SQL. (b) needs exact control over locks and isolation, which raw SQL (typed) gives and an ORM tends to hide. (c) is many fixed queries, each wanting its own exact result type — a codegen tool over raw SQL fits. (d) needs queries assembled at runtime from untrusted pieces, which is what a typed query builder is for.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><p>(a) An ORM such as Prisma or Drizzle: fast CRUD and migrations, with the indexes and N+1 queries watched. (b) Typed raw SQL, or a query builder with raw fragments: they need exact control over locks, isolation and statement shape, and the lessons' repositories fit that well. (c) Raw SQL with codegen (pgtyped or sqlc): every report query gets exact result types without rewriting SQL in another API. (d) A query builder such as Kysely: composable, typed conditions, with sort columns from an allow-list rather than pasted text.</p></div></div>
 </section>
 
 <section>

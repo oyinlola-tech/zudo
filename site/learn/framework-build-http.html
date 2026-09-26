@@ -8,19 +8,6 @@
   <link rel="alternate" type="text/markdown" href="/learn/framework-build-http.md" title="Markdown version">
   <meta name="description" content="Add a router, middleware, controllers, validation, error responses and an event bus to your mini framework, serve it with node:http, and compare it with ZudoJS.">
   <!-- seo:start -->
-  <meta name="robots" content="index, follow, max-image-preview:large">
-  <link rel="canonical" href="https://zudojs.oyinlola.site/learn/framework-build-http">
-  <meta property="og:site_name" content="ZudoJS">
-  <meta property="og:type" content="article">
-  <meta property="og:title" content="Build a mini framework, part 2: HTTP — ZudoJS Academy">
-  <meta property="og:description" content="Add a router, middleware, controllers, validation, error responses and an event bus to your mini framework, serve it with node:http, and compare it with ZudoJS.">
-  <meta property="og:url" content="https://zudojs.oyinlola.site/learn/framework-build-http">
-  <meta property="og:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Build a mini framework, part 2: HTTP — ZudoJS Academy">
-  <meta name="twitter:description" content="Add a router, middleware, controllers, validation, error responses and an event bus to your mini framework, serve it with node:http, and compare it with ZudoJS.">
-  <meta name="twitter:image" content="https://zudojs.oyinlola.site/assets/og-image.png">
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"ZudoJS","item":"https://zudojs.oyinlola.site/"},{"@type":"ListItem","position":2,"name":"Academy","item":"https://zudojs.oyinlola.site/learn"},{"@type":"ListItem","position":3,"name":"Software design and architecture","item":"https://zudojs.oyinlola.site/learn/software-architecture"},{"@type":"ListItem","position":4,"name":"Build a mini framework, part 2: HTTP","item":"https://zudojs.oyinlola.site/learn/framework-build-http"}]}</script>
   <!-- seo:end -->
   <meta name="keywords" content="build a web framework, router from scratch, path parameters, middleware pipeline, onion model, controllers, request validation, error handling middleware, http error responses, event bus, node http server, graceful shutdown, body size limit, zudojs http">
   <meta name="author" content="Oluwayemi Oyinlola Michael">
@@ -2634,7 +2621,7 @@ await server.stop();</script>
 =&gt; POST /books 409 {"error":"\"Purple Hibiscus\" is already in the catalog","code":"ERR_CONFLICT"}
 =&gt; POST /books 400 {"error":"validation_failed","details":["title: String must be at least 1 character","priceKobo: Expected &gt;= 100, received 5","(body): Unknown key: isbn"]}
 =&gt; POST /books 401 {"error":"Send a valid X-Api-Key header","code":"ERR_HTTP_UNAUTHORIZED"}
-=&gt; DELETE /books/b1 405 {"error":"Method Not Allowed","method":"DELETE","path":"/books/b1","allowed":["GET"]}
+=&gt; DELETE /books/b1 405 {"error":"Method Not Allowed","code":"METHOD_NOT_ALLOWED","method":"DELETE","path":"/books/b1","allowed":["GET","HEAD","OPTIONS"]}
 =&gt; GET /books/b9 404 {"error":"Book b9 was not found","code":"ERR_RESOURCE_NOT_FOUND"}</pre></div>
 </figure>
 <p>The same statuses for the same requests, from the same ideas. The differences are instructive:</p>
@@ -2667,7 +2654,62 @@ await server.stop();</script>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="rate-limit.ts" data-project="fwh"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A rate-limiting middleware</h3><p>Write <code>rateLimit(max, windowMs, now)</code>: at most <code>max</code> requests per API key per fixed window; the next ones get 429 with a <code>Retry-After</code> header in seconds. Take the clock as a parameter and test it with <code>compose</code>, without a server.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="23" data-file="rate-limit.ts" data-project="fwh">
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="rate-limit.ts" data-project="fwh" data-title="A rate-limiting middleware"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A rate-limiting middleware</h3><div class="lx-ex-task"><p>Write <code>rateLimit(max, windowMs, now)</code>: at most <code>max</code> requests per API key per fixed window; the next ones get 429 with a <code>Retry-After</code> header in seconds. Take the clock as a parameter and test it with <code>compose</code>, without a server.</p></div><script type="text/plain" class="lx-ex-starter" data-file="rate-limit.ts">// Example to learn from: a fixed-window counter keyed by id, using an
+// injected clock so it can be tested without waiting.
+//
+//   function attemptsAllowed(max: number, windowMs: number, now: () => number) {
+//     const windows = new Map<string, { start: number; count: number }>();
+//     return (id: string): boolean => {
+//       const time = now();
+//       let w = windows.get(id);
+//       if (w === undefined || time - w.start >= windowMs) {
+//         w = { start: time, count: 0 };
+//         windows.set(id, w);
+//       }
+//       w.count++;
+//       return w.count <= max;
+//     };
+//   }
+//   let clock = 0;
+//   const allowed = attemptsAllowed(2, 1000, () => clock);
+//   console.log(allowed("ada"), allowed("ada"), allowed("ada"));
+//
+// Now do the same as a middleware below.
+
+import { compose } from "./mini/http/pipeline.js";
+import type { HttpContext, Middleware } from "./mini/http/types.js";
+import { json } from "./mini/http/types.js";
+
+function rateLimit(max: number, windowMs: number, now: () => number): Middleware {
+  const windows = new Map<string, { start: number; count: number }>();
+  return async (ctx, next) => {
+    // 1. key = ctx.headers["x-api-key"] ?? "anonymous"; time = now()
+    // 2. get or start a window for `key`: { start: time, count: 0 } when
+    //    missing, or when windowMs has elapsed since window.start
+    // 3. increment window.count
+    // 4. over `max`: return json(429, { error: "too_many_requests" },
+    //    { "retry-after": String(secondsLeft) }), where secondsLeft is
+    //    Math.ceil((window.start + windowMs - time) / 1000)
+    // 5. otherwise: return next()
+    // your code here
+    return next();
+  };
+}
+
+let clock = 0;
+const handler = compose([rateLimit(3, 60_000, () => clock)], () => json(200, "ok"));
+const request = (key: string) => ({ headers: { "x-api-key": key } }) as unknown as HttpContext;
+
+const seen: string[] = [];
+for (let i = 1; i <= 5; i++) {
+  const response = await handler(request("ada"));
+  seen.push(`${response.status}${response.headers?.["retry-after"] ? ` (retry after ${response.headers["retry-after"]}s)` : ""}`);
+  clock += 10_000;
+}
+console.log("ada:", seen.join(", "));
+console.log("tunde:", (await handler(request("tunde"))).status);
+clock = 60_000;
+console.log("ada, a minute later:", (await handler(request("ada"))).status);</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Start or reset the window: <code>let window = windows.get(key); if (window === undefined || time - window.start &gt;= windowMs) { window = { start: time, count: 0 }; windows.set(key, window); }</code>, then <code>window.count++;</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>if (window.count &gt; max) { const retryAfter = Math.ceil((window.start + windowMs - time) / 1000); return json(429, { error: "too_many_requests" }, { "retry-after": String(retryAfter) }); } return next();</code>.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="23" data-file="rate-limit.ts" data-project="fwh">
 <figcaption class="lx-bar"><span class="lx-file">rate-limit.ts</span><button type="button" class="lx-edit" data-index="23" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="23"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> compose <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./mini/http/pipeline.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpContext</span><span class="t-pn">,</span> <span class="t-ty">Middleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./mini/http/types.js"</span><span class="t-pn">;</span>
@@ -2749,7 +2791,58 @@ tunde: 200
 ada, a minute later: 200</pre></div>
 </figure>
 <p>Each key has its own window, so Tunde is not punished for Ada's requests, and the window resets after a minute. This is the fixed-window algorithm; <a href="/learn/api-rate-limiting">Rate limiting</a> compares it with sliding windows and token buckets. With several server processes, the counters must live in a shared store such as Redis, or each process allows <code>max</code> on its own.</p></div></div>
-<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="array-schema.ts" data-project="fwh"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Lists in the schema builder</h3><p>Add <code>array(item, max)</code> to the validation builder, as a separate function that returns a <code>Schema&lt;T[]&gt;</code>. Issues inside the list must carry their index, like <code>body.items[1].quantity</code>.</p><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="24" data-file="array-schema.ts" data-project="fwh">
+<div class="lx-exercise" data-exercise="2" data-mode="run" data-target="0" data-file="array-schema.ts" data-project="fwh" data-title="Lists in the schema builder"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Lists in the schema builder</h3><div class="lx-ex-task"><p>Add <code>array(item, max)</code> to the validation builder, as a separate function that returns a <code>Schema&lt;T[]&gt;</code>. Issues inside the list must carry their index, like <code>body.items[1].quantity</code>.</p></div><script type="text/plain" class="lx-ex-starter" data-file="array-schema.ts">// Example to learn from: validating a list, keeping each item's position in
+// its error message.
+//
+//   function positiveNumbers(max: number) {
+//     return (input: unknown): string[] => {
+//       if (!Array.isArray(input)) return ["must be a list"];
+//       if (input.length > max) return [`must have at most ${max} items`];
+//       return input.flatMap((value, index) => (typeof value === "number" && value > 0 ? [] : [`[${index}] must be a positive number`]));
+//     };
+//   }
+//   console.log(positiveNumbers(3)([1, -2, "x"]));
+//
+// Now do the same as a Schema<T[]> below, delegating each item to its own
+// schema instead of a typeof check.
+
+import type { Issue, Schema } from "./mini/http/validation.js";
+import { s } from "./mini/http/validation.js";
+
+function array<T>(item: Schema<T>, max: number): Schema<T[]> {
+  const schema: Schema<T[]> = {
+    parse(input, path = "body") {
+      // 1. not an array: return { ok: false, issues: [{ path, message: "must be a list" }] }
+      // 2. longer than max: return { ok: false, issues: [{ path, message: `must have at most ${max} items` }] }
+      // 3. otherwise call item.parse(element, `${path}[${index}]`) for each
+      //    element; collect ok values into `value`, collect every issue
+      //    from a failed one into `issues`
+      // 4. any issues collected: return { ok: false, issues }; otherwise
+      //    { ok: true, value }
+      // your code here
+      return { ok: true, value: [] };
+    },
+    optional() {
+      return {
+        parse: (input, path) => (input === undefined ? { ok: true, value: undefined } : schema.parse(input, path)),
+        optional() {
+          return this;
+        },
+      };
+    },
+  };
+  return schema;
+}
+
+const Cart = s.object({ items: array(s.object({ bookId: s.string(2, 10), quantity: s.integer(1, 5) }), 3) });
+for (const input of [
+  { items: [{ bookId: "b1", quantity: 2 }] },
+  { items: [{ bookId: "b1", quantity: 2 }, { bookId: "", quantity: 9 }] },
+  { items: [1, 2, 3, 4] },
+]) {
+  const result = Cart.parse(input);
+  console.log(result.ok ? JSON.stringify(result.value) : result.issues.map((i) => `${i.path} ${i.message}`).join("; "));
+}</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Guard first, in order: <code>if (!Array.isArray(input)) return { ok: false, issues: [{ path, message: "must be a list" }] }; if (input.length &gt; max) return { ok: false, issues: [{ path, message: `must have at most ${max} items` }] };</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>Then walk the array: <code>input.forEach((element, index) =&gt; { const result = item.parse(element, `${path}[${index}]`); if (result.ok) value.push(result.value); else issues.push(...result.issues); });</code>, and return based on whether <code>issues</code> collected anything.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="24" data-file="array-schema.ts" data-project="fwh">
 <figcaption class="lx-bar"><span class="lx-file">array-schema.ts</span><button type="button" class="lx-edit" data-index="24" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="24"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Issue</span><span class="t-pn">,</span> <span class="t-ty">Schema</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./mini/http/validation.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> s <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./mini/http/validation.js"</span><span class="t-pn">;</span>
@@ -2833,7 +2926,7 @@ body.items[1].bookId must be text of 2 to 10 characters; body.items[1].quantity 
 body.items must have at most 3 items</pre></div>
 </figure>
 <p>The item schema receives the path with the index, so nested problems point at the exact element. The length check comes first: a list of 10,000 items should be refused before 10,000 items are validated.</p></div></div>
-<div class="lx-exercise" data-exercise="3" data-mode="think"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Where does it belong?</h3><p>For each requirement, choose router, global middleware, route middleware, controller, service or event listener: (1) every response gets an <code>X-Request-Id</code> header; (2) only staff may add books; (3) a book's price may not drop more than 50% at once; (4) <code>/books/:id</code> answers 400 for an id that is not <code>b</code> followed by digits; (5) the sales dashboard counts new books; (6) requests over 100 per minute get 429.</p><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ol>
+<div class="lx-exercise" data-exercise="3" data-mode="think" data-title="Where does it belong?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Where does it belong?</h3><div class="lx-ex-task"><p>For each requirement, choose router, global middleware, route middleware, controller, service or event listener: (1) every response gets an <code>X-Request-Id</code> header; (2) only staff may add books; (3) a book's price may not drop more than 50% at once; (4) <code>/books/:id</code> answers 400 for an id that is not <code>b</code> followed by digits; (5) the sales dashboard counts new books; (6) requests over 100 per minute get 429.</p></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Ask: does this apply to every route or one route, is it about HTTP shapes or business rules, and could something outside HTTP (a CLI, a bulk import) need the same rule?</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>(3) and (5) are not about requests or responses at all; re-read <a href="/learn/arch-clean">Clean architecture</a> for where a rule that must hold everywhere, and a fact other features react to, each belong.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ol>
 <li><strong>Framework or global middleware</strong>: it is the same for every route. Your adapter already does it.</li>
 <li><strong>Route middleware</strong> (<code>requireStaff</code>) for authentication; if the rule gets richer ("editors may add, only admins may delete"), the authorization check moves into the service.</li>
 <li><strong>Service or domain</strong>: it is a business rule. The CLI and a bulk import must obey it too, so it cannot live in HTTP code (<a href="/learn/arch-clean">Clean architecture</a>).</li>
