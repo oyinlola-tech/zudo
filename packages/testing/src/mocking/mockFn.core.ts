@@ -4,19 +4,17 @@
  * Creates mock functions that record calls and return configured values.
  */
 
-/** How a mock produces its result. */
-type MockMode =
-  | { readonly kind: "none" }
-  | { readonly kind: "value"; readonly value: unknown }
-  | { readonly kind: "resolve"; readonly value: unknown }
-  | { readonly kind: "reject"; readonly error: unknown }
-  | {
-      readonly kind: "implementation";
-      readonly fn: (...args: never[]) => unknown;
-    };
+import {
+  defineRecordingProperties,
+  produceResult,
+  type MockMode,
+} from "./mockFn.state.js";
 
 /**
  * A mock function that records calls and returns configured values.
+ *
+ * The `…Once` setters queue a result for the next call only; queued results
+ * are consumed in order before the persistent mode (or default) applies.
  */
 export interface MockFn<
   TArgs extends readonly unknown[] = unknown[],
@@ -40,7 +38,17 @@ export interface MockFn<
   /** Configures the mock to return a promise rejecting with `error`. */
   mockRejectedValue: (error: unknown) => void;
   mockImplementation: (fn: (...args: TArgs) => TResult) => void;
+  /** Returns `value` from the next call only. */
+  mockReturnValueOnce: (value: TResult) => void;
+  /** Returns a promise resolving to `value` from the next call only. */
+  mockResolvedValueOnce: (value: Awaited<TResult>) => void;
+  /** Returns a promise rejecting with `error` from the next call only. */
+  mockRejectedValueOnce: (error: unknown) => void;
+  /** Runs `fn` for the next call only. */
+  mockImplementationOnce: (fn: (...args: TArgs) => TResult) => void;
+  /** Clears the recording, the persistent mode and any queued one-shots. */
   mockReset: () => void;
+  /** Clears the recording only. */
   mockClear: () => void;
 }
 
@@ -55,8 +63,6 @@ export interface MockFn<
  * const mockFn = createMockFn<string[], void>();
  *
  * mockFn("hello", "world");
- *
- * expect(mockFn.calls).toHaveLength(1);
  * expect(mockFn.calls[0]).toEqual(["hello", "world"]);
  * expect(mockFn.callCount).toBe(1);
  * ```
@@ -68,6 +74,7 @@ export function createMockFn<
   const calls: TArgs[] = [];
   const results: TResult[] = [];
   const errors: unknown[] = [];
+  const once: MockMode[] = [];
 
   const initialMode: MockMode =
     arguments.length > 0
@@ -76,33 +83,11 @@ export function createMockFn<
 
   let mode: MockMode = initialMode;
 
-  /**
-   * Produce the configured result.
-   *
-   * `undefined` is a legitimate configured value, so the mode is tracked
-   * explicitly rather than inferred from a `!== undefined` check — which
-   * silently ignored `mockReturnValue(undefined)`.
-   */
-  const produce = (args: TArgs): TResult => {
-    switch (mode.kind) {
-      case "value":
-        return mode.value as TResult;
-      case "resolve":
-        return Promise.resolve(mode.value) as TResult;
-      case "reject":
-        return Promise.reject(mode.error) as TResult;
-      case "implementation":
-        return (mode.fn as (...a: TArgs) => TResult)(...args);
-      case "none":
-        return undefined as TResult;
-    }
-  };
-
   const mock = ((...args: TArgs): TResult => {
     calls.push(args);
     let result: TResult;
     try {
-      result = produce(args);
+      result = produceResult<TArgs, TResult>(once.shift() ?? mode, args);
     } catch (error) {
       // Keep `results` aligned with `calls` even when the implementation
       // throws; otherwise every later result shifts one index left.
@@ -114,51 +99,43 @@ export function createMockFn<
     return result;
   }) as MockFn<TArgs, TResult>;
 
-  Object.defineProperty(mock, "calls", {
-    get: () => calls,
-    enumerable: true,
+  defineRecordingProperties(mock, { calls, results, errors });
+
+  const implementation = (fn: (...args: TArgs) => TResult): MockMode => ({
+    kind: "implementation",
+    fn: fn as (...a: never[]) => unknown,
   });
 
-  Object.defineProperty(mock, "results", {
-    get: () => results,
-    enumerable: true,
-  });
-
-  Object.defineProperty(mock, "errors", {
-    get: () => errors,
-    enumerable: true,
-  });
-
-  Object.defineProperty(mock, "invoked", {
-    get: () => calls.length > 0,
-    enumerable: true,
-  });
-
-  Object.defineProperty(mock, "callCount", {
-    get: () => calls.length,
-    enumerable: true,
-  });
-
-  mock.mockReturnValue = (value: TResult): void => {
+  mock.mockReturnValue = (value) => {
     mode = { kind: "value", value };
   };
-
-  mock.mockResolvedValue = (value: Awaited<TResult>): void => {
+  mock.mockResolvedValue = (value) => {
     mode = { kind: "resolve", value };
   };
-
-  mock.mockRejectedValue = (error: unknown): void => {
+  mock.mockRejectedValue = (error) => {
     mode = { kind: "reject", error };
   };
-
-  mock.mockImplementation = (fn: (...args: TArgs) => TResult): void => {
-    mode = { kind: "implementation", fn: fn as (...a: never[]) => unknown };
+  mock.mockImplementation = (fn) => {
+    mode = implementation(fn);
+  };
+  mock.mockReturnValueOnce = (value) => {
+    once.push({ kind: "value", value });
+  };
+  mock.mockResolvedValueOnce = (value) => {
+    once.push({ kind: "resolve", value });
+  };
+  mock.mockRejectedValueOnce = (error) => {
+    once.push({ kind: "reject", error });
+  };
+  mock.mockImplementationOnce = (fn) => {
+    once.push(implementation(fn));
   };
 
   mock.mockReset = (): void => {
     calls.length = 0;
     results.length = 0;
     errors.length = 0;
+    once.length = 0;
     mode = initialMode;
   };
 

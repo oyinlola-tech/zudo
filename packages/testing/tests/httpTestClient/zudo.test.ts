@@ -106,7 +106,10 @@ describe("createHttpTestClient — @zudojs/http router", () => {
 
   it("maps a thrown error to 500 without leaking the message or stack", async () => {
     const response = await client(createZudoApp()).get("/boom").expect(500);
-    expect(response.body).toEqual({ error: "Internal Server Error" });
+    expect(response.body).toEqual({
+      error: "Internal Server Error",
+      code: "INTERNAL_SERVER_ERROR",
+    });
     expect(response.text).not.toContain(SECRET);
     expect(response.text).not.toMatch(/at .*\.ts:\d+/);
   });

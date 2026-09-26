@@ -12,8 +12,14 @@ import { SchemaIssueCode } from "@zudojs/constants";
 
 /**
  * Schema for a fixed set of allowed values.
+ *
+ * `T` is a `const` type parameter so the members stay literal even when the
+ * schema is written inline inside `union([...])` or an object shape. There
+ * the contextual return type (`Schema<unknown>`) used to widen `T` to
+ * `string`, and `parse()` on the union returned `string` while `Infer<>` on
+ * the same schema written on its own line gave the literal union.
  */
-export class EnumSchema<T extends string | number> extends ModifiableSchema<T> {
+export class EnumSchema<const T extends string | number> extends ModifiableSchema<T> {
   public readonly _type = "enum";
 
   constructor(private readonly _values: readonly T[]) {
@@ -41,7 +47,7 @@ export class EnumSchema<T extends string | number> extends ModifiableSchema<T> {
 }
 
 /** Creates an enum schema from an array of allowed values. */
-export function enumSchema<T extends string | number>(
+export function enumSchema<const T extends string | number>(
   values: readonly T[],
 ): EnumSchema<T> {
   return new EnumSchema(values);

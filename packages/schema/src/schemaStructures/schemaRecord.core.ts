@@ -7,6 +7,8 @@
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
 import { describeType } from "../schemaBase/schemaBase.describe.js";
+import { ModifiableSchema } from "../schemaModifiers/schemaModifiable.core.js";
+
 import {
   addIssue,
   childContext,
@@ -27,7 +29,9 @@ import { StringSchema } from "../schemaPrimitives/index.js";
 /**
  * Schema for record objects with string keys and typed values.
  */
-export class RecordSchema<TValue> extends Schema<Record<string, TValue>> {
+export class RecordSchema<TValue> extends ModifiableSchema<
+  Record<string, TValue>
+> {
   public readonly _type = "record";
 
   constructor(

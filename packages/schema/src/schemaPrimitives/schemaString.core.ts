@@ -13,7 +13,7 @@ import {
   SCHEMA_STRING_FORMATS,
   SCHEMA_DEFAULT_MAX_STRING_LENGTH,
 } from "@zudojs/constants";
-import { formatCount } from "@zudojs/types";
+import { characterLength, formatCount } from "@zudojs/types";
 
 import { OptionalModifierSchema } from "../schemaModifiers/schemaOptionalNullable.core.js";
 import { NullableModifierSchema } from "../schemaModifiers/schemaOptionalNullable.core.js";
@@ -81,15 +81,18 @@ export class StringSchema extends Schema<string> {
 
     // Bound the input before any pattern runs against it. Without a ceiling a
     // caller-supplied regex is handed unbounded attacker input, which is how a
-    // format check becomes a CPU denial of service.
+    // format check becomes a CPU denial of service. The ceiling is in
+    // characters (code points); a character is at most two UTF-16 units, so
+    // an input within `hardMax` units needs no counting at all.
     const hardMax = this._config.max ?? SCHEMA_DEFAULT_MAX_STRING_LENGTH;
-    if (input.length > hardMax) {
+    const measured = input.length > hardMax ? characterLength(input) : 0;
+    if (measured > hardMax) {
       addIssue(ctx, {
         code: SchemaIssueCode.TOO_LARGE,
         path: [...ctx.path],
         message: `String must be at most ${formatCount(hardMax, "character")}`,
         expected: `<= ${hardMax}`,
-        received: String(input.length),
+        received: String(measured),
       });
       failValidation();
     }
@@ -114,33 +117,42 @@ export class StringSchema extends Schema<string> {
     const c = this._config;
     let failed = false;
 
-    if (c.min !== undefined && value.length < c.min) {
+    // `min`/`max`/`length` are documented in characters, so they count
+    // Unicode code points like `@zudojs/validation`'s `minLength` does.
+    // `value.length` counts UTF-16 units and let the two packages disagree
+    // on whether "🛒🛒" has two characters or four.
+    const measured =
+      c.min !== undefined || c.max !== undefined || c.length !== undefined
+        ? characterLength(value)
+        : 0;
+
+    if (c.min !== undefined && measured < c.min) {
       addIssue(ctx, {
         code: SchemaIssueCode.TOO_SMALL,
         path: [...ctx.path],
         message: `String must be at least ${formatCount(c.min, "character")}`,
         expected: `>= ${c.min}`,
-        received: String(value.length),
+        received: String(measured),
       });
       failed = true;
     }
-    if (c.max !== undefined && value.length > c.max) {
+    if (c.max !== undefined && measured > c.max) {
       addIssue(ctx, {
         code: SchemaIssueCode.TOO_LARGE,
         path: [...ctx.path],
         message: `String must be at most ${formatCount(c.max, "character")}`,
         expected: `<= ${c.max}`,
-        received: String(value.length),
+        received: String(measured),
       });
       failed = true;
     }
-    if (c.length !== undefined && value.length !== c.length) {
+    if (c.length !== undefined && measured !== c.length) {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_LENGTH,
         path: [...ctx.path],
         message: `String must be exactly ${formatCount(c.length, "character")}`,
         expected: String(c.length),
-        received: String(value.length),
+        received: String(measured),
       });
       failed = true;
     }
@@ -211,17 +223,17 @@ export class StringSchema extends Schema<string> {
     return false;
   }
 
-  /** Minimum character length. */
+  /** Minimum length in characters (Unicode code points, so an emoji is one). */
   public min(min: number): StringSchema {
     return new StringSchema({ ...this._config, min });
   }
 
-  /** Maximum character length. */
+  /** Maximum length in characters (Unicode code points, so an emoji is one). */
   public max(max: number): StringSchema {
     return new StringSchema({ ...this._config, max });
   }
 
-  /** Exact character length. */
+  /** Exact length in characters (Unicode code points, so an emoji is one). */
   public length(length: number): StringSchema {
     return new StringSchema({ ...this._config, length });
   }

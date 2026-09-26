@@ -1,5 +1,108 @@
 # @zudojs/scheduler
 
+## 1.3.0
+
+### Minor Changes
+
+- **@zudojs/scheduler**
+
+  - `CronTrigger` (and `Scheduler.cron(..., { timezone })`) now accepts any
+    IANA zone name — `"Africa/Lagos"`, `"America/New_York"`, `"Asia/Kolkata"` —
+    in addition to `"UTC"` and the host's local zone. Zones are resolved
+    through Node's `Intl` data, so daylight-saving transitions are honoured:
+    `0 9 * * *` in `America/New_York` fires at 09:00 wall-clock on both sides
+    of a DST change, and a half-hour zone still visits every minute of a
+    restricted hour. Previously every zone other than `"UTC"` threw
+    `InvalidScheduleError`; an unknown zone name still does, with a message
+    that names it. `CronTrigger.timezone` exposes the canonical zone name
+    (`undefined` for local time), `nextCronDate` accepts a `CronZone` in
+    place of its `utc` boolean (which still works), and `resolveCronZone`,
+    `createIntlZone`, `UTC_ZONE`, `LOCAL_ZONE` and the `CronZone` /
+    `CronWallClock` types are exported.
+
+  **@zudojs/queue**
+
+  - A job can now fail permanently. Throw an error passed through
+    `markUnrecoverable(error)` — or `createUnrecoverableJobError(message)`, a
+    pre-marked `JobError` — or return `createJobErrorResult(message, ms,
+{ unrecoverable: true })`, and the job is dead-lettered at once instead of
+    burning its remaining attempts. `isUnrecoverableJobError` reads the mark.
+    Ordinary failures retry exactly as before.
+  - A dead-letter entry for a job whose attempts ran out now says what went
+    wrong: the `JobMaxAttemptsError` message ends in `Last error: <message>`
+    (the bare message is still on `reason`). An unrecoverable failure is
+    recorded with the processor's own error. `job:failed` now carries the
+    error instance the processor threw rather than a fresh `Error` built from
+    its message.
+  - Retry jitter can be made deterministic: `calculateRetryDelay` takes an
+    optional `random` source, `QueueOptions.random` injects one into the
+    in-memory queue's retry scheduling, and `applyJitter`, `resolveBackoff`,
+    `DEFAULT_RETRY_BACKOFF` and `MAX_TIMER_DELAY` are exported.
+  - The queue error classes it throws — `JobDuplicateError` from `add()`,
+    `JobMaxAttemptsError` on a dead-lettered job, `QueueError`, `isQueueError`
+    and the rest — are re-exported from `@zudojs/queue`, so a consumer no longer
+    has to depend on `@zudojs/errors` to catch them.
+  - Selecting the next job no longer parses every waiting job's timestamps on
+    every poll. Measured on the in-memory queue with 10,000 waiting jobs and
+    1,000 retained settled jobs: 3.2 ms per selection before, 0.14 ms after
+    (9.9 ms → 0.18 ms when the waiting jobs are delayed). Ordering is
+    unchanged.
+
+  **@zudojs/events**
+
+  - `EventPayloadMap` is now `object`, so `EventUnion`, `EventTypeOf`,
+    `PayloadOf` and `defineEventTypes` accept an `interface` as the payload
+    map. A `Record<string, unknown>` bound rejected interfaces with "Index
+    signature for type 'string' is missing".
+  - New `createTypedEventBus<TMap>(bus)` returns a view whose `on`, `once`,
+    `onAny` and `publish` are checked against one payload map: the event type
+    selects the handler's payload type and the payload `publish` accepts.
+    `bus.on<Event<OrderPlaced>>("stock.low", h)` still compiles on the raw
+    bus — nothing ties `P` to the type there — which is the gap the typed
+    view closes.
+  - Documentation: `EventEmitterOptions.errorMode` said "Defaults to THROW",
+    which is true of a standalone emitter only. An `EventBus` defaults to
+    `CONTINUE`, so a throwing handler does not reject `publish()`; both
+    option docs and the README now say so.
+
+  **@zudojs/cqrs**
+
+  - `errorMiddleware` and `toCqrsError` recognise `BaseError` with
+    `isBaseError` instead of `instanceof`. With two copies of `@zudojs/errors`
+    installed, an error from the other copy was wrapped as a 500 `CqrsError`
+    and lost its code and status; it now passes through with both intact.
+  - `CommandOf`, `QueryOf`, `createCommand`, `createQuery`, `CqrsEvent`,
+    `CreateCqrsEventInput` and `createCqrsEvent` accept any object type as the
+    payload, an `interface` included (previously TS2344).
+  - Decorators: `CommandHandlerFor`, `QueryHandlerFor` and the
+    `create*HandlerDecorator` helpers keep the literal type argument. The
+    metadata readers (`getCqrsType`, `getCqrsHandlerMetadata`,
+    `getCommandHandlerMetadata`, `getQueryHandlerMetadata`, `isCqrsHandler`,
+    `isDecorated*Handler`) now report only metadata a class was decorated with
+    itself: a subclass of a decorated handler used to inherit the parent's
+    mark, so discovery registered one type twice. New
+    `registerDecoratedHandlers({ commandBus, queryBus } | registry, instances)`
+    and `collectDecoratedHandlers(instances)` turn decorated instances into
+    registrations — the buses themselves never read the mark, which is now
+    documented on the decorators.
+  - Documentation: `execute<TCommand, TResult>`'s result type is a
+    caller-side claim the bus cannot check (handlers are resolved by `type`
+    string at run time), and with no type arguments it is `void`; the
+    `CommandBus` / `QueryBus` contracts and the README say so.
+
+  `@zudojs/middleware` ([#63](https://github.com/oyinlola-tech/zudo/issues/63)): `withTiming` JSDoc explains how its result type
+  is inferred (annotate `ctx` or pass both type arguments), pinned by a type
+  test. The second half of [#63](https://github.com/oyinlola-tech/zudo/issues/63), an `HttpMiddleware`-shaped guard type in this
+  package, is not added: `@zudojs/middleware` sits below `@zudojs/http` and
+  cannot own HTTP context types, so import `HttpMiddleware` from `@zudojs/http`.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.4.0
+  - @zudojs/types@1.3.0
+  - @zudojs/constants@1.2.0
+
 ## 1.2.2
 
 ### Patch Changes

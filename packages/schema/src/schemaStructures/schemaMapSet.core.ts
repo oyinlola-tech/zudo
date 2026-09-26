@@ -7,6 +7,8 @@
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
 import { describeType } from "../schemaBase/schemaBase.describe.js";
+import { ModifiableSchema } from "../schemaModifiers/schemaModifiable.core.js";
+
 import {
   addIssue,
   childContext,
@@ -20,7 +22,9 @@ import { SchemaIssueCode } from "@zudojs/constants";
 /**
  * Schema for Map objects.
  */
-export class MapSchema<TKey, TValue> extends Schema<Map<TKey, TValue>> {
+export class MapSchema<TKey, TValue> extends ModifiableSchema<
+  Map<TKey, TValue>
+> {
   public readonly _type = "map";
 
   constructor(
@@ -80,7 +84,7 @@ export class MapSchema<TKey, TValue> extends Schema<Map<TKey, TValue>> {
 /**
  * Schema for Set objects.
  */
-export class SetSchema<TValue> extends Schema<Set<TValue>> {
+export class SetSchema<TValue> extends ModifiableSchema<Set<TValue>> {
   public readonly _type = "set";
 
   constructor(private readonly _valueSchema: Schema<TValue>) {

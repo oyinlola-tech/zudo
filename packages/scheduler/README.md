@@ -82,9 +82,12 @@ day-of-week`) with ranges, lists, steps and three-letter names, plus the
 `@daily`/`@hourly`/`@weekly`/`@monthly`/`@yearly` macros. An invalid expression
 throws where the schedule is declared, not at fire time.
 
-Only `timezone: "UTC"` and the system local zone are supported. Any other zone
-is rejected rather than silently ignored — honouring an arbitrary IANA zone
-needs real zone data this package does not carry.
+`timezone` accepts any IANA zone name (`"Africa/Lagos"`, `"America/New_York"`,
+`"Asia/Kolkata"`), `"UTC"`, or nothing for the host's local zone. Zones are
+resolved through Node's `Intl` data, so daylight-saving transitions are
+honoured: `0 9 * * *` in `America/New_York` fires at 09:00 wall-clock on both
+sides of a DST change. An unknown zone name throws `InvalidScheduleError` where
+the schedule is declared rather than being silently ignored.
 
 ## Controlling a schedule
 

@@ -68,6 +68,7 @@ export {
   serializeToEnvelope,
   deserializeFromEnvelope,
 } from "./serializerEnvelope/index.js";
+export type { EnvelopeMetadataOptions } from "./serializerEnvelope/index.js";
 
 // ─── Registry & Factory ───────────────────────────────────────
 export { SerializerRegistry } from "./serializerRegistry/index.js";

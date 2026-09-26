@@ -7,6 +7,8 @@
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
 import { describeType } from "../schemaBase/schemaBase.describe.js";
+import { ModifiableSchema } from "../schemaModifiers/schemaModifiable.core.js";
+
 import {
   addIssue,
   countIssues,
@@ -57,10 +59,14 @@ const ACCEPTS_UNDEFINED = new Set(["optional", "default", "any", "unknown"]);
 
 /**
  * Schema for object values with a defined shape.
+ *
+ * Extends `ModifiableSchema`, so `.optional()`, `.nullable()`, `.default()`,
+ * `.refine()` and `.transform()` chain on an object exactly as they do on a
+ * primitive; `schema.refine(objectSchema, check, message)` was the only way.
  */
 export class ObjectSchema<
   TOutput extends Record<string, unknown>,
-> extends Schema<TOutput> {
+> extends ModifiableSchema<TOutput> {
   public readonly _type = "object";
   private readonly _config: ObjectSchemaConfig;
   private readonly _keys: readonly string[];

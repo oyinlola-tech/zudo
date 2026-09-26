@@ -35,5 +35,7 @@ export {
   createJsonResponse,
   createNotFound,
   createUnauthorized,
+  TENANCY_RESPONSE_CODE,
 } from "./httpHelpers.js";
+export type { TenancyResponseCode } from "./httpHelpers.js";
 export type * from "./httpTypes.js";

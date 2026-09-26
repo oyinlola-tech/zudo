@@ -406,13 +406,19 @@ describe("Envelope", () => {
     expect(result).toEqual(data);
   });
 
-  it("accepts custom format and version", () => {
+  it("accepts a custom format and a readable version", () => {
     const envelope = createEnvelope("data", "msgpack", {
-      version: 2,
+      version: 1,
       contentType: "application/msgpack",
     });
     expect(envelope.metadata.format).toBe("msgpack");
-    expect(envelope.metadata.version).toBe(2);
+    expect(envelope.metadata.version).toBe(1);
     expect(envelope.metadata.contentType).toBe("application/msgpack");
+  });
+
+  it("refuses a wire-format version this build cannot read back", () => {
+    expect(() => createEnvelope("data", "msgpack", { version: 2 })).toThrow(
+      /schemaVersion/,
+    );
   });
 });

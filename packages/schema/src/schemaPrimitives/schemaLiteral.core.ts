@@ -14,7 +14,7 @@ import { SchemaIssueCode } from "@zudojs/constants";
  * Schema for a specific literal value.
  */
 export class LiteralSchema<
-  T extends string | number | boolean | null,
+  const T extends string | number | boolean | null,
 > extends ModifiableSchema<T> {
   public readonly _type = "literal";
 
@@ -38,7 +38,7 @@ export class LiteralSchema<
 }
 
 /** Creates a literal schema. */
-export function literalSchema<T extends string | number | boolean | null>(
+export function literalSchema<const T extends string | number | boolean | null>(
   value: T,
 ): LiteralSchema<T> {
   return new LiteralSchema(value);

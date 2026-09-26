@@ -1,5 +1,37 @@
 # @zudojs/storage
 
+## 1.3.0
+
+### Minor Changes
+
+- Round 12 (academy findings) — data packages. No breaking changes; every fix is reproduced by a test first (`tests/*.round12.test.ts`).
+
+  **@zudojs/database**
+
+  - **Keyset pagination no longer skips rows created in the same millisecond ([#79](https://github.com/oyinlola-tech/zudo/issues/79)).** Cursors encode a `Date` at millisecond precision while PostgreSQL `timestamp`/`timestamptz` keep microseconds, so `createdAt = C` matched nothing and `createdAt < C` skipped the rest of the millisecond: four rows paged with `limit: 1` came back as one. `buildKeysetWhere` now compares a date cursor value as its millisecond bucket (`gte C, lt C + 1ms` for a tie; `lt C` / `gte C + 1ms` for the strict part) and lets the id tiebreaker order rows inside it. Exact for identical timestamps and for insertion-ordered ids; on millisecond-precision columns it is the old comparison. Reproduced against PGlite (`timestamptz` rows one microsecond apart and four identical timestamps). Existing cursors keep working. New helpers: `isDateCursorValue`, `keysetTieFilter`, `keysetStrictFilter`, `nextMillisecond`.
+  - **`BaseRepository.createCursor(row, { sort, direction })` ([#80](https://github.com/oyinlola-tech/zudo/issues/80))** builds a cursor `paginateCursor` accepts: it appends the id tiebreaker and signs with `cursorSecret`. `createKeysetCursor(row, sort)` with the bare sort produced a cursor `paginateCursor` rejected as missing the id field; its JSDoc now says so.
+  - **`mapRepositoryError` maps every code `normalizeDatabaseError` maps ([#77](https://github.com/oyinlola-tech/zudo/issues/77)).** `P2004` (check constraint) → 409, `P2000`/`P2011` → 400, `P2014` → 409, `P2015`/`P2018` → 404, `P2028` → 503, via the shared table (new `getPrismaCodeMapping`, `PrismaCodeMapping`). They used to fall through to a non-exposed 500 `ERR_DATABASE_QUERY`.
+  - **`SoftDeletableEntity<TId = string>` and `AuditableEntity<TId = string>` ([#78](https://github.com/oyinlola-tech/zudo/issues/78))** take the id type, as `DatabaseEntity` does, so `interface Task extends SoftDeletableEntity<number>` compiles.
+  - **Migrations can opt out of their transaction ([#81](https://github.com/oyinlola-tech/zudo/issues/81)).** `Migration.transaction: false` runs `up`/`down` on the root client outside any transaction (`CREATE INDEX CONCURRENTLY`, `ALTER TYPE ... ADD VALUE`); the applied check and the history record still run in short transactions under the advisory lock. Requires `perItemTransaction: true` (a batch runner refuses it at construction); a failed body is not recorded.
+  - **`createTransactionContext` collision documented ([#110](https://github.com/oyinlola-tech/zudo/issues/110)).** This package's function builds the immutable status record `TransactionManager.run` reports; `@zudojs/transactions`' creates an AsyncLocalStorage store. Both keep their names (a rename would break imports); the JSDoc and README of each now name the other and say which to use.
+
+  **@zudojs/storage**
+
+  - **`BaseRepository` no longer passes raw driver errors through ([#82](https://github.com/oyinlola-tech/zudo/issues/82)).** A PostgreSQL error with a SQLSTATE `code` becomes a `StorageError`: `23505`/`23503`/`23514`/`23P01` → exposable 409 `ERR_CONFLICT`; `23502`/`22001`/`22003`/`22007`/`22P02` → exposable 400 `ERR_INVALID_INPUT`; `40001`/`40P01` → 409 with `metadata.retryable`; `57014` and connection class `08` → 503; anything else a non-exposed 500. The message names only the table and operation; the constraint/column name goes to `metadata` and the driver error is the `cause`. Existing `@zudojs/errors` errors pass through unchanged, and builder validation errors (`TypeError`) are raised before the wrapper. New protected `execute(operation, work)` for subclasses and exported `mapRepositoryError` / `RepositoryErrorContext`.
+
+  **@zudojs/transactions**
+
+  - **Work started from `afterCommit` no longer joins the finished transaction ([#127](https://github.com/oyinlola-tech/zudo/issues/127)).** Callbacks and hooks ran with the committed transaction's context still active, so a timer or queued job started there saw `getCurrent()` return the committed transaction and a new `manager.run()` joined it as a participant ("Transaction is closed", jobs retrying forever). Two fixes: after-commit/after-rollback callbacks and hooks now run in the scope that enclosed the transaction (the outer transaction of a `requires_new`, otherwise none), and the manager reads the scope through the new `currentTransaction(context)`, which ignores a committed, rolled-back or failed transaction still held by the store — so `getCurrent()`, `getCurrentHandle()`, `currentTransactionHandle()` and `begin()` (including `mandatory`/`never`) all treat a finished transaction as no transaction. `manager.getCurrent()` inside an `afterCommit` callback is now `undefined` (the hook argument still carries the transaction).
+  - **`TransactionManager` is an exported type ([#90](https://github.com/oyinlola-tech/zudo/issues/90))**; `createTransactionManager` is declared to return it, replacing `ReturnType<typeof createTransactionManager>`.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.4.0
+  - @zudojs/serialization@1.3.0
+  - @zudojs/types@1.3.0
+  - @zudojs/constants@1.2.0
+
 ## 1.2.3
 
 ### Patch Changes

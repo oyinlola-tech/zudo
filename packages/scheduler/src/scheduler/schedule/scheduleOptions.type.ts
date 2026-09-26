@@ -7,7 +7,11 @@ import type {
  * Options for a schedule.
  */
 export interface ScheduleOptions {
-  /** IANA timezone name. Only "UTC" is currently honoured by CronTrigger. */
+  /**
+   * Zone a cron expression is read in: an IANA name such as `"Africa/Lagos"`
+   * (DST honoured through `Intl`), `"UTC"`, or omitted for the host's local
+   * zone. Ignored by non-cron schedules.
+   */
   readonly timezone?: string;
 
   /**

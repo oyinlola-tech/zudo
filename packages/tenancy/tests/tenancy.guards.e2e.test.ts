@@ -96,9 +96,7 @@ describe("tenancy middleware over a real @zudojs/http server", () => {
 
     expect(response.status).toBe(403);
     expect(response.headers.get("content-type")).toContain("application/json");
-    expect(await response.json()).toEqual({
-      error: "Tenant could not be established for this route",
-    });
+    expect(await response.json()).toEqual({ error: "Tenant could not be established for this route", code: "ERR_TENANT_FORBIDDEN" });
     expect(effects).toEqual([]);
   });
 
@@ -108,7 +106,7 @@ describe("tenancy middleware over a real @zudojs/http server", () => {
     const response = await fetch(`${origin}/projects`);
 
     expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: "Tenant not found" });
+    expect(await response.json()).toEqual({ error: "Tenant not found", code: "ERR_TENANT_NOT_FOUND" });
     expect(effects).toEqual([]);
   });
 
@@ -118,9 +116,7 @@ describe("tenancy middleware over a real @zudojs/http server", () => {
     const response = await fetch(`${origin}/projects`);
 
     expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({
-      error: "Tenant context is required",
-    });
+    expect(await response.json()).toEqual({ error: "Tenant context is required", code: "ERR_TENANT_REQUIRED" });
     expect(effects).toEqual([]);
   });
 });

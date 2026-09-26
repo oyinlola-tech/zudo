@@ -14,3 +14,10 @@ export {
   tenantKey,
   createTenantCacheKey,
 } from "./guard.core.js";
+
+export {
+  createTenantCacheNamespace,
+  createTenantCacheScope,
+  TENANT_CACHE_PART_PATTERN,
+  type TenantCacheScope,
+} from "./tenantCache.helper.js";

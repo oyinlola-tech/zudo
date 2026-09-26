@@ -1,6 +1,8 @@
 import type { Trigger } from "./trigger.type.js";
 import { parseCron, nextCronDate } from "./cron.parser.js";
 import type { ParsedCron } from "./cron.parser.js";
+import { resolveCronZone } from "./cron.zone.js";
+import type { CronZone } from "./cron.zone.js";
 import { InvalidScheduleError } from "../errors/scheduler.errors.js";
 
 /**
@@ -82,29 +84,27 @@ export class IntervalTrigger implements Trigger {
 export class CronTrigger implements Trigger {
   private readonly expression: string;
   private readonly parsed: ParsedCron;
-  private readonly utc: boolean;
+  private readonly zone: CronZone;
 
   /**
    * @param expression - A five-field cron expression, or a macro such as `@daily`.
-   * @param timezone - Pass `"UTC"` to interpret the fields in UTC. Any other
-   *   value is rejected: honouring an arbitrary IANA zone needs real zone data,
-   *   and silently ignoring the argument is what made the previous
-   *   implementation's `timezone` parameter meaningless.
+   * @param timezone - The zone the fields are read in: an IANA name such as
+   *   `"Africa/Lagos"` or `"America/New_York"` (resolved through `Intl`, so
+   *   DST is honoured), `"UTC"`, or omitted for the host's local zone. An
+   *   unknown name is rejected rather than silently ignored.
    */
   constructor(expression: string, timezone?: string) {
     this.expression = expression;
     this.parsed = parseCron(expression);
 
-    if (timezone === undefined) {
-      this.utc = false;
-    } else if (/^utc$/i.test(timezone) || timezone === "Etc/UTC") {
-      this.utc = true;
-    } else {
+    const zone = resolveCronZone(timezone);
+    if (zone === undefined) {
       throw new InvalidScheduleError(
-        `CronTrigger supports only "UTC" or the system local zone, got "${timezone}"`,
+        `CronTrigger received an unknown time zone "${timezone}"; use an IANA name such as "Africa/Lagos", or "UTC"`,
         expression,
       );
     }
+    this.zone = zone;
   }
 
   /** The expression this trigger was built from. */
@@ -112,8 +112,13 @@ export class CronTrigger implements Trigger {
     return this.expression;
   }
 
+  /** The canonical zone the fields are read in; `undefined` for local time. */
+  get timezone(): string | undefined {
+    return this.zone.name;
+  }
+
   next(after: Date): Date | null {
-    return nextCronDate(this.parsed, after, this.utc);
+    return nextCronDate(this.parsed, after, this.zone);
   }
 }
 

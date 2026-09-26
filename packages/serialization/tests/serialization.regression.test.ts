@@ -213,11 +213,16 @@ describe("SER-05: envelope metadata is enforced", () => {
   });
 
   it("rejects a payload from a newer schema version", () => {
-    const envelope = createEnvelope("{}", "json", {
-      version: SERIALIZATION_SCHEMA_VERSION + 1,
-    });
+    // A newer producer's envelope, as it arrives from the wire. It cannot be
+    // built with createEnvelope(), which refuses a version this build cannot
+    // read back (round 12, #74).
+    const current = createEnvelope("{}", "json");
+    const envelope = {
+      ...current,
+      metadata: { ...current.metadata, version: SERIALIZATION_SCHEMA_VERSION + 1 },
+    };
     expect(() => unwrapEnvelope(envelope)).toThrow(
-      /Unsupported envelope schema/,
+      /Unsupported envelope wire-format version/,
     );
   });
 

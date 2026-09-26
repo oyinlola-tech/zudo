@@ -4,7 +4,7 @@
  * Result constructors and type guards for schema outcomes.
  */
 
-import { SchemaError } from "@zudojs/errors";
+import { ErrorCode, SchemaError, isBaseError } from "@zudojs/errors";
 
 import type {
   SchemaResult,
@@ -93,8 +93,16 @@ function isSchemaIssue(value: unknown): value is SchemaIssue {
 }
 
 /**
- * Narrows a caught value to a validation error thrown by `parse()` or
- * `unwrapSchemaResult()`, with `issues` typed as `SchemaIssue[]`.
+ * Narrows a caught value to a schema validation error with `issues` typed
+ * as `SchemaIssue[]`.
+ *
+ * Accepts `SchemaError` (thrown by `parse()` and `unwrapSchemaResult()`) and
+ * any `BaseError` carrying `ErrorCode.SCHEMA_VALIDATION` and an issue list,
+ * which is what `@zudojs/validation`'s `SchemaValidationError` is. Both
+ * report `ERR_SCHEMA_VALIDATION`, so an HTTP error mapper keyed on this guard
+ * used to drop the `issues` of every error from the validation package.
+ * Recognition goes through `isBaseError`, so a second installed copy of
+ * `@zudojs/errors` is handled too.
  *
  * `SchemaError` lives in `@zudojs/errors`, which sits below this package and
  * cannot name `SchemaIssue`, so `instanceof SchemaError` alone leaves
@@ -113,5 +121,10 @@ function isSchemaIssue(value: unknown): value is SchemaIssue {
 export function isSchemaValidationError(
   value: unknown,
 ): value is SchemaError<SchemaIssue> {
-  return value instanceof SchemaError && value.issues.every(isSchemaIssue);
+  if (!isBaseError(value)) return false;
+  const issues = (value as { readonly issues?: unknown }).issues;
+  if (!Array.isArray(issues)) return false;
+  const isSchemaShaped =
+    value instanceof SchemaError || value.code === ErrorCode.SCHEMA_VALIDATION;
+  return isSchemaShaped && issues.every(isSchemaIssue);
 }

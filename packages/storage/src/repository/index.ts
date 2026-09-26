@@ -4,6 +4,8 @@
 
 export { BaseRepository } from "./baseRepository.core.js";
 export type { BaseRepositoryOptions } from "./baseRepository.core.js";
+export { mapRepositoryError } from "./baseRepository.errors.js";
+export type { RepositoryErrorContext } from "./baseRepository.errors.js";
 export {
   assertIdentifier,
   assertIdentifiers,

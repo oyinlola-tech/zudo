@@ -11,6 +11,14 @@ import type {
   RateLimitResult,
 } from "../types/security.type.js";
 import { createIpKeyGenerator, ipRateLimitKey } from "./rateLimit.clientKey.js";
+import {
+  createSlidingWindow,
+  pruneWindow,
+  recordHit,
+  windowCount,
+  windowOldest,
+  type SlidingWindow,
+} from "./rateLimit.window.js";
 
 /** Default window: 1 minute. */
 const DEFAULT_WINDOW_MS = 60_000;
@@ -27,12 +35,12 @@ const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 /**
  * In-memory rate limit store.
  *
- * `timestamps` holds only *allowed* requests inside the current window, so the
+ * `window` holds only *allowed* requests inside the current window, so the
  * memory a single key can occupy is bounded by `max` no matter how hard it is
  * hammered. `lastSeen` drives eviction when the store hits its key cap.
  */
 interface RateLimitEntry {
-  timestamps: number[];
+  window: SlidingWindow;
   lastSeen: number;
 }
 
@@ -122,6 +130,8 @@ export interface RateLimiterOptions extends RateLimitConfig {
  * The window genuinely slides: each check prunes timestamps older than
  * `windowMs` and decides against what remains, so a client cannot spend a full
  * allowance either side of a fixed boundary and get `2 × max` back to back.
+ * Pruning is a binary search over an ordered log (see `rateLimit.window.ts`),
+ * so the cost of a check is O(log max), not O(max).
  *
  * @param config - Rate limit configuration.
  * @returns A function that checks rate limits.
@@ -221,7 +231,7 @@ export function createRateLimiter(config: RateLimiterOptions) {
 
     let entry = store.get(key);
     if (!entry) {
-      entry = { timestamps: [], lastSeen: now };
+      entry = { window: createSlidingWindow(), lastSeen: now };
       store.set(key, entry);
       evictIfNeeded();
     } else {
@@ -231,23 +241,22 @@ export function createRateLimiter(config: RateLimiterOptions) {
     }
 
     // Prune everything that has slid out of the window.
-    const timestamps = entry.timestamps.filter((t) => t > windowStart);
+    pruneWindow(entry.window, windowStart);
     entry.lastSeen = now;
 
-    const allowed = timestamps.length < config.max;
+    const allowed = windowCount(entry.window) < config.max;
 
     // Only an allowed request consumes an allowance slot. Recording denied
     // requests too would let a client already over the limit keep growing its
     // own bucket, so the cost of an attack would scale with the attack.
     if (allowed) {
-      timestamps.push(now);
+      recordHit(entry.window, now);
     }
-    entry.timestamps = timestamps;
 
-    const remaining = Math.max(0, config.max - timestamps.length);
+    const remaining = Math.max(0, config.max - windowCount(entry.window));
 
     // The window frees up when its oldest surviving request ages out.
-    const oldest = timestamps[0];
+    const oldest = windowOldest(entry.window);
     const resetAt = new Date((oldest ?? now) + config.windowMs);
 
     return {
@@ -295,8 +304,8 @@ export function createRateLimiter(config: RateLimiterOptions) {
     const entry = store.get(storeKey(key));
     if (!entry) return 0;
 
-    const windowStart = Date.now() - config.windowMs;
-    return entry.timestamps.filter((t) => t > windowStart).length;
+    pruneWindow(entry.window, Date.now() - config.windowMs);
+    return windowCount(entry.window);
   }
 
   /**

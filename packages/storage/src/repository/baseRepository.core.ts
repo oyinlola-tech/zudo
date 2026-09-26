@@ -12,6 +12,7 @@ import type {
   Repository,
 } from "../types/storage.type.js";
 import { providedKeys } from "./baseRepository.columns.js";
+import { mapRepositoryError } from "./baseRepository.errors.js";
 import type { FindAllOptions, TableRef } from "./baseRepository.query.js";
 import {
   buildCount,
@@ -53,6 +54,12 @@ export interface BaseRepositoryOptions {
 /**
  * Base repository providing common CRUD operations.
  * Override methods for domain-specific behavior.
+ *
+ * Driver failures raised by the `Database` are normalised through
+ * `mapRepositoryError` (see `baseRepository.errors.ts`): constraint
+ * violations become exposable 409 `StorageError`s, bad values 400s, and
+ * the raw driver error is kept as `cause`. Run custom queries in
+ * subclasses through {@link BaseRepository.execute} to get the same.
  */
 export class BaseRepository<
   Entity extends Record<string, unknown>,
@@ -88,11 +95,26 @@ export class BaseRepository<
   }
 
   /**
+   * Runs a database call, normalising any driver failure into a
+   * `StorageError` tagged with the table and operation name. Build the
+   * query first: builder validation errors are programming errors and are
+   * not driver failures.
+   */
+  protected async execute<T>(operation: string, work: () => Promise<T>): Promise<T> {
+    try {
+      return await work();
+    } catch (error) {
+      throw mapRepositoryError(error, { table: this.table.tableName, operation });
+    }
+  }
+
+  /**
    * Find an entity by its primary key.
    */
   async findById(id: ID): Promise<Entity | null> {
-    const result = await this.database.query<Entity>(
-      buildFindById(this.table, id as QueryParameter),
+    const query = buildFindById(this.table, id as QueryParameter);
+    const result = await this.execute("findById", () =>
+      this.database.query<Entity>(query),
     );
     return result.rows[0] ?? null;
   }
@@ -103,8 +125,9 @@ export class BaseRepository<
   async findByIds(ids: readonly ID[]): Promise<readonly Entity[]> {
     if (ids.length === 0) return [];
 
-    const result = await this.database.query<Entity>(
-      buildFindByIds(this.table, ids as readonly QueryParameter[]),
+    const query = buildFindByIds(this.table, ids as readonly QueryParameter[]);
+    const result = await this.execute("findByIds", () =>
+      this.database.query<Entity>(query),
     );
     return result.rows;
   }
@@ -116,8 +139,9 @@ export class BaseRepository<
    * from the INSERT; `null` inserts `NULL`.
    */
   async create(entity: Entity): Promise<Entity> {
-    const result = await this.database.query<Entity>(
-      buildCreate(this.table, entity),
+    const query = buildCreate(this.table, entity);
+    const result = await this.execute("create", () =>
+      this.database.query<Entity>(query),
     );
     return result.rows[0]!;
   }
@@ -142,8 +166,9 @@ export class BaseRepository<
       return existing;
     }
 
-    const result = await this.database.query<Entity>(
-      buildUpdate(this.table, id as QueryParameter, changes),
+    const query = buildUpdate(this.table, id as QueryParameter, changes);
+    const result = await this.execute("update", () =>
+      this.database.query<Entity>(query),
     );
     const updated = result.rows[0];
     if (updated === undefined) {
@@ -162,16 +187,16 @@ export class BaseRepository<
    * Delete an entity by primary key.
    */
   async delete(id: ID): Promise<void> {
-    await this.database.execute(buildDelete(this.table, id as QueryParameter));
+    const query = buildDelete(this.table, id as QueryParameter);
+    await this.execute("delete", () => this.database.execute(query));
   }
 
   /**
    * Check if an entity exists by primary key.
    */
   async exists(id: ID): Promise<boolean> {
-    const result = await this.database.query(
-      buildExists(this.table, id as QueryParameter),
-    );
+    const query = buildExists(this.table, id as QueryParameter);
+    const result = await this.execute("exists", () => this.database.query(query));
     return result.rowCount > 0;
   }
 
@@ -179,8 +204,9 @@ export class BaseRepository<
    * Find all entities with optional limit, offset and sort column.
    */
   async findAll(options?: FindAllOptions): Promise<readonly Entity[]> {
-    const result = await this.database.query<Entity>(
-      buildFindAll(this.table, options),
+    const query = buildFindAll(this.table, options);
+    const result = await this.execute("findAll", () =>
+      this.database.query<Entity>(query),
     );
     return result.rows;
   }
@@ -189,8 +215,9 @@ export class BaseRepository<
    * Count entities matching optional where conditions.
    */
   async count(where?: Record<string, QueryParameter>): Promise<number> {
-    const result = await this.database.query<{ count: string | number }>(
-      buildCount(this.table, where),
+    const query = buildCount(this.table, where);
+    const result = await this.execute("count", () =>
+      this.database.query<{ count: string | number }>(query),
     );
     const raw = result.rows[0]?.count ?? 0;
     return typeof raw === "number" ? raw : Number.parseInt(raw, 10);

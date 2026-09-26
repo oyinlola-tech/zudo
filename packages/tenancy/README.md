@@ -149,8 +149,18 @@ explicitly on routes where something else ties the tenant to the principal.
 - Tenant ids are normalized (NFKC, trimmed, lowercased) and constrained to
   `^[a-z0-9][a-z0-9_-]*$`, so an id cannot forge a separator in a cache key,
   a schema name, or a path. `tenantKey` escapes its segments as well.
+- For `@zudojs/cache`, use `createTenantCacheScope(tenantId, key)` rather than
+  `createTenantCacheKey`: the cache refuses `:` inside a key part (that is how
+  it stops a raw key from forging a namespace), so `tenant:acme:totals` throws
+  `ERR_INVALID_INPUT` there. The scope helper returns
+  `{ namespace: "tenant.acme", key: "totals" }`, and the cache's namespace is
+  the isolation boundary:
+  `await cache.get(scope.key, { namespace: scope.namespace })`.
 - Non-active tenants are refused during resolution. Pass `allowInactive` on
   routes that exist to serve suspended tenants.
+- Every refusal body is `{ "error": message, "code": ERR_TENANT_* }`, the
+  shape `@zudojs/http` uses, so a client can tell `ERR_TENANT_NOT_FOUND` from
+  an application 404. The codes are exported as `TENANCY_RESPONSE_CODE`.
 - An unknown tenant and a non-active one get the same `404 Tenant not found`,
   and the guard middleware answers `403 Tenant is not available` without the
   id or status, so a caller cannot enumerate tenants or learn which are

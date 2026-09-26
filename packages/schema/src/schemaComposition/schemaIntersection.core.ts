@@ -6,6 +6,8 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { ModifiableSchema } from "../schemaModifiers/schemaModifiable.core.js";
+
 import {
   addIssue,
   failValidation,
@@ -17,7 +19,9 @@ import { SchemaIssueCode } from "@zudojs/constants";
  * Schema that accepts values matching all provided schemas.
  * Results are merged left to right.
  */
-export class IntersectionSchema<TLeft, TRight> extends Schema<TLeft & TRight> {
+export class IntersectionSchema<TLeft, TRight> extends ModifiableSchema<
+  TLeft & TRight
+> {
   public readonly _type = "intersection";
 
   constructor(

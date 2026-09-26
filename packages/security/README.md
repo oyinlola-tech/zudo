@@ -61,7 +61,10 @@ function handle(request, response) {
 A genuine sliding window: each check prunes entries older than `windowMs` and
 decides against what remains, so a client cannot spend a full allowance either
 side of a fixed boundary. Only allowed requests consume an allowance slot, so a
-client being limited cannot grow its own bucket.
+client being limited cannot grow its own bucket. Expiry is a binary search over
+an ordered hit log with amortised compaction, so a check costs O(log `max`)
+rather than O(`max`): a limiter with `max: 1_000_000` is as cheap per request
+as one with `max: 300`.
 
 ```typescript
 const limiter = createRateLimiter({

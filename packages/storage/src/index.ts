@@ -62,10 +62,11 @@ export type {
 
 export { ConnectionPool } from "./database/index.js";
 
-export { BaseRepository } from "./repository/index.js";
+export { BaseRepository, mapRepositoryError } from "./repository/index.js";
 export type {
   BaseRepositoryOptions,
   FindAllOptions,
+  RepositoryErrorContext,
   SortDirection,
 } from "./repository/index.js";
 export {

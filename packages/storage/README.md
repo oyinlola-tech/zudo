@@ -94,6 +94,20 @@ it is left out of the SQL, so an optional field a partial DTO did not send can
 never wipe a column. Only an explicit `null` writes `NULL`. An `update` with
 nothing provided returns the current row unchanged.
 
+Driver failures are normalised, not passed through. A PostgreSQL error with a
+SQLSTATE `code` becomes a `StorageError`: unique, foreign key, check and
+exclusion violations (`23505`, `23503`, `23514`, `23P01`) are exposable
+**409** `ERR_CONFLICT`; null, overflow and malformed values (`23502`,
+`22001`, `22003`, `22007`, `22P02`) exposable **400** `ERR_INVALID_INPUT`;
+serialization failures and deadlocks (`40001`, `40P01`) **409** with
+`metadata.retryable: true`; statement cancellation (`57014`) and connection
+loss (class `08`) **503**; anything else a non-exposed **500**. The message
+names the table and operation only; the constraint or column name goes to
+`metadata` and the driver error is kept as `cause`. Errors that are already
+`@zudojs/errors` errors pass through unchanged. Subclasses get the same by
+running custom queries through `this.execute("operation", () => ...)`, and
+adapters can call the exported `mapRepositoryError` directly.
+
 ## Features
 
 - Unified storage abstraction with driver-independent interfaces

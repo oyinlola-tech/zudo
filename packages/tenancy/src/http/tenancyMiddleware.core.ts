@@ -29,6 +29,7 @@ import {
   createJsonResponse,
   createNotFound,
   createUnauthorized,
+  TENANCY_RESPONSE_CODE,
 } from "./httpHelpers.js";
 import { meetsTrustLevel } from "../security/guard.core.js";
 import {
@@ -109,7 +110,10 @@ export interface ResolveTenantMiddlewareOptions<
    * `tenancy:claims` state key. May be typed with `@zudojs/http`'s context.
    */
   readonly getClaims?: TenantClaimsReader<Context>;
-  /** Custom error response for missing tenant. */
+  /**
+   * Custom body for the 404 answered when no usable tenant resolves. The
+   * default is `{ error: "Tenant not found", code: "ERR_TENANT_NOT_FOUND" }`.
+   */
   readonly notFoundResponse?: (
     resolution: TenantResolution | undefined,
   ) => unknown;
@@ -160,6 +164,7 @@ export function createResolveTenantMiddleware<
       if (error instanceof TenantResolutionConflictError) {
         return createForbidden(
           "Tenant could not be established: request sources name different tenants",
+          TENANCY_RESPONSE_CODE.RESOLUTION_CONFLICT,
         );
       }
 

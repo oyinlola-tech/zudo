@@ -10,6 +10,8 @@
  */
 
 import { CronParseError } from "../errors/scheduler.errors.js";
+import { LOCAL_ZONE, UTC_ZONE } from "./cron.zone.js";
+import type { CronWallClock, CronZone } from "./cron.zone.js";
 
 /** Inclusive bounds for each cron field. */
 const FIELD_BOUNDS = [
@@ -243,60 +245,64 @@ function resolveValue(
  *
  * Search is minute-by-minute with whole-field skips, bounded by
  * {@link MAX_SEARCH_YEARS} so an unsatisfiable expression (30 February) fails
- * rather than looping.
+ * rather than looping. Every skip is computed in wall-clock terms of the
+ * schedule's zone, so a DST transition neither skips nor repeats an hour of
+ * scheduling, and a half-hour zone (Asia/Kolkata) still visits every minute.
  *
  * @param parsed - The parsed expression.
  * @param after - The instant to search forward from (exclusive).
- * @param utc - Interpret the fields in UTC rather than local time.
+ * @param zone - The zone the fields are read in: a {@link CronZone}, or for
+ *   compatibility `true` for UTC and `false` (the default) for local time.
  * @returns The next fire time, or null when none exists within the horizon.
  */
 export function nextCronDate(
   parsed: ParsedCron,
   after: Date,
-  utc = false,
+  zone: CronZone | boolean = false,
 ): Date | null {
-  const get = {
-    minute: (d: Date) => (utc ? d.getUTCMinutes() : d.getMinutes()),
-    hour: (d: Date) => (utc ? d.getUTCHours() : d.getHours()),
-    date: (d: Date) => (utc ? d.getUTCDate() : d.getDate()),
-    month: (d: Date) => (utc ? d.getUTCMonth() : d.getMonth()) + 1,
-    day: (d: Date) => (utc ? d.getUTCDay() : d.getDay()),
-    year: (d: Date) => (utc ? d.getUTCFullYear() : d.getFullYear()),
-  };
+  const clock: CronZone =
+    typeof zone === "boolean" ? (zone ? UTC_ZONE : LOCAL_ZONE) : zone;
 
   // Start at the next whole minute after `after`, with seconds cleared.
-  const candidate = new Date(after.getTime());
-  if (utc) candidate.setUTCSeconds(0, 0);
-  else candidate.setSeconds(0, 0);
-  candidate.setTime(candidate.getTime() + 60_000);
+  let candidate = Math.floor(after.getTime() / 60_000) * 60_000 + 60_000;
 
-  const limitYear = get.year(after) + MAX_SEARCH_YEARS;
+  const limitYear = clock.fields(after.getTime()).year + MAX_SEARCH_YEARS;
 
-  while (get.year(candidate) <= limitYear) {
-    if (!parsed.month.has(get.month(candidate))) {
-      advanceMonth(candidate, utc);
+  for (;;) {
+    const now = clock.fields(candidate);
+
+    if (now.year > limitYear) {
+      return null;
+    }
+
+    if (!parsed.month.has(now.month)) {
+      candidate = advanceTo(
+        candidate,
+        clock.instantOf(now.year, now.month + 1, 1, 0, 0),
+      );
       continue;
     }
 
-    if (!matchesDay(parsed, candidate, get.date, get.day)) {
-      advanceDay(candidate, utc);
+    if (!matchesDay(parsed, now)) {
+      candidate = advanceTo(
+        candidate,
+        clock.instantOf(now.year, now.month, now.date + 1, 0, 0),
+      );
       continue;
     }
 
-    if (!parsed.hour.has(get.hour(candidate))) {
-      advanceHour(candidate, utc);
+    if (!parsed.hour.has(now.hour)) {
+      candidate = advanceHour(candidate, now.minute, clock);
       continue;
     }
 
-    if (!parsed.minute.has(get.minute(candidate))) {
-      candidate.setTime(candidate.getTime() + 60_000);
+    if (!parsed.minute.has(now.minute)) {
+      candidate += 60_000;
       continue;
     }
 
-    return candidate;
+    return new Date(candidate);
   }
-
-  return null;
 }
 
 /**
@@ -307,14 +313,9 @@ export function nextCronDate(
  * implementation preserves, because `0 0 1,15 * mon` is widely used to mean
  * "the 1st, the 15th, and every Monday".
  */
-function matchesDay(
-  parsed: ParsedCron,
-  candidate: Date,
-  getDate: (d: Date) => number,
-  getDay: (d: Date) => number,
-): boolean {
-  const domMatches = parsed.dayOfMonth.has(getDate(candidate));
-  const dowMatches = parsed.dayOfWeek.has(getDay(candidate));
+function matchesDay(parsed: ParsedCron, now: CronWallClock): boolean {
+  const domMatches = parsed.dayOfMonth.has(now.date);
+  const dowMatches = parsed.dayOfWeek.has(now.day);
 
   if (parsed.dayOfMonthUnrestricted && parsed.dayOfWeekUnrestricted) {
     return true;
@@ -328,47 +329,29 @@ function matchesDay(
   return domMatches || dowMatches;
 }
 
-/** Moves to 00:00 on the first day of the next month. */
-function advanceMonth(candidate: Date, utc: boolean): void {
-  if (utc) {
-    candidate.setUTCDate(1);
-    candidate.setUTCHours(0, 0, 0, 0);
-    candidate.setUTCMonth(candidate.getUTCMonth() + 1);
-  } else {
-    candidate.setDate(1);
-    candidate.setHours(0, 0, 0, 0);
-    candidate.setMonth(candidate.getMonth() + 1);
-  }
-}
-
-/** Moves to 00:00 on the next day. */
-function advanceDay(candidate: Date, utc: boolean): void {
-  if (utc) {
-    candidate.setUTCHours(0, 0, 0, 0);
-    candidate.setUTCDate(candidate.getUTCDate() + 1);
-  } else {
-    candidate.setHours(0, 0, 0, 0);
-    candidate.setDate(candidate.getDate() + 1);
-  }
+/**
+ * Moves the search to `target`, never backwards.
+ *
+ * A wall-clock midnight that does not exist in the zone (a DST gap at
+ * 00:00) can resolve to an instant before the candidate; falling back to
+ * the next minute keeps the search advancing until the gap is behind it.
+ */
+function advanceTo(candidate: number, target: number): number {
+  return Number.isFinite(target) && target > candidate
+    ? target
+    : candidate + 60_000;
 }
 
 /**
  * Moves to the top of the next hour.
  *
  * Uses wall-clock arithmetic rather than adding an hour of milliseconds, so a
- * DST transition does not skip or repeat an hour of scheduling. In UTC mode
- * the top of the hour is taken in UTC: a host on a half-hour offset
- * (Asia/Kolkata) would otherwise land every skip on :30 UTC and never visit
- * minutes 0-29 of a restricted hour.
+ * DST transition does not skip or repeat an hour of scheduling. The top of the
+ * hour is taken in the schedule's zone: a host on a half-hour offset
+ * (Asia/Kolkata) evaluating a UTC schedule would otherwise land every skip
+ * on :30 UTC and never visit minutes 0-29 of a restricted hour.
  */
-function advanceHour(candidate: Date, utc: boolean): void {
-  if (utc) {
-    candidate.setUTCMinutes(0, 0, 0);
-    candidate.setTime(candidate.getTime() + 3_600_000);
-    candidate.setUTCMinutes(0, 0, 0);
-    return;
-  }
-  candidate.setMinutes(0, 0, 0);
-  candidate.setTime(candidate.getTime() + 3_600_000);
-  candidate.setMinutes(0, 0, 0);
+function advanceHour(candidate: number, minute: number, clock: CronZone): number {
+  const nextHour = candidate - minute * 60_000 + 3_600_000;
+  return nextHour - clock.fields(nextHour).minute * 60_000;
 }

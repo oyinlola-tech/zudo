@@ -8,7 +8,6 @@
 
 import type {
   SerializedEnvelope,
-  SerializationMetadata,
   SerializedValue,
   SerializeOptions,
   DeserializeOptions,
@@ -20,6 +19,29 @@ import {
 } from "@zudojs/constants";
 import { InvalidSerializedDataError } from "@zudojs/errors";
 import { decodeUtf8 } from "../serializerTransformsExt/index.js";
+import {
+  assertProducibleVersion,
+  assertValidEnvelope,
+} from "./envelope.assert.js";
+
+export { assertValidEnvelope } from "./envelope.assert.js";
+
+/** Application-level metadata a producer may stamp on an envelope. */
+export interface EnvelopeMetadataOptions {
+  /**
+   * Wire-format version. Defaults to, and may not exceed,
+   * `SERIALIZATION_SCHEMA_VERSION`; pass a lower value only to produce an
+   * envelope for an older consumer. Not the version of your message shape:
+   * that is `schemaVersion`.
+   */
+  readonly version?: number;
+  readonly contentType?: string;
+  readonly encoding?: string;
+  /** Name of the payload (`"OrderPlaced"`), carried verbatim. */
+  readonly type?: string;
+  /** Version of the payload's shape, carried verbatim. */
+  readonly schemaVersion?: number | string;
+}
 
 /**
  * Create a serialization envelope wrapping data with metadata.
@@ -28,22 +50,26 @@ import { decodeUtf8 } from "../serializerTransformsExt/index.js";
  * @param format - The serialization format used (default: "json").
  * @param options - Additional metadata options.
  * @returns A SerializedEnvelope with metadata and data.
+ * @throws {SerializationError} when `options.version` is not a wire-format
+ *   version this build can read back.
  */
 export function createEnvelope(
   data: SerializedValue,
   format: string = SerializationFormat.JSON,
-  options: {
-    readonly version?: number;
-    readonly contentType?: string;
-    readonly encoding?: string;
-  } = {},
+  options: EnvelopeMetadataOptions = {},
 ): SerializedEnvelope {
+  const version = options.version ?? SERIALIZATION_SCHEMA_VERSION;
+  assertProducibleVersion(version);
   return {
     metadata: {
       format,
-      version: options.version ?? SERIALIZATION_SCHEMA_VERSION,
+      version,
       contentType: options.contentType ?? contentTypeForFormat(format),
       encoding: options.encoding ?? "utf-8",
+      ...(options.type !== undefined ? { type: options.type } : {}),
+      ...(options.schemaVersion !== undefined
+        ? { schemaVersion: options.schemaVersion }
+        : {}),
     },
     data,
   };
@@ -68,71 +94,6 @@ export function contentTypeForFormat(format: string): string {
       return "application/msgpack";
     default:
       return "application/octet-stream";
-  }
-}
-
-/**
- * Validates that a value received from the wire is a well-formed envelope.
- *
- * @param envelope - The candidate envelope.
- * @throws {InvalidSerializedDataError} when the shape or schema version is
- *   unusable. Envelope payloads arrive from a queue or an RPC peer, so a
- *   rejection has to be distinguishable from an internal bug: a bare `Error`
- *   left callers unable to tell hostile input from a defect of their own.
- */
-export function assertValidEnvelope(
-  envelope: unknown,
-): asserts envelope is SerializedEnvelope {
-  if (typeof envelope !== "object" || envelope === null) {
-    throw new InvalidSerializedDataError(
-      `Malformed envelope: expected an object, got ${envelope === null ? "null" : typeof envelope}`,
-      { format: "envelope" },
-    );
-  }
-
-  const candidate = envelope as { metadata?: unknown; data?: unknown };
-
-  if (typeof candidate.metadata !== "object" || candidate.metadata === null) {
-    throw new InvalidSerializedDataError(
-      "Malformed envelope: missing metadata",
-      { format: "envelope" },
-    );
-  }
-
-  const metadata = candidate.metadata as Partial<SerializationMetadata>;
-
-  if (typeof metadata.format !== "string" || metadata.format.length === 0) {
-    throw new InvalidSerializedDataError(
-      "Malformed envelope: metadata.format is missing",
-      { format: "envelope" },
-    );
-  }
-
-  if (
-    typeof candidate.data !== "string" &&
-    !(candidate.data instanceof Uint8Array)
-  ) {
-    throw new InvalidSerializedDataError(
-      "Malformed envelope: data must be a string or Uint8Array",
-      { format: "envelope" },
-    );
-  }
-
-  // The version exists so a future producer can be detected rather than
-  // silently misread. Older versions stay readable; newer ones do not.
-  if (metadata.version !== undefined) {
-    if (!Number.isInteger(metadata.version)) {
-      throw new InvalidSerializedDataError(
-        `Malformed envelope: metadata.version must be an integer, got ${String(metadata.version)}`,
-        { format: "envelope" },
-      );
-    }
-    if (metadata.version > SERIALIZATION_SCHEMA_VERSION) {
-      throw new InvalidSerializedDataError(
-        `Unsupported envelope schema version ${metadata.version}: this build understands up to ${SERIALIZATION_SCHEMA_VERSION}`,
-        { format: "envelope" },
-      );
-    }
   }
 }
 
@@ -170,6 +131,8 @@ export function unwrapEnvelope(
  *   the helper could only ever call `serialize(value)`, so `preserveTypes`,
  *   `pretty` and the size/depth limits were unreachable through an envelope
  *   unless they happened to be baked into the serializer instance.
+ * @param metadata - Application metadata (`type`, `schemaVersion`) to stamp
+ *   on the envelope.
  * @returns A SerializedEnvelope containing the serialized data.
  */
 export function serializeToEnvelope<T>(
@@ -180,9 +143,11 @@ export function serializeToEnvelope<T>(
   },
   format: string = SerializationFormat.JSON,
   options?: SerializeOptions,
+  metadata: Pick<EnvelopeMetadataOptions, "type" | "schemaVersion"> = {},
 ): SerializedEnvelope {
   const data = serializer.serialize(value, options);
   return createEnvelope(data, format, {
+    ...metadata,
     contentType: serializer.contentType,
   });
 }

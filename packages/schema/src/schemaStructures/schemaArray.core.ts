@@ -7,6 +7,8 @@
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
 import { describeType } from "../schemaBase/schemaBase.describe.js";
+import { ModifiableSchema } from "../schemaModifiers/schemaModifiable.core.js";
+
 import {
   addIssue,
   childContext,
@@ -32,7 +34,7 @@ interface ArraySchemaConfig<T> {
 /**
  * Schema for array values.
  */
-export class ArraySchema<TOutput> extends Schema<TOutput[]> {
+export class ArraySchema<TOutput> extends ModifiableSchema<TOutput[]> {
   public readonly _type = "array";
   private readonly _config: ArraySchemaConfig<TOutput>;
 

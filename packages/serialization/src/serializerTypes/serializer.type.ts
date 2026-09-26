@@ -69,12 +69,28 @@ export interface DeserializeOptions {
 export interface SerializationMetadata {
   /** The format used (e.g., "json"). */
   readonly format: string;
-  /** Schema version for forward/backward compatibility. */
+  /**
+   * Version of the envelope's wire format, i.e. `SERIALIZATION_SCHEMA_VERSION`
+   * (currently 1). It is owned by this package, not by the application: a
+   * consumer refuses an envelope whose version is newer than it understands.
+   * The version of *your* message shape belongs in {@link schemaVersion}.
+   */
   readonly version?: number;
   /** MIME content type (e.g., "application/json"). */
   readonly contentType?: string;
   /** Character encoding (e.g., "utf-8"). */
   readonly encoding?: string;
+  /**
+   * Application-level name of what the payload is (`"OrderPlaced"`), so a
+   * consumer can route an envelope without deserializing it first.
+   */
+  readonly type?: string;
+  /**
+   * Application-level version of the payload's shape (`2` or `"2026-01"`),
+   * for the consumer's own forward/backward compatibility handling. Carried
+   * verbatim; this package never interprets it.
+   */
+  readonly schemaVersion?: number | string;
 }
 
 /** An envelope wrapping serialized data with metadata. */

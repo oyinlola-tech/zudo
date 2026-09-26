@@ -12,3 +12,4 @@ export {
   serializeToEnvelope,
   deserializeFromEnvelope,
 } from "./envelope.core.js";
+export type { EnvelopeMetadataOptions } from "./envelope.core.js";

@@ -8,7 +8,7 @@ import type { Tenant, TenantContext } from "../tenancyTypes/tenantInterface.js";
 import type { TenantRepository } from "../tenancyTypes/repositoryTypes.js";
 import type { TenantContextStorage } from "../context/contextStorage.core.js";
 import type { HttpMiddleware } from "./httpTypes.js";
-import { createForbidden } from "./httpHelpers.js";
+import { createForbidden, TENANCY_RESPONSE_CODE } from "./httpHelpers.js";
 import {
   TENANT_STATE_KEY,
   TENANT_CONTEXT_STATE_KEY,
@@ -55,7 +55,10 @@ export function createTenantGuardMiddleware(
     // One answer for "gone" and "not active", naming neither the tenant nor
     // its status: the body goes to the client, which must not learn either.
     if (!current || current.status !== "active") {
-      return createForbidden("Tenant is not available");
+      return createForbidden(
+        "Tenant is not available",
+        TENANCY_RESPONSE_CODE.UNAVAILABLE,
+      );
     }
 
     return next();

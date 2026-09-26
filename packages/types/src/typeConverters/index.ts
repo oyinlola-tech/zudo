@@ -18,3 +18,7 @@ export {
   camelToKebab,
 } from "./typeConverters.core.js";
 export { formatCount } from "./typeConverters.count.js";
+export {
+  characterLength,
+  jsonStringByteLength,
+} from "./typeConverters.length.js";

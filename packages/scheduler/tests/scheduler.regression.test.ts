@@ -113,9 +113,9 @@ describe("SCH-01: CronTrigger honours the expression", () => {
     expect(() => new CronTrigger("5-1 * * * *")).toThrow(/inverted/);
   });
 
-  it("rejects an unsupported timezone rather than ignoring it", () => {
-    expect(() => new CronTrigger("0 0 * * *", "America/New_York")).toThrow(
-      /UTC/,
+  it("rejects an unknown timezone rather than ignoring it", () => {
+    expect(() => new CronTrigger("0 0 * * *", "Mars/Olympus_Mons")).toThrow(
+      /unknown time zone/,
     );
   });
 

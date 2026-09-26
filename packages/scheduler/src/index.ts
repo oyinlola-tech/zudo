@@ -104,6 +104,13 @@ export {
 } from "./scheduler/trigger/index.js";
 export { parseCron, nextCronDate } from "./scheduler/trigger/index.js";
 export type { ParsedCron } from "./scheduler/trigger/index.js";
+export {
+  LOCAL_ZONE,
+  UTC_ZONE,
+  createIntlZone,
+  resolveCronZone,
+} from "./scheduler/trigger/index.js";
+export type { CronWallClock, CronZone } from "./scheduler/trigger/index.js";
 
 // Clock
 export { SystemClock, createSystemClock } from "./scheduler/clock/index.js";
