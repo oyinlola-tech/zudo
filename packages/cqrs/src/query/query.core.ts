@@ -51,7 +51,7 @@ export abstract class MetadataQuery<
  */
 export function createQuery<
   TType extends string,
-  TPayload extends Record<string, unknown> = Record<never, never>,
+  TPayload extends object = Record<never, never>,
 >(
   type: TType,
   payload?: TPayload,

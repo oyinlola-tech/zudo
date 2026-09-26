@@ -67,6 +67,12 @@ const found = await queryBus.execute<GetUser, User | undefined>({
 Class-based handlers extend `CommandHandler` / `QueryHandler`; any object with an
 `execute()` method is accepted as well.
 
+The result type argument on `execute` (`User` above) is a claim the bus cannot
+check: handlers are resolved by the command's `type` string at run time, so
+`execute<CreateUser, string>` compiles whatever the handler returns, and with no
+type arguments the result is `void`. Keep the claim beside the handler's declared
+result type, or wrap the bus in a typed facade for your command set.
+
 ```typescript
 import { CommandHandler, createCommandBus } from "@zudojs/cqrs";
 
@@ -140,7 +146,7 @@ try {
 - Query bus for read operations
 - Middleware pipeline for both (timing, error normalisation, validation, locking, context enrichment)
 - Function, object and class-based handlers
-- Class decorators (`CommandHandlerFor`, `QueryHandlerFor`, `CqrsHandler`) for handler discovery
+- Class decorators (`CommandHandlerFor`, `QueryHandlerFor`, `CqrsHandler`) that mark handler classes; the buses never read the mark, so register decorated instances with `registerDecoratedHandlers(bus, [new Handler()])` or read them with `collectDecoratedHandlers`
 - Dedicated error classes (`isCqrsError`)
 - Result types for explicit returns
 - Execution contexts with correlation chains

@@ -1,10 +1,10 @@
 import {
-  BaseError,
   CqrsError,
   ErrorCategory,
   ErrorCode,
   ErrorSeverity,
   type ErrorMetadata,
+  isBaseError,
 } from "@zudojs/errors";
 
 /**
@@ -297,8 +297,10 @@ export function isCqrsError(error: unknown): error is CqrsError {
  * Converts an unknown error into a CQRS error.
  *
  * - `CqrsError` instances are returned unchanged.
- * - Other `BaseError` instances keep their code, status, category,
- *   severity, exposure and operational flags (and metadata).
+ * - Other `BaseError` instances — recognised with `isBaseError`, so a
+ *   `BaseError` from a second copy of `@zudojs/errors` counts — keep their
+ *   code, status, category, severity, exposure and operational flags (and
+ *   metadata).
  * - Plain `Error` instances become a non-operational 500 `CqrsError`
  *   using the original message.
  * - Anything else becomes a non-operational 500 `CqrsError` using the
@@ -312,7 +314,7 @@ export function toCqrsError(
     return error;
   }
 
-  if (error instanceof BaseError) {
+  if (isBaseError(error)) {
     return new CqrsError(error.message, {
       code: error.code,
       category: error.category,

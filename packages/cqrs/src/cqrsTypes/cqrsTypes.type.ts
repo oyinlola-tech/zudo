@@ -153,6 +153,15 @@ export interface CqrsBusOptions {
 
 /**
  * Command bus contract.
+ *
+ * `TResult` on `execute` is a caller-side claim, not something the bus can
+ * verify: handlers are looked up by the command's `type` string at run
+ * time, so `execute<PlaceOrder, string>` compiles whatever the registered
+ * handler returns, and with no type arguments the result is `void`. Keep
+ * the claim next to the handler's declared result (a `CommandHandler<C, R>`
+ * class, or `createCommandHandler<C, R>`) or wrap the bus in a typed
+ * facade for your command set. Middleware (`CqrsMiddleware`) is untyped for
+ * the same reason: it sees every request the bus carries.
  */
 export interface CommandBus {
   execute<TCommand extends Command, TResult = void>(
@@ -162,7 +171,7 @@ export interface CommandBus {
 }
 
 /**
- * Query bus contract.
+ * Query bus contract. See {@link CommandBus} for what `TResult` guarantees.
  */
 export interface QueryBus {
   execute<TQuery extends Query, TResult = unknown>(
@@ -177,11 +186,13 @@ export interface QueryBus {
  * The payload defaults to an empty object (`Record<never, never>`), so
  * `CommandOf<"Ping">` is satisfied by `{ type: "Ping" }`. A `type` key in
  * the payload is dropped: the discriminator always wins, mirroring
- * `createCommand`.
+ * `createCommand`. Any object type is accepted as the payload, an
+ * `interface` included (a `Record<string, unknown>` bound rejected
+ * interfaces with TS2344).
  */
 export type CommandOf<
   TType extends string,
-  TPayload extends Record<string, unknown> = Record<never, never>,
+  TPayload extends object = Record<never, never>,
 > = Readonly<
   {
     readonly type: TType;
@@ -195,7 +206,7 @@ export type CommandOf<
  */
 export type QueryOf<
   TType extends string,
-  TPayload extends Record<string, unknown> = Record<never, never>,
+  TPayload extends object = Record<never, never>,
 > = Readonly<
   {
     readonly type: TType;

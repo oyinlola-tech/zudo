@@ -5,3 +5,4 @@
  */
 
 export * from "./cqrsDecorators.core.js";
+export * from "./cqrsDecorators.discovery.js";

@@ -30,7 +30,7 @@ export interface CqrsEventExtensions {
  * versioning fields used in event-sourced aggregates.
  */
 export type CqrsEvent<
-  TPayload extends Record<string, unknown> = Record<string, unknown>,
+  TPayload extends object = Record<string, unknown>,
 > = Event<TPayload> & CqrsEventExtensions;
 
 /**
@@ -43,7 +43,7 @@ export type CqrsEvent<
  * `Event` contract.
  */
 export interface CreateCqrsEventInput<
-  TPayload extends Record<string, unknown> = Record<string, unknown>,
+  TPayload extends object = Record<string, unknown>,
 > {
   readonly type: EventType;
   readonly payload: TPayload;
@@ -94,7 +94,7 @@ export function createEventId(): EventId {
  *
  * Extends the base Zudojs event with aggregate fields.
  */
-export function createCqrsEvent<TPayload extends Record<string, unknown>>(
+export function createCqrsEvent<TPayload extends object>(
   input: CreateCqrsEventInput<TPayload>,
 ): CqrsEvent<TPayload> {
   if (typeof input.type !== "string" || input.type.trim().length === 0) {

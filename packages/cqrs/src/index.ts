@@ -131,6 +131,9 @@ export {
   isDecoratedCommandHandler,
   isDecoratedQueryHandler,
   createCommandHandlerDecorator,
+  collectDecoratedHandlers,
+  registerDecoratedHandlers,
+  type DecoratedHandlerTarget,
   createQueryHandlerDecorator,
 } from "./cqrsDecorators/index.js";
 

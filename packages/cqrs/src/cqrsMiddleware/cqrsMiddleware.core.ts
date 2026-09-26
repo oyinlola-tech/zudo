@@ -1,4 +1,4 @@
-import { BaseError } from "@zudojs/errors";
+import { isBaseError } from "@zudojs/errors";
 
 import type {
   Command,
@@ -229,7 +229,9 @@ export function timingMiddleware(
  * into `CqrsError` instances.
  *
  * `BaseError` instances (including every CQRS error) pass through
- * unchanged.
+ * unchanged. Recognition uses `isBaseError`, which also accepts a
+ * `BaseError` from a second copy of `@zudojs/errors`; an `instanceof`
+ * check wrapped those as a 500 `CqrsError` and lost their code and status.
  */
 export function errorMiddleware(
   options: MiddlewareOptions = {},
@@ -242,7 +244,7 @@ export function errorMiddleware(
     try {
       return await next(request, context);
     } catch (error) {
-      if (error instanceof BaseError) {
+      if (isBaseError(error)) {
         throw error;
       }
 

@@ -105,8 +105,16 @@ export function CqrsHandler<TType extends string>(
  *
  * Named `CommandHandlerFor` so it does not collide with the abstract
  * `CommandHandler` class exported from the same package.
+ *
+ * The mark is metadata only: no bus reads it. Registration is explicit —
+ * `commandBus.register(type, new Handler())` — or driven from the mark
+ * with `registerDecoratedHandlers`. The decorator is typed as a legacy
+ * `ClassDecorator` and also works as a standard (TC39) class decorator,
+ * whose second argument it ignores.
  */
-export function CommandHandlerFor(type: string): ClassDecorator {
+export function CommandHandlerFor<TType extends string>(
+  type: TType,
+): ClassDecorator {
   validateHandlerMetadata("command", type);
 
   return (target) => {
@@ -129,9 +137,12 @@ export function CommandHandlerFor(type: string): ClassDecorator {
  * Marks a class as the query handler for `type`.
  *
  * Named `QueryHandlerFor` so it does not collide with the abstract
- * `QueryHandler` class exported from the same package.
+ * `QueryHandler` class exported from the same package. See
+ * {@link CommandHandlerFor} for how the mark is consumed.
  */
-export function QueryHandlerFor(type: string): ClassDecorator {
+export function QueryHandlerFor<TType extends string>(
+  type: TType,
+): ClassDecorator {
   validateHandlerMetadata("query", type);
 
   return (target) => {
@@ -151,16 +162,35 @@ export function QueryHandlerFor(type: string): ClassDecorator {
 }
 
 /**
+ * Reads metadata the class itself was decorated with.
+ *
+ * Only own metadata counts. A subclass of a decorated handler used to
+ * inherit the parent's mark through the prototype chain, so discovery
+ * reported both classes as the handler for the same type and registered
+ * the type twice; a subclass is a handler only when it is decorated itself.
+ */
+function ownMetadata<TValue>(
+  target: unknown,
+  key: symbol,
+): TValue | undefined {
+  if (typeof target !== "function") {
+    return undefined;
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(target, key)) {
+    return undefined;
+  }
+
+  return (target as unknown as Record<symbol, TValue | undefined>)[key];
+}
+
+/**
  * Reads generic CQRS handler metadata from a class.
  */
 export function getCqrsHandlerMetadata(
   target: unknown,
 ): CqrsHandlerMetadata | undefined {
-  if (typeof target !== "function") {
-    return undefined;
-  }
-
-  return (target as DecoratedCqrsClass)[CQRS_HANDLER_METADATA] ?? undefined;
+  return ownMetadata<CqrsHandlerMetadata>(target, CQRS_HANDLER_METADATA);
 }
 
 /**
@@ -169,11 +199,7 @@ export function getCqrsHandlerMetadata(
 export function getCommandHandlerMetadata(
   target: unknown,
 ): CommandHandlerMetadata | undefined {
-  if (typeof target !== "function") {
-    return undefined;
-  }
-
-  return (target as DecoratedCqrsClass)[COMMAND_HANDLER_METADATA] ?? undefined;
+  return ownMetadata<CommandHandlerMetadata>(target, COMMAND_HANDLER_METADATA);
 }
 
 /**
@@ -182,22 +208,14 @@ export function getCommandHandlerMetadata(
 export function getQueryHandlerMetadata(
   target: unknown,
 ): QueryHandlerMetadata | undefined {
-  if (typeof target !== "function") {
-    return undefined;
-  }
-
-  return (target as DecoratedCqrsClass)[QUERY_HANDLER_METADATA] ?? undefined;
+  return ownMetadata<QueryHandlerMetadata>(target, QUERY_HANDLER_METADATA);
 }
 
 /**
  * Reads the CQRS type discriminator from a class.
  */
 export function getCqrsType(target: unknown): string | undefined {
-  if (typeof target !== "function") {
-    return undefined;
-  }
-
-  return (target as DecoratedCqrsClass)[CQRS_TYPE_METADATA] ?? undefined;
+  return ownMetadata<string>(target, CQRS_TYPE_METADATA);
 }
 
 /**
@@ -224,14 +242,18 @@ export function isDecoratedQueryHandler(target: unknown): boolean {
 /**
  * Creates a reusable command handler decorator.
  */
-export function createCommandHandlerDecorator(type: string): ClassDecorator {
+export function createCommandHandlerDecorator<TType extends string>(
+  type: TType,
+): ClassDecorator {
   return CommandHandlerFor(type);
 }
 
 /**
  * Creates a reusable query handler decorator.
  */
-export function createQueryHandlerDecorator(type: string): ClassDecorator {
+export function createQueryHandlerDecorator<TType extends string>(
+  type: TType,
+): ClassDecorator {
   return QueryHandlerFor(type);
 }
 
