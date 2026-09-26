@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { CryptoError } from "@zudojs/errors";
 import { randomBytes, scryptSync } from "node:crypto";
 
 import { hashPassword, verifyPassword } from "../src/cryptoPassword/index.js";
@@ -18,12 +19,12 @@ describe("security/CRYPTO-01", () => {
   });
 
   it("refuses to mint a hash below the cost floor, on both entry points", async () => {
-    await expect(hashPassword("pw", { cost: 2 })).rejects.toThrow(RangeError);
-    await expect(hashPassword("pw", { cost: 8_192 })).rejects.toThrow(RangeError);
+    await expect(hashPassword("pw", { cost: 2 })).rejects.toThrow(CryptoError);
+    await expect(hashPassword("pw", { cost: 8_192 })).rejects.toThrow(CryptoError);
     const provider = createNodeCryptoProvider();
     await expect(
       provider.hashPassword("pw", { algorithm: "scrypt", memoryCost: 2 }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(CryptoError);
   });
 
   it("still verifies older stored hashes with a smaller cost", async () => {

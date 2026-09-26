@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { CryptoError } from "@zudojs/errors";
 import { pbkdf2Sync, scryptSync } from "node:crypto";
 import {
   hashPassword,
@@ -35,13 +36,13 @@ describe("hashPassword salt/key options", () => {
 
   it("enforces the maximum password length", async () => {
     const long = "a".repeat(PASSWORD_POLICY.MAX_LENGTH + 1);
-    await expect(hashPassword(long)).rejects.toThrow(RangeError);
+    await expect(hashPassword(long)).rejects.toThrow(CryptoError);
     expect(await verifyPassword(long, "v1$scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).toBe(false);
   });
 
   it("rejects out-of-bounds work factors", async () => {
-    await expect(hashPassword("pw", { cost: 2 ** 21 })).rejects.toThrow(RangeError);
-    await expect(hashPassword("pw", { parallelization: 64 })).rejects.toThrow(RangeError);
+    await expect(hashPassword("pw", { cost: 2 ** 21 })).rejects.toThrow(CryptoError);
+    await expect(hashPassword("pw", { parallelization: 64 })).rejects.toThrow(CryptoError);
     // Individually in range, but 128 * N * r = 4 GiB.
     await expect(
       hashPassword("pw", { cost: 2 ** 20, blockSize: 32 }),

@@ -16,23 +16,32 @@ import type {
   PasswordHashResult,
 } from "./cryptoPassword.type.js";
 
-import {
-  assertPassword,
-  validateParameters,
-} from "./cryptoPassword.validate.js";
+import { validateParameters } from "./cryptoPassword.validate.js";
 
 import {
   decodePasswordHash,
   PASSWORD_FORMAT_VERSION,
 } from "./cryptoPassword.codec.js";
 
-import { assertNewHashCost } from "./cryptoPassword.helper.js";
+import {
+  assertNewHashCost,
+  assertPassword,
+} from "./cryptoPassword.helper.js";
+
+import { PASSWORD_POLICY } from "../cryptoConstants/cryptoConstants.security.js";
 
 /**
  * Options for `hashPassword` including an optional provider override.
+ *
+ * `minLength` opts into a minimum password length; pass
+ * `PASSWORD_POLICY.MIN_LENGTH` (8) to apply the package policy. It is
+ * opt-in because `hashPassword` is also used to re-hash existing
+ * credentials that predate the policy; enforce it at registration and
+ * password change.
  */
 export interface HashPasswordOptions extends PasswordHashOptions {
   readonly provider?: CryptoProvider;
+  readonly minLength?: number;
 }
 
 /**
@@ -40,12 +49,26 @@ export interface HashPasswordOptions extends PasswordHashOptions {
  *
  * `saltBytes` and `keyBytes` are honoured, and the returned `salt`/`hash`
  * are exactly the values inside `encoded`.
+ *
+ * @throws {CryptoError} `CRYPTO_HASH` when the password is outside the
+ *   length bounds (user-facing, 400) or a work factor is out of range.
  */
 export async function hashPassword(
   password: string,
   options: HashPasswordOptions = {},
 ): Promise<PasswordHashResult> {
-  assertPassword(password);
+  if (
+    options.minLength !== undefined &&
+    (!Number.isInteger(options.minLength) ||
+      options.minLength < 1 ||
+      options.minLength > PASSWORD_POLICY.MAX_LENGTH)
+  ) {
+    throw new RangeError(
+      `minLength must be an integer between 1 and ${PASSWORD_POLICY.MAX_LENGTH}.`,
+    );
+  }
+
+  assertPassword(password, options.minLength);
 
   const provider = options.provider ?? getDefaultCryptoProvider();
   assertPasswordHashingCapability(provider);

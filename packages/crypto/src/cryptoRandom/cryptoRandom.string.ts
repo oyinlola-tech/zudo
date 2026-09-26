@@ -11,6 +11,10 @@ function assertLength(length: number, name = "length"): void {
 
 /**
  * Generates a cryptographically secure random hexadecimal string.
+ *
+ * `length` counts output **characters**, not bytes: `randomHex(32)` is 32
+ * hex digits carrying 16 bytes (128 bits) of entropy. `randomBase64` and
+ * `randomBase64Url` take a byte count instead.
  */
 export async function randomHex(
   length: number,
@@ -43,6 +47,9 @@ export async function randomBase64(
 
 /**
  * Generates a cryptographically secure URL-safe random string.
+ *
+ * `byteLength` counts random **bytes**; the output is about 4/3 as many
+ * characters (`randomBase64Url(32)` is 43 characters of 256-bit entropy).
  */
 export async function randomBase64Url(
   byteLength: number,

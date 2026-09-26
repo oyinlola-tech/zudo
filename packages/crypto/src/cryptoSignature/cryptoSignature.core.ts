@@ -6,7 +6,7 @@ import { CryptoOperation } from "@zudojs/errors";
 
 import { assertProviderCapability } from "../cryptoProvider/cryptoProvider.capability.js";
 
-import type { CryptoInput } from "../cryptoProvider/index.js";
+import type { SignatureKeyMaterial } from "../cryptoProvider/index.js";
 
 import type { SignatureAlgorithm } from "../cryptoProvider/index.js";
 
@@ -26,7 +26,7 @@ export type SignatureOptions = {
  */
 export async function sign(
   data: Uint8Array,
-  privateKey: CryptoInput,
+  privateKey: SignatureKeyMaterial,
   options: SignatureOptions = {},
 ): Promise<Uint8Array> {
   const provider = options.provider ?? getDefaultCryptoProvider();
@@ -49,7 +49,7 @@ export async function sign(
 export async function verify(
   data: Uint8Array,
   signature: Uint8Array,
-  publicKey: CryptoInput,
+  publicKey: SignatureKeyMaterial,
   options: SignatureOptions = {},
 ): Promise<boolean> {
   const provider = options.provider ?? getDefaultCryptoProvider();
@@ -73,7 +73,7 @@ export async function verify(
  */
 export async function signString(
   data: string,
-  privateKey: CryptoInput,
+  privateKey: SignatureKeyMaterial,
   options: SignatureOptions = {},
 ): Promise<Uint8Array> {
   return sign(Buffer.from(data, "utf8"), privateKey, options);
@@ -85,7 +85,7 @@ export async function signString(
 export async function verifyString(
   data: string,
   signature: Uint8Array,
-  publicKey: CryptoInput,
+  publicKey: SignatureKeyMaterial,
   options: SignatureOptions = {},
 ): Promise<boolean> {
   return verify(Buffer.from(data, "utf8"), signature, publicKey, options);

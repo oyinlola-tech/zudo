@@ -13,7 +13,11 @@ export type {
   DecryptOptions,
 } from "./cryptoCipher.type.js";
 
-export type { SignOptions, VerifyOptions } from "./cryptoSignature.type.js";
+export type {
+  SignOptions,
+  VerifyOptions,
+  SignatureKeyMaterial,
+} from "./cryptoSignature.type.js";
 
 export type {
   DerivedKeyResult,

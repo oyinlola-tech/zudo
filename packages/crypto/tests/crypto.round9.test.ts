@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { CryptoError } from "@zudojs/errors";
 
 import {
   PASSWORD_HASH,
@@ -24,7 +25,7 @@ describe("CRYPTO-R9-01: key derivation enforces the documented upper bounds", ()
 
   it("validateScryptOptions rejects cost, blockSize, parallelization and keyLength above LIMITS", () => {
     expect(() => validateScryptOptions(32, 2 ** 30, 8, 1, salt)).toThrow(
-      RangeError,
+      CryptoError,
     );
     expect(() =>
       validateScryptOptions(32, LIMITS.MAX_SCRYPT_COST * 2, 8, 1, salt),
@@ -77,13 +78,13 @@ describe("CRYPTO-R9-01: key derivation enforces the documented upper bounds", ()
   it("derivePbkdf2 / deriveScrypt refuse out-of-bounds work before deriving", async () => {
     await expect(
       derivePbkdf2("pw", { iterations: LIMITS.MAX_PBKDF2_ITERATIONS + 1, salt }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(CryptoError);
     await expect(
       deriveScrypt("pw", { cost: 2 ** 14, blockSize: 1024, salt }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(CryptoError);
     await expect(
       deriveScrypt("pw", { cost: 2 ** 30, salt }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(CryptoError);
   });
 
   it("the Node provider enforces the same ceilings at its own boundary", async () => {

@@ -92,6 +92,28 @@ export function keyError(
 }
 
 /**
+ * Builds a password hashing error (`CRYPTO_HASH`, operation `HASH`).
+ *
+ * Pass `userFacing: true` for a rejection the end user caused and can act
+ * on, such as a password outside the length policy: the error then carries
+ * `statusCode: 400` and `expose: true` so an HTTP layer answers with the
+ * message instead of a generic 500. Parameter violations by the caller
+ * (a weak scrypt cost) keep the 500 default.
+ */
+export function passwordHashError(
+  message: string,
+  options: { readonly userFacing?: boolean; readonly cause?: unknown } = {},
+): CryptoError {
+  return new CryptoError(message, {
+    code: ErrorCode.CRYPTO_HASH,
+    operation: CryptoOperation.HASH,
+    algorithm: "scrypt",
+    cause: options.cause,
+    ...(options.userFacing ? { statusCode: 400, expose: true } : {}),
+  });
+}
+
+/**
  * Builds a generic crypto error for an operation, preserving `cause`.
  */
 export function operationError(

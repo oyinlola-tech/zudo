@@ -154,6 +154,7 @@ export async function createCryptoKey(
     extractable: options.extractable ?? false,
     createdAt,
     length: keyBytes.byteLength * 8,
+    byteLength: keyBytes.byteLength,
     fingerprint,
     bytes: () => new Uint8Array(keyBytes),
   });
@@ -162,9 +163,15 @@ export async function createCryptoKey(
 /**
  * Generates a cryptographically secure random symmetric key.
  *
+ * `length` is in **bytes** (`generateCryptoKey(32, …)` is a 256-bit key);
+ * the returned key reports `byteLength: 32` and `length: 256` (bits).
+ *
  * Only symmetric algorithms (AES-GCM, HMAC, KDF outputs) are accepted:
  * random bytes are not a usable Ed25519 key, so asymmetric algorithms are
  * rejected. Use `generateEd25519KeyPair` for signing keys.
+ *
+ * @throws {CryptoError} `CRYPTO_KEY` when the algorithm is asymmetric or
+ *   `length` is not a positive integer.
  */
 export async function generateCryptoKey(
   length: number,
@@ -180,8 +187,10 @@ export async function generateCryptoKey(
   }
 
   if (!Number.isInteger(length) || length <= 0) {
-    throw new RangeError(
-      "Cryptographic key length must be a positive integer.",
+    throw keyError(
+      "Cryptographic key length must be a positive integer number of bytes.",
+      CryptoOperation.KEY_GENERATION,
+      options.algorithm,
     );
   }
 

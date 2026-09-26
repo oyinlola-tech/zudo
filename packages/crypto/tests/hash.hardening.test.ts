@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { CryptoError } from "@zudojs/errors";
 import { hash, hmac, hmacSha256, sha256, sha512 } from "../src/cryptoHash/index.js";
 import { createNodeCryptoProvider } from "../src/node/index.js";
 
@@ -49,7 +50,7 @@ describe("HMAC", () => {
 
   it("rejects empty and short keys", async () => {
     await expect(hmac("x", new Uint8Array(0))).rejects.toThrow();
-    await expect(hmac("x", new Uint8Array(8))).rejects.toThrow(RangeError);
+    await expect(hmac("x", new Uint8Array(8))).rejects.toThrow(CryptoError);
     const provider = createNodeCryptoProvider();
     await expect(provider.hmac("sha256", new Uint8Array(0), "x")).rejects.toThrow(
       TypeError,

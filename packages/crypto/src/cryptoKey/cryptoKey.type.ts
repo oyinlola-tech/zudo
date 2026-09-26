@@ -19,6 +19,15 @@ export enum CryptoKeyUsage {
  *
  * The underlying byte array is copied when a key is created and when
  * its bytes are requested to prevent accidental mutation.
+ *
+ * Units: `length` is in **bits** (256 for a 32-byte key) and `byteLength`
+ * in bytes; `generateCryptoKey(length)` takes bytes.
+ *
+ * `extractable` gates the public export path (`exportCryptoKey`) and
+ * conversion to a signing key. `bytes()` is the raw accessor the providers
+ * use to perform operations with the key, so it is available regardless of
+ * `extractable`; treat it as internal and hand keys to the package's
+ * functions rather than reading them out.
  */
 export interface CryptoKey {
   readonly algorithm: CryptoAlgorithm;
@@ -26,7 +35,10 @@ export interface CryptoKey {
   readonly usages: readonly CryptoKeyUsage[];
   readonly extractable: boolean;
   readonly createdAt: number;
+  /** Key size in bits. */
   readonly length: number;
+  /** Key size in bytes (`length / 8`). */
+  readonly byteLength: number;
   readonly fingerprint: string;
   readonly bytes: () => Uint8Array;
 }

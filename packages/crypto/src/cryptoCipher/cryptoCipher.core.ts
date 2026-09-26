@@ -10,6 +10,8 @@ import { CryptoOperation } from "@zudojs/errors";
 
 import { cipherError } from "../cryptoErrors/cryptoErrors.helper.js";
 
+import { assertIvNotReused } from "./cryptoCipher.nonceGuard.js";
+
 /**
  * Options used when encrypting data.
  *
@@ -17,11 +19,20 @@ import { cipherError } from "../cryptoErrors/cryptoErrors.helper.js";
  * key. Reusing an IV under the same key with AES-GCM leaks the XOR of the
  * plaintexts and allows authentication-key recovery; omit it to have a
  * fresh random IV drawn for every call.
+ *
+ * A supplied `iv` is checked against every (key, iv) pair this process has
+ * already encrypted with, and a repeat is refused with a `CryptoError`
+ * (see {@link assertIvNotReused}). The check is per process and cannot
+ * see other processes or earlier runs, so it is a safety net, not a
+ * uniqueness guarantee. `unsafeAllowIvReuse` disables it for the rare case
+ * that genuinely needs a repeated nonce, such as replaying a published
+ * test vector; never set it in application code.
  */
 export interface CipherOptions {
   readonly iv?: Uint8Array;
   readonly aad?: Uint8Array;
   readonly provider?: CryptoProvider;
+  readonly unsafeAllowIvReuse?: boolean;
 }
 
 /**
@@ -36,6 +47,9 @@ export interface CipherResult {
 
 /**
  * Encrypts data using AES-256-GCM.
+ *
+ * @throws {CryptoError} `CRYPTO_CIPHER` when a supplied `iv` is not 12
+ *   bytes, or was already used with this key in this process.
  */
 export async function encrypt(
   plaintext: Uint8Array,
@@ -52,6 +66,14 @@ export async function encrypt(
 
   const provider = options.provider ?? getDefaultCryptoProvider();
   assertProviderCapability(provider, "encryption", CryptoOperation.ENCRYPT);
+
+  if (
+    options.iv !== undefined &&
+    key instanceof Uint8Array &&
+    options.unsafeAllowIvReuse !== true
+  ) {
+    assertIvNotReused(key, options.iv);
+  }
 
   const encrypted = await provider.encrypt({
     key,

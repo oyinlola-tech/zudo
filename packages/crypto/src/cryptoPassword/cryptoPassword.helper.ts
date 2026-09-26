@@ -1,6 +1,11 @@
 import type { PasswordHashOptions } from "./cryptoPassword.type.js";
 
-import { PASSWORD_HASH } from "../cryptoConstants/cryptoConstants.security.js";
+import {
+  PASSWORD_HASH,
+  PASSWORD_POLICY,
+} from "../cryptoConstants/cryptoConstants.security.js";
+
+import { passwordHashError } from "../cryptoErrors/cryptoErrors.helper.js";
 
 import { decodePasswordHash } from "./cryptoPassword.codec.js";
 
@@ -49,12 +54,44 @@ export function isValidPassword(
  * older stored hashes stay verifiable; minting a new hash with `cost: 2`
  * produced a hash that is effectively free to crack.
  *
- * @throws {RangeError} when `cost` is below the floor.
+ * @throws {CryptoError} `CRYPTO_HASH` when `cost` is below the floor.
  */
 export function assertNewHashCost(cost: number): void {
   if (typeof cost === "number" && cost < PASSWORD_HASH.SCRYPT.MIN_COST) {
-    throw new RangeError(
+    throw passwordHashError(
       `scrypt cost for a new password hash must be at least ${PASSWORD_HASH.SCRYPT.MIN_COST}.`,
+    );
+  }
+}
+
+/**
+ * Asserts that a value is a password string within the length bounds:
+ * non-empty, at least `minLength` code units when one is given, and at
+ * most `PASSWORD_POLICY.MAX_LENGTH`.
+ *
+ * Length violations are user-facing `CryptoError`s (`CRYPTO_HASH`,
+ * `statusCode` 400, `expose` true); a non-string is a `TypeError`.
+ */
+export function assertPassword(password: string, minLength?: number): void {
+  if (typeof password !== "string") {
+    throw new TypeError("Password must be a string.");
+  }
+
+  if (password.length === 0) {
+    throw new TypeError("Password cannot be empty.");
+  }
+
+  if (minLength !== undefined && password.length < minLength) {
+    throw passwordHashError(
+      `Password must be at least ${minLength} characters.`,
+      { userFacing: true },
+    );
+  }
+
+  if (password.length > PASSWORD_POLICY.MAX_LENGTH) {
+    throw passwordHashError(
+      `Password must not exceed ${PASSWORD_POLICY.MAX_LENGTH} characters.`,
+      { userFacing: true },
     );
   }
 }
