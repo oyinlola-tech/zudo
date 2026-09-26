@@ -464,6 +464,52 @@ if (!cancelled.ok) console.log("[caller]", cancelled.error.code, cancelled.error
 <h2 id="practice">Practice</h2>
 <exercise title="Admins only">
 <p>Write an interceptor that refuses every operation tagged <code>"Admin"</code> unless the <strong>verified</strong> role in the context is <code>"admin"</code>. Store the role with your own context key. The input must never decide the role: test it with an input that claims <code>role: "admin"</code>.</p>
+<starter file="admin.ts">
+// Example to learn from: an interceptor that checks a different verified
+// slot, guarding a different tag.
+//
+//   const BetaKey = createContextKey<boolean>("beta");
+//   const betaOnly: APIInterceptor = {
+//     async intercept(call, next) {
+//       if (call.operation.metadata?.tags?.includes("Beta") && call.context.get(BetaKey) !== true) {
+//         return apiFailure(new APIAuthorizationError("Beta access required."));
+//       }
+//       return next();
+//     },
+//   };
+//
+// Now write adminOnly the same way, checking RoleKey against "admin".
+
+import { APIAuthorizationError, APIExecutor, apiFailure, createAPIContext, createContextKey, defineOperation } from "@zudojs/api";
+import type { APIInterceptor } from "@zudojs/api";
+
+const RoleKey = createContextKey<"user" | "admin">("role");
+const adminOnly: APIInterceptor = {
+  async intercept(call, next) {
+    // If call.operation.metadata?.tags includes "Admin" and
+    // call.context.get(RoleKey) is not "admin", return
+    // apiFailure(new APIAuthorizationError("Admins only.")). Otherwise
+    // return next().
+    return next();
+  },
+};
+const deleteAll = defineOperation({
+  name: "tasks.deleteAll",
+  metadata: { tags: ["Admin"] },
+  handler: async () => "all tasks deleted",
+});
+
+const executor = new APIExecutor([adminOnly]);
+const bo = createAPIContext("req-1", {});
+bo.set(RoleKey, "user");
+const denied = await executor.execute(deleteAll, { role: "admin" }, bo);
+if (!denied.ok) console.log(denied.error.statusCode, denied.error.message);
+const ada = createAPIContext("req-2", {});
+ada.set(RoleKey, "admin");
+console.log(await executor.execute(deleteAll, {}, ada));
+</starter>
+<hint><p>Read the tags off <code>call.operation.metadata?.tags</code>, and the verified role off <code>call.context.get(RoleKey)</code>, never off <code>call.input</code>. Combine both with <code>&amp;&amp;</code> before refusing.</p></hint>
+<hint><p><code>if (call.operation.metadata?.tags?.includes("Admin") &amp;&amp; call.context.get(RoleKey) !== "admin") return apiFailure(new APIAuthorizationError("Admins only.")); return next();</code>.</p></hint>
 <solution>
 <example file="admin.ts" project="api-admin" browser="no">
 import { APIAuthorizationError, APIExecutor, apiFailure, createAPIContext, createContextKey, defineOperation } from "@zudojs/api";
@@ -502,6 +548,37 @@ console.log(await executor.execute(deleteAll, {}, ada));
 </exercise>
 <exercise title="Exit codes for a command-line transport">
 <p><code>runApiCli</code> turns results into exit codes for you. To see how, write your own <code>exitCode(result)</code>: 0 for success, 77 for status 401 or 403, 65 for 422, and 1 for anything else. Test it with results made by <code>apiSuccess</code> and <code>apiFailure</code>.</p>
+<starter file="exit-code.ts">
+// Example to learn from: mapping a different set of statuses to fixed
+// buckets.
+//
+//   function httpBucket(status: number): "ok" | "client" | "server" {
+//     if (status < 400) return "ok";
+//     if (status < 500) return "client";
+//     return "server";
+//   }
+//
+// Now write exitCode, mapping the four specific cases below to numbers.
+
+import { APIAuthenticationError, APIConflictError, APIValidationError, apiFailure, apiSuccess } from "@zudojs/api";
+import type { APIResult } from "@zudojs/api";
+
+function exitCode(result: APIResult<unknown>): number {
+  // 0 for result.ok. Otherwise look at result.error.statusCode: 77 for 401
+  // or 403, 65 for 422, 1 for anything else.
+  return 1;
+}
+
+const results: APIResult<unknown>[] = [
+  apiSuccess({ id: 1 }),
+  apiFailure(new APIAuthenticationError("Sign in first.")),
+  apiFailure(new APIValidationError("Invalid input.", ["title: invalid"])),
+  apiFailure(new APIConflictError("Already exists.")),
+];
+console.log(results.map(exitCode));
+</starter>
+<hint><p>Check <code>result.ok</code> first and return early. Otherwise read <code>result.error.statusCode</code> and compare it against 401, 403 and 422 in turn.</p></hint>
+<hint><p><code>if (result.ok) return 0; const status = result.error.statusCode; if (status === 401 || status === 403) return 77; if (status === 422) return 65; return 1;</code>.</p></hint>
 <solution>
 <example file="exit-code.ts" project="api-exit" browser="no">
 import { APIAuthenticationError, APIConflictError, APIValidationError, apiFailure, apiSuccess } from "@zudojs/api";

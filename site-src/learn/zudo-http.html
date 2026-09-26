@@ -104,8 +104,8 @@ await withServer(router, async (base) => {
 GET /tasks -> 200 [{"id":1,"title":"Buy milk","done":false},{"id":2,"title":"Walk the dog","done":true}]
 GET /tasks/2 -> 200 {"id":2,"title":"Walk the dog","done":true}
 GET /tasks/9 -> 404 {"error":"Task 9 not found","code":"ERR_RESOURCE_NOT_FOUND"}
-GET /users -> 404 {"error":"Not Found","method":"GET","path":"/users"}
-DELETE /tasks/1 -> 405 {"error":"Method Not Allowed","method":"DELETE","path":"/tasks/1","allowed":["GET"]}
+GET /users -> 404 {"error":"Not Found","code":"NOT_FOUND","method":"GET","path":"/users"}
+DELETE /tasks/1 -> 405 {"error":"Method Not Allowed","code":"METHOD_NOT_ALLOWED","method":"DELETE","path":"/tasks/1","allowed":["GET","HEAD","OPTIONS"]}
 </output>
 <p>You wrote two routes, and five different requests got sensible answers:</p>
 <ul>
@@ -277,10 +277,10 @@ await withServer(router, async (base) => {
 <output>
 good -> 201 /tasks/1 {"id":1,"title":"Buy milk","done":false}
 broken JSON -> 400 null {"error":"The request body is not valid JSON","code":"BAD_REQUEST"}
-too short -> 400 null {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+too short -> 400 null {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_small","message":"String must be at least 3 characters"}]}
 not JSON -> 415 null {"error":"Send JSON with Content-Type: application/json","code":"UNSUPPORTED_MEDIA_TYPE"}
 </output>
-<p>Every bad request got a 4xx status, and none of them reached the task list. The schema failure became a 400 by itself, because <code>SchemaError</code> carries status 400. Its body only says "Validation failed" for now; <a href="/learn/zudo-errors">The ZudoJS error system</a> adds the list of problems.</p>
+<p>Every bad request got a 4xx status, and none of them reached the task list. The schema failure became a 400 by itself, because <code>SchemaError</code> carries status 400, and its body already lists exactly which field failed and why in <code>issues</code>, sanitised so a submitted value never leaks back into the response. <a href="/learn/zudo-errors">The ZudoJS error system</a> covers how any thrown error becomes a body like this.</p>
 </section>
 
 <section>
@@ -370,7 +370,7 @@ await withServer(router, async (base) => {
 <output>
 first DELETE -> 204
 second DELETE -> 404 {"error":"Task 1 not found","code":"ERR_RESOURCE_NOT_FOUND"}
-GET /crash -> 500 {"error":"Internal Server Error"}
+GET /crash -> 500 {"error":"Internal Server Error","code":"INTERNAL_SERVER_ERROR"}
 </output>
 <p>The last request hit a bug. The error message contained a file path, which would tell an attacker about your server, and it was <strong>not</strong> sent. The client got a generic 500. You will decide exactly what clients see, and log the details for yourself, in <a href="/learn/zudo-errors">The ZudoJS error system</a>.</p>
 </section>
@@ -739,6 +739,41 @@ $ curl -X POST http://localhost:3000/tasks -d 'title=Buy milk'
 <h2 id="practice">Practice</h2>
 <exercise title="Mark a task as done">
 <p>Add a <code>PATCH /tasks/:id/done</code> route to the small in-memory router from the <a href="#router">routes section</a>. It sets <code>done</code> to <code>true</code> and answers 200 with the task, or 404 if there is no such task.</p>
+<starter file="patch.ts">
+// Example to learn from: find the row, throw NotFoundError if it is
+// missing, otherwise change it and return it.
+//
+//   router.patch("/orders/:id/cancel", (ctx) => {
+//     const order = orders.find((o) => String(o.id) === ctx.params.id);
+//     if (!order) throw new NotFoundError(`Order ${ctx.params.id} not found`);
+//     order.status = "cancelled";
+//     return createResponseContext().json(order);
+//   });
+//
+// Now do the same for marking a task done below.
+
+import { createResponseContext, createRouter } from "@zudojs/http";
+import { NotFoundError } from "@zudojs/errors";
+import { show, withServer } from "./serve.js";
+
+const tasks = [{ id: 1, title: "Buy milk", done: false }];
+
+const router = createRouter();
+router.patch("/tasks/:id/done", (ctx) => {
+  // find the task by ctx.params.id (String(t.id) === ctx.params.id);
+  // missing: throw new NotFoundError(`Task ${ctx.params.id} not found`)
+  // found: set done to true and return createResponseContext().json(task)
+  // your code here
+  return createResponseContext({ status: 404 }).json({ error: "not implemented" });
+});
+
+await withServer(router, async (base) => {
+  await show("PATCH /tasks/1/done", await fetch(`${base}/tasks/1/done`, { method: "PATCH" }));
+  await show("PATCH /tasks/5/done", await fetch(`${base}/tasks/5/done`, { method: "PATCH" }));
+});
+</starter>
+<hint><p><code>const task = tasks.find((t) =&gt; String(t.id) === ctx.params.id); if (!task) throw new NotFoundError(`Task ${ctx.params.id} not found`);</code>.</p></hint>
+<hint><p>Once found: <code>task.done = true; return createResponseContext().json(task);</code>.</p></hint>
 <solution>
 <example file="patch.ts" project="http" browser="no">
 import { createResponseContext, createRouter } from "@zudojs/http";
@@ -770,6 +805,44 @@ PATCH /tasks/5/done -> 404 {"error":"Task 5 not found","code":"ERR_RESOURCE_NOT_
 </exercise>
 <exercise title="A limit on the list">
 <p>Change the <code>GET /tasks</code> route of <a href="#query">the filter example</a> so it also accepts <code>?limit=N</code>. It must be a whole number from 1 to 50; anything else is a 400. Remember: the value arrives as a string, maybe as an array.</p>
+<starter file="limit.ts">
+// Example to learn from: a query parameter that must be a whole number in
+// range, defaulting when missing and refused otherwise.
+//
+//   router.get("/products", (ctx) => {
+//     const raw = ctx.query.page ?? "1";
+//     const page = typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) : NaN;
+//     if (!(page >= 1 && page <= 100)) {
+//       throw badRequest("page must be a whole number from 1 to 100");
+//     }
+//     return createResponseContext().json({ page });
+//   });
+//
+// Now do the same for a limit on the task list below.
+
+import { badRequest, createResponseContext, createRouter } from "@zudojs/http";
+import { show, withServer } from "./serve.js";
+
+const tasks = Array.from({ length: 5 }, (_, i) => ({ id: i + 1, title: `Task ${i + 1}` }));
+
+const router = createRouter();
+router.get("/tasks", (ctx) => {
+  // ctx.query.limit may be missing, a string, or an array (a repeated key).
+  // Default to 50 when missing. Reject with badRequest("limit must be a
+  // whole number from 1 to 50") for anything that is not a digits-only
+  // string from 1 to 50 (an array included). Otherwise slice tasks to it.
+  // your code here
+  return createResponseContext().json(tasks);
+});
+
+await withServer(router, async (base) => {
+  await show("limit=2", await fetch(`${base}/tasks?limit=2`));
+  await show("limit=0", await fetch(`${base}/tasks?limit=0`));
+  await show("limit=1&limit=2", await fetch(`${base}/tasks?limit=1&limit=2`));
+});
+</starter>
+<hint><p><code>const raw = ctx.query.limit ?? "50"; const limit = typeof raw === "string" &amp;&amp; /^\d+$/.test(raw) ? Number(raw) : NaN;</code> — a non-string (array) value fails the <code>typeof</code> check and falls through to <code>NaN</code>.</p></hint>
+<hint><p><code>if (!(limit &gt;= 1 &amp;&amp; limit &lt;= 50)) throw badRequest("limit must be a whole number from 1 to 50"); return createResponseContext().json(tasks.slice(0, limit));</code>.</p></hint>
 <solution>
 <example file="limit.ts" project="http" browser="no">
 import { badRequest, createResponseContext, createRouter } from "@zudojs/http";

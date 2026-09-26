@@ -131,7 +131,7 @@ grace bucket 6243 then 6243
 still inside at 50%: true
 </output>
 <p>A 20% rollout reaches about 20% of users, and when you raise it to 50%, everybody who already had the feature keeps it. The flag key is part of the hash, so the same 20% of users do not end up as the guinea pigs of every experiment.</p>
-<p>The rule uses <code>userId</code>, then <code>tenantId</code>, then <code>sessionId</code>. A context with none of them counts as the single user <code>"anonymous"</code>, so all anonymous visitors get the same answer. Give logged-out visitors a session id if they should be spread out too.</p>
+<p>The rule uses <code>userId</code>, then <code>tenantId</code>, then <code>sessionId</code>. A context with none of them counts as the single user <code>"anonymous"</code>, so all anonymous visitors get the same answer. Give logged-out visitors a session id if they should be spread out too. That order also means that if a context happens to carry both a <code>userId</code> and a <code>tenantId</code>, members of the same company land in different buckets — fine for a per-user feature, wrong for one you want a whole tenant to see together. Set <code>bucketBy: "tenantId"</code> on a <code>percentage</code> or <code>variant</code> rule to pin the subject: every user of that tenant then gets the same answer, and a context missing <code>tenantId</code> simply does not match the rule.</p>
 </section>
 
 <section>
@@ -363,6 +363,47 @@ task 1 done, email skipped
 <h2 id="practice">Practice</h2>
 <exercise title="Staff first, then 10%">
 <p>Write a flag <code>new-editor</code> that is on for users whose <code>email</code> attribute ends with <code>@taskapi.dev</code>, and for 10% of everyone else. Print the value and reason for <code>ada</code> (with a staff email) and for <code>user-1</code> to <code>user-3</code> (no email).</p>
+<starter file="new-editor.ts">
+// Example to learn from: enterprise plan first, then a small random
+// rollout, for a different flag.
+//
+//   const flags = createFeatureFlags({
+//     provider: createMemoryProvider([{
+//       key: "priority-support",
+//       enabled: true,
+//       defaultValue: false,
+//       rules: [
+//         { type: "attribute", attribute: "plan", operator: "equals", value: "enterprise" },
+//         { type: "percentage", percentage: 5, value: true },
+//       ],
+//     }]),
+//   });
+//
+// Now write the "new-editor" rules below: staff email first, then 10%.
+
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "new-editor",
+    enabled: true,
+    defaultValue: false,
+    // TODO: two rules, in order: (1) an "attribute" rule matching an
+    // "email" that "ends_with" "@taskapi.dev", (2) a "percentage" rule
+    // at 10 that serves true.
+    rules: [],
+  }]),
+});
+
+const ada = await flags.evaluate("new-editor", { userId: "ada", attributes: { email: "ada@taskapi.dev" } });
+console.log("ada", ada.value, ada.reason);
+for (const userId of ["user-1", "user-2", "user-3"]) {
+  const result = await flags.evaluate("new-editor", { userId });
+  console.log(userId, result.value, result.reason);
+}
+</starter>
+<hint><p>A rule is one object in the <code>rules</code> array. The attribute rule looks like <code>{ type: "attribute", attribute: "email", operator: "ends_with", value: "@taskapi.dev" }</code> — order matters, so put it first.</p></hint>
+<hint><p>The second rule is <code>{ type: "percentage", percentage: 10, value: true }</code>. Rules are checked in order and the first match wins, so users without a staff email only ever reach this one.</p></hint>
 <solution>
 <example file="new-editor.ts">
 import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
@@ -397,6 +438,8 @@ user-3 false default
 </exercise>
 <exercise title="Spot the unsafe flags">
 <p>Which of these definitions are unsafe, and why? (a) <code>{ key: "max-upload-mb", enabled: false, defaultValue: 100 }</code>, switched off because the file storage is failing (b) <code>{ key: "admin-panel", enabled: true, defaultValue: false, rules: [{ type: "attribute", attribute: "role", operator: "equals", value: "admin" }] }</code> with <code>role</code> read from a request header (c) <code>{ key: "beta-banner", enabled: true, defaultValue: false, visibility: "client" }</code></p>
+<hint><p>For (a), work out what a number flag actually serves once <code>enabled</code> is <code>false</code> and no <code>offValue</code> is declared. Is it 0?</p></hint>
+<hint><p>For (b), ask where <code>attributes.role</code> came from before it reached <code>evaluate</code>, and who controls that value. For (c), ask whether anything sensitive would leak if a user opened their browser's network tab and read the flag's value.</p></hint>
 <solution>
 <p>(a) is unsafe: a number flag that is off serves its <code>defaultValue</code>, so uploads of 100 MB are still allowed while everyone believes they are stopped. Add <code>offValue: 0</code>. (b) is unsafe twice: the client controls the header, so anyone can become "admin", and a flag must not replace the permission check anyway. (c) is fine: it is off by default, and a banner is safe to show in the browser.</p>
 </solution>

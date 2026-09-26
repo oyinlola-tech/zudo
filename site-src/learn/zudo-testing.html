@@ -125,6 +125,7 @@ log lines: [ 'info task created {"taskId":1}', 'info task created {"taskId":2}' 
 events: [ 'task.created', 'task.created' ]
 </output>
 <p>Two days later, only "Buy milk" (due after one day) is overdue. One e-mail went out, with the exact address and subject. No time passed, no e-mail was sent, nothing was printed by the logger. Two more doubles: <code>createStub&lt;T&gt;(overrides)</code> makes an object whose methods do nothing unless you write them, and <code>createSpyMethod(object, "name")</code> records the calls of a real object's method until you call <code>restore()</code>.</p>
+<p>A mock's value can also change from one call to the next. <code>mockResolvedValueOnce(v)</code>, <code>mockRejectedValueOnce(error)</code>, <code>mockReturnValueOnce(v)</code> and <code>mockImplementationOnce(fn)</code> each queue a result for exactly the <em>next</em> call; once the queue is empty, the mock falls back to whatever <code>mockResolvedValue</code> or <code>mockImplementation</code> set. Queue several to script a sequence: <code>send.mockRejectedValueOnce(new Error("SMTP down")); send.mockResolvedValue("sent");</code> makes the first call fail and every call after it succeed, which is exactly the shape of "the mail server was down for one message, then recovered".</p>
 <p>The recording happens inside the bus itself. Whether your code calls <code>publish</code>, <code>publishEvent</code> or <code>emit</code>, and whether it got the double or its <code>bus</code> property, every event lands in <code>published</code>. You can pass the double anywhere an <code>EventBus</code> is expected. <code>createTestMessageBus</code> records every <code>send</code> and <code>dispatch</code> the same way, and <code>createTestQueue</code> every <code>add</code>.</p>
 </section>
 
@@ -437,6 +438,37 @@ AssertionError: expected +0 to be 1 // Object.is equality
 <h2 id="practice">Practice</h2>
 <exercise title="A mailer that fails">
 <p>What should <code>remind</code> do when the mail server is down? Make the mock fail with <code>mockRejectedValue</code>, and check with <code>assertRejects</code> that <code>remind</code> passes the error on. Print how many times the mailer was called.</p>
+<starter file="failing-mailer.ts">
+// Example to learn from: the same mockRejectedValue-then-assertRejects
+// shape, for a different dependency.
+//
+//   const save = createMockFn<[Task], Promise<void>>();
+//   save.mockRejectedValue(new Error("disk full"));
+//   const error = await assertRejects(() => save({ id: 1, title: "x", dueAt: new Date() }), "disk full");
+//   console.log(error.message, "- save calls:", save.callCount);
+//
+// Now do the same for the mailer in tasks.remind below.
+
+import { assertRejects, createMockFn, createSpyLogger, createTestClock, createTestEventBus } from "@zudojs/testing";
+import { createTaskService } from "./task-service.js";
+
+const clock = createTestClock("2026-10-01T09:00:00Z");
+const send = createMockFn<[string, string], Promise<void>>();
+// Make send reject with new Error("SMTP server unreachable").
+const events = createTestEventBus();
+const tasks = createTaskService({ now: () => clock.now, logger: createSpyLogger(), events, mailer: { send }, maxOpenTasks: 3 });
+await tasks.create("Buy milk", 1);
+clock.add({ days: 2 });
+try {
+  const error = await assertRejects(() => tasks.remind("ada@example.com"), "unreachable");
+  console.log(error.message, "- mailer calls:", send.callCount);
+} catch {
+  console.log("remind() did not reject - mailer calls:", send.callCount);
+}
+events.dispose();
+</starter>
+<hint><p><code>send.mockRejectedValue(new Error("SMTP server unreachable"));</code> makes every call to the mock reject with that error, so <code>tasks.remind</code>'s <code>await deps.mailer.send(...)</code> throws.</p></hint>
+<hint><p><code>send.mockRejectedValue(new Error("SMTP server unreachable"));</code>. With that in place, <code>assertRejects</code> finds a real rejection and returns the error instead of throwing its own "did not reject" failure.</p></hint>
 <solution>
 <example file="failing-mailer.ts" project="tt" browser="no">
 import { assertRejects, createMockFn, createSpyLogger, createTestClock, createTestEventBus } from "@zudojs/testing";
@@ -461,6 +493,31 @@ SMTP server unreachable - mailer calls: 1
 </exercise>
 <exercise title="Messages you did not send">
 <p>Use <code>createTestMessageBus</code>. Send an <code>email.send</code> message, then check with <code>assertMessageDispatched</code> that it was sent and with <code>assertMessageNotDispatched</code> that no <code>sms.send</code> was.</p>
+<starter file="messages.ts">
+// Example to learn from: the same dispatched/not-dispatched pair of
+// checks, for a different message type.
+//
+//   const bus = createTestMessageBus();
+//   await bus.send({ type: "audit.log", payload: { action: "login" } });
+//   assertMessageDispatched(bus.dispatched, "audit.log");
+//   assertMessageNotDispatched(bus.dispatched, "audit.delete");
+//
+// Now send "email.send" below, and check it the same way.
+
+import { assertMessageDispatched, assertMessageNotDispatched, createTestMessageBus } from "@zudojs/testing";
+
+const messages = createTestMessageBus();
+
+// Send an "email.send" message with messages.send({ type: "email.send",
+// payload: { to: "ada@example.com", subject: "Overdue: Buy milk" } }).
+// Then check with assertMessageDispatched that "email.send" was sent, and
+// with assertMessageNotDispatched that "sms.send" was not.
+
+console.log(messages.findByType("email.send").map((recorded) => recorded.message.payload));
+messages.dispose();
+</starter>
+<hint><p><code>messages.send(...)</code> takes the same <code>{ type, payload }</code> shape as an event or a command. Send it before checking it: an assertion can only see messages already dispatched.</p></hint>
+<hint><p><code>await messages.send({ type: "email.send", payload: { to: "ada@example.com", subject: "Overdue: Buy milk" } }); assertMessageDispatched(messages.dispatched, "email.send"); assertMessageNotDispatched(messages.dispatched, "sms.send");</code>.</p></hint>
 <solution>
 <example file="messages.ts" project="tt" browser="no">
 import { assertMessageDispatched, assertMessageNotDispatched, createTestMessageBus } from "@zudojs/testing";

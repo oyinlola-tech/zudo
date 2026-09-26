@@ -234,7 +234,7 @@ Dry run: 1 file would be generated (nothing written):
 <p>Two patterns are worth seeing in that table:</p>
 <ul>
 <li>The layered schematics <strong>cascade</strong>. A controller is useless without a service, a service without a repository, a repository without the DTO types it stores. So <code>generate controller</code> writes the whole chain below it. Only <code>route</code> and <code>resource</code> also wire the result into the app; the others leave it for you to connect.</li>
-<li><code>module</code> and the dry run disagree slightly: the dry run listed seven files, the real run eight. The eighth is <code>src/app.ts</code>, where the new module is added to the runtime's list. Treat <code>--dry-run</code> as a close preview, not a contract, and look at <code>git diff</code> after the real run.</li>
+<li><code>module</code> also touches <code>src/app.ts</code>, where the new module is added to the runtime's list; <code>--dry-run</code> lists it too, so what it previews is what the real run writes.</li>
 </ul>
 <h3>What the small schematics write</h3>
 <p>The resource files are complete and tested; you will trace them line by line in the <a href="/learn/zudo-project-anatomy">next lesson</a>. The small schematics write <strong>stubs</strong>: starting points that compile but do nothing useful yet. Here is exactly what four of them wrote:</p>
@@ -486,25 +486,17 @@ missing-markers
 <li>It is <strong>idempotent</strong>: doing it twice has the same effect as doing it once. The second call finds the line already there and changes nothing. That is why <code>generate … --force</code> can rewrite a resource's own files without registering its routes twice.</li>
 <li>If the markers are gone, it does not guess where the line belongs.</li>
 </ul>
-<p>The last case is a real trap. Delete the <code>routes</code> markers from <code>src/routes/index.ts</code> (say, while tidying up) and generate a resource:</p>
+<p>The last case used to be a real trap: an older CLI would still write the other seven files, warn about the missing markers, and exit 0, so the resource looked generated while the route stayed unregistered. Delete the <code>routes</code> markers from <code>src/routes/index.ts</code> (say, while tidying up) and generate a resource now:</p>
 <shell title="Terminal on your computer">
 $ zudojs generate resource orders
 Detected architecture: monolith
-Generated 8 files:
-  - src/dtos/orders.dto.ts
-  - src/repositories/orders.repository.ts
-  - src/services/orders.service.ts
-  - src/controllers/orders.controller.ts
-  - src/routes/orders.routes.ts
-  - tests/orders.test.ts
-  - src/routes/index.ts
-  - src/container.ts
-Warning: Finish by hand:
+Cannot register resource "orders": the files it registers into are missing their markers, so nothing was written.
   - src/routes/index.ts: add "registerOrdersRoutes(router, deps.ordersController);" between "// zudojs:routes:start" and "// zudojs:routes:end" (the markers are missing, so the file was left unchanged)
+Restore the marker comments (or add the lines by hand and re-run with --force once the files exist).
 $ echo $?
-0
+1
 </shell>
-<p>The exit code is 0, <code>src/routes/index.ts</code> is still in the "Generated" list, <code>npm run typecheck</code> passes and <code>tests/orders.test.ts</code> passes, because the test builds its own router. Yet the running server answers 404 on <code>/api/v1/orders</code>. Only the warning tells you. Two habits prevent it: keep your own code outside the markers and never delete them, and read the last lines of every <code>generate</code> run.</p>
+<p>Now the whole plan is refused, nothing is written, and the exit code is 1: the same all-or-nothing check that refuses a name clash (<a href="#errors">below</a>) also refuses a missing marker, because a resource generated but not wired in is just as broken as one only half written. Restore the marker comments and run it again. Missing markers are still worth avoiding on purpose: keep your own code outside them and never delete them, since a refusal here is safer than the silent 404 an older CLI would have left you with, but it is still a run that does nothing until you fix it.</p>
 </section>
 
 <section>
@@ -534,17 +526,23 @@ Generated 8 files:
   - src/modules/billing/services/payments.service.ts
   - src/modules/billing/controllers/payments.controller.ts
   - src/modules/billing/routes/payments.routes.ts
-  - tests/payments.test.ts
+  - tests/modules/billing/payments.test.ts
   - src/modules/billing/routes/index.ts
   - src/container.ts
 $ zudojs generate resource payments --module shipping
 Detected architecture: modular-monolith
 Module "shipping" does not exist at src/modules/shipping. Create it first: zudojs generate module shipping
+$ zudojs generate service refunds --module billing
+Detected architecture: modular-monolith
+Generated 3 files:
+  - src/modules/billing/dtos/refunds.dto.ts
+  - src/modules/billing/repositories/refunds.repository.ts
+  - src/modules/billing/services/refunds.service.ts
 </shell>
-<p>Two behaviours in a modular monolith are easy to trip over:</p>
+<p>Two things are worth noticing in a modular monolith:</p>
 <ul>
-<li><strong>Tests are not grouped by module.</strong> The test still goes to <code>tests/payments.test.ts</code>. A <code>payments</code> resource in a second module collides with it and is refused with "already exists", even though its source files would not collide.</li>
-<li><strong><code>service</code> means "module" here.</strong> <code>zudojs generate service refunds --module billing</code> prints <code>Mapping "service" → "module" for modular-monolith architecture.</code> and creates a whole new module called <code>refunds</code>, ignoring <code>--module billing</code>. To get a service inside <code>billing</code>, generate a <code>resource</code> or <code>controller</code> there and delete what you do not need.</li>
+<li><strong>Tests are grouped by module.</strong> <code>payments</code> in <code>billing</code> gets <code>tests/modules/billing/payments.test.ts</code>, so a same-named resource in a second module writes its own test alongside its own source files, with nothing to collide.</li>
+<li><strong><code>--module</code> is respected by every schematic, including <code>service</code>.</strong> <code>generate service refunds --module billing</code> writes the service (and the repository and DTO it cascades to) inside <code>billing</code>, exactly where <code>--module</code> points, the same as <code>resource</code> and <code>controller</code> do.</li>
 </ul>
 <p>In a microservice project, a service name that does not exist is refused the same way: <code>No app at apps/services/billing. Pass --service with an existing service (or omit it for the gateway).</code></p>
 </section>
@@ -567,11 +565,11 @@ $ zudojs generate resource
 Missing required argument "name".
 Run "zudojs generate --help" for usage.
 $ zudojs generate widget orders
-Schematic name is required. Available: resource, service, module, command, query, controller, repository, middleware, event, job, route, model, dto, validator
+Unknown schematic "widget". Available: resource, service, module, command, query, controller, repository, middleware, event, job, route, model, dto, validator
 $ zudojs add payments
 Unknown feature: "payments". Available: database, redis, websockets, email, docker, queue, messaging, openapi, observability, cache, storage, scheduler
 </shell>
-<p>The third message is misleading: you did give a schematic name, just not a valid one. Read the list that follows it, not the first sentence.</p>
+<p>Both name what was wrong and list what is valid, so you fix it from the message alone.</p>
 <p>The two options that control writing:</p>
 <ul>
 <li><code>--dry-run</code> writes nothing and lists what would change. Use it every time you are unsure about a name or a target.</li>
@@ -627,6 +625,7 @@ Updated:
   - .gitignore
 Feature "database" added successfully.
 Next: Set DATABASE_URL in .env, then run the db:migrate script after adding models.
+Next: In production, apply migrations with the built image: docker run --rm --env-file .env <image> npx prisma migrate deploy (the db:deploy script does the same locally).
 Next: Resources generated from now on use Prisma; existing ones keep their in-memory repository until you swap it in src/container.ts.
 $ zudojs generate resource coupons
 Detected architecture: monolith
@@ -641,6 +640,7 @@ Generated 10 files:
   - prisma/schema.prisma
   - src/routes/index.ts
   - src/container.ts
+Warning: Could not run "npx prisma generate" (dependencies were skipped above with --skip-install). Run it after installing dependencies; until then the Prisma repository does not type-check.
 Warning: Finish by hand:
   - Run "prisma migrate dev --name add-coupons" (the Coupon model was added to prisma/schema.prisma).
 </shell>
@@ -723,7 +723,7 @@ Zudojs Doctor - Project Diagnostics
 ✔ Package manager: npm (lock file present)
 ✔ Dependencies installed: node_modules present
 ✔ TypeScript configuration: tsconfig.json found in every app
-✔ Zudojs dependencies: 13 Zudojs package(s) declared
+✔ Zudojs dependencies: 14 Zudojs package(s) declared
 ✔ Features: Every declared feature has its package
 ⚠ Capabilities: "openapi" is in .zudojs/manifest.json but in no app's zudojs.features
 
@@ -817,6 +817,8 @@ stopping: "zudojs build" failed, later steps are skipped
 <h2 id="practice">Practice</h2>
 <exercise title="Predict a dry run">
 <p>Without running it, write down the files <code>zudojs generate controller invoices --dry-run</code> lists in a monolith, and which existing files it edits. Then run it.</p>
+<hint><p>Find <code>controller</code> in the schematics table and read its two columns.</p></hint>
+<hint><p>The layered schematics cascade downward only; <code>controller</code> needs everything below it in the table (which schematics are those?), but nothing wires it to a route.</p></hint>
 <solution>
 <shell title="Terminal on your computer">
 $ zudojs generate controller invoices --dry-run
@@ -832,6 +834,43 @@ Dry run: 4 files would be written or updated (nothing written):
 </exercise>
 <exercise title="Warn about irregular plurals">
 <p>The singular rule turns <code>people</code> into the type <code>People</code> and <code>news</code> into <code>New</code>. Add a check to <code>resourceNames</code> that refuses a name when its singular does not look right, using a small list of irregular words, and suggests a better name.</p>
+<starter file="irregular.js">
+// Example to learn from: a lookup table of known-bad values, each with a
+// suggested replacement, checked before doing the real work.
+//
+//   const BANNED = new Map([["admin", "site-admin"], ["root", "root-user"]]);
+//   function checkUsername(name) {
+//     const better = BANNED.get(name);
+//     if (better) throw new Error(`"${name}" is reserved; try "${better}"`);
+//     return name;
+//   }
+//   for (const name of ["ada", "admin"]) {
+//     try { console.log("ok", checkUsername(name)); }
+//     catch (error) { console.log("refused", error.message); }
+//   }
+//
+// Now do the same for irregular plurals below.
+
+const IRREGULAR = new Map([["people", "persons"], ["news", "news-items"], ["children", "child-records"]]);
+
+function checkPlural(slug) {
+  // If IRREGULAR has an entry for slug, throw an Error:
+  //   `"${slug}" has an irregular plural; try "${better}"`
+  // Otherwise return slug unchanged.
+  // your code here
+  return slug;
+}
+
+for (const name of ["customers", "people", "news"]) {
+  try {
+    console.log("ok", checkPlural(name));
+  } catch (error) {
+    console.log("refused", error.message);
+  }
+}
+</starter>
+<hint><p><code>const better = IRREGULAR.get(slug);</code> gives you the suggestion, or <code>undefined</code> when <code>slug</code> is not in the map.</p></hint>
+<hint><p><code>if (better) throw new Error(`"${slug}" has an irregular plural; try "${better}"`);</code>, the same shape as <code>checkUsername</code> above.</p></hint>
 <solution>
 <example file="irregular.js">
 const IRREGULAR = new Map([["people", "persons"], ["news", "news-items"], ["children", "child-records"]]);
@@ -860,9 +899,11 @@ refused "news" has an irregular plural; try "news-items"
 </exercise>
 <exercise title="A resource that answers 404">
 <p>A teammate says: "I generated <code>resource shipments</code>, the tests pass, but <code>curl http://localhost:3000/api/v1/shipments</code> gives 404." List the two most likely causes and how to check each.</p>
+<hint><p>The generated test builds its own router, so passing tests tell you nothing about whether the real server was wired up or is running fresh code. Think of one cause in each of those two categories.</p></hint>
+<hint><p>One cause is about what <code>src/routes/index.ts</code> and <code>src/container.ts</code> actually contain right now, regardless of what <code>generate</code> reported; the other is about which script started the server they are curling.</p></hint>
 <solution>
 <ul>
-<li><strong>The wiring was not written.</strong> Check the end of the generate output for <code>Warning: Finish by hand</code>, then open <code>src/routes/index.ts</code> and look for <code>registerShipmentsRoutes</code> between the <code>routes</code> markers, and for <code>shipmentsController</code> in <code>src/container.ts</code>. If the markers are gone, restore them and add the lines the warning printed.</li>
+<li><strong>The wiring was reverted or edited by hand afterwards.</strong> A missing marker now makes <code>generate</code> refuse the whole run (nothing is written, exit 1), so if the command reported success, <code>registerShipmentsRoutes</code> is between the <code>routes</code> markers in <code>src/routes/index.ts</code> and <code>shipmentsController</code> is in <code>src/container.ts</code> — unless someone removed one of those lines after the fact. Check both, and check <code>git log</code> for what changed them.</li>
 <li><strong>The running server is old.</strong> With <code>npm start</code>, the server runs <code>dist/</code>, compiled before the resource existed. Run <code>npm run build</code> again, or use <code>npm run dev</code>, which restarts on every save.</li>
 </ul>
 <p>The tests pass in both cases because <code>tests/shipments.test.ts</code> registers the routes on its own router.</p>
@@ -877,7 +918,7 @@ refused "news" has an irregular plural; try "news-items"
 <li>Exit codes: 0 success (warnings included), 1 failure, 2 incomplete command line, 3 unknown command.</li>
 <li>The CLI walks up from the current folder to the first folder with a manifest, a <code>zudojs.config</code> file or a <code>zudojs</code> block in <code>package.json</code>, and reads the architecture from there.</li>
 <li>Names become kebab-case files and PascalCase classes; resources are plural, their record types singular; names that would break the code are refused.</li>
-<li>Generated wiring goes between <code>// zudojs:…</code> markers, idempotently. Missing markers produce a warning, not a failure, so read the end of every run.</li>
+<li>Generated wiring goes between <code>// zudojs:…</code> markers, idempotently. Missing markers refuse the whole run rather than write half of it, so read the end of every run.</li>
 <li>Stubs such as the validator compile but do nothing; replace them before anything depends on them. There are no custom templates, but <code>zudojs-cli</code> lets you build your own commands.</li>
 </ul>
 <p>Next, <a href="/learn/zudo-project-anatomy">Anatomy of a ZudoJS project</a> opens the files <code>create</code> and <code>generate resource</code> wrote and follows one request from <code>src/server.ts</code> all the way to the repository and back.</p>

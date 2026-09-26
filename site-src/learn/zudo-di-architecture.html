@@ -373,7 +373,7 @@ try {
 }
 </example>
 <output>
-DependencyResolutionError Failed to resolve DueTodayReminder: No registration found for token "Mailer". (chain: DueTodayReminder)
+DependencyResolutionError Failed to resolve DueTodayReminder: No registration found for token "Mailer" (required by "DueTodayReminder"). (chain: DueTodayReminder -> Mailer)
 </output>
 <p>The missing mailer stops the app at startup, with the chain that needed it. A deploy that fails to start is rolled back before a single user notices; a job that fails at 08:00 is a bug report.</p>
 <h3>Failure 2: the container cannot see the dependency</h3>
@@ -596,8 +596,8 @@ try {
 <output>
 registrations checked: 5
 Wiring is broken:
-- TaskNotifier: Failed to resolve TaskNotifier: No registration found for token "Mailer". (chain: TaskNotifier)
-- InvoiceService: Failed to resolve InvoiceService: No registration found for token "PaymentGateway". (chain: InvoiceService)
+- TaskNotifier: Failed to resolve TaskNotifier: No registration found for token "Mailer" (required by "TaskNotifier"). (chain: TaskNotifier -> Mailer)
+- InvoiceService: Failed to resolve InvoiceService: No registration found for token "PaymentGateway" (required by "InvoiceService"). (chain: InvoiceService -> PaymentGateway)
 </output>
 <p>Both mistakes, including the one in a scoped registration that only a request would have reached, are reported before the app accepts traffic. Call the helper in the composition root, right after registering. The same call in a test checks the production wiring on every test run.</p>
 <h3>Freeze the wiring</h3>
@@ -852,6 +852,56 @@ class InvoiceSender {
   }
 }
 </example>
+<starter file="invoice-injected.ts">
+// Example to learn from: two dependencies received in the constructor
+// instead of pulled from a container inside a method.
+//
+//   interface IdGenerator { next(): number; }
+//   interface Logger { log(message: string): void; }
+//   class TicketOpener {
+//     constructor(private readonly ids: IdGenerator, private readonly logger: Logger) {}
+//     open(subject: string): string {
+//       const id = this.ids.next();
+//       this.logger.log(`opened ticket ${id}: ${subject}`);
+//       return `TCK-${id}`;
+//     }
+//   }
+//
+// Now do the same for InvoiceSender below.
+
+import { createContainer } from "@zudojs/container";
+import { FixedClock } from "@zudojs/types";
+import { CLOCK, MAILER } from "./domain.js";
+import type { Clock, Mailer } from "./domain.js";
+
+class InvoiceSender {
+  // receive clock and mailer through the constructor, as readonly fields,
+  // the same shape as TicketOpener above
+  // your code here
+  sendMonthly(customer: string): void {
+    // build month from this.clock.now(): new Date(this.clock.now()).toISOString().slice(0, 7)
+    // then this.mailer.send(customer, `Your invoice for ${month}: ₦12,500`)
+    // your code here
+  }
+}
+
+function compose(withClock: boolean) {
+  const container = createContainer();
+  if (withClock) container.registerValue(CLOCK, new FixedClock(Date.parse("2026-09-24T09:00:00Z")));
+  container.registerValue(MAILER, { send: (to: string, text: string) => console.log(`to ${to}: ${text}`) });
+  container.registerFactory(InvoiceSender, (clock, mailer) => new InvoiceSender(clock, mailer), [CLOCK, MAILER]);
+  return container;
+}
+
+compose(true).resolve(InvoiceSender).sendMonthly("chiamaka@example.com");
+try {
+  compose(false).resolve(InvoiceSender);
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<hint><p><code>constructor(private readonly clock: Clock, private readonly mailer: Mailer) {}</code>, the same as <code>TicketOpener</code>'s two-dependency constructor above.</p></hint>
+<hint><p><code>const month = new Date(this.clock.now()).toISOString().slice(0, 7); this.mailer.send(customer, `Your invoice for ${month}: ₦12,500`);</code>.</p></hint>
 <solution>
 <example file="invoice-injected.ts" project="di">
 import { createContainer } from "@zudojs/container";
@@ -884,13 +934,58 @@ try {
 </example>
 <output>
 to chiamaka@example.com: Your invoice for 2026-09: ₦12,500
-Failed to resolve InvoiceSender: No registration found for token "Clock". (chain: InvoiceSender)
+Failed to resolve InvoiceSender: No registration found for token "Clock" (required by "InvoiceSender"). (chain: InvoiceSender -> Clock)
 </output>
 <p>The class now states its two dependencies, a test can build it with <code>new InvoiceSender(fakeClock, fakeMailer)</code> and no container, and a missing registration surfaces at resolve time, which the startup check turns into a failed deploy.</p>
 </solution>
 </exercise>
 <exercise title="A test container with typed overrides">
 <p>Write <code>buildTestContainer(overrides)</code> for the <code>di</code> project. <code>overrides</code> may contain a <code>clock</code> and a <code>mailer</code>. It must use <code>registerTaskServices</code>, replace only what was given, and run <code>verifyContainer</code>. Show two containers with different clocks that do not affect each other.</p>
+<starter file="test-container.ts">
+// Example to learn from: building a value from defaults, replacing only
+// the fields a caller actually overrides.
+//
+//   interface Config { readonly region: string; readonly debug: boolean; }
+//   function buildConfig(overrides: Partial<Config> = {}): Config {
+//     return { region: "ng", debug: false, ...overrides };
+//   }
+//   console.log(buildConfig({ debug: true }));
+//
+// Now do the same for a test container below: start from the real
+// registrations, then replace only clock/mailer when given.
+
+import { createContainer } from "@zudojs/container";
+import { FixedClock } from "@zudojs/types";
+import { CLOCK, MAILER, TaskService } from "./domain.js";
+import type { Clock, Mailer } from "./domain.js";
+import { registerTaskServices } from "./registrations.js";
+import { verifyContainer } from "./verify.js";
+
+interface Overrides {
+  readonly clock?: Clock;
+  readonly mailer?: Mailer;
+}
+
+async function buildTestContainer(overrides: Overrides = {}) {
+  const container = createContainer({ name: "test" });
+  registerTaskServices(container);
+  // if overrides.clock is given, container.replace(CLOCK, { useValue: overrides.clock })
+  // if overrides.mailer is given, container.replace(MAILER, { useValue: overrides.mailer })
+  // then await verifyContainer(container)
+  // your code here
+  return container;
+}
+
+const at = (iso: string): Clock => new FixedClock(Date.parse(iso));
+const monday = await buildTestContainer({ clock: at("2026-09-21T09:00:00Z") });
+const friday = await buildTestContainer({ clock: at("2026-09-25T17:00:00Z") });
+
+console.log(monday.resolve(TaskService).create("Plan the week").createdAt);
+console.log(friday.resolve(TaskService).create("Send the report").createdAt);
+console.log(monday.resolve(TaskService).list().length, friday.resolve(TaskService).list().length);
+</starter>
+<hint><p><code>if (overrides.clock) container.replace(CLOCK, { useValue: overrides.clock });</code>, and the same shape for <code>overrides.mailer</code> and <code>MAILER</code>.</p></hint>
+<hint><p>End with <code>await verifyContainer(container);</code> so a broken override still fails loudly, the same way <code>fresh.ts</code> above does it, one option at a time.</p></hint>
 <solution>
 <example file="test-container.ts" project="di">
 import { createContainer } from "@zudojs/container";
@@ -932,6 +1027,68 @@ console.log(monday.resolve(TaskService).list().length, friday.resolve(TaskServic
 </exercise>
 <exercise title="Pick the storage at the composition root">
 <p>The Task API will get a PostgreSQL repository. Define a <code>TaskRepository</code> interface with <code>save(title)</code> and <code>count()</code>, an in-memory and a (fake) PostgreSQL implementation, and a <code>TASK_REPOSITORY</code> token. Register it with a factory that reads a <code>storage: "memory" | "postgres"</code> setting. <code>TaskService</code>-like code must not contain an <code>if</code> about storage.</p>
+<starter file="choose-storage.ts">
+// Example to learn from: a factory that reads one setting and returns one
+// of two implementations, with no `if` anywhere else in the app.
+//
+//   interface Cache { get(key: string): string | undefined; }
+//   class MemoryCache implements Cache { get(key: string) { return undefined; } }
+//   class RedisCache implements Cache { get(key: string) { return "from redis"; } }
+//   container.registerFactory(CACHE, (kind) => (kind === "redis" ? new RedisCache() : new MemoryCache()), [CACHE_KIND]);
+//
+// Now do the same for the task repository below.
+
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+interface TaskRepository {
+  save(title: string): void;
+  count(): number;
+}
+class MemoryTaskRepository implements TaskRepository {
+  private readonly titles: string[] = [];
+  save(title: string): void {
+    this.titles.push(title);
+  }
+  count(): number {
+    return this.titles.length;
+  }
+}
+class PostgresTaskRepository extends MemoryTaskRepository {
+  override save(title: string): void {
+    console.log(`  INSERT INTO tasks (title) VALUES ('${title}')`);
+    super.save(title);
+  }
+}
+
+const STORAGE = createToken<"memory" | "postgres">("Storage");
+const TASK_REPOSITORY = createToken<TaskRepository>("TaskRepository");
+
+class TaskRecorder {
+  constructor(private readonly repository: TaskRepository) {}
+  record(title: string): string {
+    this.repository.save(title);
+    return `${this.repository.count()} task(s) stored`;
+  }
+}
+
+for (const storage of ["memory", "postgres"] as const) {
+  const container = createContainer();
+  container.registerValue(STORAGE, storage);
+  container.registerFactory(
+    TASK_REPOSITORY,
+    // return a PostgresTaskRepository when kind is "postgres", otherwise
+    // a MemoryTaskRepository
+    (kind) => new MemoryTaskRepository(), // your code here
+    [STORAGE],
+    { scope: ContainerScope.SINGLETON },
+  );
+  container.registerFactory(TaskRecorder, (repository) => new TaskRecorder(repository), [TASK_REPOSITORY]);
+  console.log(storage);
+  console.log(" ", container.resolve(TaskRecorder).record("Buy milk"));
+}
+</starter>
+<hint><p>The factory receives the resolved <code>STORAGE</code> value as its <code>kind</code> parameter: compare it with <code>=== "postgres"</code>.</p></hint>
+<hint><p><code>(kind) =&gt; (kind === "postgres" ? new PostgresTaskRepository() : new MemoryTaskRepository())</code>.</p></hint>
 <solution>
 <example file="choose-storage.ts" project="di">
 import { ContainerScope, createContainer, createToken } from "@zudojs/container";

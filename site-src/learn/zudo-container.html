@@ -210,7 +210,40 @@ factory-check.ts:17:37 - error TS2741: Property 'titles' is missing in type 'Clo
 Found 1 error in factory-check.ts:17
 </output>
 <p>The second token is <code>CLOCK</code>, so the second parameter is a <code>Clock</code>, even though it is called <code>store</code>. The constructor wants a <code>TaskStore</code> there, and a <code>Clock</code> has no <code>titles</code>. The names of the parameters do not matter; their order does.</p>
-<warn title="THE CLASS INJECT LIST IS NOT TYPE-CHECKED">For <code>registerClass</code>, TypeScript still does not compare <code>inject: [TaskStore, CLOCK]</code> with the constructor. If you swap the two tokens there, the code compiles and fails when it runs. Keep the <code>inject</code> list next to the constructor and in the same order, and let a test resolve every service once, so a mistake shows up in the test run. When you want the compiler to check the wiring, register the class with a factory instead: <code>registerFactory(TaskService, (store, clock) =&gt; new TaskService(store, clock), [TaskStore, CLOCK])</code>.</warn>
+<p><code>registerClass</code> checks the same way: swap the tokens in its <code>inject</code> list and the registration itself fails to compile, no factory needed:</p>
+<example file="class-check.ts" check="tsc-error">
+import { createContainer, createToken } from "@zudojs/container";
+import type { Clock } from "@zudojs/types";
+
+class TaskStore {
+  readonly titles: string[] = [];
+}
+class TaskService {
+  constructor(readonly store: TaskStore, readonly clock: Clock) {}
+}
+
+const CLOCK = createToken<Clock>("Clock");
+const container = createContainer();
+container.registerClass(TaskService, TaskService, { inject: [CLOCK, TaskStore] });
+</example>
+<output kind="tsc">
+class-check.ts:13:38 - error TS2345: Argument of type 'typeof TaskService' is not assignable to parameter of type 'InjectedConstructor<TaskService, NoInfer<readonly [InjectionToken<Clock>, typeof TaskStore]>>'.
+  Types of parameters 'store' and 'args' are incompatible.
+    Type '{ [x: number]: Clock | TaskStore; toString: never; toLocaleString: never; concat: never; join: never; slice: never; indexOf: never; lastIndexOf: never; every: never; some: never; ... 24 more ...; length: never; }' is not assignable to type '[store: TaskStore, clock: Clock]'.
+      Type at position 0 in source is not compatible with type at position 0 in target.
+        Property 'titles' is missing in type 'Clock' but required in type 'TaskStore'.
+
+13 container.registerClass(TaskService, TaskService, { inject: [CLOCK, TaskStore] });
+                                        ~~~~~~~~~~~
+
+  class-check.ts:5:12 - 'titles' is declared here.
+    5   readonly titles: string[] = [];
+                 ~~~~~~
+
+
+Found 1 error in class-check.ts:13
+</output>
+<p>Keep the <code>inject</code> list next to the constructor and in the same order regardless: the message above is accurate but not exactly friendly, and a wiring mistake is cheaper to read as a type error here than to debug from a runtime crash three files away.</p>
 </section>
 
 <section>
@@ -565,13 +598,50 @@ $ npx tsx src/check-container.ts
 true
 $ npx tsc --noEmit
 </shell>
-<p>The service got the store and the fixed clock without calling a single constructor, and the store it wrote to is the same singleton the rest of the app sees. <code>registerClass</code> checks nothing about the order of <code>inject</code>, as the warning above said, so this script doubles as the test that resolves every service once.</p>
+<p>The service got the store and the fixed clock without calling a single constructor, and the store it wrote to is the same singleton the rest of the app sees. <code>registerClass</code> catches a wrong <code>inject</code> order at compile time, as <a href="#providers">above</a>, but resolving every service at least once, the way this script does, is still the surest way to catch a token that is missing entirely.</p>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
 <exercise title="An id generator">
 <p>Register an <code>IdGenerator</code> class whose <code>next()</code> method returns 1, 2, 3, … Resolve it twice and call <code>next()</code> on each. Try it first as transient (the default), then as a singleton. Explain the difference in output.</p>
+<starter file="ids.ts">
+// Example to learn from: a stateful class registered with a lifetime, to
+// see how many instances share their state.
+//
+//   class TokenPool {
+//     private issued = 0;
+//     next(): string {
+//       this.issued += 1;
+//       return `T-${this.issued}`;
+//     }
+//   }
+//   const container = createContainer();
+//   container.registerClass(TokenPool, TokenPool, { scope: ContainerScope.SINGLETON });
+//   console.log(container.resolve(TokenPool).next(), container.resolve(TokenPool).next());
+//
+// Now do the same for the id generator below, at both lifetimes.
+
+import { ContainerScope, createContainer } from "@zudojs/container";
+
+class IdGenerator {
+  // track the last id issued, and increment it in next()
+  // your code here
+  next(): number {
+    return 0;
+  }
+}
+
+for (const scope of [ContainerScope.TRANSIENT, ContainerScope.SINGLETON]) {
+  const container = createContainer();
+  container.registerClass(IdGenerator, IdGenerator, { scope });
+  const a = container.resolve(IdGenerator);
+  const b = container.resolve(IdGenerator);
+  console.log(scope, a.next(), b.next());
+}
+</starter>
+<hint><p>Give the class a private field, <code>private last = 0;</code>, and increment it inside <code>next()</code> before returning it: <code>this.last += 1; return this.last;</code>, the same shape as <code>TokenPool</code> above.</p></hint>
+<hint><p>With this fix, transient gives each resolve its own <code>IdGenerator</code> (both print 1), while singleton shares one across both resolves (1, then 2).</p></hint>
 <solution>
 <example file="ids.ts">
 import { ContainerScope, createContainer } from "@zudojs/container";
@@ -601,6 +671,48 @@ singleton 1 2
 </exercise>
 <exercise title="One scope per request">
 <p>Register a scoped <code>RequestContext</code> class with a <code>requestId</code> property, and a transient <code>AuditLog</code> that receives it. Simulate two requests with two scopes, resolve <code>AuditLog</code> twice in each, and show that both logs in the same request share the same <code>RequestContext</code>.</p>
+<starter file="per-request.ts">
+// Example to learn from: a scoped value shared by everything resolved
+// inside one scope, injected into a transient that depends on it.
+//
+//   let counter = 0;
+//   class TenantContext {
+//     readonly tenantId = `tenant-${++counter}`;
+//   }
+//   class AccessLog {
+//     constructor(readonly context: TenantContext) {}
+//   }
+//   container.registerClass(TenantContext, TenantContext, { scope: ContainerScope.SCOPED });
+//   container.registerClass(AccessLog, AccessLog, { inject: [TenantContext] });
+//
+// Now do the same for RequestContext and AuditLog below (the registrations
+// are already wired up; add the missing property).
+
+import { ContainerScope, createContainer } from "@zudojs/container";
+
+let counter = 0;
+class RequestContext {
+  // a readonly requestId, unique per instance: `req-${++counter}`
+  // your code here
+}
+class AuditLog {
+  constructor(readonly context: RequestContext) {}
+}
+
+const container = createContainer();
+container.registerClass(RequestContext, RequestContext, { scope: ContainerScope.SCOPED });
+container.registerClass(AuditLog, AuditLog, { inject: [RequestContext] });
+
+for (const name of ["first", "second"]) {
+  const scope = container.createScope({ name });
+  const a = scope.resolve(AuditLog);
+  const b = scope.resolve(AuditLog);
+  console.log(name, a.context.requestId, b.context.requestId, a === b);
+  await scope.dispose();
+}
+</starter>
+<hint><p>Give <code>RequestContext</code> one readonly field, initialised inline: <code>readonly requestId = `req-${++counter}`;</code>, the same shape as <code>TenantContext</code> above.</p></hint>
+<hint><p>Once <code>requestId</code> exists, both <code>a</code> and <code>b</code> in one scope read the same value, because <code>RequestContext</code> is scoped; the two scopes each get their own.</p></hint>
 <solution>
 <example file="per-request.ts">
 import { ContainerScope, createContainer } from "@zudojs/container";
@@ -639,7 +751,7 @@ second req-2 req-2 false
 <ul>
 <li><strong>Dependency injection</strong>: a class receives its dependencies instead of creating them, so they can be shared and replaced.</li>
 <li>A <strong>token</strong> names a dependency: a class, or <code>createToken&lt;T&gt;("Name")</code> for interfaces and values.</li>
-<li>Providers: <code>registerValue</code>, <code>registerClass</code> with an <code>inject</code> list, <code>registerFactory</code> (its parameters are typed from its <code>inject</code> list, so TypeScript checks the wiring), <code>registerExisting</code>.</li>
+<li>Providers: <code>registerValue</code>, <code>registerClass</code> and <code>registerFactory</code> with an <code>inject</code> list (both type-checked against the constructor or the factory's parameters, in order), <code>registerExisting</code>.</li>
 <li>Lifetimes: <strong>singleton</strong> (one per container), <strong>scoped</strong> (one per <code>createScope()</code>), <strong>transient</strong> (new every time, the default). A singleton may not depend on a scoped dependency.</li>
 <li>Cycles fail with <code>CircularDependencyError</code>. <code>dispose()</code> cleans up singletons and scopes, newest first.</li>
 <li>For tests: <code>replace</code> a registration with a fake, then <code>restoreSnapshot</code>.</li>

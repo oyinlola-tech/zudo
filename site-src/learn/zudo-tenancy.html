@@ -288,7 +288,7 @@ acme asks for task 2: undefined
 globex sees: [ { id: 2, title: 'Globex: secret merger plan' } ]
 </output>
 <p>This is the test that matters. Acme asked for task 2 by its id, which is easy to guess because ids count up. The query found nothing, because task 2 belongs to Globex: <code>and tenant_id = $2</code> is part of the lookup. For the client, "belongs to someone else" and "does not exist" must look the same: a 404. Answering 403 would tell an attacker that the id exists.</p>
-<tip>Scope other keys to the tenant too, but through <a href="/learn/zudo-cache">the cache's</a> own <code>namespace</code> option, not by joining the tenant into the key text yourself: <code>cache.set("tasks.list", value, { namespace: tenantId })</code> keeps one tenant's cached list from ever being served to another. <code>@zudojs/cache</code> rejects any key or namespace containing its <code>:</code> separator with <code>ERR_INVALID_INPUT</code>, so a colon-joined string such as what <code>tenantKey(tenantId, "tasks:list")</code> builds would throw the moment you passed it in as a single cache key, rather than scoping anything. <code>assertTenantOwnership(resource, tenantId)</code> still throws a <code>TenantIsolationError</code> if an object from the wrong tenant reaches your code.</tip>
+<tip>Scope other keys to the tenant too, but through <a href="/learn/zudo-cache">the cache's</a> own <code>namespace</code> option, not by joining the tenant into the key text yourself. <code>createTenantCacheScope(tenantId, key)</code> returns <code>{ namespace: "tenant.acme", key: "tasks.list" }</code>, the shape the cache accepts: <code>cache.set(scope.key, value, { namespace: scope.namespace })</code> keeps one tenant's cached list from ever being served to another. <code>@zudojs/cache</code> rejects any key or namespace containing its <code>:</code> separator with <code>ERR_INVALID_INPUT</code>, so a colon-joined string such as what <code>tenantKey(tenantId, "tasks:list")</code> builds would throw the moment you passed it in as a single cache key, rather than scoping anything; <code>createTenantCacheScope</code> never builds one. <code>assertTenantOwnership(resource, tenantId)</code> still throws a <code>TenantIsolationError</code> if an object from the wrong tenant reaches your code.</tip>
 </section>
 
 <section>
@@ -372,7 +372,7 @@ ada lists tasks        200 [{"id":1,"title":"Acme: ship order 1001"}]
 ada guesses id 2       404 {"error":"Task not found","code":"NOT_FOUND"}
 ada sends x-tenant-id  200 [{"id":1,"title":"Acme: ship order 1001"}]
 header, no session     401 {"error":"Log in first","code":"UNAUTHORIZED"}
-suspended tenant       404 {"error":"Tenant not found"}
+suspended tenant       404 {"error":"Tenant not found","code":"ERR_TENANT_NOT_FOUND"}
 </output>
 <p>Read the five answers:</p>
 <ul>
@@ -382,13 +382,54 @@ suspended tenant       404 {"error":"Tenant not found"}
 <li>A header without a session is not even looked at: the request is not logged in.</li>
 <li>Initech's user logged in before the tenant was suspended. The middleware answers <code>404 Tenant not found</code>, the same as for a tenant that does not exist, so a caller cannot learn which tenants exist or which are suspended. If only a header had named a tenant, the answer would be <code>403</code>: an <code>untrusted</code> source is refused.</li>
 </ul>
-<p><code>.asResolver()</code> turns the chain into the single resolver the middleware takes. The guard refusals are real HTTP answers with their own status codes (since @zudojs/tenancy 1.3.0 with @zudojs/http 1.4.0), and the middleware fits the route's <code>middleware</code> list without a cast.</p>
+<p><code>.asResolver()</code> turns the chain into the single resolver the middleware takes. The guard refusals are real HTTP answers with their own status codes (since @zudojs/tenancy 1.3.0 with @zudojs/http 1.4.0), and the middleware fits the route's <code>middleware</code> list without a cast. Every refusal also carries a machine-readable <code>code</code> next to <code>error</code> (<code>ERR_TENANT_NOT_FOUND</code>, <code>ERR_TENANT_REQUIRED</code>, <code>ERR_TENANT_FORBIDDEN</code>, <code>ERR_TENANT_UNAVAILABLE</code>, <code>ERR_TENANT_RESOLUTION_CONFLICT</code>; exported as <code>TENANCY_RESPONSE_CODE</code>), the same <code>{ error, code }</code> shape <code>@zudojs/http</code> uses, so code that branches on the reason for a 404 does not have to parse the message text.</p>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
 <exercise title="Add update and delete">
 <p>Add <code>rename(id, title)</code> and <code>delete(id)</code> to <code>TaskRepository</code>. Both must only touch the current tenant's row, and return whether a row was changed. Show that Acme cannot rename Globex's task.</p>
+<starter file="rename.ts">
+// Example to learn from: the same tenant-scoped update, for archiving a
+// note instead of renaming a task.
+//
+//   async function archiveNote(id: number): Promise<boolean> {
+//     const tenantId = tenantContext.requireCurrentTenant().id;
+//     const result = await db.query("update notes set archived = true where id = $1 and tenant_id = $2", [id, tenantId]);
+//     return (result.affectedRows ?? 0) > 0;
+//   }
+//
+// Now do the same for renaming a task below.
+
+import { PGlite } from "@electric-sql/pglite";
+import { createTenantId } from "@zudojs/tenancy";
+import { tenantContext } from "./context.js";
+import { tenants } from "./tenants.js";
+
+const db = new PGlite();
+await db.exec("create table tasks (id serial primary key, tenant_id text not null, title text not null)");
+await db.exec("insert into tasks (tenant_id, title) values ('acme', 'Acme task'), ('globex', 'Globex task')");
+
+async function rename(id: number, title: string): Promise<boolean> {
+  // TODO: filter the update on both id and the current tenant's id
+  // (tenantContext.requireCurrentTenant().id), and return whether a row
+  // actually changed (result.affectedRows > 0).
+  await db.query("update tasks set title = $1 where id = $2", [title, id]);
+  return true;
+}
+
+const acme = await tenants.findById(createTenantId("acme"));
+if (acme) {
+  await tenantContext.run(acme, async () => {
+    console.log("rename own task:", await rename(1, "Acme task, renamed"));
+    console.log("rename Globex's task:", await rename(2, "hacked"));
+  });
+}
+console.log((await db.query("select id, tenant_id, title from tasks order by id")).rows);
+await db.close();
+</starter>
+<hint><p>Read the current tenant with <code>tenantContext.requireCurrentTenant().id</code>, then add it as a third bound parameter: <code>where id = $2 and tenant_id = $3</code>, passed as <code>[title, id, tenantId]</code>.</p></hint>
+<hint><p>Return <code>(result.affectedRows ?? 0) > 0</code> instead of always <code>true</code>. Zero rows changed means either the id does not exist or it belongs to another tenant — the caller cannot tell which, which is exactly the point.</p></hint>
 <solution>
 <p>Put <code>tenant_id</code> in the <code>where</code> of every write, just like in the reads. PGlite reports how many rows changed in <code>affectedRows</code>:</p>
 <example file="rename.ts" project="tenancy" browser="no">
@@ -429,6 +470,8 @@ rename Globex's task: false
 </exercise>
 <exercise title="Which source?">
 <p>For each case, say which resolver you would use and whether it is safe on its own: (a) a mobile app whose users log in; (b) each company opens <code>acme.tasks.test</code> in the browser, and users still log in; (c) a partner system calls your API with an API key; (d) a <code>?tenant=acme</code> query parameter.</p>
+<hint><p>Ask who wrote the value the resolver reads. A session or token was set by your own server after it checked something. A subdomain, header or query parameter was set by whoever sent the request.</p></hint>
+<hint><p>(b) is the tricky one: a hostname is <code>verified</code>, not <code>untrusted</code>, but it is still worth double-checking against the trusted session once the user is logged in, because two different sources naming two different tenants is itself a signal something is wrong.</p></hint>
 <solution>
 <p>(a) The session or token claim (<code>createJwtResolver</code>): trusted. (b) The subdomain is fine for choosing the login page and the look of the site, but after login, check that the session's tenant equals the subdomain's, with <code>createResolverChain(..., { detectConflicts: true })</code>, which throws <code>TenantResolutionConflictError</code> when they disagree. (c) Look the tenant up from the API key on the server: trusted, because your server issued the key. (d) Never on its own: the client writes it, like a header. It is untrusted.</p>
 </solution>

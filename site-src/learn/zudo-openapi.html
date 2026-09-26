@@ -408,12 +408,42 @@ await server.stop();
 <li>Add a route to the router, and it is in the document the next time someone opens <code>/openapi.json</code>. There is no second list to forget.</li>
 </ul>
 <p>The same works for the operations of <a href="/learn/zudo-api">the previous lesson</a>: <code>toOpenAPIRouteDescriptors(registry, { basePath: "/api" })</code> turns them into route descriptions, and <code>createOpenAPIDocumentFromRoutes(routes, options)</code> from this package builds the document from any such list. The <code>middleware</code> option of <code>mountOpenAPI</code> can put the docs behind a sign-in when they are only for your team.</p>
+<p><code>mountOpenAPI</code>'s <code>/docs</code> page is on by default, at <code>docsPath</code> (<code>/docs</code> unless you change it) &mdash; except when <code>NODE_ENV</code> is <code>production</code>, where it is off unless you pass <code>docsPath</code> yourself. <code>/openapi.json</code> stays mounted either way, since a machine reading it is not the same risk as a public HTML page: pass an explicit <code>docsPath</code> if your team still wants the browsable page in production, ideally behind the <code>middleware</code> sign-in check above.</p>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
 <exercise title="Document PATCH /tasks/:id">
 <p>Add a route to <code>taskApiDocs()</code>'s manager for <code>PATCH /tasks/:id</code>: it takes an <code>id</code> path parameter and a body <code>{ done: boolean }</code>, and answers 200 with a <code>Task</code> or 404. Register the body schema as <code>TaskUpdate</code>. Validate the result.</p>
+<starter file="patch.ts">
+// Example to learn from: documenting a different route with a body and a
+// path parameter, the same shape.
+//
+//   manager.addSchema("Rename", schema.object({ title: schema.string() }));
+//   manager.addRoute({ method: "put", path: "/tasks/:id/title", metadata: { openapi: {
+//     operationId: "tasks.rename",
+//     parameters: [{ name: "id", in: "path", schema: { type: "integer", minimum: 1 } }],
+//     requestBody: { required: true, content: { "application/json": { schema: createComponentReference("schemas", "Rename") } } },
+//     responses: { "200": { description: "Renamed" } },
+//   } } });
+//
+// Now document PATCH /tasks/:id the same way, with a TaskUpdate body.
+
+import { createComponentReference } from "@zudojs/openapi";
+import { schema } from "@zudojs/schema";
+import { taskApiDocs } from "./task-api.js";
+
+const manager = taskApiDocs();
+manager.addSchema("TaskUpdate", schema.object({ done: schema.boolean() }));
+// Add a route: method "patch", path "/tasks/:id", operationId
+// "tasks.update", an "id" path parameter (integer, minimum 1), a required
+// JSON body referencing "TaskUpdate", and responses 200 (content
+// referencing "Task") and 404.
+
+console.log(manager.validate().valid, Object.keys(manager.generate().paths));
+</starter>
+<hint><p>The shape is the same as the worked example: <code>parameters</code> for <code>id</code>, <code>requestBody</code> with a <code>createComponentReference("schemas", "TaskUpdate")</code>, and two entries in <code>responses</code>.</p></hint>
+<hint><p><code>manager.addRoute({ method: "patch", path: "/tasks/:id", metadata: { openapi: { operationId: "tasks.update", parameters: [{ name: "id", in: "path", schema: { type: "integer", minimum: 1 } }], requestBody: { required: true, content: { "application/json": { schema: createComponentReference("schemas", "TaskUpdate") } } }, responses: { "200": { description: "The updated task", content: { "application/json": { schema: createComponentReference("schemas", "Task") } } }, "404": { description: "No task with this id" } } } } });</code>.</p></hint>
 <solution>
 <example file="patch.ts" project="oa" browser="no">
 import { createComponentReference } from "@zudojs/openapi";
@@ -440,6 +470,32 @@ true [ '/tasks', '/health', '/tasks/{id}' ]
 </exercise>
 <exercise title="A check for CI">
 <p>Write <code>check-docs.ts</code>: it builds the Task API document for OpenAPI 3.0.3, prints <code>OpenAPI document OK</code> when it is valid, and otherwise prints the problems and sets <code>process.exitCode = 1</code>, so a CI job fails.</p>
+<starter file="check-docs.ts">
+// Example to learn from: the same validate-then-branch shape for a
+// different check.
+//
+//   const result = schema.safeParse(config);
+//   if (result.success) {
+//     console.log("config OK");
+//   } else {
+//     for (const issue of result.issues) console.error(issue.path, issue.message);
+//     process.exitCode = 1;
+//   }
+//
+// Now write the OpenAPI CI check the same way, using manager.validate().
+
+import { taskApiDocs } from "./task-api.js";
+
+const manager = taskApiDocs("3.0.3");
+const result = manager.validate();
+// If result.valid, log "OpenAPI document OK:" followed by
+// manager.generate().openapi and the number of entries in
+// manager.generate().paths. Otherwise, for each issue in result.errors,
+// console.error its path (joined with ".") and message, and set
+// process.exitCode = 1.
+</starter>
+<hint><p>Branch on <code>result.valid</code>. In the success branch, <code>Object.keys(manager.generate().paths).length</code> gives you the number of paths to log next to <code>manager.generate().openapi</code>.</p></hint>
+<hint><p><code>if (result.valid) { console.log("OpenAPI document OK:", manager.generate().openapi, Object.keys(manager.generate().paths).length, "paths"); } else { for (const issue of result.errors) console.error(issue.path.join("."), issue.message); process.exitCode = 1; }</code>.</p></hint>
 <solution>
 <example file="check-docs.ts" project="oa" browser="no">
 import { taskApiDocs } from "./task-api.js";

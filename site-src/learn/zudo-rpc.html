@@ -473,6 +473,35 @@ tasks: [] after 3 sends
 <h2 id="practice">Practice</h2>
 <exercise title="Only admins may delete">
 <p>Write a middleware that lets a call through only when the <strong>verified</strong> identity has <code>role: "admin"</code>, and answers <code>RPC_FORBIDDEN</code> otherwise. Test it with a frame whose metadata claims <code>role: "admin"</code> but whose verified identity is a normal user.</p>
+<starter file="admin.ts">
+// Example to learn from: a middleware that checks a different verified
+// claim, never a metadata one.
+//
+//   const requireTier: RPCMiddleware = async (context, next) => {
+//     if (context.auth?.tier !== "pro") throw new RPCForbiddenError("Pro plan required.");
+//     return next();
+//   };
+//
+// Now write adminOnly the same way, checking context.auth?.role.
+
+import { createRPCProcedure, createRPCRequest, RPCForbiddenError, RPCMiddlewareStack, RPCServer } from "@zudojs/rpc";
+import type { RPCMiddleware } from "@zudojs/rpc";
+
+const adminOnly: RPCMiddleware = async (context, next) => {
+  // If context.auth?.role is not "admin", throw new
+  // RPCForbiddenError("Admins only."). Otherwise return next().
+  return next();
+};
+
+const server = new RPCServer(undefined, new RPCMiddlewareStack([adminOnly]));
+server.register(createRPCProcedure("tasks.deleteAll", async () => "deleted"));
+
+const frame = createRPCRequest({ id: "r1", procedure: "tasks.deleteAll", payload: {}, metadata: { role: "admin" } });
+console.log((await server.handle(frame, { auth: { userId: "bo", role: "user" } })).error?.code);
+console.log((await server.handle(frame, { auth: { userId: "ada", role: "admin" } })).result);
+</starter>
+<hint><p>Read the role off <code>context.auth</code>, never off <code>context.metadata</code>: <code>if (context.auth?.role !== "admin") throw new RPCForbiddenError("Admins only.");</code>, then <code>return next();</code>.</p></hint>
+<hint><p><code>if (context.auth?.role !== "admin") throw new RPCForbiddenError("Admins only."); return next();</code>.</p></hint>
 <solution>
 <example file="admin.ts" project="rpc-admin" browser="no">
 import { createRPCProcedure, createRPCRequest, RPCForbiddenError, RPCMiddlewareStack, RPCServer } from "@zudojs/rpc";
@@ -499,6 +528,30 @@ deleted
 </exercise>
 <exercise title="Which errors to retry">
 <p>Write a <code>shouldRetry(error)</code> function for <code>retryIf</code>. It returns <code>true</code> for <code>RPCUnavailableError</code> and <code>RPCTimeoutError</code>, and <code>false</code> for everything else. Test it with three errors.</p>
+<starter file="should-retry.ts">
+// Example to learn from: a similar allow-list check for a different pair
+// of error types.
+//
+//   function isNetworkError(error: unknown): boolean {
+//     return error instanceof TypeError || error instanceof RPCUnavailableError;
+//   }
+//
+// Now write shouldRetry, allowing RPCUnavailableError and RPCTimeoutError.
+
+import { RPCError, RPCTimeoutError, RPCUnavailableError } from "@zudojs/rpc";
+
+function shouldRetry(error: unknown): boolean {
+  // Return true only when error is an RPCUnavailableError or an
+  // RPCTimeoutError.
+  return false;
+}
+
+console.log(shouldRetry(new RPCUnavailableError("down")));
+console.log(shouldRetry(new RPCTimeoutError(100)));
+console.log(shouldRetry(new RPCError("bad input", { code: "RPC_VALIDATION_ERROR" })));
+</starter>
+<hint><p>Combine two <code>instanceof</code> checks with <code>||</code>: <code>error instanceof RPCUnavailableError || error instanceof RPCTimeoutError</code>.</p></hint>
+<hint><p><code>return error instanceof RPCUnavailableError || error instanceof RPCTimeoutError;</code>.</p></hint>
 <solution>
 <example file="should-retry.ts" project="rpc-retry" browser="no">
 import { RPCError, RPCTimeoutError, RPCUnavailableError } from "@zudojs/rpc";

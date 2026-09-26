@@ -978,7 +978,7 @@ console.log("log lines:", logged.length);
 <output>
 no token   401 - {"error":"A valid import token is required","code":"ERR_AUTHENTICATION_FAILED"}
 intern     403 - {"error":"This token may not import tasks","code":"ERR_FORBIDDEN"}
-bad body   400 - {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+bad body   400 - {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["tasks"],"code":"too_small","message":"Array must have at least 1 item"}]}
 import     201 - {"created":1,"skipped":["Buy milk"]}
 again      201 - {"created":1,"skipped":[]}
 too often  429 60 {"error":"Too many imports, try again later"}
@@ -1026,6 +1026,55 @@ $ curl -s -X POST http://localhost:3000/tasks/import -d '{"tasks":[{"title":"Pla
 <h2 id="practice">Practice</h2>
 <exercise title="A daily limit in kobo">
 <p>Tellers may move at most ₦100,000 per day in total. Write a middleware <code>dailyCap</code> for the transfer pipeline that keeps a running total per user id and refuses a transfer that would go over the cap, with an <code>AuthorizationError</code>. Where in the list does it go, and why? Show three transfers of ₦45,000 by Ada.</p>
+<starter file="daily-cap.ts">
+// Example to learn from: a middleware that keeps a running total per key,
+// and only adds to it once the wrapped work actually succeeded.
+//
+//   const dataCap: NamedMiddleware<DownloadContext, string> = {
+//     name: "data-cap",
+//     handler: async (context, next) => {
+//       const already = usedToday.get(context.userId) ?? 0;
+//       if (already + context.bytes > CAP_BYTES) throw new Error(`Daily data cap of ${CAP_BYTES} bytes reached`);
+//       const result = await next();
+//       usedToday.set(context.userId, already + context.bytes);
+//       return result;
+//     },
+//   };
+//
+// Now do the same for the daily kobo cap below.
+
+import { AuthorizationError } from "@zudojs/errors";
+import { createPipeline } from "@zudojs/middleware";
+import type { NamedMiddleware } from "@zudojs/middleware";
+import { moveMoney, naira, request } from "./bank.js";
+import type { TransferContext } from "./bank.js";
+import { authenticate, authorize, validate } from "./checks.js";
+
+const CAP_KOBO = 10_000_000;
+const movedToday = new Map<string, number>();
+
+const dailyCap: NamedMiddleware<TransferContext, string> = {
+  name: "daily-cap",
+  handler: async (context, next) => {
+    // 1. already = movedToday.get(context.user!.id) ?? 0
+    // 2. if already + context.transfer!.amountKobo > CAP_KOBO, throw
+    //    new AuthorizationError(`Daily limit of ${naira(CAP_KOBO)} reached`)
+    // 3. otherwise: const result = await next(); then
+    //    movedToday.set(context.user!.id, already + context.transfer!.amountKobo);
+    //    return result;
+    // your code here
+    return next();
+  },
+};
+
+const run = createPipeline([authenticate, authorize, validate, dailyCap], moveMoney);
+for (let i = 1; i <= 3; i++) {
+  const outcome = await run(request("tok-ada", { from: "acc-1", to: "acc-2", amountKobo: 4_500_000 }));
+  console.log(i, outcome.success ? outcome.result : (outcome.error as Error).message);
+}
+</starter>
+<hint><p>Read the amount and user the same way the checks before it already resolved them: <code>context.user!.id</code> and <code>context.transfer!.amountKobo</code>.</p></hint>
+<hint><p>Guard first: <code>if (already + amount &gt; CAP_KOBO) throw new AuthorizationError(...)</code>. Only after <code>await next()</code> succeeds do you update the map, so a failed transfer never counts against the cap.</p></hint>
 <solution>
 <example file="daily-cap.ts" project="pipe" browser="no">
 import { AuthorizationError } from "@zudojs/errors";
@@ -1069,6 +1118,49 @@ for (let i = 1; i <= 3; i++) {
 </exercise>
 <exercise title="A pipeline for a queue job">
 <p>Reuse the transfer checks for a nightly batch job: build a pipeline for the context <code>request("tok-ada", …)</code> with <code>errorMode: "throw"</code>, an <code>errorMiddleware</code> that prints the failing request id, and the handler <code>moveMoney</code>. Run two jobs, one valid and one with an amount of ₦0.50, and let the job runner's own <code>try</code>/<code>catch</code> decide what to do.</p>
+<starter file="batch.ts">
+// Example to learn from: a pipeline built with errorMode: "throw", so the
+// caller's own try/catch decides what happens to a failure.
+//
+//   const runJob = createPipeline<ReminderJob, string>(
+//     [errorMiddleware<string>((_error, context) => console.log("job failed:", (context as ReminderJob).requestId))],
+//     sendReminder,
+//     { errorMode: "throw" },
+//   );
+//
+// Now build the transfer batch job's pipeline below.
+
+import { createPipeline, errorMiddleware } from "@zudojs/middleware";
+import { moveMoney, request } from "./bank.js";
+import type { TransferContext } from "./bank.js";
+import { authenticate, authorize, validate } from "./checks.js";
+
+const runJob = createPipeline<TransferContext, string>(
+  [
+    // log the failing request id: errorMiddleware<string>((_error, context) =>
+    //   console.log("job failed:", (context as TransferContext).requestId))
+    // your code here
+    authenticate,
+    authorize,
+    validate,
+  ],
+  moveMoney,
+  // add { errorMode: "throw" } as a fourth argument
+  // your code here
+);
+
+for (const amountKobo of [150_000, 50]) {
+  const job = request("tok-ada", { from: "acc-1", to: "acc-2", amountKobo });
+  try {
+    const outcome = await runJob(job);
+    console.log("job done:", outcome.success && outcome.result);
+  } catch (error) {
+    console.log("runner: will not retry a", (error as Error).name);
+  }
+}
+</starter>
+<hint><p>The middleware list's first entry: <code>errorMiddleware&lt;string&gt;((_error, context) =&gt; console.log("job failed:", (context as TransferContext).requestId))</code>, before <code>authenticate</code>.</p></hint>
+<hint><p><code>createPipeline</code> takes the options object as its third argument, after the handler: <code>moveMoney, { errorMode: "throw" }</code>.</p></hint>
 <solution>
 <example file="batch.ts" project="pipe" browser="no">
 import { createPipeline, errorMiddleware } from "@zudojs/middleware";

@@ -336,12 +336,12 @@ console.log("state:", runtime.state, "| runtime.ready:", runtime.ready);
 initialize store
 ready      store
 shutdown   store (finishing its work)
-state: stopping | runtime.ready: true
+state: stopping | runtime.ready: false
 safe answer: false
 destroy    store
-state: stopped | runtime.ready: true
+state: stopped | runtime.ready: false
 </output>
-<p>Look at <code>runtime.ready</code>. In the published <code>@zudojs/runtime</code>, running the checks while the runtime stops sets <code>ready</code> back to <code>true</code>, and it stays <code>true</code> after the runtime has stopped. So never answer a probe from <code>runtime.ready</code> alone: combine it with <code>runtime.state === "running"</code>, as the "safe answer" line does. The generated project is protected twice: <code>src/app.ts</code> registers a check called <code>modules</code> that returns <code>runtime.state === "running"</code>, and the <code>health</code> function in <code>src/server.ts</code> checks <code>runtime.state</code> itself. At the <a href="#task-api">end of this lesson</a>, <code>/health</code> reports every readiness check and keeps that state check.</p>
+<p>Look at <code>runtime.ready</code>: it is already <code>false</code> the moment <code>stop()</code> begins, and running the checks again while the store's own check still returns <code>true</code> does not flip it back. <code>shutting_down</code> is <strong>sticky</strong>: once the runtime starts to stop, only a fresh <code>setState()</code> can leave it, so a check that races the shutdown and still passes cannot make <code>ready</code> true again. This is a newer fix; before it, running the checks during <code>stop()</code> did set <code>ready</code> back to <code>true</code>, and it stayed <code>true</code> after the runtime had fully stopped, so a probe timed just wrong could route a request to an instance with its connections already closing. It is still worth combining <code>runtime.ready</code> with <code>runtime.state === "running"</code>, as the "safe answer" line does: a state check reads cleanly in one line, does not depend on which patch version of the package you have, and says directly what you mean, "handling traffic right now". The generated project is protected twice this way: <code>src/app.ts</code> registers a check called <code>modules</code> that returns <code>runtime.state === "running"</code>, and the <code>health</code> function in <code>src/server.ts</code> checks <code>runtime.state</code> itself. At the <a href="#task-api">end of this lesson</a>, <code>/health</code> reports every readiness check and keeps that state check.</p>
 </section>
 
 <section>
@@ -674,6 +674,34 @@ $ curl http://localhost:3000/health
 <h2 id="practice">Practice</h2>
 <exercise title="Add a mailer module">
 <p>Using <code>traceModule</code> and <code>buildRuntime</code> from this lesson, add a <code>mailer</code> module that needs <code>tasks</code>, next to <code>http</code>, which also needs <code>tasks</code>. Before running it, write down the order you expect for all four rounds of hooks. Then run it.</p>
+<starter file="mailer.ts">
+// Example to learn from: two independent modules that share one
+// dependency, declared as data in a list, in the wrong order on purpose.
+//
+//   const runtime = buildRuntime([
+//     traceModule("recommendations", ["catalog"]),
+//     traceModule("search", ["catalog"]),
+//     traceModule("catalog", ["db"]),
+//     traceModule("db"),
+//   ]);
+//   await runtime.start();
+//   await runtime.stop();
+//
+// Now add mailer and http below, both needing tasks.
+
+import { buildRuntime, traceModule } from "./trace.js";
+
+const runtime = buildRuntime([
+  // add traceModule("mailer", ["tasks"]) here
+  // add traceModule("http", ["tasks"]) here
+  traceModule("tasks", ["store"]),
+  traceModule("store"),
+]);
+await runtime.start();
+await runtime.stop();
+</starter>
+<hint><p>Add two more entries to the array, in the same shape as <code>traceModule("tasks", ["store"])</code>: <code>traceModule("mailer", ["tasks"])</code> and <code>traceModule("http", ["tasks"])</code>.</p></hint>
+<hint><p>Order inside the array does not matter for modules that do not depend on each other; the runtime still starts <code>store</code> and <code>tasks</code> first, since <code>mailer</code> and <code>http</code> both need <code>tasks</code>.</p></hint>
 <solution>
 <example file="mailer.ts" project="rt" browser="no">
 import { buildRuntime, traceModule } from "./trace.js";
@@ -710,6 +738,41 @@ destroy    store
 </exercise>
 <exercise title="A failing initialization">
 <p>Make the <code>tasks</code> module throw <code>new Error("Schema is out of date")</code> in <code>onInitialize</code>. Which hooks run, what is the error's <code>phase</code>, and why does <code>onShutdown</code> run for no module at all?</p>
+<starter file="init-fail.ts">
+// Example to learn from: overriding one hook on top of a working module,
+// by spreading it and replacing just that key.
+//
+//   const cache = {
+//     ...traceModule("cache", ["store"]),
+//     onInitialize: () => {
+//       console.log("initialize cache");
+//       throw new Error("cache cluster unreachable");
+//     },
+//   };
+//
+// Now do the same for tasks below.
+
+import { RuntimeStartError } from "@zudojs/runtime";
+import { buildRuntime, traceModule } from "./trace.js";
+
+const tasks = {
+  ...traceModule("tasks", ["store"]),
+  // override onInitialize: log "initialize tasks", then throw
+  // new Error("Schema is out of date")
+  // your code here
+};
+
+const runtime = buildRuntime([traceModule("store"), tasks, traceModule("http", ["tasks"])]);
+try {
+  await runtime.start();
+} catch (error) {
+  if (error instanceof RuntimeStartError) {
+    console.log(error.phase, "-", (error.cause as Error).message);
+  }
+}
+</starter>
+<hint><p><code>onInitialize: () =&gt; { console.log("initialize tasks"); throw new Error("Schema is out of date"); }</code>, replacing the key <code>traceModule</code> already gave <code>tasks</code>.</p></hint>
+<hint><p>Once <code>tasks</code> throws, <code>store</code> (already ready) and <code>tasks</code> (half-initialized) both get destroyed; <code>http</code>, which depends on <code>tasks</code>, is never reached at all.</p></hint>
 <solution>
 <example file="init-fail.ts" project="rt" browser="no">
 import { RuntimeStartError } from "@zudojs/runtime";
@@ -745,6 +808,11 @@ initialize - Schema is out of date
 </exercise>
 <exercise title="Stop on failure">
 <p>In the Task API, <code>src/server.ts</code> calls <code>await runtime.start()</code> without a <code>try</code>, just before it creates the HTTP server. Change it so that a failed start logs the error, calls <code>runtime.stop()</code> and exits with code 1.</p>
+<starter file="src/server.ts (part)">
+await runtime.start();
+</starter>
+<hint><p>Wrap the call in <code>try</code>/<code>catch</code>. A failed start still leaves some modules registered and possibly partially started, so the <code>catch</code> block should still call <code>runtime.stop()</code> before exiting.</p></hint>
+<hint><p><code>try { await runtime.start(); } catch (error) { console.error("Startup failed:", error); await runtime.stop(); process.exit(1); }</code>.</p></hint>
 <solution>
 <example file="src/server.ts (part)" browser="no" check="skip">
 try {

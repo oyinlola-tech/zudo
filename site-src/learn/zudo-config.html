@@ -561,6 +561,45 @@ Cannot start: PORT must be an integer between 0 and 65535, got "eighty".
 <h2 id="practice">Practice</h2>
 <exercise title="A request timeout setting">
 <p>Add a <code>request_timeout_ms</code> setting to the <a href="#validate">config schema</a>, with a default of 30000 in the defaults source. It must be a whole number from 1000 to 120000. Check it with <code>TASKS_REQUEST_TIMEOUT_MS=500</code> and with <code>5000</code>.</p>
+<starter file="timeout-setting.ts">
+// Example to learn from: one numeric setting, a default, and a schema that
+// coerces and bounds it.
+//
+//   const Schema = schema.object({
+//     max_upload_mb: schema.coerce.number().int().min(1).max(100),
+//   });
+//   const config = createConfigManager({
+//     sources: [
+//       createDefaultsConfigSource({ max_upload_mb: 10 }),
+//       createEnvironmentConfigSource({ prefix: "SHOP_", env: { SHOP_MAX_UPLOAD_MB: "20" }, priority: 20 }),
+//     ],
+//   });
+//
+// Now do the same for the request timeout below.
+
+import { createConfigManager, createDefaultsConfigSource, createEnvironmentConfigSource } from "@zudojs/config";
+import { schema } from "@zudojs/schema";
+
+const Schema = schema.object({
+  // request_timeout_ms: a coerced whole number from 1000 to 120_000
+  // your code here
+});
+
+for (const value of ["500", "5000"]) {
+  const config = createConfigManager({
+    sources: [
+      // defaults: { request_timeout_ms: 30_000 }
+      // environment: prefix "TASKS_", env: { TASKS_REQUEST_TIMEOUT_MS: value }, priority 20
+      // your code here
+    ],
+  });
+  await config.load();
+  const result = Schema.safeParse(config.toObject());
+  console.log(value, "->", result.success ? result.data : result.issues[0]?.message);
+}
+</starter>
+<hint><p><code>request_timeout_ms: schema.coerce.number().int().min(1000).max(120_000),</code>, the same shape as <code>max_upload_mb</code> above.</p></hint>
+<hint><p><code>sources: [createDefaultsConfigSource({ request_timeout_ms: 30_000 }), createEnvironmentConfigSource({ prefix: "TASKS_", env: { TASKS_REQUEST_TIMEOUT_MS: value }, priority: 20 })]</code>.</p></hint>
 <solution>
 <example file="timeout-setting.ts">
 import { createConfigManager, createDefaultsConfigSource, createEnvironmentConfigSource } from "@zudojs/config";
@@ -590,6 +629,8 @@ for (const value of ["500", "5000"]) {
 </exercise>
 <exercise title="Find the leak">
 <p>A teammate wants to debug a production problem and adds <code>console.log("config", config.toObject())</code> at startup. What is wrong, and what should the line be?</p>
+<hint><p>Re-read the two methods a config manager offers for reading everything at once, and what each promises about sensitive values.</p></hint>
+<hint><p>Think about where logs end up and who can read them, not just whether the code that wrote the line was trusted.</p></hint>
 <solution>
 <p><code>toObject()</code> returns the <strong>real</strong> values, so the JWT secret and the database password would be printed into the production logs, where anyone with log access can read them, and log services keep them for months. Use <code>config.toSafeObject()</code>, which replaces sensitive values with <code>"[REDACTED]"</code>, or better, log only the few settings you need, such as the port and the origins. If a secret was ever logged, treat it as leaked and replace it.</p>
 </solution>

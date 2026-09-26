@@ -1215,7 +1215,7 @@ console.log(noBody.status, noBody.text);
 await client.close();
 </example>
 <output>
-500 {"error":"Internal Server Error"}
+500 {"error":"Internal Server Error","code":"INTERNAL_SERVER_ERROR"}
 400 {"error":"The request body is not valid JSON.","code":"BAD_REQUEST"}
 400 {"error":"Validation failed","issues":[{"path":"","message":"Expected object, received undefined"}]}
 </output>
@@ -1336,6 +1336,66 @@ lost routes marker   /health 200 | /api/v1/examples 404
 <h2 id="practice">Practice</h2>
 <exercise title="Log the errors you answer with 500">
 <p>Change <code>dispatch</code> so an unexpected error is logged with its message before it is rethrown, but a 4xx error is not logged. Try it with the broken repository.</p>
+<starter file="log-500.ts">
+// Example to learn from: logging only the failures worth an operator's
+// attention, not the ones a caller already turned into a normal answer.
+//
+//   function handle(work: () => string): { status: number; body: string } {
+//     try {
+//       return { status: 200, body: work() };
+//     } catch (error) {
+//       if (error instanceof RangeError) return { status: 400, body: "bad input" };
+//       console.error(`unexpected: ${(error as Error).message}`);
+//       throw error;
+//     }
+//   }
+//
+// Now do the same for dispatch below: log only when errorResponse found
+// nothing to turn the error into.
+
+import { HttpMiddlewarePipeline, createRouter } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+import { createLogger } from "@zudojs/logger";
+import { createHttpTestClient } from "@zudojs/testing";
+
+import { ExamplesController } from "./src/controllers/examples.controller.js";
+import type { CreateExampleInput, Example } from "./src/dtos/examples.dto.js";
+import { InMemoryExamplesRepository } from "./src/repositories/examples.repository.js";
+import { registerExamplesRoutes } from "./src/routes/examples.routes.js";
+import { ExamplesService } from "./src/services/examples.service.js";
+import { errorResponse } from "./src/utils/http.js";
+
+class BrokenRepository extends InMemoryExamplesRepository {
+  public override async create(_input: CreateExampleInput): Promise<Example> {
+    throw new Error("disk full at /var/lib/shop/data.db");
+  }
+}
+
+const logger = createLogger({ name: "task-api" });
+const router = createRouter();
+registerExamplesRoutes(router, new ExamplesController(new ExamplesService(new BrokenRepository())));
+
+const dispatch: HttpMiddleware = async (context) => {
+  try {
+    return (await router.dispatch(context.request, { signal: context.signal })).response;
+  } catch (error) {
+    const response = errorResponse(error);
+    if (response !== undefined) return response;
+    // This is an unexpected (non-HTTP) error: log it with logger.error,
+    // including context.request.method, context.request.path and
+    // (error as Error).message, then rethrow so the caller still gets 500.
+    // your code here
+    throw error;
+  }
+};
+
+const client = createHttpTestClient(new HttpMiddlewarePipeline({ middlewares: [dispatch] }));
+console.log((await client.get("/api/v1/examples/not-a-uuid")).status);
+console.log((await client.post("/api/v1/examples").send({ name: "Buy milk" })).status);
+await client.close();
+</starter>
+<hint><p><code>logger.error</code> takes one message string. Build it with a template literal: <code>`unhandled error on ${context.request.method} ${context.request.path}: ${(error as Error).message}`</code>.</p></hint>
+<hint><p><code>logger.error(...)</code> goes right before <code>throw error;</code>, inside the same <code>if (response !== undefined) return response;</code> branch's <code>else</code> path (i.e. after that <code>if</code>, since it already returned when <code>response</code> exists).</p></hint>
 <solution>
 <example file="log-500.ts" project="anatomy" browser="no">
 import { HttpMiddlewarePipeline, createRouter } from "@zudojs/http";
@@ -1386,6 +1446,63 @@ await client.close();
 </exercise>
 <exercise title="Swap a layer at the composition root">
 <p>Write a repository that refuses to store more than two examples (throwing <code>ConflictError</code> from <code>@zudojs/errors</code>) and plug it in with the generated controller and service. What does the third <code>POST</code> answer, and why did no other layer need to change?</p>
+<starter file="small-store.ts">
+// Example to learn from: a repository subclass that adds one rule, then
+// delegates to the original for the real work.
+//
+//   class LimitedCart extends InMemoryCart {
+//     override async add(item: CartItem): Promise<void> {
+//       if ((await this.items()).length >= 2) throw new ConflictError("Cart is full.");
+//       return super.add(item);
+//     }
+//   }
+//
+// Now do the same for the examples repository below: refuse a third example.
+
+import { ConflictError } from "@zudojs/errors";
+import { HttpMiddlewarePipeline, createRouter } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+import { createHttpTestClient } from "@zudojs/testing";
+
+import { ExamplesController } from "./src/controllers/examples.controller.js";
+import type { CreateExampleInput, Example } from "./src/dtos/examples.dto.js";
+import { InMemoryExamplesRepository } from "./src/repositories/examples.repository.js";
+import { registerRoutes } from "./src/routes/index.js";
+import { ExamplesService } from "./src/services/examples.service.js";
+import { errorResponse } from "./src/utils/http.js";
+
+class TwoSlotRepository extends InMemoryExamplesRepository {
+  public override async create(input: CreateExampleInput): Promise<Example> {
+    // Refuse with `new ConflictError("Only two examples fit in this store.")`
+    // once this.findAll() already has 2 or more; otherwise super.create(input).
+    // your code here
+    return super.create(input);
+  }
+}
+
+const router = createRouter();
+registerRoutes(router, {
+  health: async () => ({ ready: true, checks: {} }),
+  examplesController: new ExamplesController(new ExamplesService(new TwoSlotRepository())),
+});
+const dispatch: HttpMiddleware = async (context) => {
+  try {
+    return (await router.dispatch(context.request, { signal: context.signal })).response;
+  } catch (error) {
+    const response = errorResponse(error);
+    if (response === undefined) throw error;
+    return response;
+  }
+};
+const client = createHttpTestClient(new HttpMiddlewarePipeline({ middlewares: [dispatch] }));
+for (const name of ["Buy milk", "Pay rent", "Call Ada"]) {
+  const response = await client.post("/api/v1/examples").send({ name });
+  console.log(response.status, response.status === 201 ? name : response.text);
+}
+await client.close();
+</starter>
+<hint><p><code>(await this.findAll()).length &gt;= 2</code> tells you the store is already full.</p></hint>
+<hint><p><code>if ((await this.findAll()).length &gt;= 2) throw new ConflictError("Only two examples fit in this store."); return super.create(input);</code>.</p></hint>
 <solution>
 <example file="small-store.ts" project="anatomy" browser="no">
 import { ConflictError } from "@zudojs/errors";
@@ -1438,6 +1555,8 @@ await client.close();
 </exercise>
 <exercise title="Where would you look?">
 <p>For each report, name the first file you would open: (a) the app does not start and says <code>PORT must be an integer between 0 and 65535</code>; (b) every response lacks the <code>x-frame-options</code> header; (c) <code>POST /api/v1/examples</code> accepts a 300-character name; (d) after a restart, all examples are gone.</p>
+<hint><p>Match each report to a layer: parsing a setting, a middleware in the pipeline, a schema's rule, or where a repository keeps its rows.</p></hint>
+<hint><p>(a) and (c) both point at a place a value is checked; (b) and (d) both point at a place something is set up once, in <code>src/server.ts</code> or <code>src/container.ts</code>.</p></hint>
 <solution>
 <ul>
 <li>(a) <code>src/configs/index.ts</code>, the <code>port</code> function, then your <code>.env</code> or environment.</li>

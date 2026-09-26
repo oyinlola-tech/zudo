@@ -223,6 +223,7 @@ info outside any request trace=-
 </output>
 <p>Both requests ran at the same time and finished in the opposite order, yet each <code>loadTasks</code> saw its own request, and each log line carries its own trace id. <code>loadTasks</code> has no request parameter. Outside a <code>run</code>, there is no context. This example sets fixed trace ids so the output stays the same on every run. Normally <code>createPropagationContext()</code> creates a random one.</p>
 <p>A trace id that you put on every log line, every span and every error report is a <strong>correlation id</strong>: with one id you can find everything that belongs to one request. Put it in your error responses too, for example as a <code>traceId</code> field. When a user reports a problem, they can send you that id.</p>
+<p>Since <code>@zudojs/observability</code> 1.3.0, a log record carries the propagation context's <code>requestId</code> and <code>correlationId</code> the same way it already carried <code>traceId</code>: a custom exporter like <code>printLogs</code> above can read <code>r.requestId</code> and <code>r.correlationId</code> straight off the record, with no extra plumbing, and the console exporter writes them too. A logger's <code>correlate</code> option (default <code>true</code>) is what stamps these fields on; a logger built with <code>correlate: false</code> never adds them, which matters for a line written well before any request context exists.</p>
 </section>
 
 <section>
@@ -416,6 +417,30 @@ caller flag 0 -> recording: false
 <h2 id="practice">Practice</h2>
 <exercise title="Count tasks by priority">
 <p>Add a counter <code>tasks.created</code> with a <code>priority</code> label. Create two <code>high</code> tasks and one <code>low</code> task, then print every series with <code>obs.metrics.getSeries("tasks.created")</code>. Would a <code>title</code> label be a good idea?</p>
+<starter file="priority.ts">
+// Example to learn from: a different counter with a small, fixed label set.
+//
+//   for (const status of ["success", "success", "failed"]) {
+//     obs.metrics.counter("logins", { status }).increment();
+//   }
+//   for (const series of obs.metrics.getSeries("logins")) console.log(series.labels, series.value);
+//
+// Now count "tasks.created" by priority the same way.
+
+import { createObservability } from "@zudojs/observability";
+
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false });
+
+for (const priority of ["high", "high", "low"]) {
+  // Increment obs.metrics.counter("tasks.created", { priority }).
+}
+for (const series of obs.metrics.getSeries("tasks.created")) {
+  console.log(series.labels, series.value);
+}
+await obs.shutdown();
+</starter>
+<hint><p><code>obs.metrics.counter(name, labels)</code> returns the same counter for the same name and labels, so calling it once per loop turn and incrementing it is enough: <code>obs.metrics.counter("tasks.created", { priority }).increment();</code>.</p></hint>
+<hint><p><code>obs.metrics.counter("tasks.created", { priority }).increment();</code> inside the loop. Two calls with <code>priority: "high"</code> add up to the same series.</p></hint>
 <solution>
 <example file="priority.ts" browser="no">
 import { createObservability } from "@zudojs/observability";
@@ -439,6 +464,30 @@ await obs.shutdown();
 </exercise>
 <exercise title="Find the slow step">
 <p>Using <code>spanTree</code> from <code>print.ts</code>, trace a <code>POST /tasks</code> request with three steps: <code>validate</code> (1 ms), <code>db.insert</code> (40 ms) and <code>events.publish</code> (5 ms). Which step would you optimize first?</p>
+<starter file="slow-step.ts">
+// Example to learn from: the same nested-span shape for a different request.
+//
+//   await withSpan(obs.tracer, "GET /report", async () => {
+//     await withSpan(obs.tracer, "load data", () => wait(30));
+//     await withSpan(obs.tracer, "render pdf", () => wait(10));
+//   });
+//
+// Now trace POST /tasks with its three steps below.
+
+import { createObservability, withSpan } from "@zudojs/observability";
+import { spanTree } from "./print.js";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false, spanExporter: spanTree });
+
+// Wrap a "POST /tasks" span (withSpan(obs.tracer, "POST /tasks", async () => { ... }))
+// around three nested spans, each wrapping a wait(): "validate" (1),
+// "db.insert" (40), "events.publish" (5).
+
+await obs.shutdown();
+</starter>
+<hint><p>Nest the calls the way the worked example nests <code>"load data"</code> and <code>"render pdf"</code> inside <code>"GET /report"</code>: each inner <code>withSpan</code> call is <code>await</code>ed inside the outer one's callback.</p></hint>
+<hint><p><code>await withSpan(obs.tracer, "POST /tasks", async () => { await withSpan(obs.tracer, "validate", () =&gt; wait(1)); await withSpan(obs.tracer, "db.insert", () =&gt; wait(40)); await withSpan(obs.tracer, "events.publish", () =&gt; wait(5)); });</code>.</p></hint>
 <solution>
 <example file="slow-step.ts" project="obs" browser="no">
 import { createObservability, withSpan } from "@zudojs/observability";
@@ -465,6 +514,8 @@ POST /tasks 65ms  trace=444c92b07bd4e081c4d859fec64ab6ab
 </exercise>
 <exercise title="Is this header safe?">
 <p>A client sends <code>traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01</code> and <code>x-user-role: admin</code>. The Task API joins the trace. Should it also trust the role?</p>
+<hint><p>Re-read what joining a trace actually does to a request's <em>power</em>, versus what a role decides. Do the two headers carry the same kind of claim?</p></hint>
+<hint><p>Ask where each value would need to come from if it were trustworthy: is there a place in this lesson, or an earlier one, that already answers "where does a verified identity or role come from"?</p></hint>
 <solution>
 <p>No. Joining a trace only links spans together: at worst, a client makes its request appear inside someone else's trace. A role decides what the caller may do, so it must come from your own authentication (a verified session or token, as in <a href="/learn/zudo-auth">the auth lesson</a>), never from a header the client can type. Treat every incoming header as untrusted, and give each one only as much power as it can safely have.</p>
 </solution>

@@ -1266,6 +1266,41 @@ $ npx vitest run
 <h2 id="practice">Practice</h2>
 <exercise title="Sign out everywhere">
 <p>After a password change, the Task API calls <code>auth.logoutAll(userId)</code>. Write an auth test that logs Ada in on a laptop and a phone, calls <code>logoutAll</code>, and checks that both access tokens are refused, while Bola's session keeps working.</p>
+<starter file="tests/logout-all.test.ts">
+// Example to learn from: the same "do the thing, then check both sides"
+// shape for a different auth guarantee.
+//
+//   it("keeps a session alive after a token refresh", async () => {
+//     const auth = createAuth(testTokens, await usersWithAdaAndBola());
+//     const first = await auth.login({ identifier: "ada@example.com", password: PASSWORD });
+//     const refreshed = await auth.refresh(first.tokens.refreshToken);
+//     await expect(auth.verifyToken(refreshed.accessToken)).resolves.toMatchObject({ sub: "ada" });
+//   });
+//
+// Now write the logoutAll test the same way: do the thing, then check the
+// device that should be signed out and the one that should not.
+
+import { expect, it } from "vitest";
+import { toUserId } from "@zudojs/auth";
+import { assertRejects } from "@zudojs/testing";
+import { createAuth } from "../src/auth.js";
+import { PASSWORD, testTokens, usersWithAdaAndBola } from "./fixtures.js";
+
+it("signs Ada out on every device, and nobody else", async () => {
+  const auth = createAuth(testTokens, await usersWithAdaAndBola());
+  const laptop = await auth.login({ identifier: "ada@example.com", password: PASSWORD });
+  const phone = await auth.login({ identifier: "ada@example.com", password: PASSWORD });
+  const bola = await auth.login({ identifier: "bola@example.com", password: PASSWORD });
+
+  // 1. await auth.logoutAll(toUserId("ada")).
+  // 2. assertRejects that auth.verifyToken(laptop.tokens.accessToken)
+  //    rejects with "no longer active", and the same for phone's token.
+  // 3. expect(auth.verifyToken(bola.tokens.accessToken)) still resolves,
+  //    matching { sub: "bola" }.
+});
+</starter>
+<hint><p><code>await auth.logoutAll(toUserId("ada"));</code> comes first. Then two calls to <code>assertRejects</code>, one per device, and one <code>expect(...).resolves.toMatchObject({ sub: "bola" })</code> for the account that was never touched.</p></hint>
+<hint><p><code>await auth.logoutAll(toUserId("ada")); await assertRejects(() =&gt; auth.verifyToken(laptop.tokens.accessToken), "no longer active"); await assertRejects(() =&gt; auth.verifyToken(phone.tokens.accessToken), "no longer active"); await expect(auth.verifyToken(bola.tokens.accessToken)).resolves.toMatchObject({ sub: "bola" });</code>.</p></hint>
 <solution>
 <file name="tests/logout-all.test.ts" project="app">
 import { expect, it } from "vitest";
@@ -1300,6 +1335,50 @@ await runTests("tests/logout-all.test.ts");
 </exercise>
 <exercise title="Pin down a tie in the contract">
 <p>Two tasks with the same due date: in which order do they come back? The contract does not say, so the fake and PostgreSQL could disagree, and some day a user would see their list jump around. Decide on "by id" and write a test that runs against both repositories.</p>
+<starter file="tests/ordering.test.ts">
+// Example to learn from: the same describe.each shape, run against a
+// different pair of implementations for a different rule.
+//
+//   describe.each(makers)("%s", (_name, make) => {
+//     it("keeps a fresh empty list before anything is created", async () => {
+//       const repo = make();
+//       expect(await repo.listVisibleTo("bola")).toEqual([]);
+//     });
+//   });
+//
+// Now write the tie-breaking test the same way: create three same-due-date
+// tasks, update one, and check the order that comes back.
+
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { PGlite } from "@electric-sql/pglite";
+import { migrate } from "../src/db.js";
+import { PgTaskRepository, type TaskRepository } from "../src/task.repository.js";
+import { MemoryTaskRepository } from "./memory-task-repository.js";
+
+const db = new PGlite();
+beforeAll(() => migrate(db));
+afterAll(() => db.close());
+
+const makers: [string, () => TaskRepository][] = [
+  ["MemoryTaskRepository", () => new MemoryTaskRepository()],
+  ["PgTaskRepository", () => new PgTaskRepository(db)],
+];
+
+describe.each(makers)("%s", (_name, make) => {
+  it("lists tasks with the same due date by id", async () => {
+    const repo = make();
+    const due = new Date("2026-10-05T09:00:00Z");
+    // 1. Create three tasks for owner "bola" at `due`: "Pack bags", "Book
+    //    taxi", "Call Ada" (in that order), keeping the first one's result.
+    // 2. Update the first task ("Pack bags") to set assigneeId: "ada" (an
+    //    update should not change its position in the list).
+    // 3. expect((await repo.listVisibleTo("bola")).map((t) => t.title)) to
+    //    equal ["Pack bags", "Book taxi", "Call Ada"].
+  });
+});
+</starter>
+<hint><p>Keep the id of the first task you create (<code>const packBags = await repo.create(...)</code>), so you can pass <code>packBags.id</code> to <code>repo.update</code> afterwards.</p></hint>
+<hint><p><code>const packBags = await repo.create({ ownerId: "bola", title: "Pack bags", dueAt: due }); await repo.create({ ownerId: "bola", title: "Book taxi", dueAt: due }); await repo.create({ ownerId: "bola", title: "Call Ada", dueAt: due }); await repo.update(packBags.id, { assigneeId: "ada" }); expect((await repo.listVisibleTo("bola")).map((t) =&gt; t.title)).toEqual(["Pack bags", "Book taxi", "Call Ada"]);</code>.</p></hint>
 <solution>
 <file name="tests/ordering.test.ts" project="app">
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -1343,6 +1422,8 @@ await runTests("tests/ordering.test.ts");
 </exercise>
 <exercise title="Which test catches it?">
 <p>For each bug, name the cheapest test in this lesson that fails: (1) someone shortens the SQL in <code>listVisibleTo</code> to <code>ORDER BY id</code>; (2) the route for <code>POST /tasks/:id/complete</code> loses its <code>guarded</code> option; (3) <code>createApp</code> forgets to call <code>processEmails</code>; (4) the service lets the assignee assign; (5) the notifications handler queues <code>to: payload.assigneeId</code> instead of the looked-up address.</p>
+<hint><p>For each bug, ask: which layer's decision does it actually break, and does that layer's tests use a fake that would hide the bug or the real thing that would show it? Re-read the layer table near the top of the lesson.</p></hint>
+<hint><p>(1) and (3) are two different kinds of "only one test would ever see this": one because most tests use the fake, the other because most tests build their own wiring instead of the composition root. (2), (4) and (5) each belong to one layer's own test file from this lesson.</p></hint>
 <solution>
 <ol>
 <li>The repository contract, "lists what a user owns or is assigned, by due date", for <code>PgTaskRepository</code> only. The service tests stay green, because they use the fake.</li>

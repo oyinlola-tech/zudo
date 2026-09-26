@@ -1,0 +1,421 @@
+---
+title: Theming a site with CSS variables
+description: Build a light, dark and system theme switch the way this site does it: colour tokens in CSS, one attribute on the root element, a boot script that stops the flash, a preference that survives reloads and follows other tabs, and an event other code can listen to.
+minutes: 45
+youNeed: The DOM and Browser APIs
+youBuild: The three-state theme switch this very site uses, then a fourth state of your own
+keywords: dark mode, light mode, css variables, custom properties, design tokens, prefers-color-scheme, matchMedia, data attribute, localStorage, storage event, CustomEvent, flash of wrong theme, theme toggle
+objectives: Explain why colours are tokens with roles instead of hex values in rules | Switch a whole page with one attribute on the root element and no other CSS change | Resolve a stored preference and the OS setting into what is on screen, and store only what the visitor chose | Stop the flash of the wrong theme with a small inline script that runs before the first paint | Follow OS changes and other tabs with matchMedia and the storage event, and tell other code with a CustomEvent
+---
+<section>
+<h2 id="problem">The page that flashes</h2>
+<p>Ada's task list from <a href="/learn/browser-dom">The DOM</a> and <a href="/learn/browser-apis">Browser APIs</a> gets its first design request: "a dark mode, please, my eyes hurt at night." Her first version takes an afternoon. She copies every rule that mentions a colour, wraps the copies in <code>body.dark { … }</code>, swaps white for black and black for white, and adds a button that toggles the class. It works in the demo. Then the complaints arrive:</p>
+<ol>
+<li>"Every time I reload, the page is white for a moment, then goes dark." The class is added by JavaScript, which runs after the browser has already painted the page in its default colours.</li>
+<li>"The grey hint text is unreadable now." Swapping black for white also swapped the greys, and a grey that is readable on white is not the same grey that is readable on black.</li>
+<li>"I have the list open in two tabs and only one of them changed." Each tab has its own copy of the page and nobody told the other.</li>
+<li>"My laptop goes dark at sunset by itself, but your page does not." The operating system has an opinion, and the page never asks for it.</li>
+</ol>
+<p>Each complaint points at a design decision, not a bug in a line. This lesson makes those decisions one at a time, ending with the switch this site uses. Press the theme button in the header while you read: everything below is what happens when you do.</p>
+</section>
+
+<section>
+<h2 id="tokens">Colours are roles, not values</h2>
+<p>The copied rules were the first mistake. A stylesheet with two copies of every colour rule has two places to forget, and "swap black for white" is not what a dark theme is. The fix is to name what a colour <em>does</em> and let a rule use the name. In CSS the tool for that is a <strong>custom property</strong>, a variable you declare with two leading dashes and read with <code>var()</code>. A set of them chosen this way is called <strong>design tokens</strong>.</p>
+<file name="index.html" project="theme">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tasks</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #FAFAF9;        /* the page */
+    --surface: #FFFFFF;   /* a card */
+    --text: #1A1A2E;      /* words */
+    --text-muted: #6B7280;
+    --ink: #1A1A2E;       /* borders */
+    --accent: #C0392B;    /* the one red */
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0F0F1A;
+    --surface: #16213E;
+    --text: #F0EFEA;
+    --text-muted: #9AA0B4; /* lifted, not inverted */
+    --ink: #FAFAF9;
+    /* --accent is not redefined: it stays the same red */
+  }
+  body { background: var(--bg); color: var(--text); font-family: sans-serif; }
+  .card { background: var(--surface); border: 2px solid var(--ink); padding: 1rem; }
+  .hint { color: var(--text-muted); }
+  .due { color: var(--accent); font-weight: bold; }
+</style>
+</head>
+<body>
+  <div class="card" id="card">
+    <p>Buy detergent <span class="due" id="due">due today</span></p>
+    <p class="hint" id="hint">Tap a task to mark it done</p>
+  </div>
+</body>
+</html>
+</file>
+<p>Read the names, not the values. <code>--surface</code> is "a card", whatever shade a card is today. <code>--ink</code> is "borders". The dark block redefines the same names, and every rule that reads them changes with it. Not one rule was copied. Notice two things the naive swap got wrong:</p>
+<ul>
+<li><strong>The muted grey is lifted, not inverted.</strong> <code>#6B7280</code> on white passes the 4.5:1 contrast rule for body text; its mirror image on navy would not. The dark value is chosen by measuring, not by arithmetic.</li>
+<li><strong>The accent is not redefined at all.</strong> A red button stays the same red in both themes; only its surroundings move. Deciding which tokens change and which stay is most of the design work.</li>
+</ul>
+<note><p><code>color-scheme</code> is a one-line bonus: it tells the browser which theme the page is, so scrollbars, form controls and the default focus ring match without any rules of yours.</p></note>
+</section>
+
+<section>
+<h2 id="attribute">One attribute switches everything</h2>
+<p>With tokens in place, switching the theme means changing one attribute on the root element. The rules do not know it happened; they just read different values the next time the browser computes styles.</p>
+<example file="apply.js" project="theme" runtime="dom">
+const root = document.documentElement;
+
+function colours() {
+  const body = getComputedStyle(document.body).backgroundColor;
+  const card = getComputedStyle(document.getElementById("card")).backgroundColor;
+  const due = getComputedStyle(document.getElementById("due")).color;
+  return `${body} | card ${card} | due ${due}`;
+}
+
+root.setAttribute("data-theme", "light");
+console.log("light:", colours());
+
+root.setAttribute("data-theme", "dark");
+console.log("dark: ", colours());
+
+root.removeAttribute("data-theme");
+</example>
+<output>
+light: rgb(250, 250, 249) | card rgb(255, 255, 255) | due rgb(192, 57, 43)
+dark:  rgb(15, 15, 26) | card rgb(22, 33, 62) | due rgb(192, 57, 43)
+</output>
+<p>The page, the card and the words all moved with one line, and the due date stayed red in both, because its token was not redefined. This is the whole mechanism. Everything that follows is about deciding <em>which</em> value to put in that attribute, and <em>when</em>.</p>
+</section>
+
+<section>
+<h2 id="resolve">A preference is not what is on screen</h2>
+<p>Ada's toggle had two states, on and off. Complaint four shows why two is not enough: some people want the page to follow the operating system, which is a third state. So there are two separate things:</p>
+<ul>
+<li>The <strong>preference</strong>: what the visitor asked for. <code>"light"</code>, <code>"dark"</code>, or <code>"system"</code> (follow the OS).</li>
+<li>The <strong>resolved theme</strong>: what is actually on screen right now, which is only ever <code>"light"</code> or <code>"dark"</code>.</li>
+</ul>
+<p>Turning one into the other is a pure function, so write it as one and test it without a browser:</p>
+<example file="resolve.js">
+function resolveTheme(preference, osPrefersDark) {
+  if (preference === "dark") return "dark";
+  if (preference === "light") return "light";
+  return osPrefersDark ? "dark" : "light";
+}
+
+const cases = [
+  ["system", false],
+  ["system", true],
+  ["light", true],
+  ["dark", false],
+  [null, true],
+  ["banana", false],
+];
+for (const [preference, osDark] of cases) {
+  console.log(String(preference).padEnd(7), "os dark:", String(osDark).padEnd(5), "→", resolveTheme(preference, osDark));
+}
+</example>
+<output>
+system  os dark: false → light
+system  os dark: true  → dark
+light   os dark: true  → light
+dark    os dark: false → dark
+null    os dark: true  → dark
+banana  os dark: false → light
+</output>
+<p>Anything that is not exactly <code>"dark"</code> or <code>"light"</code>, including a missing value and a typo, means "follow the OS". That is the safe default: a corrupted stored value can never trap someone in a theme they did not choose.</p>
+<p>The OS setting itself comes from a media query. The same <code>prefers-color-scheme</code> that CSS can test in an <code>@media</code> block is available to JavaScript through <code>window.matchMedia</code>, which returns an object whose <code>matches</code> is true or false right now, and which fires a <code>change</code> event when the answer changes.</p>
+</section>
+
+<section>
+<h2 id="remember">Remembering safely</h2>
+<p>The preference has to survive a reload, so it goes in <code>localStorage</code>, which <a href="/learn/browser-apis">Browser APIs</a> covered. Two rules from that lesson matter here. Storage can throw, in a private window or when the visitor has blocked site data, and a theme switch must never crash a page over that. And store only what was chosen: "system" is the <em>absence</em> of a stored value, so a visitor who never touches the toggle keeps following their OS forever, and clearing the value is how you go back to it.</p>
+<example file="safe-pref.js">
+const KEY = "academy-demo:theme";
+
+function readPreference(storage) {
+  try {
+    const value = storage.getItem(KEY);
+    return value === "light" || value === "dark" ? value : "system";
+  } catch {
+    return "system";
+  }
+}
+
+function writePreference(storage, preference) {
+  try {
+    if (preference === "light" || preference === "dark") storage.setItem(KEY, preference);
+    else storage.removeItem(KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// A fake storage: the same interface, so the functions cannot tell the difference.
+function fakeStorage({ broken = false } = {}) {
+  const data = new Map();
+  const fail = () => { throw new Error("storage is disabled"); };
+  return {
+    getItem: (k) => (broken ? fail() : (data.has(k) ? data.get(k) : null)),
+    setItem: (k, v) => (broken ? fail() : void data.set(k, String(v))),
+    removeItem: (k) => (broken ? fail() : void data.delete(k)),
+  };
+}
+
+const ok = fakeStorage();
+console.log("fresh:", readPreference(ok));
+console.log("write dark:", writePreference(ok, "dark"), "→", readPreference(ok));
+console.log("write system:", writePreference(ok, "system"), "→", readPreference(ok));
+ok.setItem(KEY, "banana");
+console.log("garbage:", readPreference(ok));
+
+const blocked = fakeStorage({ broken: true });
+console.log("blocked read:", readPreference(blocked));
+console.log("blocked write:", writePreference(blocked, "dark"));
+</example>
+<output>
+fresh: system
+write dark: true → dark
+write system: true → system
+garbage: system
+blocked read: system
+blocked write: false
+</output>
+<p>Both helpers turn every failure into a value the caller can live with: a preference of "system", or <code>false</code> from a write. The page still switches theme for the rest of the visit; it just will not be remembered, which is the right amount of failure.</p>
+</section>
+
+<section>
+<h2 id="boot">Stopping the flash</h2>
+<p>Now complaint one, the white flash. Follow what the browser does with Ada's page. It reads the HTML from the top. When it meets a stylesheet it fetches it, and it will not paint until the CSS has arrived, so the first paint already has the right rules. But the theme attribute is set by JavaScript, and her script is at the bottom of the page with <code>defer</code>, so it runs after that first paint. For a moment the page is painted with the default (light) tokens; then the script runs, the attribute appears, and everything repaints. That moment is the flash.</p>
+<p>The fix is to set the attribute <em>before</em> the first paint, which means before the stylesheet: a small inline script in <code>&lt;head&gt;</code>, above the <code>&lt;link&gt;</code> tags. Inline scripts block parsing, which is exactly what we want here and why everything else is deferred. It has to be tiny, synchronous, and unable to fail:</p>
+<file name="head.html" project="theme">
+<head>
+  <meta charset="utf-8">
+  <script>
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem("theme"); } catch (e) { /* follow the OS */ }
+      var dark = saved === "dark" ||
+        (saved !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    })();
+  </script>
+  <link rel="stylesheet" href="theme.css">
+  <script src="theme.js" defer></script>
+</head>
+</file>
+<p>Three details carry the weight. It reads storage inside <code>try</code>, because the boot script must never throw: an error here would leave the page unthemed and print a red line in the console of every visit. It resolves "system" on the spot with <code>matchMedia</code>, so the attribute is always <code>"light"</code> or <code>"dark"</code> and the CSS needs one dark block, not one for the attribute and another for the media query. And it uses <code>var</code> and a function expression, plain old JavaScript, because a syntax error in a script this early would be the one thing worse than a flash.</p>
+<p>You can watch it work. This runs the same logic against a stored value and reads the attribute back:</p>
+<example file="boot.js" project="theme" runtime="dom">
+const KEY = "academy-demo:theme";
+
+function boot() {
+  let saved = null;
+  try { saved = localStorage.getItem(KEY); } catch { /* follow the OS */ }
+  const dark = saved === "dark" ||
+    (saved !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  return document.documentElement.getAttribute("data-theme");
+}
+
+localStorage.setItem(KEY, "dark");
+console.log("stored dark  →", boot());
+
+localStorage.setItem(KEY, "light");
+console.log("stored light →", boot());
+
+localStorage.removeItem(KEY);
+const os = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+console.log("nothing stored → same as the OS:", boot() === os);
+
+document.documentElement.removeAttribute("data-theme");
+</example>
+<output>
+stored dark  → dark
+stored light → light
+nothing stored → same as the OS: true
+</output>
+<tip><p>The site you are reading keeps the boot block inside <code>js/theme.js</code> between two comment marks, and a build script copies it into every page's <code>&lt;head&gt;</code>. One source, hundreds of copies, none of them typed by hand. You can see it with "view source" on this page.</p></tip>
+</section>
+
+<section>
+<h2 id="follow">Following the OS and other tabs</h2>
+<p>Complaints three and four are the same shape: something changed elsewhere and this page did not hear about it. Both have an event.</p>
+<p>When the OS switches theme, the <code>MediaQueryList</code> from <code>matchMedia</code> fires <code>change</code>. The page should react only while the preference is "system"; a visitor who chose dark stays dark at sunrise. When another tab writes to <code>localStorage</code>, every <em>other</em> tab with the same origin receives a <code>storage</code> event on <code>window</code>, with the key and the new value. The tab that wrote it gets nothing, which is fine: it already knows.</p>
+<example file="follow.js" project="theme" runtime="dom">
+const KEY = "academy-demo:theme";
+const media = window.matchMedia("(prefers-color-scheme: dark)");
+console.log("OS answer is a", typeof media.matches);
+
+function apply(preference) {
+  const dark = preference === "dark" || (preference !== "light" && media.matches);
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  console.log("applied", preference, "→ on screen:", dark ? "dark" : "light");
+}
+
+media.addEventListener("change", () => {
+  const preference = localStorage.getItem(KEY) ?? "system";
+  if (preference === "system") apply("system");
+});
+
+window.addEventListener("storage", (event) => {
+  if (event.key !== KEY && event.key !== null) return;
+  console.log("another tab chose", event.newValue ?? "system");
+  apply(event.newValue ?? "system");
+});
+
+// Another tab writing "dark", then "light", looks exactly like this to us:
+window.dispatchEvent(new StorageEvent("storage", { key: KEY, newValue: "dark" }));
+window.dispatchEvent(new StorageEvent("storage", { key: KEY, newValue: "light" }));
+
+document.documentElement.removeAttribute("data-theme");
+</example>
+<output>
+OS answer is a boolean
+another tab chose dark
+applied dark → on screen: dark
+another tab chose light
+applied light → on screen: light
+</output>
+<p>Had the other tab removed the value instead, <code>newValue</code> would be <code>null</code>, the handler would apply "system", and the result would depend on the OS: dark at night on a laptop set to follow the sun. That is not a bug; it is the whole point of the state. A <code>key</code> of <code>null</code> means the other tab called <code>localStorage.clear()</code>, so treat it as "our value may be gone too".</p>
+</section>
+
+<section>
+<h2 id="event">Telling the rest of the page</h2>
+<p>Other code cares when the theme changes. A code editor wants to swap its own colour scheme; a chart wants to redraw its axes. None of that belongs in the theme module, and the theme module should not know those things exist. The DOM already has the tool: dispatch a <code>CustomEvent</code> on <code>document</code> with the details, and anyone can listen.</p>
+<example file="event.js" project="theme" runtime="dom">
+function announce(preference, resolved) {
+  document.dispatchEvent(new CustomEvent("theme:change", {
+    detail: { preference, resolved },
+  }));
+}
+
+// Somewhere else entirely: a widget that only cares about the resolved theme.
+document.addEventListener("theme:change", (event) => {
+  const { preference, resolved } = event.detail;
+  console.log(`widget: ${resolved} palette (visitor asked for ${preference})`);
+});
+
+announce("system", "light");
+announce("dark", "dark");
+</example>
+<output>
+widget: light palette (visitor asked for system)
+widget: dark palette (visitor asked for dark)
+</output>
+<p>The theme module has one job and one event. The editor on this site listens to <code>zudo:theme</code> exactly like this and calls Monaco's <code>setTheme</code>; the theme code has never heard of Monaco.</p>
+</section>
+
+<section>
+<h2 id="site">How this site does it</h2>
+<p>Everything above is running on the page you are reading. The parts, in case you want to read real code:</p>
+<ul>
+<li><code>css/site.css</code> declares about ninety tokens in a <code>:root</code> block, and a <code>:root[data-theme="dark"]</code> block that redefines the ones that change. <a href="/docs/design-themes">Themes</a> in the docs lists every token with both values.</li>
+<li><code>js/theme.js</code> is the boot block plus <code>window.zudoTheme</code>, with <code>get</code>, <code>set</code>, <code>cycle</code>, <code>resolved</code> and <code>onChange</code>. Try <code>zudoTheme.cycle()</code> in the browser console.</li>
+<li>The header button in <code>js/components.js</code> draws a monitor, sun or moon for the current preference and calls <code>cycle()</code>. It does not store anything itself.</li>
+<li>The Tailwind utilities the pages use (<code>bg-zudo-white</code>, <code>border-black</code>, <code>bg-black/5</code>) point at the same tokens, so 350 pages changed theme with no edits.</li>
+<li>Code blocks keep their dark palette in both themes on purpose: the colour a keyword has should not depend on what time of day you study.</li>
+</ul>
+<warn><p>Do not copy the "swap every colour" idea into a real project, even as a first step. The tokens are the cheap part; the expensive part is deciding which roles exist, and a copied stylesheet hides that decision until it is too late to make it well.</p></warn>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a high-contrast state">
+<p>The switch cycles System, Light, Dark. Add a fourth preference, <code>"contrast"</code>, after Dark: it resolves to itself (the CSS would have a <code>[data-theme="contrast"]</code> block), everything else keeps working, and unknown values still mean "system". Write <code>nextPreference(current)</code> and update <code>resolveTheme</code>.</p>
+<starter file="theme-cycle.js">
+// Example to learn from: a cycle through a fixed list, wrapping at the end,
+// and a resolver that treats anything unexpected as "system".
+//
+//   const SIZES = ["small", "medium", "large"];
+//   function nextSize(current) {
+//     const i = SIZES.indexOf(current);
+//     return SIZES[(i + 1) % SIZES.length];   // indexOf gives -1 for unknown → SIZES[0]
+//   }
+//   function resolveSize(preference) {
+//     return SIZES.includes(preference) ? preference : "medium";
+//   }
+//
+// Now do the same for themes, with one more state, below.
+
+const ORDER = ["system", "light", "dark"]; // 1. add "contrast" after "dark"
+
+function nextPreference(current) {
+  // 2. return the entry after `current`, wrapping to the start;
+  //    an unknown value should give "system"
+}
+
+function resolveTheme(preference, osPrefersDark) {
+  // 3. "dark" → "dark"; "light" → "light"; "contrast" → "contrast";
+  //    anything else → the OS answer
+  if (preference === "dark") return "dark";
+  if (preference === "light") return "light";
+  return osPrefersDark ? "dark" : "light";
+}
+
+let pref = "system";
+for (let i = 0; i < 5; i++) {
+  pref = nextPreference(pref);
+  console.log(pref.padEnd(8), "→", resolveTheme(pref, true));
+}
+console.log(nextPreference("banana"), resolveTheme("banana", false));
+</starter>
+<hint><p><code>ORDER.indexOf(current)</code> is <code>-1</code> for an unknown value, and <code>(-1 + 1) % 4</code> is <code>0</code>, which is exactly the "system" entry. The wrap at the end comes from the remainder operator.</p></hint>
+<hint><p><code>function nextPreference(current) { return ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]; }</code> and one extra line in the resolver: <code>if (preference === "contrast") return "contrast";</code></p></hint>
+<solution>
+<example file="theme-cycle.js">
+const ORDER = ["system", "light", "dark", "contrast"];
+
+function nextPreference(current) {
+  return ORDER[(ORDER.indexOf(current) + 1) % ORDER.length];
+}
+
+function resolveTheme(preference, osPrefersDark) {
+  if (preference === "dark") return "dark";
+  if (preference === "light") return "light";
+  if (preference === "contrast") return "contrast";
+  return osPrefersDark ? "dark" : "light";
+}
+
+let pref = "system";
+for (let i = 0; i < 5; i++) {
+  pref = nextPreference(pref);
+  console.log(pref.padEnd(8), "→", resolveTheme(pref, true));
+}
+console.log(nextPreference("banana"), resolveTheme("banana", false));
+</example>
+<output>
+light    → light
+dark     → dark
+contrast → contrast
+system   → dark
+light    → light
+system light
+</output>
+<p>The fifth step shows the cycle wrapping back to "system", which on a dark OS resolves to dark. An unknown value cycles to "system" and resolves to the OS answer, so a bad stored value can never strand anyone.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Name colours by role with custom properties and redefine them under one attribute; never copy rules.</li>
+<li>Dark values are chosen by measuring contrast: lift muted greys, keep accents, decide which tokens change.</li>
+<li>Keep the preference (system, light, dark) apart from what is on screen (light, dark); resolving one into the other is a pure function with "system" as the safe default.</li>
+<li>Store only an explicit choice, inside <code>try</code>, and treat a missing or broken value as "system".</li>
+<li>Set the attribute from a tiny inline script in <code>&lt;head&gt;</code>, before the stylesheet, so the first paint is already right.</li>
+<li>Listen to <code>matchMedia</code> for the OS and to <code>storage</code> for other tabs; tell everyone else with one <code>CustomEvent</code>.</li>
+</ul>
+<p>Next: <a href="/learn/browser-networking">Networking from the browser</a>, where the page starts talking to Ada's Task API.</p>
+</section>

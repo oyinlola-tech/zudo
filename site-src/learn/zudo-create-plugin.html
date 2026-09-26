@@ -574,12 +574,13 @@ console.log("stdout:", JSON.stringify(run.stdout.trim()));
 console.log("stderr:", run.stderr.trim().split("\n")[0]);
 </example>
 <output>
-exit code: 13
-stdout: ""
-stderr: Warning: Detected unsettled top-level await at /home/you/project/hang.mjs:15
+exit code: 0
+stdout: "mailer: connection closed\ncaught: PluginTimeoutError\nstart-up finished"
+stderr:
 </output>
-<p>No <code>PluginTimeoutError</code>, no rollback, no "connection closed", not even "start-up finished": Node simply exited with code 13 while <code>start</code> was still waiting. <code>hookTimeout</code>'s own timer no longer causes this: it is deliberately kept ref'd precisely so a hanging hook cannot let Node exit before it fires. What still catches you out is what happens <em>after</em> it fires. <code>Promise.race</code> cannot cancel the losing side, so the manager cannot make <code>fx-rates</code>' <code>start()</code> actually stop; it can only give up waiting for it. Rolling back still needs to know whether that abandoned call eventually settles (so it can call <code>stop()</code> on a plugin that turns out to have started after all), so it waits one more <code>hookTimeout</code> as a grace period, on a timer that <em>is</em> unref'd on purpose: an abandoned hook that is merely slow should not keep the process hostage a second time. A <code>start()</code> that never settles at all rides that unref'd grace timer all the way to the same exit-13 failure, one <code>hookTimeout</code> later than before. In a server that is already listening, the open socket keeps the process alive regardless. During start-up, before anything listens, nothing does.</p>
-<p>So the host keeps the process alive itself while plugins start. One interval, cleared in <code>finally</code>, is enough:</p>
+<p>The timeout fires, the rollback stops the mailer (its connection is closed), the error reaches your <code>catch</code>, and start-up carries on to report it. That works even here, where nothing else holds the event loop, because the manager's own timers do. <code>hookTimeout</code>'s timer is ref'd, so a hanging hook cannot let Node exit before it fires. After it fires, the manager waits one more <code>hookTimeout</code> to see whether the abandoned <code>start()</code> settles after all. <code>Promise.race</code> cannot cancel the losing call, and a plugin that does finish starting late must still be stopped. That grace wait is ref'd too, and it is cleared the moment it is decided.</p>
+<p>Before <code>@zudojs/plugins</code> 1.4.1 the grace timer was unref'd. A <code>start()</code> that never settled let Node exit with code 13 ("unsettled top-level await") one <code>hookTimeout</code> after the timeout, with no error, no rollback and no log line. Hosts guarded against that with a <code>setInterval</code> around <code>manager.start()</code>. You no longer need that, but the lesson behind it still holds: a timeout you have never seen fire in a fresh process is a timeout you have not tested.</p>
+<p>The same failure inside the plugin project, reading the diagnostics afterwards:</p>
 <example file="hang-guarded.ts" project="plugin" browser="no">
 import { PluginManager } from "@zudojs/plugins";
 import { createHost, createMemoryTransport } from "./src/host/host.js";
@@ -594,14 +595,11 @@ manager.register({
   start: () => new Promise<void>(() => {}),
 });
 
-const keepAlive = setInterval(() => {}, 60_000);
 try {
   await manager.start(context);
 } catch (error) {
   const timeout = error as Error & { getMetadata(key: string): unknown };
   console.log(timeout.name, "-", timeout.message, "| phase:", timeout.getMetadata("phase"));
-} finally {
-  clearInterval(keepAlive);
 }
 console.log(manager.diagnostics().plugins.map((p) => `${p.plugin.name.slice(23)}: ${p.health.status}`).join(", "));
 </example>
@@ -611,8 +609,8 @@ smtp: connection closed
 PluginTimeoutError - Plugin "@mycompany/zudo-plugin-fx-rates" timed out after 200ms. | phase: starting
 mailer: healthy, fx-rates: unhealthy
 </output>
-<p>Now the timeout fires, the mailer is stopped and its connection closed, and the diagnostics blame the right plugin. Put the <code>keepAlive</code> guard around wherever the host calls <code>manager.start()</code>, so every start-up has it, not only this demonstration. Choose the timeout from the slowest honest start-up of your plugins (a database migration may need a minute; a mailer needs seconds), and remember it bounds <code>stop</code> too, which is what limits the receipts plugin's drain on shutdown.</p>
-<warn title="TEST START-UP THE WAY PRODUCTION RUNS IT">This failure only appears when nothing else holds the event loop, which is exactly the situation in a fresh process at start-up, and rarely the situation in a test runner or a development server. A start-up test that runs your real entry file in a child process, with a plugin that hangs, is the only reliable way to know that your timeout works.</warn>
+<p>The mailer is stopped and its connection closed, and the diagnostics blame the right plugin. Choose the timeout from the slowest honest start-up of your plugins (a database migration may need a minute; a mailer needs seconds), and remember it bounds <code>stop</code> too, which is what limits the receipts plugin's drain on shutdown.</p>
+<warn title="TEST START-UP THE WAY PRODUCTION RUNS IT">Start-up failures behave differently when nothing else holds the event loop, which is exactly the situation in a fresh process at start-up, and rarely the situation in a test runner or a development server. A start-up test that runs your real entry file in a child process, with a plugin that hangs, is the only reliable way to know that your timeout works.</warn>
 </section>
 
 <section>

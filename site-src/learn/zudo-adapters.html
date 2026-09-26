@@ -76,22 +76,22 @@ export interface PaymentAdapter extends LifecycleAdapter {
 </table></div>
 <p>All the lifecycle methods are optional: a fake has nothing to connect to. The two payment methods are yours. <code>ChargeRequest.reference</code> is the order's id and doubles as the <strong>idempotency key</strong>: sending the same reference twice must never charge twice. That promise is part of the contract, and every adapter must keep it.</p>
 <h3>Capabilities are about the platform</h3>
-<p>Not every provider can refund through its API. It is tempting to write that into <code>capabilities</code>, but the capability list is fixed, and TypeScript refuses a name it does not know:</p>
-<example file="capabilities.ts" project="pay" check="tsc-error">
+<p>Not every provider can refund through its API. It is tempting to write that into <code>capabilities</code>: since <code>AdapterCapabilities</code> keeps a fixed list of well-known platform keys (<code>KnownAdapterCapabilities</code>: <code>http</code>, <code>streaming</code>, <code>gracefulShutdown</code>, <code>abortSignal</code> and a few more) but also accepts any other name, a business capability such as <code>refunds</code> type-checks fine:</p>
+<example file="capabilities.ts" project="pay" browser="no">
+import { AdapterRegistry, createMockAdapter } from "@zudojs/adapters";
 import type { AdapterCapabilities } from "@zudojs/adapters";
 
 export const kobopayCapabilities: AdapterCapabilities = { http: true, abortSignal: true, refunds: false };
+
+const adapters = new AdapterRegistry();
+adapters.register(createMockAdapter({ name: "kobopay", capabilities: kobopayCapabilities }));
+adapters.register(createMockAdapter({ name: "some-other-adapter", capabilities: { refunds: true } }));
+console.log(adapters.findByCapability("refunds").map((adapter) => adapter.name));
 </example>
-<output kind="tsc">
-capabilities.ts:3:90 - error TS2353: Object literal may only specify known properties, and 'refunds' does not exist in type 'AdapterCapabilities'.
-
-3 export const kobopayCapabilities: AdapterCapabilities = { http: true, abortSignal: true, refunds: false };
-                                                                                           ~~~~~~~
-
-
-Found 1 error in capabilities.ts:3
+<output>
+[ 'some-other-adapter' ]
 </output>
-<p>Capabilities describe what the adapter's runtime supports: can it be cancelled with an <code>AbortSignal</code>, does it shut down gracefully, does it run on an edge runtime. What the <em>provider's business API</em> supports goes into your own contract. That is the <code>features</code> field in <code>PaymentAdapter</code>, and checkout can read it.</p>
+<p>That is the trap: <code>refunds</code> is just a string key, so <code>findByCapability("refunds")</code> returns every adapter that happens to declare it true, whatever they meant by it. Here that is <code>some-other-adapter</code>, which has nothing to do with payments. Capabilities describe what the adapter's <em>runtime</em> supports: can it be cancelled with an <code>AbortSignal</code>, does it shut down gracefully, does it run on an edge runtime — questions any code in the registry can ask of any adapter. What the <em>provider's business API</em> supports is a different, narrower question that only makes sense for payment providers, so it goes into your own contract instead: the <code>features</code> field in <code>PaymentAdapter</code>, which only a caller holding a <code>PaymentAdapter</code> can read, with the compiler checking the field name.</p>
 </section>
 
 <section>
@@ -669,16 +669,16 @@ sms: initialize
 database: start
 payments: start
 sms: start
-database: stop
-database: dispose
-payments: stop
-payments: dispose
 sms: stop
 sms: dispose
+payments: stop
+payments: dispose
+database: stop
+database: dispose
 One or more adapters failed to dispose. connection pool is busy
 left in the registry: 0
 </output>
-<p>Two things to notice. <code>payments</code> failed to stop and was still disposed, because leaving its connections open would be worse; the failure is reported in the <code>AggregateError</code> at the end. And the order: the registry initializes, starts, stops and disposes in <strong>registration order</strong>. It does not reverse on the way down, as a cleanup manager or <a href="/learn/zudo-lifecycle">@zudojs/lifecycle</a> does. If one adapter uses another (a payments adapter on top of an HTTP client adapter), do not rely on the registry for the order: manage those two with the lifecycle package, which understands dependencies.</p>
+<p>Two things to notice. <code>payments</code> failed to stop and was still disposed, because leaving its connections open would be worse; the failure is reported in the <code>AggregateError</code> at the end. And the order: the registry initializes and starts in registration order, then <strong>stops and disposes in reverse</strong>, the mirror image, the same rule a cleanup manager or <a href="/learn/zudo-lifecycle">@zudojs/lifecycle</a> uses — the last adapter up is the first one down, so an adapter never gets asked to stop while something that started after it, and may depend on it, is still running. If one adapter uses another (a payments adapter on top of an HTTP client adapter), register the one it depends on first, so it starts first and stops last; for anything more than that, manage the two with the lifecycle package, which understands dependencies explicitly.</p>
 <p>Now a graceful shutdown with a charge in flight. KoboPay takes a second to answer, and the app is told to stop 100 ms after the charge started:</p>
 <example file="dispose.ts" project="pay" browser="no">
 import { isAdapterError } from "@zudojs/adapters";
@@ -845,6 +845,56 @@ payments down  503 { payments: 'unhealthy', sms: 'healthy' }
 <h2 id="practice">Practice</h2>
 <exercise title="A logging wrapper">
 <p>Write <code>withLogging(inner, log)</code>: it returns a <code>PaymentAdapter</code> that forwards every member to <code>inner</code> and logs each charge's reference, amount and outcome. Register the wrapped adapter and run two payments through the unchanged checkout. This is the <em>decorator</em> pattern: it only works because checkout depends on the contract.</p>
+<starter file="decorator.ts">
+// Example to learn from: the same wrap-log-forward shape around a
+// notifier's send method instead of a payment adapter's charge.
+//
+//   function withLogging(inner: Notifier, log: (line: string) => void): Notifier {
+//     return {
+//       async send(to, message) {
+//         await inner.send(to, message);
+//         log(`sent to ${to}: ${message}`);
+//       },
+//     };
+//   }
+//
+// Now do the same for PaymentAdapter.charge below.
+
+import { AdapterRegistry } from "@zudojs/adapters";
+import { createCheckout } from "./checkout.js";
+import { FakePaymentAdapter } from "./fake-payments.js";
+import type { ChargeRequest, PaymentAdapter } from "./payments.js";
+
+function withLogging(inner: PaymentAdapter, log: (line: string) => void): PaymentAdapter {
+  return {
+    name: inner.name,
+    version: inner.version,
+    capabilities: inner.capabilities,
+    features: inner.features,
+    initialize: () => inner.initialize?.(),
+    stop: () => inner.stop?.(),
+    dispose: () => inner.dispose?.(),
+    health: async () => (await inner.health?.()) ?? { status: "healthy", timestamp: Date.now() },
+    async charge(request: ChargeRequest, options) {
+      // TODO: call inner.charge, log the reference, amount and outcome
+      // through `log`, and still return the result. If inner.charge
+      // throws, log the failure and re-throw it, so checkout still sees
+      // the error.
+      return inner.charge(request, options);
+    },
+    refund: (chargeId) => inner.refund(chargeId),
+  };
+}
+
+const payments = withLogging(new FakePaymentAdapter(), (line) => console.log(`[payments] ${line}`));
+const adapters = new AdapterRegistry();
+adapters.register(payments);
+const checkout = createCheckout(adapters.require<PaymentAdapter>("fake-payments"));
+await checkout.pay({ id: "1001", totalKobo: 2_042_500, email: "ada@example.com" }, "tok_visa");
+await checkout.pay({ id: "1002", totalKobo: 950_000, email: "bola@example.com" }, "tok_declined");
+</starter>
+<hint><p>Inside <code>charge</code>, wrap the call in <code>try</code>/<code>catch</code>: <code>const result = await inner.charge(request, options);</code> then <code>log(...)</code> with <code>request.reference</code>, <code>request.amountKobo</code> and <code>result.status</code>, then <code>return result;</code>.</p></hint>
+<hint><p>In <code>catch</code>, log the failure with the error's name — <code>log(`charge ${request.reference} failed: ${(error as Error).name}`)</code> — and re-throw with <code>throw error;</code>. A decorator that swallows the error would hide it from checkout.</p></hint>
 <solution>
 <example file="decorator.ts" project="pay" browser="no">
 import { AdapterRegistry } from "@zudojs/adapters";
@@ -892,6 +942,35 @@ await checkout.pay({ id: "1002", totalKobo: 950_000, email: "bola@example.com" }
 </exercise>
 <exercise title="Cancel an order">
 <p>Write <code>cancelOrder(payments, chargeId)</code>. When the adapter supports refunds, refund and return <code>refunded &lt;id&gt;</code>. When it does not, return a note that a person must refund it in the provider's dashboard, without calling <code>refund</code> at all. Try it with the fake and with KoboPay.</p>
+<starter file="cancel.ts">
+// Example to learn from: branching on a capability flag before acting,
+// for a shipping label instead of a refund.
+//
+//   async function requestLabel(carrier: { canPrint: boolean; name: string }): Promise<string> {
+//     if (!carrier.canPrint) return `print ${carrier.name}'s label by hand at the counter`;
+//     return "label printed";
+//   }
+//
+// Now branch on payments.features.refunds below.
+
+import { FakePaymentAdapter } from "./fake-payments.js";
+import { KoboPayAdapter } from "./kobopay-adapter.js";
+import type { PaymentAdapter } from "./payments.js";
+
+async function cancelOrder(payments: PaymentAdapter, chargeId: string): Promise<string> {
+  // TODO: check payments.features.refunds first. When it is false,
+  // return `refund ${chargeId} by hand in the ${payments.name} dashboard`
+  // WITHOUT calling refund. Only call payments.refund(chargeId), then
+  // return `refunded ${chargeId}`, when the adapter actually supports it.
+  return `refunded ${chargeId}`;
+}
+
+const kobopay = new KoboPayAdapter({ baseUrl: "http://127.0.0.1:1", secretKey: "sk_test_123", timeoutMs: 1_000 });
+console.log(await cancelOrder(new FakePaymentAdapter(), "fake_ch_1"));
+console.log(await cancelOrder(kobopay, "ch_7"));
+</starter>
+<hint><p>Guard at the top: <code>if (!payments.features.refunds) return `refund ${chargeId} by hand in the ${payments.name} dashboard`;</code> — return early, before anything calls <code>refund</code>.</p></hint>
+<hint><p>After the guard, the rest is the two lines you started with: <code>await payments.refund(chargeId); return `refunded ${chargeId}`;</code>. Calling <code>KoboPayAdapter.refund</code> would throw <code>AdapterNotSupportedError</code>, which is exactly why the guard must run first.</p></hint>
 <solution>
 <example file="cancel.ts" project="pay" browser="no">
 import { FakePaymentAdapter } from "./fake-payments.js";
@@ -917,6 +996,8 @@ refund ch_7 by hand in the kobopay dashboard
 </exercise>
 <exercise title="Which error?">
 <p>Name the error class for each situation: (1) <code>KOBOPAY_SECRET</code> is missing at startup; (2) the provider's DNS name does not resolve; (3) the provider answered <code>500</code>; (4) no answer within the timeout; (5) someone asks the KoboPay adapter for a refund; (6) the app asks the registry for an adapter called <code>paypal</code>; (7) a route needs the <code>streaming</code> capability and the adapter lacks it.</p>
+<hint><p>Re-read <code>KoboPayAdapter.call</code> and <code>initialize</code>: each branch there throws one specific class for one specific cause, in the order it checks them (a caller-supplied signal, then the timeout, then the private controller, then anything else).</p></hint>
+<hint><p>(1), (6) and (7) never touch the network at all — they are refused before any request is made, by <code>initialize</code> or by the registry itself. The other four all come from inside <code>call</code>, once a request was actually attempted.</p></hint>
 <solution>
 <ol>
 <li><code>AdapterConfigurationError</code>, thrown by <code>initialize</code> (and reported inside the <code>AggregateError</code> from <code>initializeAll</code>).</li>
@@ -937,7 +1018,7 @@ refund ch_7 by hand in the kobopay dashboard
 <ul>
 <li>Business logic depends on a contract in its own words (<code>PaymentAdapter</code>); each provider gets an adapter that translates. Swapping providers is one new class and one configuration value.</li>
 <li><code>LifecycleAdapter</code> gives every adapter a name, capabilities, <code>initialize</code>/<code>start</code>/<code>stop</code>/<code>dispose</code> and <code>health</code>. Capabilities describe the platform; business features belong in your contract.</li>
-<li><code>AdapterRegistry</code> finds adapters by case-insensitive name or capability, and runs the lifecycle for all of them, collecting failures in an <code>AggregateError</code>. It runs in registration order, even when stopping.</li>
+<li><code>AdapterRegistry</code> finds adapters by case-insensitive name or capability, and runs the lifecycle for all of them, collecting failures in an <code>AggregateError</code>. It initializes and starts in registration order, then stops and disposes in reverse.</li>
 <li>Adapters turn failures into <code>AdapterConfigurationError</code>, <code>AdapterInitializationError</code>, <code>AdapterConnectionError</code>, <code>AdapterOperationError</code>, <code>AdapterTimeoutError</code> and <code>AdapterNotSupportedError</code>. A timed-out charge is an unknown outcome; retry it only with the same idempotency key.</li>
 <li><code>healthAll</code> combines health with a time limit and retries. One contract test suite keeps the fake and the real adapter interchangeable.</li>
 </ul>
