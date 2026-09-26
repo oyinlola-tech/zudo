@@ -187861,6 +187861,14 @@ Add a `request_timeout_ms` setting to the [config schema](#validate), with a def
 
 Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
+HINT 1
+
+`request_timeout_ms: schema.coerce.number().int().min(1000).max(120_000),`, the same shape as `max_upload_mb` above.
+
+HINT 2
+
+`sources: [createDefaultsConfigSource({ request_timeout_ms: 30_000 }), createEnvironmentConfigSource({ prefix: "TASKS_", env: { TASKS_REQUEST_TIMEOUT_MS: value }, priority: 20 })]`.
+
 SOLUTION
 
 timeout-setting.ts
@@ -187900,6 +187908,14 @@ TRY IT YOURSELF
 A teammate wants to debug a production problem and adds `console.log("config", config.toObject())` at startup. What is wrong, and what should the line be?
 
 Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read the two methods a config manager offers for reading everything at once, and what each promises about sensitive values.
+
+HINT 2
+
+Think about where logs end up and who can read them, not just whether the code that wrote the line was trusted.
 
 SOLUTION
 
@@ -188407,10 +188423,10 @@ Output of `npx tsx guards.ts` and of the browser terminal
 ```ts
 normal -> passed
 too deep -> SerializationDepthError 400 Maximum serialization depth exceeded: 11 > 10
-too big -> SerializationPayloadTooLargeError 413 Serialized payload too large: 100013 bytes (max: 16384)
+too big -> SerializationPayloadTooLargeError 413 Serialized payload too large: 50013 bytes (max: 16384)
 ```
 
-Both hostile bodies were stopped. The size check is an estimate, not a byte count: it counts two bytes per UTF-16 code unit. That is double the real size for plain ASCII text such as the `x`s here, but *less* than the real UTF-8 size for characters such as `₦`, which take three bytes. [Validation rules](https://zudojs.oyinlola.site/learn/zudo-validation-rules#guards) measures the difference. Treat the guard as a cheap check on the parsed value, and keep the server's own body limit as the limit on real bytes.
+Both hostile bodies were stopped. The size check counts real UTF-8 bytes now: 50,013 for the `x`s here is within a rounding hair of the true 50,012-byte JSON, ASCII or not. Before this was fixed, the guard counted two bytes per UTF-16 code unit instead, which overcounted plain ASCII text by roughly double and *undercounted* a field full of multi-byte characters such as `₦`, which take three UTF-8 bytes but only one UTF-16 code unit each; [Validation rules](https://zudojs.oyinlola.site/learn/zudo-validation-rules#guards) shows the two figures side by side. Treat the guard as a cheap check on the parsed value all the same, and keep the server's own body limit as the authority on real bytes on the wire, since the guard measures the parsed value, not the exact bytes the client sent.
 
 Look at the status codes. The size error is a **413 Payload Too Large**, and the depth error a **400 Bad Request**: both are the client's mistake, so thrown from a route they become the right 4xx answer by themselves.
 
@@ -188772,25 +188788,25 @@ await server.stop();
 Output of `npx tsx src/check-validation.ts`
 
 ```ts
-PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":[],"code":"unknown_keys","message":"Unknow
 PATCH /tasks/2 200 {"id":2,"title":"Walk the dog","done":true,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}
 GET /tasks?done=false&limit=1&page=2 200 [{"id":3,"title":"Water the plants","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]
-GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
-PATCH /tasks/2 413 {"error":"Serialized payload too large: 80013 bytes (max: 65536)","code":"ERR_PAYLOAD_TOO_LARGE"}
+GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["limit"],"code":"too_large","message":"Ex
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_large","message":"St
 ```
 
-The unknown `id` was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and a huge body never reached a schema: it got a 413 that names the size and the limit, and nothing from the body itself. You do not map this error yourself: the guard marks it as safe to show, so the router's default answer here, and the generated `errorResponse` in the running server, both send it as it is. The 400 bodies still only say "Validation failed"; [The ZudoJS error system](https://zudojs.oyinlola.site/learn/zudo-errors) adds the list of issues for every route at once. Run the same script in your project:
+The unknown `id` was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and the huge title got a 400 too — but not the 413 you might expect. The byte-size guard now counts real UTF-8 bytes (see [above](#guards)), so 40,000 ASCII characters is a ~40,013-byte body, comfortably under the 65,536-byte limit; it passes the guard and reaches the schema, where the `title` field's own length constraint rejects it as `too_large`. You do not map any of these errors yourself: the guard and the schema both mark their failures as safe to show, so the router's default answer, and the generated `errorResponse` in the running server, send each one as it is, `issues` array included. [The ZudoJS error system](https://zudojs.oyinlola.site/learn/zudo-errors) is what makes that array show up on every route at once, without each handler building it by hand. Run the same script in your project:
 
 Terminal on your computer
 
 ```bash
 $ npx tsc --noEmit
 $ npx tsx src/check-validation.ts
-PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":[],"code":"unknown_keys","message":"Unknow
 PATCH /tasks/2 200 {"id":2,"title":"Walk the dog","done":true,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}
 GET /tasks?done=false&limit=1&page=2 200 [{"id":3,"title":"Water the plants","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]
-GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
-PATCH /tasks/2 413 {"error":"Serialized payload too large: 80013 bytes (max: 65536)","code":"ERR_PAYLOAD_TOO_LARGE"}
+GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["limit"],"code":"too_large","message":"Ex
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_large","message":"St
 ```
 
 `registerRoutes` already registers `registerTaskRoutes`, so the running server has the new `PATCH /tasks/:id` route as soon as `npm run dev` restarts.
@@ -188804,6 +188820,14 @@ TRY IT YOURSELF
 Add a `q` parameter to `ListTasksQuery` for searching titles. It is optional, is trimmed, must be 1 to 50 characters, and is compared in lower case, so turn it to lower case in the schema. Test it with `?q=%20MILK%20` (the `%20` are spaces) and with `?q=`.
 
 Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Chain the modifiers in the same order as `category` above: trim, then lower case, then the length bounds, then `.optional()`.
+
+HINT 2
+
+`q: schema.string().trim().toLowerCase().min(1).max(50).optional()`.
 
 SOLUTION
 
@@ -188848,6 +188872,14 @@ function updateTask(task: StoredTask, body: Record<string, unknown>): StoredTask
 ```
 
 Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The unknown field to catch is `ownerId`: a task with an id and title should never accept a new `id` or `ownerId` from a client. Build `UpdateTaskSchema` the same way as `RenameSchema` above, but with `title` and `done` instead of `nickname`.
+
+HINT 2
+
+`schema.object({ title: schema.string().trim().min(3).max(100), done: schema.boolean() }).partial().strict()`, then inside `updateTask`: `const changes = UpdateTaskSchema.parse(body); return { ...task, title: changes.title ?? task.title, done: changes.done ?? task.done };`.
 
 SOLUTION
 
@@ -188966,15 +188998,15 @@ created "Buy  milk"
 created "BUY MILK"
 created "Ｂｕｙ milk"
 created "Buy milk\u0007"
-created "🛒🛒"
-tasks stored: 6
+refused (String must be at least 3 characters)
+tasks stored: 5
 ```
 
 - Four spellings of "Buy milk" are now four tasks: two spaces, capitals, and "fullwidth" letters that some phone keyboards produce. To a person they are the same task.
 - A title with an invisible control character (`\u0007`, the "bell") was stored. It will end up in e-mails, logs and CSV exports.
-- Two emoji passed `min(3)`, because JavaScript counts an emoji as two "characters" (two UTF-16 code units).
+- The two emoji were correctly refused this time: `@zudojs/schema`'s `min()` counts Unicode code points, so `🛒🛒` is 2 characters, not the 4 UTF-16 code units older versions counted. A shape check can measure length; it still has no opinion on duplicates or control characters.
 
-None of these is a shape problem. They are **rules** about what a value means: which titles count as the same, which characters are allowed, how long a string is to a human. `@zudojs/validation` is the ZudoJS package for such rules. It also brings structural guards, which you have used since the last lesson, a Zod integration, and an error class for validation failures.
+Two of these are not shape problems. They are **rules** about what a value means: which titles count as the same, which characters are allowed. `@zudojs/validation` is the ZudoJS package for such rules. It also brings structural guards, which you have used since the last lesson, a Zod integration, and an error class for validation failures.
 
 ## @zudojs/schema or @zudojs/validation?
 
@@ -188989,7 +189021,7 @@ ZudoJS has two validation packages, and it is fair to ask why:
 
 The rule of thumb for this course: **schemas describe shapes, `@zudojs/validation` checks rules**. A DTO stays a `@zudojs/schema` schema. Rules that need more than a type, a length and a format, such as "no control characters", "same title ignoring case and spacing", "USSD transfers at most ₦20,000", are written as constraints and composed with `@zudojs/validation`, and run after the schema has produced a typed value. Its Zod schemas are the alternative for a project that already uses Zod; do not describe the same DTO in both.
 
-The two error classes look alike but are not the same class, and one guard does not recognise the other's errors:
+The two error classes look alike but are not the same class, and only one of the two guards reaches across packages:
 
 two-errors.ts
 
@@ -189019,10 +189051,10 @@ Output of `npx tsx two-errors.ts` and of the browser terminal
 
 ```ts
 SchemaError 400 ERR_SCHEMA_VALIDATION | schema guard: true | validation guard: false
-SchemaValidationError 400 ERR_SCHEMA_VALIDATION | schema guard: false | validation guard: true
+SchemaValidationError 400 ERR_SCHEMA_VALIDATION | schema guard: true | validation guard: true
 ```
 
-Both are exposed 400s with the same `code`, so a generic error handler answers both correctly. But code that checks `isSchemaValidationError` to read `issues`, as the Task API's error handler will in [the next lesson](https://zudojs.oyinlola.site/learn/zudo-errors), does not recognise errors from `@zudojs/validation`. Keep that in mind when you mix them; this lesson's Task API rules are written so that their error message carries the details.
+Both are exposed 400s with the same `code`, so a generic error handler answers both correctly. `isSchemaValidationError` now recognises both: any `BaseError` coded `ERR_SCHEMA_VALIDATION` with an issue list counts, whichever package threw it, so code that checks it to read `issues`, as the Task API's error handler will in [the next lesson](https://zudojs.oyinlola.site/learn/zudo-errors), works for both. The reverse still does not hold: `isValidationError` only recognises `@zudojs/validation`'s own errors, not a plain `SchemaError` from `@zudojs/schema`. Reach for `isSchemaValidationError` when you need one guard that covers a mixed codebase.
 
 ## Constraints
 
@@ -189060,7 +189092,7 @@ emoji        [ 'title: Value must contain at least 3 characters.' ]
 A few details matter:
 
 - `checkConstraints` runs *every* constraint and reports every failure, so a form can show all problems at once. The `path` argument puts the field name on each issue.
-- String lengths count **code points**, so an emoji is one character: `🛒🛒` is two, and fails `minLength(3)`. `@zudojs/schema`'s `min(3)` counts UTF-16 code units and let it through. When length means "what a person sees", use the constraint.
+- String lengths count **code points**, so an emoji is one character: `🛒🛒` is two, and fails `minLength(3)`. `@zudojs/schema`'s `min(3)` counts the same way now, so the two packages agree on "what a person sees" — you no longer need the constraint just to get this right, only for rules a schema cannot express at all.
 - `httpUrl` accepts only `http:` and `https:`. A `javascript:` "URL" in a profile link is a classic stored-XSS trick.
 - The rejected value is **not** copied into the issue. Issues end up in error responses and logs, and the rejected value may be a password or a card number.
 
@@ -189106,12 +189138,12 @@ Output of `npx tsx custom.ts` and of the browser terminal
 ]
 false
 Choose another username true
-Value must not satisfy one_of.
-One or more validation constraints failed.
+Value must not satisfy the "one of" constraint.
+Value must be an integer. Value must be between 1 and 8.
 [ 'Value must be an integer.' ]
 ```
 
-Two things to notice. `not` without options reports the internal name of the constraint it negates (`one_of`), which means nothing to a user, so give it your own message. And `combineConstraints` turns several constraints into one, but its failure message is generic: when the reason matters to the user, pass the list to `checkConstraints` instead.
+Two things to notice. `not` without options now reports a readable phrase naming the constraint it negates (`the "one of" constraint`) instead of the bare internal name `one_of`; giving it your own `message`, as `notReserved` does, still gives the best wording for a user. And `combineConstraints` turns several constraints into one, and its failure message now lists every member's message in one string; when you need each one as a separate issue instead, pass the list to `checkConstraints`.
 
 ## Normalize, then validate
 
@@ -189394,10 +189426,10 @@ Output of `npx tsx zod-async.ts` and of the browser terminal
   ]
 }
 true
-validate threw: Error - Encountered Promise during synchronous parse. Use .parseAsync() instead.
+validate threw: ConfigurationError - The schema contains an async refine() or transform() and cannot be parsed synchronously; use validateAsync(), parseAsync() or createAsyncValidator().
 ```
 
-The synchronous call did not return a failure result: it threw a plain `Error`, which a server would answer with 500. Use `validateAsync` or `parseAsync` for any schema with an asynchronous rule. And keep such checks out of schemas for writes that must be unique: between the check and the insert another request can take the name. The database's unique index is the real guarantee; the check only gives a friendlier message.
+The synchronous call did not return a failure result: it threw a `ConfigurationError` naming the fix, rather than the bare `Error` it used to throw — a clue instead of a mystery 500, though it is still your bug to fix, not the client's. Use `validateAsync` or `parseAsync` for any schema with an asynchronous rule. And keep such checks out of schemas for writes that must be unique: between the check and the insert another request can take the name. The database's unique index is the real guarantee; the check only gives a friendlier message.
 
 ## Validation errors
 
@@ -189423,7 +189455,7 @@ console.log(isValidationError(error));
 Output of `npx tsx errors.ts` and of the browser terminal
 
 ```ts
-ValidationError 400 true ERR_VALIDATION_FAILED
+ValidationError 400 true ERR_INVALID_INPUT
 password: Password must be at least 12 characters; email: Enter a valid email address
 [Object: null prototype] {
   password: 'Password must be at least 12 characters',
@@ -189509,13 +189541,13 @@ Output of `npx tsx depth-size.ts` and of the browser terminal
 
 ```ts
 3 0
-a estimate: 2013 real UTF-8 bytes: 1012
-₦ estimate: 2013 real UTF-8 bytes: 3012
-任 estimate: 2013 real UTF-8 bytes: 3012
-2,500-byte limit: passed
+a estimate: 1013 real UTF-8 bytes: 1012
+₦ estimate: 3013 real UTF-8 bytes: 3012
+任 estimate: 3013 real UTF-8 bytes: 3012
+Serialized payload too large: 3013 bytes (max: 2500)
 ```
 
-The size estimate counts two bytes per UTF-16 code unit. For plain ASCII that is about double the real size, but `₦` and most non-Latin scripts take three bytes in UTF-8, and there the estimate is too *low*: the 3,012-byte body passed a 2,500-byte limit. Treat the guard as a cheap check on the parsed structure, and keep the HTTP server's body limit (10 MB by default, set lower for a JSON API) as the hard limit on real bytes.
+The size estimate now counts real UTF-8 bytes, the same as `JSON.stringify` would put on the wire — within a byte of it here, for the one byte of quoting the key adds. Plain ASCII, `₦` and 任 all come out right, where the old estimate charged every string two bytes per UTF-16 code unit: correct for nothing in particular, roughly double the real size for ASCII, and *short* for `₦` and most non-Latin scripts, which take three bytes each in UTF-8 but only one UTF-16 code unit. That undercount is what let the 3,012-byte `₦` body pass a 2,500-byte limit before; now it is correctly refused. Treat the guard as a cheap check on the parsed structure, and keep the HTTP server's body limit (10 MB by default, set lower for a JSON API) as the authority on real bytes on the wire.
 
 ## Request validation and response validation
 
@@ -189892,18 +189924,18 @@ Output of `npx tsx src/check-rules.ts`
 POST "  Buy \t milk " 201 {"id":1,"title":"Buy milk","done":false,"priority":"normal","createdAt":"2026-09-25T09:00:00.000Z"}
 POST "BUY  MILK"      409 {"error":"A task called \"BUY MILK\" already exists","code":"ERR_CONFLICT"}
 POST "Ｂｕｙ milk"       409 {"error":"A task called \"Ｂｕｙ milk\" already exists","code":"ERR_CONFLICT"}
-POST "Pay rent\u0007" 400 {"error":"title: Title must not contain control characters","code":"ERR_VALIDATION_FAILED"}
-POST "🛒🛒"           400 {"error":"title: Value must contain between 3 and 100 characters.","code":"ERR_VALIDATION_FAILED"}
+POST "Pay rent\u0007" 400 {"error":"title: Title must not contain control characters","code":"ERR_INVALID_INPUT","issues":[{"path":["title"],"code":"control_character","message":"Title must not contain control characters"}]}
+POST "🛒🛒"           400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_small","message":"String must be at least 3 characters"}]}
 PATCH "Buy Milk"       200 {"id":1,"title":"Buy Milk","done":false,"priority":"normal","createdAt":"2026-09-25T09:00:00.000Z"}
-GET /tasks/99 500 {"error":"Internal Server Error"}
+GET /tasks/99 500 {"error":"Internal Server Error","code":"INTERNAL_SERVER_ERROR"}
 ```
 
 Read the answers:
 
 - The first title was stored clean: `Buy milk`, with the tab and the extra spaces gone.
 - `BUY  MILK` and the fullwidth spelling are now conflicts, 409, because their keys match. Renaming task 1 to `Buy Milk` is allowed: it is the same task.
-- The bell character and the two emoji were refused with 400, and the message says which rule failed. It is carried by the error's `message`, which every error handler sends.
-- The planted task with `done: "no"` got a plain 500: the client learns nothing about your data. With the error handler from [the next lesson](https://zudojs.oyinlola.site/learn/zudo-errors), that 500 is logged together with `taskId` and the failing fields.
+- The bell character was refused by `checkTitle`'s constraint, `ERR_INVALID_INPUT`, with an `issues` entry for `title`. The two emoji never reach `checkTitle` at all: `NewTaskSchema.title`'s own `min(3)` now counts code points too ([above](#why)), so it refuses a two-emoji title first, as `ERR_SCHEMA_VALIDATION`. Different package, different code, same shape of answer: both are exposed 400s with an `issues` array, because `@zudojs/errors` now attaches one to every exposed error that has one, whichever package built it.
+- The planted task with `done: "no"` got a 500 that names only its `code`, `INTERNAL_SERVER_ERROR`: the client learns nothing about your data. With the error handler from [the next lesson](https://zudojs.oyinlola.site/learn/zudo-errors), that 500 is logged together with `taskId` and the failing fields.
 
 Terminal on your computer
 
@@ -189923,6 +189955,14 @@ TRY IT YOURSELF
 Write a composer for hotel bookings `{ room, nights, guests, promoCode? }` using constraints: `nights` an integer from 1 to 30, `guests` from 1 to 4, and a promo code, when present, of 4 to 12 letters or digits. Report every problem at once, each with its field path.
 
 Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Add two more entries to the array, the same shape as `nights`: `field("guests", (guests) => checkConstraints([integer, between(1, 4)], guests, ["guests"]).issues ?? [])`.
+
+HINT 2
+
+For the optional field, return no issues when it is absent: `field("promoCode", (code) => code === undefined ? [] : (checkConstraints([lengthBetween(4, 12), matches(/^[A-Z0-9]+$/i, "Letters and digits only")], code, ["promoCode"]).issues ?? []))`.
 
 SOLUTION
 
@@ -189987,6 +190027,14 @@ Write `respond(schema, value)` for a Zod response schema: on success return the 
 
 Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
+HINT 1
+
+Guard on `result.success`, the same as `reply` above: when it is `false`, throw; when it is `true`, return `result.data`.
+
+HINT 2
+
+`if (!result.success) { throw new InternalServerError("Response failed its schema", { metadata: { failures: result.issues.map((i) => \`${i.path.join(".")}: ${i.code}\`) } }); } return result.data;`.
+
 SOLUTION
 
 respond.ts
@@ -190028,7 +190076,7 @@ The good record lost its `passwordHash` on the way out, and the broken one becam
 
 ## Recap
 
-- `@zudojs/schema` describes shapes; `@zudojs/validation` checks rules, normalizes, composes and guards. Both throw exposed 400s with `issues`, but `isSchemaValidationError` only recognises `@zudojs/schema`'s errors.
+- `@zudojs/schema` describes shapes; `@zudojs/validation` checks rules, normalizes, composes and guards. Both throw exposed 400s with `issues`; `isSchemaValidationError` recognises both packages' errors, but `isValidationError` only recognises `@zudojs/validation`'s own.
 - Constraints are named rules with a code and a message. `checkConstraints` reports every failure and never copies the rejected value into an issue. String lengths count code points.
 - Normalize before you check or compare: store a clean NFC form, compare an identifier key (NFKC plus case folding) for uniqueness.
 - Composers turn steps into reusable validators; `when` makes a rule conditional; `stopOnFirstError: false` collects independent problems.
@@ -190174,13 +190222,12 @@ TaskAlreadyDoneError [ERR_TASK_ALREADY_DONE]: Task 3 is already done
   code: 'ERR_TASK_ALREADY_DONE',
   message: 'Task 3 is already done',
   category: 'business',
-  statusCode: 409,
-  metadata: { taskId: 3 }
+  statusCode: 409
 }
 ```
 
 - The `code` is your own string. Prefix it (`ERR_`) and keep it stable: clients will write `if (body.error.code === "ERR_TASK_ALREADY_DONE")`.
-- `metadata` holds facts about the failure. It is copied and frozen, so nobody can change it later. Look at the last output: for an exposed error such as this 409, `serializePublicError` sends the metadata to the client. So only put there what a client may see. Facts for your logs only belong in the log line, or in the metadata of a 5xx error, which is never exposed. Never a password or a token.
+- `metadata` holds facts about the failure. It is copied and frozen, so nobody can change it later. Look at the last output: `metadata` is missing, even though this is an exposed 409. `expose` only says the *message* is safe; `serializePublicError` no longer assumes the metadata is too. To send `taskId` here, opt in with `serializePublicError(error, { publicMetadataKeys: ["taskId"] })`, or pass `exposeMetadata: true` to publish all of it (still redacted) on every exposed error. Until you opt in, metadata stays in your logs only. Never put a password or a token in it regardless.
 - `name` was set to the class name for you.
 - 409 Conflict fits: the request clashes with the current state of the task.
 
@@ -190281,7 +190328,7 @@ A request fails because the database refused a query. The error knows the failin
 - **The client** of a 500 gets a stable code and a generic message, nothing else. SQL, table names, hosts and stack traces are a map of your system for an attacker, and the client cannot act on them anyway.
 - **Your log** gets everything that helps you fix the bug: the real message, the SQL, the stack and the cause.
 - **Neither** gets the password: logs are copied and read widely, so secrets are redacted even there.
-- A **404** is different: the client made the mistake and needs to know which task was missing, so its message and a `taskId` in its metadata may be sent. That is why exposure depends on the status: 4xx errors are exposed, 5xx errors are not.
+- A **404** is different: the client made the mistake and needs to know which task was missing, so its message is sent. That is why exposure depends on the status: 4xx errors are exposed, 5xx errors are not. `expose` only covers the message, though: a `taskId` in the 404's metadata is sent only if you name it, with `publicMetadataKeys` or `exposeMetadata: true` — otherwise it stays server-side, exposed or not.
 
 `serializePublicError(error)` is for clients. `error.toJSON()` is for logs. Here both look at a database failure whose metadata holds the failing SQL and, by mistake, a password:
 
@@ -190347,8 +190394,7 @@ Output of `npx tsx error-handler.ts` and of the browser terminal
   code: 'ERR_RESOURCE_NOT_FOUND',
   message: 'Task 9 not found',
   statusCode: 404,
-  requestId: 'req-1',
-  details: { taskId: 9 }
+  requestId: 'req-1'
 }
 [report] ERR_INTERNAL_ERROR operational=false request=req-2
 {
@@ -190359,7 +190405,7 @@ Output of `npx tsx error-handler.ts` and of the browser terminal
 }
 ```
 
-The second error was a plain `Error` mentioning an internal address. The client body says nothing about it; the reporter saw it as a non-operational error, which is exactly the kind you want an alert for.
+The first body has no `details` for `taskId`, for the same reason as `custom.ts` above: `handlePublic` shares the same metadata policy as `serializePublicError`, so pass `publicMetadataKeys` or `exposeMetadata` to `ErrorHandler`'s constructor if you want it there. The second error was a plain `Error` mentioning an internal address. The client body says nothing about it; the reporter saw it as a non-operational error, which is exactly the kind you want an alert for.
 
 ## Errors in @zudojs/http
 
@@ -190582,6 +190628,14 @@ Add a `complete(id)` method to the `TaskService`: it throws `TaskAlreadyDoneErro
 
 Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
 
+HINT 1
+
+Guard in the same order as `cancel` above: missing task first, then already-done, then the update. `if (!task) throw new NotFoundError(...); if (task.done) throw new TaskAlreadyDoneError(id);`.
+
+HINT 2
+
+`const updated = { ...task, done: true }; tasks.set(id, updated); return updated;`, after the two guards.
+
 SOLUTION
 
 complete.ts
@@ -190648,6 +190702,14 @@ function leakyHandler(error: unknown) {
 ```
 
 Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look at each of the three fields in the response body separately, and ask what a `TypeError` or a database error's `message` and `stack` can contain that a stranger should never read.
+
+HINT 2
+
+The status code is fixed at 500 for everything, even a missing task. What does a real client need in order to tell "you made a mistake" from "we made a mistake"?
 
 SOLUTION
 
@@ -283931,6 +283993,8 @@ Generated from `css/site.css` by `pnpm site:theme`; do not edit the table by han
 | `--z-tint-green-4` | #F0FAF3 | #12291C |  |
 | `--z-tint-pink` | #FDF2F8 | #2E1A2A |  |
 | `--z-tint-purple` | #F3EBFA | #2B2140 |  |
+| `--z-diagram-green` flowchart shapes in Academy diagrams; labels use currentColor | #E3F4E8 | #163A24 |  |
+| `--z-diagram-yellow` | #F9E2AF | #4A3A12 |  |
 | Code |  |  |  |
 | `--z-code-bg` | #1E1E2E | same |  |
 | `--z-code-mantle` | #181825 | same |  |
