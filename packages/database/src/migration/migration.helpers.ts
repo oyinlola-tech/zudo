@@ -82,6 +82,14 @@ export function validateMigration<
       `Migration "${migration.name}" has an invalid down function.`,
     );
   }
+  if (
+    migration.transaction !== undefined &&
+    typeof migration.transaction !== "boolean"
+  ) {
+    throw new TypeError(
+      `Migration "${migration.name}" has an invalid transaction flag.`,
+    );
+  }
 }
 
 /**

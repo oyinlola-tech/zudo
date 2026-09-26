@@ -8,6 +8,7 @@ export {
   BaseRepository,
   type BaseRepositoryOptions,
   type SoftDeleteOptions,
+  type CreateCursorOptions,
   type CursorQueryOptions,
   type TransactionClientLike,
 } from "./repository.base.js";

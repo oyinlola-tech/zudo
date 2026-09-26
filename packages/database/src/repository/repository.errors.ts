@@ -7,7 +7,10 @@ import {
   type ErrorMetadataValue,
 } from "@zudojs/errors";
 
-import { isDatabaseErrorLike } from "../databaseClient/databaseClient.errors.js";
+import {
+  getPrismaCodeMapping,
+  isDatabaseErrorLike,
+} from "../databaseClient/databaseClient.errors.js";
 
 /**
  * Repository operation names used for error diagnostics.
@@ -118,6 +121,9 @@ export function toDatabaseOperation(
  * - `P2034` serialization failure → `ERR_DATABASE_TRANSACTION` / 409 (retryable)
  * - `P2024` pool timeout → `ERR_DATABASE_TIMEOUT` / 503
  * - `P1xxx` connection failures → `ERR_DATABASE_CONNECTION` / 503
+ * - every other code `normalizeDatabaseError` knows (`P2000` value too
+ *   long / 400, `P2004` constraint / 409, `P2011` null / 400, `P2014`,
+ *   `P2015`, `P2018`, `P2028`) → the same status, code and exposure
  *
  * Existing `DatabaseError`s are returned unchanged.
  */
@@ -239,6 +245,21 @@ export function mapRepositoryError(
     );
   }
 
+  const mapping = getPrismaCodeMapping(error.code);
+
+  if (mapping !== undefined) {
+    return new DatabaseError(
+      `${context.model} ${context.operation} failed: ${lowerFirst(mapping.message)}`,
+      {
+        ...options,
+        code: mapping.code,
+        statusCode: mapping.statusCode,
+        expose: mapping.expose,
+        metadata: { ...metadata, kind: mapping.kind },
+      },
+    );
+  }
+
   return new DatabaseError(`${context.model} ${context.operation} failed.`, {
     ...options,
     code: ErrorCode.DATABASE_QUERY,
@@ -353,6 +374,10 @@ function toMetadataValue(value: unknown): ErrorMetadataValue | undefined {
   }
 
   return String(value);
+}
+
+function lowerFirst(value: string): string {
+  return value.length === 0 ? value : value[0]!.toLowerCase() + value.slice(1);
 }
 
 function extractTarget(

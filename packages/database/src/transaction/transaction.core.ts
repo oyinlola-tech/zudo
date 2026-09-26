@@ -25,7 +25,14 @@ export type TransactionStatus =
   "idle" | "active" | "committed" | "rolled-back" | "failed";
 
 /**
- * Runtime transaction information.
+ * Runtime transaction information: the immutable status record
+ * `TransactionManager.run` reports in its `TransactionOutcome` and attaches
+ * to failures (see `getTransactionContextFromError`).
+ *
+ * Not the `TransactionContext` of `@zudojs/transactions`, which is the
+ * AsyncLocalStorage store its manager propagates transactions through.
+ * The two packages share the name but not the concept; import from the
+ * package whose manager you use.
  */
 export interface TransactionContext {
   readonly transactionId: string;
@@ -258,7 +265,14 @@ export async function withTransactionRetry<
 }
 
 /**
- * Creates an immutable transaction context.
+ * Creates an immutable transaction status record (see
+ * {@link TransactionContext}), as `TransactionManager.run` does for every
+ * transaction it opens.
+ *
+ * Unrelated to `createTransactionContext` from `@zudojs/transactions`,
+ * which creates the AsyncLocalStorage propagation store that package's
+ * manager runs callbacks in. This one holds no transaction and propagates
+ * nothing; it is data for logging and error reporting.
  */
 export function createTransactionContext(
   options: ManagedTransactionOptions = {},

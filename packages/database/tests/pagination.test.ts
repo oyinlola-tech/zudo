@@ -273,7 +273,13 @@ describe("Pagination", () => {
           { createdAt: { lt: "2024-01-01T00:00:00.000Z" } },
           {
             AND: [
-              { createdAt: { equals: "2024-01-01T00:00:00.000Z" } },
+              // A Date cursor ties on its millisecond bucket (round 12, #79).
+              {
+                createdAt: {
+                  gte: "2024-01-01T00:00:00.000Z",
+                  lt: "2024-01-01T00:00:00.001Z",
+                },
+              },
               { id: { gt: "b" } },
             ],
           },

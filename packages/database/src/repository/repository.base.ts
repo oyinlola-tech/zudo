@@ -16,6 +16,7 @@ import {
 } from "../pagination/pagination.core.js";
 import {
   buildKeysetWhere,
+  createKeysetCursor,
   createKeysetPage,
   decodeKeysetCursor,
 } from "../pagination/pagination.keyset.js";
@@ -105,6 +106,23 @@ export interface CursorQueryOptions<TField extends string = string>
    * Sort order. The id field is appended as a tiebreaker when absent.
    */
   readonly sort?: readonly SortInput<TField>[];
+}
+
+/**
+ * Options for {@link BaseRepository.createCursor}.
+ */
+export interface CreateCursorOptions<TField extends string = string> {
+  /**
+   * The sort the page is fetched with, as passed to `paginateCursor`. The
+   * id field is appended as a tiebreaker when absent, exactly as
+   * `paginateCursor` does.
+   */
+  readonly sort?: readonly SortInput<TField>[];
+  /**
+   * `"forward"` (default) selects the rows after `row`; `"backward"` the
+   * rows before it (a `previousCursor`).
+   */
+  readonly direction?: KeysetDirection;
 }
 
 /**
@@ -442,6 +460,27 @@ export abstract class BaseRepository<
         secret: this.cursorSecret,
         direction,
       },
+    );
+  }
+
+  /**
+   * Builds a cursor positioned at `row` that `paginateCursor` accepts for
+   * the same `sort`: the id tiebreaker is appended and the cursor is
+   * signed with `cursorSecret` when configured.
+   *
+   * `createKeysetCursor(row, sort)` with the bare sort produces a cursor
+   * without the tiebreaker, which `paginateCursor` rejects as missing the
+   * id field.
+   */
+  public createCursor<TField extends string = string>(
+    row: TEntity,
+    options?: CreateCursorOptions<TField>,
+  ): string {
+    return createKeysetCursor(
+      row as TEntity & Readonly<Record<string, unknown>>,
+      this.buildCursorSort(options?.sort),
+      this.cursorSecret,
+      options?.direction ?? "forward",
     );
   }
 

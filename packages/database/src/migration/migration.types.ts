@@ -27,6 +27,19 @@ export interface Migration<
    * Reverts the migration.
    */
   readonly down?: (database: TTransaction) => Promise<void>;
+
+  /**
+   * When `false`, `up` and `down` run outside a transaction, on the root
+   * client, which is what statements such as `CREATE INDEX CONCURRENTLY`
+   * or `ALTER TYPE ... ADD VALUE` require. Defaults to `true`.
+   *
+   * The applied check and the history record still happen inside short
+   * transactions under the advisory lock, but the lock is released while
+   * the body runs, so make such a migration idempotent (`IF NOT EXISTS`)
+   * to tolerate a second runner started at the same moment. Requires
+   * `perItemTransaction` (the default); a batch runner refuses it.
+   */
+  readonly transaction?: boolean;
 }
 
 /**

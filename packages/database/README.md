@@ -180,6 +180,21 @@ cursor or its contents. Building keyset pages by hand? Fetch with
 `keysetFetchSort(sort, getKeysetDirection(payload))` and pass that
 `direction` to `createKeysetPage`.
 
+`paginateCursor` appends the id field to `sort` as a tiebreaker, so a cursor
+positioned at a row you hold must include it: use
+`users.createCursor(row, { sort })` (signed with `cursorSecret`), not
+`createKeysetCursor(row, sort)` with the bare sort, which `paginateCursor`
+rejects as missing the id field.
+
+A `Date` sort value is encoded at millisecond precision. PostgreSQL
+`timestamp`/`timestamptz` columns keep microseconds unless declared `(3)`,
+and Prisma returns `Date`s, so the cursor compares such a value as its
+millisecond bucket (`>= C AND < C + 1ms` for a tie) and lets the id
+tiebreaker order rows created in the same millisecond. That is exact for
+identical timestamps (rows inserted by one statement or transaction) and for
+ids that increase with insertion order (serial, ULID, UUIDv7) — with random
+ids, sort by a millisecond-precision column or add a monotonic tiebreaker.
+
 ## Migrations and seeds
 
 ```typescript
@@ -222,6 +237,31 @@ await seeds.run();
 Each migration or seed runs in its own transaction by default
 (`perItemTransaction: true`); pass `transaction: { timeoutMs, maxWaitMs, isolationLevel }`
 to size it for long-running steps.
+
+A migration that cannot run inside a transaction (`CREATE INDEX CONCURRENTLY`,
+`ALTER TYPE ... ADD VALUE`) sets `transaction: false`. Its `up`/`down` then
+receive the root client and run outside any transaction; the applied check
+and the history record still happen in short transactions under the advisory
+lock, which is released while the body runs, so write such a migration
+idempotently (`IF NOT EXISTS`). It requires `perItemTransaction: true`; a
+batch runner refuses it at construction.
+
+```typescript
+{
+  version: 20260926120000,
+  name: "orders_customer_idx",
+  transaction: false,
+  up: (db) => db.$executeRawUnsafe(
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "orders_customer_idx" ON "orders" ("customerId")',
+  ),
+  down: (db) => db.$executeRawUnsafe('DROP INDEX CONCURRENTLY IF EXISTS "orders_customer_idx"'),
+}
+```
+
+`createTransactionContext` here builds the immutable status record that
+`TransactionManager.run` reports (`transactionId`, `startedAt`, `status`);
+it is unrelated to the `createTransactionContext` of `@zudojs/transactions`,
+which creates that package's AsyncLocalStorage propagation store.
 
 ## Errors
 

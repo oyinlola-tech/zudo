@@ -277,16 +277,18 @@ export interface DatabaseEntity<TId = string> {
 }
 
 /**
- * Soft-deletable entity contract.
+ * Soft-deletable entity contract. `TId` is the primary key type (default
+ * `string`), as on {@link DatabaseEntity}.
  */
-export interface SoftDeletableEntity extends DatabaseEntity {
+export interface SoftDeletableEntity<TId = string> extends DatabaseEntity<TId> {
   readonly deletedAt: Date | null;
 }
 
 /**
- * Auditable entity contract.
+ * Auditable entity contract. `TId` is the primary key type (default
+ * `string`), as on {@link DatabaseEntity}.
  */
-export interface AuditableEntity extends DatabaseEntity {
+export interface AuditableEntity<TId = string> extends DatabaseEntity<TId> {
   readonly createdBy?: string;
   readonly updatedBy?: string;
 }

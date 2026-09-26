@@ -105,13 +105,20 @@ export interface PrismaErrorLike {
   readonly retryable?: boolean;
 }
 
-interface CodeMapping {
+/**
+ * How a Prisma error code is normalised: its classification, HTTP status,
+ * framework error code, client-safe message and whether that message may
+ * be exposed.
+ */
+export interface PrismaCodeMapping {
   readonly kind: DatabaseErrorKind;
   readonly statusCode: number;
   readonly code: ErrorCode;
   readonly message: string;
   readonly expose: boolean;
 }
+
+type CodeMapping = PrismaCodeMapping;
 
 const CONNECTION_MESSAGE = "Database connection failed.";
 
@@ -270,6 +277,17 @@ export const RETRYABLE_DATABASE_CODES: ReadonlySet<string> = new Set([
   "40001", // PostgreSQL: serialization_failure
   "40P01", // PostgreSQL: deadlock_detected
 ]);
+
+/**
+ * The mapping {@link normalizeDatabaseError} applies to a Prisma error
+ * code, or `undefined` for a code it does not know. Shared with the
+ * repository mapper so both classify the same code the same way.
+ */
+export function getPrismaCodeMapping(
+  code: string,
+): PrismaCodeMapping | undefined {
+  return PRISMA_CODE_MAP[code];
+}
 
 /**
  * Detects a Prisma error structurally.

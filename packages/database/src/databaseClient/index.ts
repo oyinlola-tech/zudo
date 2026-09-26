@@ -33,11 +33,13 @@ export {
   isNotFoundError,
   getDatabaseErrorCode,
   getDatabaseErrorKind,
+  getPrismaCodeMapping,
   isDatabaseErrorLike,
   isNonDatabaseBaseError,
   toDatabaseErrorInfo,
   RETRYABLE_DATABASE_CODES,
   type DatabaseErrorKind,
   type NormalizeDatabaseErrorOptions,
+  type PrismaCodeMapping,
   type PrismaErrorLike,
 } from "./databaseClient.errors.js";

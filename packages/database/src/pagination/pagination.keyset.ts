@@ -14,6 +14,7 @@ import {
   getKeysetDirection,
   reverseKeysetSort,
 } from "./pagination.keysetDirection.js";
+import { keysetStrictFilter, keysetTieFilter } from "./pagination.keysetValue.js";
 
 /**
  * Options for building a keyset page.
@@ -96,6 +97,12 @@ export function decodeKeysetCursor<TField extends string = string>(
  *
  * For a sort of `[a asc, b desc]` the forward result is
  * `OR: [{ a: { gt: A } }, { AND: [{ a: A }, { b: { lt: B } }] }]`.
+ *
+ * A value encoded from a `Date` is compared as its millisecond bucket
+ * (`gte C, lt C + 1ms` for a tie; `lt C` / `gte C + 1ms` for the strict
+ * part), so rows created in the same millisecond as the cursor row on a
+ * microsecond-precision column fall through to the next sort field
+ * instead of being skipped. See `pagination.keysetValue.ts`.
  */
 export function buildKeysetWhere<TField extends string = string>(
   cursor: CursorPayload,
@@ -114,11 +121,11 @@ export function buildKeysetWhere<TField extends string = string>(
     const conditions: Record<string, unknown>[] = effective
       .slice(0, index)
       .map((previous) => ({
-        [previous.field]: { equals: cursor[previous.field] },
+        [previous.field]: keysetTieFilter(cursor[previous.field]),
       }));
 
     conditions.push({
-      [entry.field]: { [comparison]: cursor[entry.field] },
+      [entry.field]: keysetStrictFilter(cursor[entry.field], comparison),
     });
 
     branches.push(
@@ -132,6 +139,12 @@ export function buildKeysetWhere<TField extends string = string>(
 /**
  * Derives the cursor payload for a row from the sort fields. A
  * `"backward"` cursor selects the rows before `row` instead of after it.
+ *
+ * `sort` must be the exact sort the page is fetched and decoded with.
+ * `BaseRepository#paginateCursor` appends the id field as a tiebreaker, so
+ * a cursor for a repository page must include it: use
+ * `repository.createCursor(row, { sort })`, which does, rather than this
+ * helper with the bare sort.
  */
 export function createKeysetCursor<TField extends string = string>(
   row: Readonly<Record<string, unknown>>,

@@ -89,6 +89,14 @@ export class MigrationRunner<
 
     validateIdentifier(this.tableName, "migration table name");
     validateLockKey(this.lockKey, "migration lock key");
+
+    const detached = this.migrations.find((m) => m.transaction === false);
+    if (detached && !this.perItemTransaction) {
+      throw this.migrationError(
+        `Migration "${detached.name}" sets transaction: false, which requires perItemTransaction: true.`,
+        { metadata: { version: detached.version, name: detached.name } },
+      );
+    }
   }
 
   /**
@@ -132,21 +140,57 @@ export class MigrationRunner<
     }
 
     for (const migration of pending) {
-      const outcome = await this.client.transaction(async (transaction) => {
-        await this.acquireMigrationLock(transaction);
-        const applied = await this.getAppliedMigrations(transaction);
-        const existing = applied.find((r) => r.version === migration.version);
-        if (existing) return { record: existing, skipped: true } as const;
-        await this.executeMigration(transaction, migration);
-        const record = await this.recordMigration(transaction, migration);
-        return { record, skipped: false } as const;
-      }, this.buildTransactionOptions());
+      const outcome =
+        migration.transaction === false
+          ? await this.applyDetached(migration)
+          : await this.client.transaction(async (transaction) => {
+              await this.acquireMigrationLock(transaction);
+              const applied = await this.getAppliedMigrations(transaction);
+              const existing = applied.find((r) => r.version === migration.version);
+              if (existing) return { record: existing, skipped: true } as const;
+              await this.executeMigration(transaction, migration);
+              const record = await this.recordMigration(transaction, migration);
+              return { record, skipped: false } as const;
+            }, this.buildTransactionOptions());
 
       if (outcome.skipped) skipped.push(outcome.record);
       else newlyApplied.push(outcome.record);
     }
 
     return { applied: newlyApplied, skipped };
+  }
+
+  /**
+   * Applies a `transaction: false` migration: the applied check and the
+   * history record run in short transactions under the advisory lock, the
+   * body runs on the root client outside any transaction.
+   */
+  private async applyDetached(
+    migration: Migration<TTransaction>,
+  ): Promise<{ readonly record: MigrationRecord; readonly skipped: boolean }> {
+    const existing = await this.client.transaction(async (transaction) => {
+      await this.acquireMigrationLock(transaction);
+      const applied = await this.getAppliedMigrations(transaction);
+      return applied.find((r) => r.version === migration.version);
+    }, this.buildTransactionOptions());
+    if (existing) return { record: existing, skipped: true };
+
+    await this.executeMigration(this.rootClient(), migration);
+
+    const record = await this.client.transaction(async (transaction) => {
+      await this.acquireMigrationLock(transaction);
+      const applied = await this.getAppliedMigrations(transaction);
+      return (
+        applied.find((r) => r.version === migration.version) ??
+        (await this.recordMigration(transaction, migration))
+      );
+    }, this.buildTransactionOptions());
+    return { record, skipped: false };
+  }
+
+  /** The root Prisma client, handed to migrations that opt out of a transaction. */
+  private rootClient(): TTransaction {
+    return this.client.getPrisma() as unknown as TTransaction;
   }
 
   /**
@@ -260,25 +304,45 @@ export class MigrationRunner<
     }
 
     while (rolledBack.length < limit) {
-      const record = await this.client.transaction(async (transaction) => {
+      const step = await this.client.transaction(async (transaction) => {
         await this.acquireMigrationLock(transaction);
         const applied = await this.getAppliedMigrations(transaction);
         const latest = applied[applied.length - 1];
         if (!latest) return null;
-        await this.revertRecord(transaction, latest);
-        return latest;
+        const migration = this.requireRollback(latest);
+        if (migration.transaction === false) {
+          return { record: latest, detached: true } as const;
+        }
+        await this.runDown(transaction, migration);
+        await this.deleteMigrationRecord(transaction, latest.version);
+        return { record: latest, detached: false } as const;
       }, this.buildTransactionOptions());
-      if (!record) break;
-      rolledBack.push(record);
+      if (!step) break;
+      if (step.detached) await this.revertDetached(step.record);
+      rolledBack.push(step.record);
     }
 
     return rolledBack;
+  }
+
+  /** Reverts a `transaction: false` migration; see {@link applyDetached}. */
+  private async revertDetached(record: MigrationRecord): Promise<void> {
+    await this.runDown(this.rootClient(), this.requireRollback(record));
+    await this.client.transaction(async (transaction) => {
+      await this.acquireMigrationLock(transaction);
+      await this.deleteMigrationRecord(transaction, record.version);
+    }, this.buildTransactionOptions());
   }
 
   private async revertRecord(
     transaction: TTransaction,
     record: MigrationRecord,
   ): Promise<void> {
+    await this.runDown(transaction, this.requireRollback(record));
+    await this.deleteMigrationRecord(transaction, record.version);
+  }
+
+  private requireRollback(record: MigrationRecord): Migration<TTransaction> {
     const migration = this.migrations.find((m) => m.version === record.version);
     if (!migration) {
       throw this.migrationError(
@@ -292,8 +356,15 @@ export class MigrationRunner<
         { metadata: { version: migration.version } },
       );
     }
+    return migration;
+  }
+
+  private async runDown(
+    transaction: TTransaction,
+    migration: Migration<TTransaction>,
+  ): Promise<void> {
     try {
-      await migration.down(transaction);
+      await migration.down!(transaction);
     } catch (error) {
       throw this.migrationError(
         `Rollback of migration "${migration.name}" failed.`,
@@ -303,7 +374,6 @@ export class MigrationRunner<
         },
       );
     }
-    await this.deleteMigrationRecord(transaction, migration.version);
   }
 
   private computePending(

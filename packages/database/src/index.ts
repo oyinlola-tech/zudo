@@ -61,6 +61,7 @@ export {
   isRetryableTransactionError,
   isConflictError,
   isNotFoundError,
+  getPrismaCodeMapping,
   getDatabaseErrorCode,
   getDatabaseErrorKind,
   isDatabaseErrorLike,
@@ -79,6 +80,7 @@ export {
   type DatabaseErrorKind,
   type NormalizeDatabaseErrorOptions,
   type PrismaErrorLike,
+  type PrismaCodeMapping,
 } from "./databaseClient/index.js";
 
 // Connection
@@ -112,6 +114,7 @@ export {
   type RepositoryDelegateOperations,
   type BaseRepositoryOptions,
   type SoftDeleteOptions,
+  type CreateCursorOptions,
   type CursorQueryOptions,
   type TransactionClientLike,
   type RepositoryOperation,
@@ -232,6 +235,10 @@ export {
   reverseKeysetSort,
   keysetFetchSort,
   createInvalidCursorError,
+  isDateCursorValue,
+  keysetStrictFilter,
+  keysetTieFilter,
+  nextMillisecond,
   normalizeCursorPagination,
   createCursorPaginationMeta,
   createCursorPaginatedResult,
