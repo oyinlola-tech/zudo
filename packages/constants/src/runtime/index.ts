@@ -1,6 +1,10 @@
 /**
  * Injectable Clock and Random interfaces for deterministic testing.
  *
+ * @deprecated `@zudojs/types` owns `Clock`, `Random`, `systemClock` and
+ * `systemRandom` (see the type ownership table). Everything here is kept so
+ * existing imports keep compiling and will be removed in the next major.
+ *
  * @module runtime
  */
 

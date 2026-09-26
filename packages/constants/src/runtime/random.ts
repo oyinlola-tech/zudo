@@ -19,7 +19,11 @@ import {
  */
 declare const SecureRandomBrand: unique symbol;
 
-/** The randomness operations shared by {@link Random} and {@link MockRandom}. */
+/**
+ * The randomness operations shared by {@link Random} and {@link MockRandom}.
+ *
+ * @deprecated Use the `Random`/`PseudoRandom` pair from `@zudojs/types`.
+ */
 export interface RandomSource {
   /**
    * Returns a random float between 0 (inclusive) and 1 (exclusive).
@@ -47,8 +51,9 @@ export interface RandomSource {
  * salts. Branded: only {@link systemRandom} (or an implementation cast
  * deliberately) satisfies it, and {@link MockRandom} never does.
  *
- * The richer, separately-branded `Random` in `@zudojs/types` is the
- * long-term owner of this contract.
+ * @deprecated Import `Random` from `@zudojs/types`, the owning package. The
+ * two interfaces have different method sets; this one is kept only so
+ * existing imports keep compiling and will be removed in the next major.
  */
 export interface Random extends RandomSource {
   /** @internal Marks the implementation as unpredictable. */
@@ -57,6 +62,8 @@ export interface Random extends RandomSource {
 
 /**
  * A seeded, fully predictable generator for tests.
+ *
+ * @deprecated Use `SeededRandom` from `@zudojs/types`.
  *
  * Structurally distinct from {@link Random} (it lacks the security brand and
  * carries `deterministic: true`), so the compiler rejects it wherever a
@@ -75,6 +82,8 @@ const RANDOM_FLOAT_WORDS = new Uint32Array(2);
 
 /**
  * Default random backed by `node:crypto` (CSPRNG).
+ *
+ * @deprecated Import `systemRandom` from `@zudojs/types`.
  *
  * Every method — including `random()` — draws from the platform CSPRNG, so
  * this singleton is safe to use for tokens, session IDs, salts, and other
@@ -104,6 +113,8 @@ export const systemRandom: Random = ({
 
 /**
  * Creates a mock random with a seeded sequence for deterministic testing.
+ *
+ * @deprecated Use `SeededRandom` from `@zudojs/types`.
  *
  * Uses a 32-bit linear congruential generator (Numerical Recipes constants)
  * with `Math.imul` for exact 32-bit arithmetic. Outputs are always in

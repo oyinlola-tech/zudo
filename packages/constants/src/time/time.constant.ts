@@ -94,10 +94,16 @@ export function toMilliseconds(
 /**
  * Format a millisecond duration to a human-readable string.
  *
+ * Shows the two most significant units and truncates the rest, so
+ * `formatDuration(90_500)` is "1m 30s" and `formatDuration(3_599_999)` is
+ * "59m 59s". A negative duration is formatted like its absolute value with a
+ * leading minus sign ("-1m 30s"); it used to fall through to "-90000ms".
+ *
  * @param ms - Duration in milliseconds
  * @returns Human-readable string (e.g. "5s", "2m 30s", "1h 15m")
  */
 export function formatDuration(ms: number): string {
+  if (ms < 0) return `-${formatDuration(-ms)}`;
   if (ms < TimeMs.SECOND) return `${ms}ms`;
   if (ms < TimeMs.MINUTE) return `${Math.floor(ms / TimeMs.SECOND)}s`;
   if (ms < TimeMs.HOUR) {

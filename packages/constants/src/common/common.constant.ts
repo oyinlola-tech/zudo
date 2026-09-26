@@ -1,23 +1,15 @@
 /**
- * Common default values, limits, sentinel constants, and branded-type
- * factories.
+ * Common default values, limits, sentinel constants, and branded string
+ * factories. Identifier factories live in `common.identifier.ts`.
  *
  * @module common/common
  */
 
-import {
-  type UserId,
-  type EventId,
-  type RequestId,
-  type CorrelationId,
-  type SessionId,
-  type MessageId,
-  type MessageCausationId,
-  type TokenId,
-  type Url,
-  type HexString,
-  type Base64String,
-  type JsonString,
+import type {
+  Url,
+  HexString,
+  Base64String,
+  JsonString,
 } from "./common.type.js";
 import { ContentTypes, Charset } from "../http/httpContentType.type.js";
 import { InvalidConstantError } from "../constantsErrors/constantsError.base.js";
@@ -111,62 +103,6 @@ export const Sentinel = Object.freeze({
   /** Wildcard for matching all */
   WILDCARD: "*",
 } as const);
-
-/**
- * Create a branded UserId from a raw string.
- */
-export function createUserId(id: string): UserId {
-  return id as UserId;
-}
-
-/**
- * Create a branded EventId from a raw string.
- */
-export function createEventId(id: string): EventId {
-  return id as EventId;
-}
-
-/**
- * Create a branded RequestId from a raw string.
- */
-export function createRequestId(id: string): RequestId {
-  return id as RequestId;
-}
-
-/**
- * Create a branded CorrelationId from a raw string.
- */
-export function createCorrelationId(id: string): CorrelationId {
-  return id as CorrelationId;
-}
-
-/**
- * Create a branded SessionId from a raw string.
- */
-export function createSessionId(id: string): SessionId {
-  return id as SessionId;
-}
-
-/**
- * Create a branded MessageId from a raw string.
- */
-export function createMessageId(id: string): MessageId {
-  return id as MessageId;
-}
-
-/**
- * Create a branded MessageCausationId from a raw string.
- */
-export function createMessageCausationId(id: string): MessageCausationId {
-  return id as MessageCausationId;
-}
-
-/**
- * Create a branded TokenId from a raw string.
- */
-export function createTokenId(id: string): TokenId {
-  return id as TokenId;
-}
 
 /**
  * Create a branded Url from a raw string.

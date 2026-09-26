@@ -9,6 +9,15 @@
  *
  * Brands prevent accidental assignment between structurally identical types
  * (e.g. a UserId cannot be passed where an EventId is expected).
+ *
+ * The brand is compile-time only. At runtime a `UserId` is a plain string:
+ * `__brand` is never present as a property, `typeof` and `JSON.stringify`
+ * see an ordinary string, and any value cast with `as UserId` passes the
+ * type. The key is a string rather than a `unique symbol` on purpose: two
+ * copies of `@zudojs/constants` (or a consumer that declares its own
+ * `Brand<string, "UserId">`) stay assignable to each other, which a symbol
+ * brand would forbid. Runtime checks belong in the `create*Id` factories,
+ * which reject empty and non-string input.
  */
 export type Brand<T, B extends string> = T & { readonly __brand: B };
 

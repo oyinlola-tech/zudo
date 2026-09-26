@@ -6,6 +6,10 @@
 
 /**
  * Provides deterministic time for testing.
+ *
+ * @deprecated Import `Clock` from `@zudojs/types`, the owning package. This
+ * copy differs in shape (it adds `Date()`) and is kept only so existing
+ * imports keep compiling; it will be removed in the next major.
  */
 export interface Clock {
   /**
@@ -24,6 +28,8 @@ export interface Clock {
 
 /**
  * A mock {@link Clock} whose time can be advanced or set explicitly.
+ *
+ * @deprecated Use `FixedClock` from `@zudojs/types`.
  */
 export interface MockClock extends Clock {
   /**
@@ -40,6 +46,8 @@ export interface MockClock extends Clock {
 
 /**
  * Default clock using real system time.
+ *
+ * @deprecated Import `systemClock` from `@zudojs/types`.
  */
 export const systemClock: Clock = {
   now: () => Date.now(),
@@ -51,6 +59,8 @@ export const systemClock: Clock = {
  *
  * The clock starts at `fixedTime` and stays there until `advance(ms)` or
  * `set(time)` is called.
+ *
+ * @deprecated Use `FixedClock` from `@zudojs/types`.
  */
 export function createMockClock(fixedTime: number = 0): MockClock {
   let time = fixedTime;

@@ -31,6 +31,14 @@ export {
   Limits,
   Defaults,
   Sentinel,
+  createUrl,
+  createHexString,
+  createBase64String,
+  createJsonString,
+} from "./common.constant.js";
+
+export {
+  assertIdentifier,
   createUserId,
   createEventId,
   createRequestId,
@@ -39,11 +47,7 @@ export {
   createMessageId,
   createMessageCausationId,
   createTokenId,
-  createUrl,
-  createHexString,
-  createBase64String,
-  createJsonString,
-} from "./common.constant.js";
+} from "./common.identifier.js";
 
 export {
   createTenantId,
