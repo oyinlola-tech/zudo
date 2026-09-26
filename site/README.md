@@ -15,7 +15,7 @@ site/
 ├── css/
 │   ├── tailwind.css        # Compiled Tailwind utilities (generated: pnpm site:css)
 │   ├── tailwind.src.css    # Tailwind entry file
-│   ├── site.css            # Shared: self-hosted @font-face, tokens, header, footer, search, docs shell
+│   ├── site.css            # Shared: self-hosted @font-face, theme tokens (light + dark), header, footer, search, docs shell
 │   ├── brand.css           # Brand page (logo stages, download rows, swatches)
 │   ├── home.css            # Landing page (hero terminal, ticker, cards)
 │   ├── docs.css            # Documentation pages (typography, code, callouts, tables)
@@ -24,7 +24,8 @@ site/
 │   └── playground.css      # Terminal playground
 ├── js/
 │   ├── tailwind-config.js  # Tailwind theme (colours, border-3, brutal shadows), source for the build
-│   ├── components.js       # Header, footer, global search (Ctrl+K), copy buttons — every page
+│   ├── theme.js            # Light / dark / system theme: boot block (inlined in every <head>) + window.zudoTheme
+│   ├── components.js       # Header, footer, global search (Ctrl+K), theme toggle, copy buttons — every page
 │   ├── playground.js       # Terminal playground (TypeScript via lazy-loaded Babel)
 │   ├── docs.js             # Docs: active sidebar, mobile drawer, TOC + scroll spy, tables
 │   ├── packages.js         # Package index filtering
@@ -69,6 +70,25 @@ changing Tailwind classes in any page or script, or editing
 ```bash
 pnpm site:css
 ```
+
+## Themes
+
+The site has light, dark and system (follow the OS) themes. Every colour is a
+`--z-*` token declared in `css/site.css`: a `:root` block holds the light
+values and a `:root[data-theme="dark"]` block redefines the ones that change.
+`js/theme.js` sets `data-theme` on `<html>`; its boot block is inlined into
+every page's `<head>` by `scripts/site-seo.mjs` (and by the Academy page
+template) so the first paint is already the right theme. The header button
+cycles the preference; `?theme=dark|light|system` on any URL stores one.
+`/docs/design-themes` lists every token with both values.
+
+- `pnpm site:theme` — regenerate the token table on `/docs/design-themes` from `site.css`.
+- `pnpm site:tokenize` / `pnpm site:tokenize --check` — replace literal colours in the page
+  stylesheets with tokens / fail if any literal remains (run the check before committing CSS).
+- `pnpm site:shots --out .site-shots/base` then `pnpm site:shots --out .site-shots/now --compare .site-shots/base`
+  — pixel-compare fifteen pages at two widths against a baseline (headless Chromium, no npm
+  dependency). Light mode is expected to match exactly; `--theme dark` captures the dark theme,
+  `--viewport [y]` captures one screen, `--git <rev>` captures a commit instead of the working tree.
 
 The logo SVGs in `assets/` are the source of truth for the brand kit. After
 changing one, run `pnpm site:brand`: it regenerates the PNG exports,
