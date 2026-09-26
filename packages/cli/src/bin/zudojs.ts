@@ -108,7 +108,8 @@ app.register(
       {
         name: "language",
         short: "l",
-        description: "Language (typescript, javascript)",
+        description:
+          "Language of the frontend app (typescript, javascript); backend apps are always TypeScript",
         type: "string",
         defaultValue: "typescript",
       },

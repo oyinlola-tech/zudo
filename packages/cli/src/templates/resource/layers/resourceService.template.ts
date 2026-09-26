@@ -1,14 +1,15 @@
 /**
- * zudojs-cli — A resource's service and controller.
+ * zudojs-cli — A resource's service.
  */
 
 import type { ResourceNames } from "../resource.names.js";
 
 /** `services/<slug>.service.ts`: CRUD with NotFoundError for missing ids. */
 export function renderResourceService(n: ResourceNames): string {
-  const types = `Create${n.entity}Input, ${n.entity}, Update${n.entity}Input`;
+  const types = `Create${n.entity}Input, ${n.entity}, ${n.entity}Page, List${n.pascal}Query, Update${n.entity}Input`;
   return `import { NotFoundError } from "@zudojs/errors";
 
+import { DEFAULT_PAGE_SIZE } from "../dtos/${n.slug}.dto.js";
 import type { ${types} } from "../dtos/${n.slug}.dto.js";
 import type { ${n.pascal}Repository } from "../repositories/${n.slug}.repository.js";
 
@@ -16,8 +17,12 @@ import type { ${n.pascal}Repository } from "../repositories/${n.slug}.repository
 export class ${n.pascal}Service {
   public constructor(private readonly repository: ${n.pascal}Repository) {}
 
-  public list(): Promise<readonly ${n.entity}[]> {
-    return this.repository.findAll();
+  /** One page of ${n.label} records (\`limit\` defaults to DEFAULT_PAGE_SIZE). */
+  public list(query: List${n.pascal}Query): Promise<${n.entity}Page> {
+    return this.repository.list({
+      limit: query.limit ?? DEFAULT_PAGE_SIZE,
+      ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+    });
   }
 
   public async get(id: string): Promise<${n.entity}> {
@@ -43,59 +48,6 @@ export class ${n.pascal}Service {
 
 function notFound(id: string): NotFoundError {
   return new NotFoundError(\`${n.entity} "\${id}" was not found.\`);
-}
-`;
-}
-
-/**
- * `controllers/<slug>.controller.ts`: validates input with the DTO schemas
- * and maps service results to responses. Handlers are arrow properties so
- * they can be passed to the router unbound.
- */
-export function renderResourceController(
-  n: ResourceNames,
-  appSrcFromControllers: string,
-): string {
-  const schemas = `Create${n.entity}Schema, ${n.entity}ParamsSchema, Update${n.entity}Schema`;
-  return `import type { HttpResponseContext, HttpRouterContext } from "@zudojs/http";
-
-import { ${schemas} } from "../dtos/${n.slug}.dto.js";
-import type { ${n.pascal}Service } from "../services/${n.slug}.service.js";
-import { empty, json, readJsonBody, validationFailed } from "${appSrcFromControllers}/utils/http.js";
-
-/** HTTP handlers for ${n.routePath}. */
-export class ${n.pascal}Controller {
-  public constructor(private readonly service: ${n.pascal}Service) {}
-
-  public readonly list = async (): Promise<HttpResponseContext> =>
-    json(200, await this.service.list());
-
-  public readonly get = async (ctx: HttpRouterContext): Promise<HttpResponseContext> => {
-    const params = ${n.entity}ParamsSchema.safeParse(ctx.params);
-    if (!params.success) return validationFailed(params.issues);
-    return json(200, await this.service.get(params.data.id));
-  };
-
-  public readonly create = async (ctx: HttpRouterContext): Promise<HttpResponseContext> => {
-    const body = Create${n.entity}Schema.safeParse(readJsonBody(ctx));
-    if (!body.success) return validationFailed(body.issues);
-    return json(201, await this.service.create(body.data));
-  };
-
-  public readonly update = async (ctx: HttpRouterContext): Promise<HttpResponseContext> => {
-    const params = ${n.entity}ParamsSchema.safeParse(ctx.params);
-    if (!params.success) return validationFailed(params.issues);
-    const body = Update${n.entity}Schema.safeParse(readJsonBody(ctx));
-    if (!body.success) return validationFailed(body.issues);
-    return json(200, await this.service.update(params.data.id, body.data));
-  };
-
-  public readonly remove = async (ctx: HttpRouterContext): Promise<HttpResponseContext> => {
-    const params = ${n.entity}ParamsSchema.safeParse(ctx.params);
-    if (!params.success) return validationFailed(params.issues);
-    await this.service.remove(params.data.id);
-    return empty(204);
-  };
 }
 `;
 }

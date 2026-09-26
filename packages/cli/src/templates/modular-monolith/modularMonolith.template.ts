@@ -48,8 +48,9 @@ import {
   APP_SOURCE_DEPENDENCIES,
   APP_TEST_DEPENDENCIES,
   applyDatabaseSetting,
+  backendAppScripts,
   backendDevDependencies,
-  backendTsconfig,
+  backendTsconfigFiles,
   emptyBarrels,
   renderBackendAppSource,
   runCommand,
@@ -103,13 +104,7 @@ export function generateModularMonolithFiles(
           architecture: "modular-monolith",
           features: capabilities,
         },
-        scripts: {
-          dev: "tsx watch src/server.ts",
-          start: "node dist/server.js",
-          build: "tsc",
-          typecheck: "tsc --noEmit",
-          test: "vitest run",
-        },
+        scripts: backendAppScripts(),
         dependencies: zudojsDependencies(deps),
         devDependencies: {
           ...backendDevDependencies(),
@@ -120,7 +115,7 @@ export function generateModularMonolithFiles(
       2,
     ) + "\n";
 
-  files["tsconfig.json"] = backendTsconfig();
+  Object.assign(files, backendTsconfigFiles());
 
   if (options.packageManager === "pnpm") {
     files["pnpm-workspace.yaml"] = renderPnpmWorkspaceFile();

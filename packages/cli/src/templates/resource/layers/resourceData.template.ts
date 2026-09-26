@@ -1,5 +1,12 @@
 /**
- * zudojs-cli — A resource's DTO schemas and in-memory repository.
+ * zudojs-cli — A resource's DTO schemas: record, create/update bodies, path
+ * parameters, and the list query and page shape.
+ *
+ * List endpoints paginate with a cursor: `?limit=` (1–MAX_PAGE_SIZE,
+ * default DEFAULT_PAGE_SIZE) and `?cursor=<id of the last item seen>`. A
+ * page answers `{ items, nextCursor }`, `nextCursor` being `null` on the
+ * last page. They used to return every record at once — up to 10,000 from
+ * the in-memory store.
  */
 
 import { withArticle, type ResourceNames } from "../resource.names.js";
@@ -31,81 +38,32 @@ export const ${n.entity}ParamsSchema = schema.object({
   id: schema.string().uuid(),
 });
 
+/** Page size when \`limit\` is not given, and the most a client may ask for. */
+export const DEFAULT_PAGE_SIZE = 50;
+export const MAX_PAGE_SIZE = 200;
+
+/** Query of \`GET ${n.routePath}\`: page size and the id to continue after. */
+export const List${n.pascal}QuerySchema = schema.object({
+  limit: schema.coerce.number().int().min(1).max(MAX_PAGE_SIZE).optional(),
+  cursor: schema.string().uuid().optional(),
+});
+
+/** One page of ${n.label} records; \`nextCursor\` is null on the last page. */
+export const ${n.entity}PageSchema = schema.object({
+  items: schema.array(${n.entity}Schema),
+  nextCursor: schema.nullable(schema.string().uuid()),
+});
+
+/** What a repository is asked for: a page size and where to continue. */
+export interface ${n.entity}PageRequest {
+  readonly limit: number;
+  readonly cursor?: string;
+}
+
 export type ${n.entity} = Infer<typeof ${n.entity}Schema>;
 export type Create${n.entity}Input = Infer<typeof Create${n.entity}Schema>;
 export type Update${n.entity}Input = Infer<typeof Update${n.entity}Schema>;
-`;
-}
-
-/** `repositories/<slug>.repository.ts`: the contract and a memory store. */
-export function renderResourceRepository(n: ResourceNames): string {
-  const types = `Create${n.entity}Input, ${n.entity}, Update${n.entity}Input`;
-  return `import { randomUUID } from "node:crypto";
-
-import { ConflictError } from "@zudojs/errors";
-
-import type { ${types} } from "../dtos/${n.slug}.dto.js";
-
-/** Storage contract for ${n.label} records; the service depends on this only. */
-export interface ${n.pascal}Repository {
-  findAll(): Promise<readonly ${n.entity}[]>;
-  findById(id: string): Promise<${n.entity} | undefined>;
-  create(input: Create${n.entity}Input): Promise<${n.entity}>;
-  update(id: string, input: Update${n.entity}Input): Promise<${n.entity} | undefined>;
-  delete(id: string): Promise<boolean>;
-}
-
-/** Most records the in-memory store keeps, so it cannot exhaust memory. */
-const MAX_RECORDS = 10_000;
-
-/**
- * Keeps ${n.label} records in process memory: for development and tests.
- * Data is lost on restart. Swap the implementation in container.ts.
- */
-export class InMemory${n.pascal}Repository implements ${n.pascal}Repository {
-  private readonly records = new Map<string, ${n.entity}>();
-
-  public async findAll(): Promise<readonly ${n.entity}[]> {
-    return [...this.records.values()];
-  }
-
-  public async findById(id: string): Promise<${n.entity} | undefined> {
-    return this.records.get(id);
-  }
-
-  public async create(input: Create${n.entity}Input): Promise<${n.entity}> {
-    if (this.records.size >= MAX_RECORDS) {
-      throw new ConflictError("The in-memory ${n.label} store is full.");
-    }
-    const now = new Date().toISOString();
-    const record: ${n.entity} = {
-      id: randomUUID(),
-      name: input.name,
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.records.set(record.id, record);
-    return record;
-  }
-
-  public async update(
-    id: string,
-    input: Update${n.entity}Input,
-  ): Promise<${n.entity} | undefined> {
-    const existing = this.records.get(id);
-    if (existing === undefined) return undefined;
-    const updated: ${n.entity} = {
-      ...existing,
-      name: input.name ?? existing.name,
-      updatedAt: new Date().toISOString(),
-    };
-    this.records.set(id, updated);
-    return updated;
-  }
-
-  public async delete(id: string): Promise<boolean> {
-    return this.records.delete(id);
-  }
-}
+export type List${n.pascal}Query = Infer<typeof List${n.pascal}QuerySchema>;
+export type ${n.entity}Page = Infer<typeof ${n.entity}PageSchema>;
 `;
 }

@@ -10,14 +10,33 @@ import {
 } from "../../resolvers/dependency/dependencyVersions.constant.js";
 import { MARKERS, insertBetweenMarkers } from "../../wiring/index.js";
 
-/** `@zudojs/*` packages the shared app source imports. */
+/**
+ * `@zudojs/*` packages the shared app source imports, plus `@zudojs/middleware`
+ * (what @zudojs/http's middleware is built on; pnpm's strict layout does not
+ * expose it transitively to an app that composes middleware of its own).
+ */
 export const APP_SOURCE_DEPENDENCIES: readonly string[] = [
   "@zudojs/config",
   "@zudojs/errors",
   "@zudojs/http",
+  "@zudojs/middleware",
   "@zudojs/schema",
   "@zudojs/security",
 ];
+
+/**
+ * Scripts of a backend app. `typecheck` covers sources and tests; `build`
+ * compiles the sources only. No `lint`: it used to repeat `tsc --noEmit`.
+ */
+export function backendAppScripts(): Record<string, string> {
+  return {
+    dev: "tsx watch src/server.ts",
+    start: "node dist/server.js",
+    build: "tsc",
+    typecheck: "tsc --noEmit && tsc -p tsconfig.test.json",
+    test: "vitest run",
+  };
+}
 
 /** `@zudojs/*` packages the generated tests import. */
 export const APP_TEST_DEPENDENCIES: readonly string[] = ["@zudojs/testing"];
@@ -32,7 +51,30 @@ export function backendDevDependencies(): Record<string, string> {
   };
 }
 
-/** tsconfig.json of a backend app (tests are compiled by Vitest, not tsc). */
+/**
+ * tsconfig.test.json of a backend app: the same options over `src/` and
+ * `tests/`, emitting nothing. `tsconfig.json` excludes the tests so `build`
+ * never writes them to `dist/`; without this file they were never checked.
+ */
+export function backendTestTsconfig(): string {
+  return `{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+`;
+}
+
+/** Every tsconfig of a backend app, keyed by file name. */
+export function backendTsconfigFiles(): Record<string, string> {
+  return { "tsconfig.json": backendTsconfig(), "tsconfig.test.json": backendTestTsconfig() };
+}
+
+/** tsconfig.json of a backend app: the build; tests are in tsconfig.test.json. */
 export function backendTsconfig(): string {
   return `{
   "compilerOptions": {

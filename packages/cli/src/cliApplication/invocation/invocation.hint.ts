@@ -72,13 +72,30 @@ export interface FailureHintInput {
  * Only usage errors get hints: a failure inside a command already says
  * what went wrong, and a help pointer would be noise there.
  */
+/**
+ * Commands people expect from a framework CLI that are the project's own
+ * scripts instead. `zudojs migrate` used to exit 3 with nothing but "not
+ * found", while the migration scripts had been added by `zudojs add
+ * database` all along.
+ */
+const SCRIPT_HINTS: Readonly<Record<string, string>> = Object.freeze({
+  migrate:
+    'Migrations run through the project\'s scripts, added by "zudojs add database": ' +
+    '"<pm> run db:migrate" in development, "<pm> run db:deploy" in production (pm: pnpm, npm, yarn or bun).',
+  test: 'Tests run through the project\'s own script: "<pm> run test" (pm: pnpm, npm, yarn or bun).',
+  start: 'A built project starts with its own script: "<pm> run build", then "<pm> run start".',
+});
+
 export function failureHints(input: FailureHintInput): readonly string[] {
   if (input.exitCode === CLI_EXIT_CODES.COMMAND_NOT_FOUND) {
     const suggestion =
       input.unknownCommand === undefined
         ? undefined
         : suggestCommand(input.unknownCommand, input.commands);
+    const script =
+      input.unknownCommand === undefined ? undefined : SCRIPT_HINTS[input.unknownCommand];
     return [
+      ...(script ? [script] : []),
       ...(suggestion ? [`Did you mean "${input.name} ${suggestion}"?`] : []),
       `Run "${input.name} --help" to see all commands.`,
     ];

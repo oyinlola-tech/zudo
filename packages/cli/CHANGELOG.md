@@ -1,5 +1,53 @@
 # zudojs-cli
 
+## 2.2.0
+
+### Minor Changes
+
+- Round 12: the `generate` command and the generated project, from the academy findings ([#7](https://github.com/oyinlola-tech/zudo/issues/7)–[#19](https://github.com/oyinlola-tech/zudo/issues/19), [#64](https://github.com/oyinlola-tech/zudo/issues/64), [#135](https://github.com/oyinlola-tech/zudo/issues/135), [#141](https://github.com/oyinlola-tech/zudo/issues/141)).
+
+  **Generated project**
+
+  - **Unexpected errors are logged and answered by the app ([#13](https://github.com/oyinlola-tech/zudo/issues/13)).** `src/server.ts` used to rethrow anything that was not an exposed 4xx, so the adapter answered a bare 500 and nothing was logged, in development or in tests. `dispatch` now logs the error (method, path, name, message, code, stack) with the runtime's logger and answers `{ "error": "Internal Server Error" }` from inside the middleware pipeline, so the 500 carries the security headers like every other response. An exposed 5xx error (an exposed `ServiceUnavailableError`, say) is answered with its own status and message and logged too; exposed 4xx errors are answered as before. `errorResponse` in `src/utils/http.ts` now covers 400–599; the new `errorDetails(error)` describes an error for the log.
+  - **NODE_ENV is read once ([#14](https://github.com/oyinlola-tech/zudo/issues/14)).** `loadConfig` resolved `nodeEnv` and `createApp` called `resolveEnvironment(process.env)` again, so `loadConfig({ NODE_ENV: "test" })` still ran as `development`. `config.nodeEnv` is now the resolved `Environment` (`resolveEnvironment` is called in `configs/index.ts`) and `app.ts` passes `options.config.nodeEnv` through.
+  - **One container ([#18](https://github.com/oyinlola-tech/zudo/issues/18)).** `app.ts` created a `@zudojs/container` that stayed empty next to the hand-written composition root in `src/container.ts`. `container.ts` now exports an `APP_DEPENDENCIES` token and `server.ts` registers the composition root under it in the runtime container, so a module reaches it with `context.application.container.resolve(APP_DEPENDENCIES)`.
+  - **List endpoints paginate ([#141](https://github.com/oyinlola-tech/zudo/issues/141)).** `GET /api/v1/<resource>` returned every record (up to 10,000 from the in-memory store, 1,000 from Prisma). It now takes `?limit=` (1–200, default 50) and `?cursor=<id of the last item seen>` and answers `{ items, nextCursor }`, `nextCursor` being `null` on the last page; an unknown cursor answers an empty page and an invalid `limit` a 400. The repository contract is `list(page)` instead of `findAll()`; the in-memory store pages in creation order, the Prisma repository with a keyset cursor (`orderBy createdAt, id`, `cursor`/`skip: 1`, `take: limit + 1`). The DTO gains `List<Name>QuerySchema`, `<Entity>PageSchema`, `<Entity>PageRequest`, `DEFAULT_PAGE_SIZE` and `MAX_PAGE_SIZE`; the routes document the query and the page schema; the generated test walks the pages.
+  - **Tests are type-checked ([#135](https://github.com/oyinlola-tech/zudo/issues/135)).** `tsconfig.json` excluded `**/*.test.ts` and nothing else compiled them. Every backend app now ships `tsconfig.test.json` (same options over `src/` and `tests/`, `noEmit`) and `typecheck` runs `tsc --noEmit && tsc -p tsconfig.test.json`. `build` is unchanged.
+  - **No `lint` script ([#141](https://github.com/oyinlola-tech/zudo/issues/141)).** It ran `tsc --noEmit`, the same command as `typecheck`, under another name. It is gone from backend apps; add the linter of your choice.
+  - **`/docs` is not served in production ([#141](https://github.com/oyinlola-tech/zudo/issues/141)).** `mountOpenAPI` is called with `docsPath: config.nodeEnv === "production" ? false : "/docs"`; `/openapi.json` stays. This is the line `zudojs add openapi` inserts as well.
+  - **Rate limit default ([#141](https://github.com/oyinlola-tech/zudo/issues/141)) — a relaxed default, on purpose.** `RATE_LIMIT_MAX` in `.env.example` is 1000 per `RATE_LIMIT_WINDOW_MS` (was 300), and `RATE_LIMIT_MAX=0` turns the limiter off (the middleware is not added to the pipeline), for load tests and local development. The comments in `.env.example` now describe the right variables (the window's comment used to describe the max).
+  - **`@zudojs/middleware` is declared ([#64](https://github.com/oyinlola-tech/zudo/issues/64)).** Every backend `package.json` lists it; under pnpm's strict layout an app that imported it (it is what `@zudojs/http`'s middleware is built on) failed to resolve a package that was only transitive.
+  - **Prisma in the runtime image ([#141](https://github.com/oyinlola-tech/zudo/issues/141)).** `zudojs add database` installs `prisma` as a dependency, not a devDependency, and a CLI-written Dockerfile for a Prisma app copies `prisma/` and `prisma.config.ts` into the runtime stage with the command to apply migrations (`docker run --rm --env-file .env <image> npx prisma migrate deploy`). The pruned production image could serve but never migrate.
+  - **`pnpm audit` is clean after `zudojs add database` ([#141](https://github.com/oyinlola-tech/zudo/issues/141)).** The Prisma CLI pulls in `mysql2` (unused with PostgreSQL) and `deepmerge-ts` at versions with published advisories (GHSA-3f6p-5ww8-9rcr, GHSA-rgwj-5xj2-c3m3, GHSA-ggr8-5vv4-36mx). The recipe now writes open-ended overrides (`mysql2: ">=3.23.1"`, `deepmerge-ts: ">=8.0.0"`) where the package manager reads them: the `overrides:` block of `pnpm-workspace.yaml` for pnpm (pnpm 11 no longer reads `pnpm.overrides` from package.json), `overrides` in the root `package.json` for npm and bun, `resolutions` for yarn. Verified against the registry: three advisories before, none after, and `prisma generate` still runs. Recipes can declare `overrides`.
+  - **`prisma generate` after `generate resource` ([#141](https://github.com/oyinlola-tech/zudo/issues/141)).** When a resource appends a model to `prisma/schema.prisma`, the CLI runs `<pm> exec prisma generate` in the app (`prisma migrate dev` no longer regenerates the client), so the Prisma-backed repository type-checks at once. When that fails — nothing installed yet — it prints the command to run.
+
+  **`zudojs generate`**
+
+  - **Unknown schematic ([#7](https://github.com/oyinlola-tech/zudo/issues/7)).** `zudojs generate widget orders` said "Schematic name is required."; it now says `Unknown schematic "widget"` and lists the schematics.
+  - **`generate service <name> --module <existing>` in a modular monolith ([#8](https://github.com/oyinlola-tech/zudo/issues/8))** adds a service layer inside that module. The "service → module" mapping used to apply regardless of `--module` and created a new module named after the service; it now applies only to a bare `generate service <name>`.
+  - **Module tests live with the module ([#9](https://github.com/oyinlola-tech/zudo/issues/9)).** A resource generated with `--module billing` writes `tests/modules/billing/<name>.test.ts` instead of `tests/<name>.test.ts`, so two modules can each have a resource of the same name as far as tests go. (The composition root is still app-wide, so a second `invoices` is refused for the container key, with a message that says so.)
+  - **Dry runs report every file ([#10](https://github.com/oyinlola-tech/zudo/issues/10)).** `generate module --dry-run` listed the files but not `src/app.ts`, which the real run edits; it now lists the same files the real run reports.
+  - **Missing markers refuse instead of warning ([#11](https://github.com/oyinlola-tech/zudo/issues/11)).** `generate resource` (and `route`, and a module's routes registration) used to write all the files, warn "Finish by hand" and exit 0 when `routes/index.ts` or `container.ts` had lost its `// zudojs:*` markers, listing the unedited file among the generated ones while the route answered 404. Every registration target is now checked before the first write; when a marker pair is missing the command fails, names the file and the lines, and writes nothing.
+  - **`generate validator` ([#12](https://github.com/oyinlola-tech/zudo/issues/12))** writes a `@zudojs/schema` object schema, its inferred type and `validate<Name>(input): SchemaResult<Name>` (`safeParse`), not `validate<Name>(input) { return true; }`.
+  - **`--force` never duplicates a registration ([#135](https://github.com/oyinlola-tech/zudo/issues/135)).** A registration line the user had moved out of the marker block was inserted again between the markers, and the file failed with TS1117. A line present anywhere in the file now counts as present.
+
+  **Other commands**
+
+  - **`zudojs dev --frontend-only` in a backend project fails ([#15](https://github.com/oyinlola-tech/zudo/issues/15))** with "This backend project has no frontend app, so --frontend-only has nothing to start", instead of warning and exiting 0 (same for `--backend-only` without a backend, and for a project with nothing to start).
+  - **Architecture fallback ([#16](https://github.com/oyinlola-tech/zudo/issues/16)).** For a project with no manifest and no `zudojs` block, `src/modules/` alone made it a "modular monolith", but every generated monolith has that folder. The heuristic now looks for `src/modules/<name>/<name>.module.ts`.
+  - **`--language` help ([#17](https://github.com/oyinlola-tech/zudo/issues/17))** says it applies to the frontend app and that backends are always TypeScript.
+  - **`zudojs migrate` ([#135](https://github.com/oyinlola-tech/zudo/issues/135))** exits 3 as before, but now says that migrations run through the project's `db:migrate` / `db:deploy` scripts (added by `zudojs add database`); `zudojs test` and `zudojs start` get the same kind of hint.
+
+  Programmatic API: `ResourceSchematicRun` gains optional `packageManager` and `exec`; `ResourceGenerationResult` gains `prismaSchema`; `registerModuleInApp` takes a trailing `dryRun`; `planDevServers` moved to `commands/dev/` and is still exported from `dev.command`; `renderShutdownBlock` is new. Nothing was removed.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/core@1.3.0
+  - @zudojs/logger@1.5.0
+  - @zudojs/errors@1.4.0
+  - @zudojs/config@1.3.4
+
 ## 2.1.3
 
 ### Patch Changes

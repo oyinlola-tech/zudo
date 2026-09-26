@@ -62,7 +62,11 @@ export function resourceLayerPaths(
     case "routes":
       return [joinPath(layout.base, "routes", `${n.slug}.routes.ts`)];
     case "test":
-      return [joinPath(layout.appRoot, "tests", `${n.slug}.test.ts`)];
+      // A module resource's test sits under tests/modules/<module>/, so two
+      // modules can each have a resource of the same name.
+      return [
+        joinPath(layout.appRoot, "tests", posix.relative(layout.appSrc, layout.base), `${n.slug}.test.ts`),
+      ];
   }
 }
 
@@ -95,11 +99,9 @@ export function renderResourceLayers(
       case "routes":
         files[path] = renderResourceRoutes(n);
         break;
-      case "test": {
-        const tests = joinPath(layout.appRoot, "tests");
-        files[path] = renderResourceTest(n, posix.relative(tests, layout.base));
+      case "test":
+        files[path] = renderResourceTest(n, posix.relative(posix.dirname(path), layout.base));
         break;
-      }
     }
   }
   return files;

@@ -18,15 +18,26 @@ function runnerFor(packageManager: string): string {
   return packageManager === "npm" || packageManager === "bun" ? "npm" : packageManager;
 }
 
-/** The runtime stage of a single-package image. */
-function runtimeStage(port: number, dist: string, from: string): string {
+/**
+ * The runtime stage of a single-package image. With Prisma, the schema,
+ * migrations and `prisma.config.ts` come along (the CLI is a runtime
+ * dependency), so the same image applies migrations.
+ */
+function runtimeStage(port: number, dist: string, from: string, prisma = false): string {
+  const migrations = prisma
+    ? `COPY --from=build --chown=node:node ${from}/prisma ./prisma
+COPY --from=build --chown=node:node ${from}/prisma.config.ts ./
+# Apply migrations with this image before starting a new version:
+#   docker run --rm --env-file .env <image> npx prisma migrate deploy
+`
+    : "";
   return `FROM node:24-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build --chown=node:node ${from}/package.json ./
 COPY --from=build --chown=node:node ${from}/node_modules ./node_modules
 COPY --from=build --chown=node:node ${from}/${dist} ./${dist}
-USER node
+${migrations}USER node
 EXPOSE ${port}
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s CMD ["node", "-e", "fetch('http://127.0.0.1:${port}/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 CMD ["node", "${dist}/server.js"]
@@ -71,7 +82,7 @@ export function renderAppPackageDockerfile(options: {
     ...(steps.prune === undefined ? [] : [`RUN ${steps.prune}`]),
     "",
   ];
-  return `${lines.join("\n")}\n${runtimeStage(options.port, "dist", "/app")}`;
+  return `${lines.join("\n")}\n${runtimeStage(options.port, "dist", "/app", options.prisma === true)}`;
 }
 
 /**

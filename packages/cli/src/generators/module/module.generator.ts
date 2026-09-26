@@ -17,7 +17,13 @@ import {
   moduleRoutesWiring,
   renderModuleRoutesIndex,
 } from "../../templates/backendApp/index.js";
-import { MARKERS, applyMarkerEdits, conflictingImport } from "../../wiring/index.js";
+import {
+  MARKERS,
+  applyMarkerEdits,
+  conflictingImport,
+  planMarkerEdits,
+  type MarkerEdit,
+} from "../../wiring/index.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -76,15 +82,41 @@ export class ${namePascal}Feature {
       `${appRoutes} already imports ${routes.functionName} (${clash.trim()}), so module "${name}" cannot register its routes. Choose another name.`,
     );
   }
+  const routeEditList: MarkerEdit[] = hasAppRoutes
+    ? [
+        { file: appRoutes, marker: MARKERS.routeImports, line: routes.importLine },
+        { file: appRoutes, marker: MARKERS.routes, line: routes.entryLine },
+      ]
+    : [];
   if (hasAppRoutes) {
     files[`${basePath}/${name}/routes/index.ts`] = renderModuleRoutesIndex(
       routes.functionName,
       "../../../container.js",
     );
+    // Checked before anything is written: a routes index without its
+    // markers used to be reported after the files existed, as a warning on
+    // a run that exited 0, and the module's routes answered 404.
+    const { manualSteps } = planMarkerEdits(cwd, routeEditList).outcome;
+    if (manualSteps.length > 0) {
+      throw new CLIValidationError(
+        `Cannot register the routes of module "${name}": ${appRoutes} is missing its markers, so nothing was written.
+${manualSteps
+          .map((step) => `  - ${step}`)
+          .join("\n")}\nRestore the marker comments and re-run.`,
+      );
+    }
   }
 
+  const appPath = `${dirname(basePath)}/app.ts`;
+  const appImport = `./${basename(basePath)}/index.js`;
+
   if (options.dryRun) {
-    return hasAppRoutes ? [...Object.keys(files), appRoutes] : Object.keys(files);
+    const registration = registerModuleInApp(cwd, appPath, spec.className, appImport, true);
+    return [
+      ...Object.keys(files),
+      ...(hasAppRoutes ? [appRoutes] : []),
+      ...(registration.registered ? [appPath] : []),
+    ];
   }
 
   try {
@@ -93,20 +125,8 @@ export class ${namePascal}Feature {
     throw new CLIGenerationError(`Failed to generate module: ${name}`, error);
   }
 
-  const routeEdits = hasAppRoutes
-    ? await applyMarkerEdits(cwd, [
-        { file: appRoutes, marker: MARKERS.routeImports, line: routes.importLine },
-        { file: appRoutes, marker: MARKERS.routes, line: routes.entryLine },
-      ])
-    : undefined;
-
-  const appPath = `${dirname(basePath)}/app.ts`;
-  const registration = registerModuleInApp(
-    cwd,
-    appPath,
-    spec.className,
-    `./${basename(basePath)}/index.js`,
-  );
+  const routeEdits = hasAppRoutes ? await applyMarkerEdits(cwd, routeEditList) : undefined;
+  const registration = registerModuleInApp(cwd, appPath, spec.className, appImport);
   options.onRegistered?.(
     routeEdits && routeEdits.manualSteps.length > 0
       ? {

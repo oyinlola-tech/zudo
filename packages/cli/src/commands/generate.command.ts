@@ -35,7 +35,10 @@ import {
   assertSafePathSegment,
 } from "../utils/utils.name.js";
 import { SCHEMATIC_NAMES } from "../constants/index.js";
-import { resolveProjectLayout } from "../resolvers/layout/projectLayout.core.js";
+import {
+  detectPackageManager,
+  resolveProjectLayout,
+} from "../resolvers/layout/projectLayout.core.js";
 import { findProjectRoot } from "../resolvers/project.resolver.js";
 import { describeError } from "./commandError.helper.js";
 import { captureWrites, findWriteConflicts } from "../utils/utils.writeGuard.js";
@@ -150,12 +153,18 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
   const dryRun = context.values["dry-run"] === true;
   const force = context.values.force === true;
 
-  if (
-    !schematic ||
-    !SCHEMATIC_NAMES.includes(schematic)
-  ) {
+  if (!schematic) {
     throw new CLIValidationError(
       `Schematic name is required. Available: ${SCHEMATIC_NAMES.join(", ")}`,
+    );
+  }
+
+  // An unknown schematic used to be reported as a missing one ("Schematic
+  // name is required."), which sent the user looking for a typo in the
+  // wrong place.
+  if (!SCHEMATIC_NAMES.includes(schematic)) {
+    throw new CLIValidationError(
+      `Unknown schematic "${schematic}". Available: ${SCHEMATIC_NAMES.join(", ")}`,
     );
   }
 
@@ -230,23 +239,29 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
   }
 
   /**
-   * A modular monolith has modules, not services, so `generate service` means
-   * `generate module` there.
+   * A modular monolith has modules, not top-level services, so a bare
+   * `generate service <name>` means `generate module <name>` there.
    *
    * This used to log the mapping and then run the service schematic anyway,
    * which wrote four inert files into a new top-level directory that the
    * runtime never loads. Rewriting the schematic here — rather than at the
    * dispatch switch — keeps the base-path resolution, the overwrite guard and
    * the result message all describing the same thing.
+   *
+   * With `--module <existing>` the user is asking for a service layer inside
+   * that module, so the service schematic runs there; the mapping used to
+   * apply regardless and created a new module named after the service.
    */
   const effectiveSchematic =
-    architecture === "modular-monolith" && schematic === "service"
+    architecture === "modular-monolith" &&
+    schematic === "service" &&
+    moduleName === undefined
       ? "module"
       : schematic;
 
   if (effectiveSchematic !== schematic) {
     context.logger.info(
-      'Mapping "service" → "module" for modular-monolith architecture.',
+      'Mapping "service" → "module" for modular-monolith architecture (pass --module <name> to add a service inside a module).',
     );
   }
 
@@ -257,6 +272,7 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
       cwd,
       backendRoot: backendPrefix(cwd).replace(/\/$/, ""),
       architecture: architecture ?? undefined,
+      packageManager: layout?.packageManager ?? detectPackageManager(cwd),
       service,
       moduleName,
       dryRun,

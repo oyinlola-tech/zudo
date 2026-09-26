@@ -43,7 +43,9 @@ import {
   APP_SOURCE_DEPENDENCIES,
   APP_TEST_DEPENDENCIES,
   applyDatabaseSetting,
+  backendAppScripts,
   backendDevDependencies,
+  backendTsconfigFiles,
   emptyBarrels,
   renderBackendAppSource,
 } from "../backendApp/index.js";
@@ -260,35 +262,18 @@ MIT
   // its own `src/types/`, and code genuinely shared between apps belongs in a
   // workspace package the author creates deliberately.
 
-  const appTsconfig = `{
-  "compilerOptions": {
-    "target": "ES2024",
-    "module": "Node16",
-    "moduleResolution": "Node16",
-    "outDir": "dist",
-    "rootDir": "src",
-    "strict": true,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "lib": ["ES2024"],
-    "types": ["node"]
-  },
-  "include": ["src/**/*"]
-}
-`;
+  /** tsconfig.json and tsconfig.test.json of one app, under `appDir`. */
+  const appTsconfigs = (appDir: string): Record<string, string> =>
+    Object.fromEntries(
+      Object.entries(backendTsconfigFiles()).map(([name, content]) => [`${appDir}/${name}`, content]),
+    );
 
   const appDevDeps = {
     ...backendDevDependencies(),
     ...zudojsDependencies(APP_TEST_DEPENDENCIES),
   };
 
-  const appScripts = {
-    dev: "tsx watch src/server.ts",
-    start: "node dist/server.js",
-    build: "tsc",
-    typecheck: "tsc --noEmit",
-    test: "vitest run",
-  };
+  const appScripts = backendAppScripts();
 
   /** The wired source tree of one app, plus its folder barrels. */
   const appSource = (appName: string, port: number): Record<string, string> => {
@@ -342,7 +327,7 @@ MIT
       2,
     ) + "\n";
 
-  files["apps/gateway/tsconfig.json"] = appTsconfig;
+  Object.assign(files, appTsconfigs("apps/gateway"));
 
   files["apps/gateway/Dockerfile"] = renderAppPackageDockerfile({
     appPath: "apps/gateway",
@@ -380,7 +365,7 @@ MIT
         2,
       ) + "\n";
 
-    files[`apps/services/${svcName}/tsconfig.json`] = appTsconfig;
+    Object.assign(files, appTsconfigs(`apps/services/${svcName}`));
 
     files[`apps/services/${svcName}/Dockerfile`] = renderAppPackageDockerfile({
       appPath: `apps/services/${svcName}`,

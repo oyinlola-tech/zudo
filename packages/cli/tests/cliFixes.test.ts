@@ -74,17 +74,19 @@ describe("schematic generators use normalized names", () => {
   });
 
   it("writes nothing when dryRun is set", async () => {
+    // A non-registering schematic: `route` would (rightly) refuse here, as
+    // the routes index and container it registers into do not exist.
     const { files } = await generateResource(
       {
         name: "Health Check",
-        schematic: "route",
+        schematic: "controller",
         layout: { base: "src", appSrc: "src", appRoot: "", prisma: false },
         dryRun: true,
       },
       "/nonexistent/path/that/cannot/be/written",
     );
-    expect(files).toContain("src/routes/health-check.routes.ts");
     expect(files).toContain("src/controllers/health-check.controller.ts");
+    expect(files).toContain("src/services/health-check.service.ts");
   });
 });
 

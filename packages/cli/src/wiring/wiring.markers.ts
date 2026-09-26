@@ -62,10 +62,13 @@ export interface MarkerInsertResult {
 
 /**
  * Inserts `line` just before the end marker of `name`, indented like the
- * marker. Idempotent: a line already present between the markers (compared
- * trimmed) is not added again. Exactly one start and one end marker, in
- * that order, are required; anything else is reported as missing markers
- * rather than guessed at.
+ * marker. Idempotent: a line already present anywhere in the file (compared
+ * trimmed) is not added again — a registration the user moved out of the
+ * marker block is still a registration, and re-inserting it between the
+ * markers (`generate resource --force` used to) made the file fail to
+ * compile on the duplicate. Exactly one start and one end marker, in that
+ * order, are required; anything else is reported as missing markers rather
+ * than guessed at.
  */
 export function insertBetweenMarkers(
   source: string,
@@ -87,9 +90,8 @@ export function insertBetweenMarkers(
     return { status: "missing-markers", source };
   }
 
-  const between = source.slice(startAt + start.length, endAt);
   const wanted = line.trim();
-  if (between.split("\n").some((existing) => existing.trim() === wanted)) {
+  if (source.split("\n").some((existing) => existing.trim() === wanted)) {
     return { status: "present", source };
   }
 

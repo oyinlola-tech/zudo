@@ -5,7 +5,9 @@
  *   plus every resource (and module) between the `routes` markers.
  * - `src/modules/<name>/routes/index.ts` does the same for one module.
  * - `src/container.ts` constructs every controller, service and repository
- *   in one place, between the `container` markers.
+ *   in one place, between the `container` markers, and exports the
+ *   `APP_DEPENDENCIES` token under which server.ts registers the result in
+ *   the runtime's DI container.
  */
 
 import { MARKERS, renderMarkerBlock } from "../../../wiring/index.js";
@@ -95,8 +97,17 @@ export function registerHealthRoutes(router: HttpRouter, check: HealthCheck): vo
 
 /** Renders `src/container.ts`. */
 export function renderContainer(lines: MarkerLines): string {
-  return `import type { HealthCheck } from "./routes/health.routes.js";
+  return `import { createToken } from "@zudojs/container";
+
+import type { HealthCheck } from "./routes/health.routes.js";
 ${renderMarkerBlock(MARKERS.containerImports, lines.imports)}
+
+/**
+ * The token server.ts registers the composition root under in the runtime
+ * container, so a module can reach it:
+ * \`context.application.container.resolve(APP_DEPENDENCIES)\`.
+ */
+export const APP_DEPENDENCIES = createToken<AppDependencies>("app.dependencies");
 
 /** Options for {@link createDependencies}. */
 export interface DependencyOptions {

@@ -1,7 +1,7 @@
 /**
  * `zudojs generate resource|route|controller|repository|dto`: the full,
  * registered chain in every architecture; clean failure on a second run;
- * manual steps (and no edits) when markers are missing.
+ * a refusal (and no writes) when markers are missing.
  */
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -88,15 +88,16 @@ describe("generate resource (monolith)", () => {
     expect(read(root, "src/container.ts").match(/usersController:/g)).toHaveLength(1);
   });
 
-  it("prints what to add, and edits nothing, when the markers are missing", async () => {
+  it("refuses, saying what to add, and writes nothing when the markers are missing", async () => {
+    // Round 12 (#11): this used to write the files, warn and exit 0.
     const root = await project("monolith");
     writeFileSync(join(root, "src/routes/index.ts"), "export function registerRoutes() {}\n");
     const ctx = context(root, { schematic: "resource", name: "users" });
-    await runGenerateCommand(ctx);
+    const run = runGenerateCommand(ctx);
+    await expect(run).rejects.toThrow(/registerUsersRoutes\(router, deps\.usersController\);/);
+    await expect(run).rejects.toThrow(/zudojs:routes:start/);
     expect(read(root, "src/routes/index.ts")).toBe("export function registerRoutes() {}\n");
-    const warning = String(ctx.warn.mock.calls.at(-1)?.[0]);
-    expect(warning).toContain("registerUsersRoutes(router, deps.usersController);");
-    expect(warning).toContain("// zudojs:routes:start");
+    expect(existsSync(join(root, "src/controllers/users.controller.ts"))).toBe(false);
   });
 
   it("route and controller write their missing lower layers; route registers itself", async () => {

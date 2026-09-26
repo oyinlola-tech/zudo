@@ -184,9 +184,12 @@ current directory.
 
 Where a schematic lands depends on the architecture: a `monolith` puts
 services in `src/services` and modules in `src/modules`; a
-`modular-monolith` has modules only, so `generate service` there generates a
-module and registers it in `app.ts`; in a `microservice` project a schematic
-goes to the gateway app, or to `apps/services/<name>` with `--service <name>`.
+`modular-monolith` has modules only, so a bare `generate service <name>` there
+generates a module and registers it in `app.ts`, while
+`generate service <name> --module <existing>` adds a service layer inside that
+module; in a `microservice` project a schematic goes to the gateway app, or to
+`apps/services/<name>` with `--service <name>`. A resource generated with
+`--module` keeps its test at `tests/modules/<module>/<name>.test.ts`.
 
 `generate service` is **refused** in a microservice project. A service there is
 a whole workspace app — its own `package.json`, `tsconfig.json`, `Dockerfile`

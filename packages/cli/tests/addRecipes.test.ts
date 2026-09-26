@@ -110,7 +110,9 @@ describe("zudojs add (monolith)", () => {
     expect(read(root, "prisma.config.ts")).toContain("defineConfig");
     expect(read(root, "src/integrations/database.ts")).toContain("new PrismaPg(");
     const pkg = JSON.parse(read(root, "package.json")) as { dependencies: Record<string, string>; devDependencies: Record<string, string>; scripts: Record<string, string> };
-    expect(pkg.devDependencies["prisma"]).toBe("^7.10.0");
+    // A runtime dependency since round 12: the production image runs `prisma migrate deploy`.
+    expect(pkg.dependencies["prisma"]).toBe("^7.10.0");
+    expect(pkg.devDependencies?.["prisma"]).toBeUndefined();
     expect(pkg.dependencies["@prisma/client"]).toBe("^7.10.0");
     expect(pkg.scripts["build"]).toBe("prisma generate && tsc");
     expect(pkg.scripts["db:migrate"]).toBe("prisma migrate dev");

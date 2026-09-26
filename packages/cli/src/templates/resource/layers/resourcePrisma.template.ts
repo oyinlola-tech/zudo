@@ -13,7 +13,7 @@ export function renderPrismaRepository(
   n: ResourceNames,
   appSrcFromRepositories: string,
 ): string {
-  const types = `Create${n.entity}Input, ${n.entity}, Update${n.entity}Input`;
+  const types = `Create${n.entity}Input, ${n.entity}, ${n.entity}Page, ${n.entity}PageRequest, Update${n.entity}Input`;
   const delegate = `prisma().${n.entityCamel}`;
   return `import { prisma } from "${appSrcFromRepositories}/integrations/database.js";
 import type { ${types} } from "../dtos/${n.slug}.dto.js";
@@ -35,17 +35,19 @@ function to${n.entity}(row: ${n.entity}Row): ${n.entity} {
   };
 }
 
-/** Most rows \`findAll\` returns; add pagination before raising it. */
-const LIST_LIMIT = 1000;
-
 /** Stores ${n.label} records in the \`${n.slug.replace(/-/g, "_")}\` table through Prisma. */
 export class Prisma${n.pascal}Repository implements ${n.pascal}Repository {
-  public async findAll(): Promise<readonly ${n.entity}[]> {
+  public async list(page: ${n.entity}PageRequest): Promise<${n.entity}Page> {
+    // Keyset pagination: one row more than asked tells whether a next page
+    // exists; \`cursor\` names the last row seen and \`skip: 1\` steps past it.
     const rows = await ${delegate}.findMany({
-      orderBy: { createdAt: "asc" },
-      take: LIST_LIMIT,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: page.limit + 1,
+      ...(page.cursor === undefined ? {} : { cursor: { id: page.cursor }, skip: 1 }),
     });
-    return rows.map(to${n.entity});
+    const items = rows.slice(0, page.limit).map(to${n.entity});
+    const last = items.at(-1);
+    return { items, nextCursor: rows.length > page.limit && last !== undefined ? last.id : null };
   }
 
   public async findById(id: string): Promise<${n.entity} | undefined> {

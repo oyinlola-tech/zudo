@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { resolveProjectLayout } from "./layout/projectLayout.core.js";
 
@@ -27,9 +27,23 @@ export async function detectArchitecture(
     if (gateway) return "microservice";
   }
 
-  if (existsSync(join(cwd, "src/modules"))) {
+  if (hasModuleDirectories(join(cwd, "src", "modules"))) {
     return "modular-monolith";
   }
 
   return "monolith";
+}
+
+/**
+ * Whether `modulesDir` holds a modular-monolith module: a directory with
+ * its own `<name>.module.ts`. A plain monolith also has `src/modules/` —
+ * `zudojs create` writes the app module there as a flat file — so the
+ * directory alone used to make every monolith a "modular monolith".
+ */
+function hasModuleDirectories(modulesDir: string): boolean {
+  if (!existsSync(modulesDir)) return false;
+  return readdirSync(modulesDir, { withFileTypes: true }).some(
+    (entry) =>
+      entry.isDirectory() && existsSync(join(modulesDir, entry.name, `${entry.name}.module.ts`)),
+  );
 }

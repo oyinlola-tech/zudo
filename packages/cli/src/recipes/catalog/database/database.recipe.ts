@@ -31,8 +31,11 @@ export const databaseRecipe: AppRecipe = {
     ...zudojsDependencies(["@zudojs/database"]),
     "@prisma/client": DEPENDENCY_VERSION_RANGES["@prisma/client"],
     "@prisma/adapter-pg": DEPENDENCY_VERSION_RANGES["@prisma/adapter-pg"],
+    // A runtime dependency, not a dev one: the production image prunes dev
+    // dependencies, and without the CLI it could not run `prisma migrate
+    // deploy` — the image could serve but never migrate.
+    prisma: DEPENDENCY_VERSION_RANGES.prisma,
   },
-  devDependencies: { prisma: DEPENDENCY_VERSION_RANGES.prisma },
   scripts: {
     postinstall: "prisma generate",
     "db:generate": "prisma generate",
@@ -51,8 +54,15 @@ export const databaseRecipe: AppRecipe = {
   }),
   gitignore: (context) => [`${context.appRoot === "" ? "" : `${context.appRoot}/`}src/generated/`],
   allowBuilds: ["prisma", "@prisma/engines", "@prisma/client"],
+  // The Prisma CLI pulls in mysql2 (unused with PostgreSQL) and deepmerge-ts
+  // at versions with published advisories (GHSA-3f6p-5ww8-9rcr,
+  // GHSA-rgwj-5xj2-c3m3, GHSA-ggr8-5vv4-36mx), so `pnpm audit` failed in
+  // every fresh project. Open-ended ranges: once Prisma catches up they
+  // change nothing.
+  overrides: { mysql2: ">=3.23.1", "deepmerge-ts": ">=8.0.0" },
   nextSteps: () => [
     "Set DATABASE_URL in .env, then run the db:migrate script after adding models.",
+    "In production, apply migrations with the built image: docker run --rm --env-file .env <image> npx prisma migrate deploy (the db:deploy script does the same locally).",
     "Resources generated from now on use Prisma; existing ones keep their in-memory repository until you swap it in src/container.ts.",
   ],
 };

@@ -59,6 +59,12 @@ export interface AppRecipe {
   readonly gitignore?: (context: RecipeContext) => readonly string[];
   /** Packages allowed to run install scripts (pnpm allowBuilds). */
   readonly allowBuilds?: readonly string[];
+  /**
+   * Transitive dependencies forced to a range, written at the project root
+   * where every package manager reads them (`overrides` in
+   * pnpm-workspace.yaml, `overrides` or `resolutions` in package.json).
+   */
+  readonly overrides?: Readonly<Record<string, string>>;
   /** What to do next, printed after the recipe is applied. */
   readonly nextSteps?: (context: RecipeContext) => readonly string[];
 }

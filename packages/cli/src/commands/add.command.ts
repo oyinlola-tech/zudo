@@ -202,7 +202,12 @@ export async function runAddCommand(context: CLIContext): Promise<void> {
         for (const line of recipe.gitignore?.(recipeContext) ?? []) gitignore.add(line);
         nextSteps.push(...(recipe.nextSteps?.(recipeContext) ?? []));
       }
-      const settings = await applyProjectSettings(layout.root, [...gitignore], recipe.allowBuilds ?? []);
+      const settings = await applyProjectSettings(
+        layout.root,
+        [...gitignore],
+        recipe.allowBuilds ?? [],
+        recipe.overrides ?? {},
+      );
       // A Dockerfile written before Prisma was added cannot build the app.
       const dockerfiles = await refreshGeneratedDockerfiles(
         projectRecipeContext(layout, feature, []),

@@ -27,13 +27,16 @@ export interface ModuleRegistration {
 /**
  * Adds `new <className>()` to the module list in `appPath` and imports it
  * from `importPath`. Idempotent. Leaves a hand-edited app.ts it does not
- * recognise untouched and returns the lines to add instead.
+ * recognise untouched and returns the lines to add instead. With `dryRun`
+ * it reports the outcome and writes nothing, so a dry run can list app.ts
+ * among the files a real run would change.
  */
 export function registerModuleInApp(
   cwd: string,
   appPath: string,
   className: string,
   importPath: string,
+  dryRun = false,
 ): ModuleRegistration {
   const importLine = `import { ${className} } from "${importPath}";`;
   const entry = `    new ${className}(),\n`;
@@ -63,6 +66,6 @@ export function registerModuleInApp(
 
   // During the overwrite check the generator runs with writes captured; the
   // registration is an intended edit, not a conflict, so it is skipped then.
-  if (!activeWriteCapture()) writeFileSync(fullPath, updated);
+  if (!dryRun && !activeWriteCapture()) writeFileSync(fullPath, updated);
   return { registered: true, manualSteps: [] };
 }

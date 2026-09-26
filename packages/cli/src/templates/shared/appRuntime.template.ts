@@ -81,7 +81,6 @@ ${options.modules.map((m) => `    new ${m.className}(),`).join("\n")}${options.m
 
   return `import type { Server } from "node:http";
 
-import { resolveEnvironment } from "@zudojs/constants";
 import { createContainer } from "@zudojs/container";
 import type { Module } from "@zudojs/core";
 import { createEventBus } from "@zudojs/events";
@@ -106,6 +105,10 @@ export interface AppOptions {
  * modules share, and the options describing this application. Integrations
  * (\`src/integrations\`) are registered first so they start before, and stop
  * after, every other module.
+ *
+ * The runtime's container is the one modules see as
+ * \`context.application.container\`; server.ts registers the composition
+ * root (\`container.ts\`) in it under \`APP_DEPENDENCIES\`.
  */
 export function createApp(options: AppOptions): Runtime {
   const logger = createLogger({ name: ${literal(options.applicationName)} });
@@ -124,9 +127,8 @@ ${registration}
     {
       applicationName: ${literal(options.applicationName)},
       applicationVersion: "0.1.0",
-      // NODE_ENV is read the same way the framework reads it: \`prod\` and
-      // \`Production\` are production, an unknown value warns once.
-      environment: resolveEnvironment(),
+      // Resolved once by loadConfig (configs/index.ts) from NODE_ENV.
+      environment: options.config.nodeEnv,
       // Signals are handled explicitly in server.ts.
       handleSignals: false,${metadata}
     },

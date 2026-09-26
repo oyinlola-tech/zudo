@@ -3,7 +3,8 @@
  *
  * The small helpers every generated controller and the server use: JSON
  * responses, schema-issue responses, JSON body reading, mapping exposed
- * 4xx errors to responses, and the @zudojs/security default headers.
+ * errors to responses, describing unexpected ones for the log, and the
+ * @zudojs/security default headers.
  */
 
 /** Renders `src/utils/http.ts`. */
@@ -62,9 +63,10 @@ export function readJsonBody(ctx: HttpRouterContext): unknown {
 }
 
 /**
- * The response for an error that carries an exposed 4xx status
- * (NotFoundError, badRequest(), ...). Anything else is left to the server,
- * which answers a generic 500 and never leaks the message.
+ * The response for an error that carries an exposed HTTP status
+ * (NotFoundError, badRequest(), an exposed 503, ...): its status, message
+ * and code. \`undefined\` for anything else; server.ts then logs the error
+ * and answers a generic 500 that never leaks the message.
  */
 export function errorResponse(error: unknown): HttpResponseContext | undefined {
   if (typeof error !== "object" || error === null) return undefined;
@@ -75,12 +77,25 @@ export function errorResponse(error: unknown): HttpResponseContext | undefined {
     readonly code?: unknown;
   };
   const status = candidate.statusCode;
-  if (typeof status !== "number" || status < 400 || status > 499) return undefined;
+  if (typeof status !== "number" || status < 400 || status > 599) return undefined;
   if (candidate.expose !== true || typeof candidate.message !== "string") return undefined;
   return json(status, {
     error: candidate.message,
     ...(typeof candidate.code === "string" ? { code: candidate.code } : {}),
   });
+}
+
+/** What the log records about an unexpected error: name, message, code, stack. */
+export function errorDetails(error: unknown): Record<string, string> {
+  if (!(error instanceof Error)) return { error: String(error) };
+  const { code } = error as { readonly code?: unknown };
+  return {
+    error: error.message,
+    name: error.name,
+    ...(typeof code === "string" ? { code } : {}),
+    ...(error.stack === undefined ? {} : { stack: error.stack }),
+    ...(error.cause === undefined ? {} : { cause: error.cause instanceof Error ? error.cause.message : String(error.cause) }),
+  };
 }
 
 /**

@@ -27,8 +27,12 @@ export function baseEnvVariables(port: number): readonly EnvVariable[] {
       value: "",
       comment: "Comma-separated origins allowed to call the API from a browser (empty: none)",
     },
-    { name: "RATE_LIMIT_WINDOW_MS", value: "60000", comment: "Requests allowed per client per window" },
-    { name: "RATE_LIMIT_MAX", value: "300" },
+    { name: "RATE_LIMIT_WINDOW_MS", value: "60000", comment: "Length of the rate-limit window in milliseconds" },
+    {
+      name: "RATE_LIMIT_MAX",
+      value: "1000",
+      comment: "Requests allowed per client per window; 0 disables the limit (load tests, local development)",
+    },
   ];
 }
 
@@ -48,12 +52,13 @@ export function renderConfigFile(options: {
   readonly defaultPort: number;
   readonly sections: readonly string[];
 }): string {
-  return `import { ConfigurationError } from "@zudojs/errors";
-import {
+  return `import {
   createConfigManager,
   createEnvironmentConfigSource,
   type ConfigManager,
 } from "@zudojs/config";
+import { resolveEnvironment } from "@zudojs/constants";
+import { ConfigurationError } from "@zudojs/errors";
 
 const DEFAULT_PORT = ${options.defaultPort};
 
@@ -113,7 +118,10 @@ export async function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   await config.load();
 
   return Object.freeze({
-    nodeEnv: text(config, "node_env", "development"),
+    // NODE_ENV is read here, once, the way the framework reads it: \`prod\`
+    // and \`Production\` are production, an unknown value warns once. app.ts
+    // and server.ts take the resolved value from this object.
+    nodeEnv: resolveEnvironment({ NODE_ENV: text(config, "node_env", "development") }),
     host: text(config, "host", "0.0.0.0"),
     port: port(config),
     corsOrigins: list(config, "cors_origins"),

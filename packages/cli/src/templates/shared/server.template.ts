@@ -1,29 +1,31 @@
 /**
  * zudojs-cli — Generated `src/server.ts`
  *
- * The entry point loads the configuration, builds a router with
- * `createRouter()`, registers every route through `registerRoutes` (from
- * the composition root in `container.ts`), mounts the OpenAPI document and
- * `/docs` page when the `openapi` capability is on, and serves the router
- * with `createHttpServer` + `createNodeHttpAdapter`.
+ * The entry point loads the configuration, builds the runtime with
+ * `createApp()`, constructs the composition root (`container.ts`) and
+ * registers it in the runtime's DI container, builds a router with
+ * `createRouter()`, registers every route through `registerRoutes`, mounts
+ * the OpenAPI document (and, outside production, the `/docs` page) when the
+ * `openapi` capability is on, and serves the router with `createHttpServer`
+ * + `createNodeHttpAdapter`.
  *
  * Every response passes through the @zudojs/security default headers, a
  * CORS policy that allows only `CORS_ORIGINS` (none by default) and a
- * per-client rate limit (`RATE_LIMIT_MAX` per `RATE_LIMIT_WINDOW_MS`). Exposed
- * 4xx errors are answered with their status; anything else is a generic
- * 500. On SIGINT/SIGTERM integrations drain, HTTP stops, then the runtime
- * stops. `tests/generatedProject.typecheck.test.ts` type-checks the output
- * against the current `@zudojs/*` sources.
- *
- * The signal listeners stay registered (`process.on`, not `once`) for the
- * whole shutdown. Under `tsx watch`, Ctrl+C delivers SIGINT twice (from the
- * terminal and forwarded by the watcher); with `once` the second signal
- * found no listener and Node's default action killed the process before
- * the runtime had stopped or logged anything. "Listening on" is logged once
- * the listeners are in place, so a signal sent after it is always handled.
+ * per-client rate limit (`RATE_LIMIT_MAX` per `RATE_LIMIT_WINDOW_MS`; 0
+ * turns it off). Exposed errors are answered with their status; anything
+ * else is logged with the runtime's logger and answered with a generic 500
+ * built inside the pipeline, so it carries the security headers too. It
+ * used to rethrow, which left the adapter to answer a bare 500 that nothing
+ * logged. On SIGINT/SIGTERM integrations drain, HTTP stops, then the
+ * runtime stops (see `server.parts.ts`).
+ * `tests/generatedProject.typecheck.test.ts` type-checks the output against
+ * the current `@zudojs/*` sources; `tests/cli.round12.server.test.ts` runs it.
  */
 
 import { MARKERS, renderMarkerBlock } from "../../wiring/index.js";
+import { openApiServerLines, renderShutdownBlock } from "./server.parts.js";
+
+export { openApiServerLines } from "./server.parts.js";
 
 /** Options for {@link renderServerFile}. */
 export interface ServerFileOptions {
@@ -31,22 +33,6 @@ export interface ServerFileOptions {
   readonly title: string;
   /** Whether `/openapi.json` and `/docs` are mounted. */
   readonly openapi: boolean;
-}
-
-/** Emits a string as a TypeScript string literal that cannot break out. */
-function literal(value: string): string {
-  return JSON.stringify(value);
-}
-
-/** The lines `zudojs add openapi` (or `create`) puts in server.ts. */
-export function openApiServerLines(title: string): {
-  readonly importLine: string;
-  readonly mountLine: string;
-} {
-  return {
-    importLine: `import { mountOpenAPI } from "@zudojs/http";`,
-    mountLine: `mountOpenAPI(router, { info: { title: ${literal(title)}, version: "0.1.0" } });`,
-  };
 }
 
 /** Renders `src/server.ts`. */
@@ -70,27 +56,30 @@ ${renderMarkerBlock(MARKERS.serverImports, options.openapi ? [openapi.importLine
 
 import { createApp } from "./app.js";
 import { loadConfig } from "./configs/index.js";
-import { createDependencies } from "./container.js";
+import { APP_DEPENDENCIES, createDependencies } from "./container.js";
 import { checkIntegrations, drainIntegrations, integrations } from "./integrations/index.js";
 import { registerRoutes } from "./routes/index.js";
-import { errorResponse, securityHeaders } from "./utils/http.js";
+import { errorDetails, errorResponse, json, securityHeaders } from "./utils/http.js";
 
 const config = await loadConfig();
 const httpServer = createServer();
 const runtime = createApp({ config, httpServer });
+const logger = runtime.context.logger;
+
+const dependencies = createDependencies({
+  health: async () => {
+    const checks = await checkIntegrations(integrations);
+    const ready =
+      runtime.state === "running" && Object.values(checks).every((check) => check === "up");
+    return { ready, checks };
+  },
+});
+// Modules reach the composition root through the runtime container:
+// context.application.container.resolve(APP_DEPENDENCIES).
+runtime.context.container.registerValue(APP_DEPENDENCIES, dependencies);
 
 const router = createRouter();
-registerRoutes(
-  router,
-  createDependencies({
-    health: async () => {
-      const checks = await checkIntegrations(integrations);
-      const ready =
-        runtime.state === "running" && Object.values(checks).every((check) => check === "up");
-      return { ready, checks };
-    },
-  }),
-);
+registerRoutes(router, dependencies);
 ${renderMarkerBlock(MARKERS.serverMounts, options.openapi ? [openapi.mountLine] : [])}
 
 const dispatch: HttpMiddleware = async (context) => {
@@ -98,8 +87,9 @@ const dispatch: HttpMiddleware = async (context) => {
     return (await router.dispatch(context.request, { signal: context.signal })).response;
   } catch (error) {
     const response = errorResponse(error);
-    if (response === undefined) throw error;
-    return response;
+    if (response !== undefined && response.status < 500) return response;
+    logger.error(\`Unhandled error: \${context.request.method} \${context.request.path}\`, errorDetails(error));
+    return response ?? json(500, { error: "Internal Server Error" });
   }
 };
 
@@ -107,7 +97,10 @@ const pipeline = new HttpMiddlewarePipeline({
   middlewares: [
     securityHeaders(),
     createCorsMiddleware({ allowOrigin: config.corsOrigins }),
-    createRateLimitMiddleware({ windowMs: config.rateLimit.windowMs, max: config.rateLimit.max }),
+    // RATE_LIMIT_MAX=0 turns the limit off (load tests, local development).
+    ...(config.rateLimit.max > 0
+      ? [createRateLimitMiddleware({ windowMs: config.rateLimit.windowMs, max: config.rateLimit.max })]
+      : []),
 ${renderMarkerBlock(MARKERS.serverMiddleware, [], "    ")}
     dispatch,
   ],
@@ -122,28 +115,5 @@ const server = createHttpServer({
 
 await server.start();
 
-let stopping = false;
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.on(signal, () => {
-    if (stopping) {
-      console.log(\`Received \${signal} again: already shutting down.\`);
-      return;
-    }
-    stopping = true;
-    console.log(\`Received \${signal}: shutting down.\`);
-    void drainIntegrations(integrations)
-      .then(() => server.stop())
-      .then(() => runtime.stop())
-      .then(() => {
-        process.exit(0);
-      })
-      .catch((error: unknown) => {
-        console.error(error);
-        process.exit(1);
-      });
-  });
-}
-
-console.log(\`Listening on http://\${config.host}:\${server.address?.port ?? config.port}\`);
-`;
+${renderShutdownBlock()}`;
 }
