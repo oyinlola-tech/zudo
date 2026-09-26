@@ -44,7 +44,14 @@ export interface EventBusErrorContext {
 
 export interface EventBusOptions {
   readonly emitter?: {
+    /** Dispatch mode. Defaults to SEQUENTIAL. */
     readonly mode?: EventEmitterMode;
+    /**
+     * Error mode. Defaults to CONTINUE (not the standalone emitter's
+     * THROW): a throwing handler does not reject `publish()`; its error is
+     * collected in `result.errors` and forwarded to `onError`. Pass THROW
+     * to have the first handler failure reject the publish instead.
+     */
     readonly errorMode?: EventErrorMode;
     /**
      * Deep-freeze events (payload included) before dispatch.

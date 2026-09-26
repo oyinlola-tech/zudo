@@ -316,7 +316,7 @@ export function defineEventTypes<const TMap extends EventPayloadMap>(
 ): Readonly<TMap> {
   return Object.freeze({
     ...map,
-  });
+  }) as Readonly<TMap>;
 }
 
 /**

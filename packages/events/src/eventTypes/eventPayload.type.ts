@@ -36,9 +36,15 @@ export type JsonEventPayload =
     };
 
 /**
- * Payload type map used by strongly typed event systems.
+ * Payload type map used by strongly typed event systems: event type
+ * keys to payload types.
+ *
+ * Any object type qualifies, including an `interface` — the map is only
+ * ever indexed by its own keys, so no string index signature is required
+ * of it (a `Record<string, unknown>` bound rejected interfaces with
+ * "Index signature for type 'string' is missing").
  */
-export type EventPayloadMap = Record<string, unknown>;
+export type EventPayloadMap = object;
 
 /**
  * Extracts the payload associated with an event type.

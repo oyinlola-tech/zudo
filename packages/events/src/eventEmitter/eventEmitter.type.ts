@@ -32,7 +32,12 @@ export interface EventEmitterOptions {
   readonly mode?: EventEmitterMode;
 
   /**
-   * Error mode. Defaults to THROW.
+   * Error mode for a standalone emitter. Defaults to THROW: the first
+   * handler failure rejects `emit()`.
+   *
+   * An `EventBus` configures its emitter differently — it defaults to
+   * CONTINUE, so a throwing handler does not reject `publish()`; see
+   * `EventBusOptions.emitter.errorMode`.
    */
   readonly errorMode?: EventErrorMode;
 

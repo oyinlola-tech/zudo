@@ -114,9 +114,11 @@ result.errors;         // EventHandlerError[] (cause = the raw thrown value)
 result.shortCircuited; // true when a middleware did not call next()
 ```
 
-In the default `CONTINUE` error mode handler failures are collected in
-`result.errors` (and forwarded to the `onError` option). In `THROW` mode the first
-`EventHandlerError` rejects the publish. Errors thrown by a middleware itself are
+In the bus's default `CONTINUE` error mode a throwing handler does not reject
+`publish()`: failures are collected in `result.errors` (and forwarded to the
+`onError` option). In `THROW` mode (`{ emitter: { errorMode: EventErrorMode.THROW } }`)
+the first `EventHandlerError` rejects the publish. A standalone `EventEmitter`
+defaults to `THROW`; only the bus defaults to `CONTINUE`. Errors thrown by a middleware itself are
 wrapped as `EventMiddlewareError`; handler errors and aborts pass through unwrapped.
 
 ## Middleware
