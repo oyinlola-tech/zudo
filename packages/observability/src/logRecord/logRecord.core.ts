@@ -60,6 +60,8 @@ export function createLogRecord(options: {
   readonly error?: unknown;
   readonly traceId?: string;
   readonly spanId?: string;
+  readonly requestId?: string;
+  readonly correlationId?: string;
   readonly timestamp?: Date;
 }): LogRecord {
   return {
@@ -73,6 +75,8 @@ export function createLogRecord(options: {
       options.error === undefined ? undefined : serializeError(options.error),
     traceId: options.traceId,
     spanId: options.spanId,
+    requestId: options.requestId,
+    correlationId: options.correlationId,
   };
 }
 

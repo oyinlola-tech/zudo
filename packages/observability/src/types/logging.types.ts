@@ -43,6 +43,10 @@ export interface LogRecord {
   readonly traceId?: string;
   /** Span this record was emitted under, when a propagation context is active. */
   readonly spanId?: string;
+  /** `requestId` of the active propagation context, when it carries one. */
+  readonly requestId?: string;
+  /** `correlationId` of the active propagation context, when it carries one. */
+  readonly correlationId?: string;
 }
 
 /** Structured logger interface. */
@@ -105,7 +109,8 @@ export interface LoggerOptions {
   readonly context?: Record<string, unknown>;
   readonly transport?: LogTransport;
   /**
-   * Stamps `traceId` and `spanId` onto every record from the ambient
+   * Stamps `traceId`, `spanId` and, when the context carries them,
+   * `requestId` and `correlationId` onto every record from the ambient
    * propagation context. Defaults to `true`.
    */
   readonly correlate?: boolean;

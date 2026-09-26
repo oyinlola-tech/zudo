@@ -160,6 +160,10 @@ export class ConsoleLogExporter implements LogExporter {
           message: record.message,
           ...(record.traceId ? { traceId: record.traceId } : {}),
           ...(record.spanId ? { spanId: record.spanId } : {}),
+          ...(record.requestId ? { requestId: record.requestId } : {}),
+          ...(record.correlationId
+            ? { correlationId: record.correlationId }
+            : {}),
           ...(record.context ? { context: record.context } : {}),
           ...(record.error ? { error: record.error } : {}),
         },

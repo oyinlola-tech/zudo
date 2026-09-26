@@ -21,7 +21,8 @@ const noopTransport: LogTransport = {
  * Core structured logger with level filtering, child loggers,
  * persistent context, and transport support.
  *
- * Every record is stamped with the ambient `traceId`/`spanId` when a
+ * Every record is stamped with the ambient `traceId`/`spanId` — and the
+ * context's `requestId`/`correlationId` when it carries them — when a
  * propagation context is active, so logs and traces line up without the
  * caller threading IDs through by hand.
  */
@@ -142,6 +143,8 @@ export class StructuredLogger implements Logger {
       error,
       traceId: propagation?.traceId,
       spanId: propagation?.spanId,
+      requestId: propagation?.requestId,
+      correlationId: propagation?.correlationId,
     });
 
     // A transport must never take the caller down with it. A failing sink is

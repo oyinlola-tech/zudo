@@ -71,7 +71,10 @@ await obs.logger.flush();
 ```
 
 Every record carries `traceId` and `spanId` when a propagation context is
-active, so logs and traces line up without threading IDs by hand.
+active — and the context's `requestId` and `correlationId` when it has them
+(`createPropagationContext({ requestId, correlationId })`) — so logs, traces
+and requests line up without threading IDs by hand. `correlate: false`
+turns all four off.
 
 `LogLevel` here counts upward in severity (`TRACE = 0 … FATAL = 5`), the
 opposite of `@zudojs/logger`'s `LoggerLevel` (`FATAL = 0 … TRACE = 5`).
@@ -255,7 +258,7 @@ child, which is what keeps a sampled trace whole across services.
 import { createPropagationContext } from "@zudojs/observability";
 
 await obs.propagation.run(createPropagationContext({ requestId }), async () => {
-  obs.logger.info("handling"); // carries traceId, spanId
+  obs.logger.info("handling"); // carries traceId, spanId, requestId
   await handle();
 });
 
