@@ -654,21 +654,26 @@
   function loadBabel() {
     if (window.Babel) return Promise.resolve(window.Babel);
     if (babelPromise) return babelPromise;
-    babelPromise = new Promise(function (resolve, reject) {
-      /* An AMD loader on the page (the Learn editor's Monaco) would make Babel's
-         UMD build register as a module instead of setting window.Babel. */
-      var amd = typeof window.define === 'function' ? window.define.amd : undefined;
-      if (amd) window.define.amd = undefined;
-      var restore = function () { if (amd) window.define.amd = amd; };
-      var s = document.createElement('script');
-      s.src = BABEL_URL;
-      s.async = true;
-      s.onload = function () { restore(); window.Babel ? resolve(window.Babel) : reject(new Error('Babel did not initialise')); };
-      s.onerror = function () { restore(); babelPromise = null; reject(new Error('Could not load the TypeScript compiler')); };
-      document.head.appendChild(s);
-    });
+    babelPromise = injectBabel().then(null, function (e) { babelPromise = null; throw e; });
     return babelPromise;
   }
+
+  /* Babel is fetched and evaluated with `define`, `module` and `exports` hidden, so its UMD
+     wrapper always sets window.Babel. With a <script> tag it would race the Learn editor's
+     AMD loader (Monaco): Babel would register as an AMD module, and its stray anonymous
+     define() could break Monaco's own loading. */
+  function injectBabel() {
+    var failed = function () { throw new Error('Could not load the TypeScript compiler'); };
+    var download = function () { return fetch(BABEL_URL).then(function (r) { return r.ok ? r.text() : failed(); }, failed); };
+    /* One retry after a short pause: a flaky connection should not fail the first run. */
+    var retry = function () { return new Promise(function (r) { setTimeout(r, 800); }).then(download); };
+    return download().then(null, retry).then(function (src) {
+      new Function('define', 'module', 'exports', src + '\n//# sourceURL=' + BABEL_URL).call(window);
+      if (!window.Babel) throw new Error('Babel did not initialise');
+      return window.Babel;
+    });
+  }
+
 
   /* TypeScript (useDefineForClassFields, the default for modern targets)
      declares constructor parameter properties as the first class fields and
@@ -1434,7 +1439,16 @@
             api.stop();
             resolve({ timedOut: true });
           }, RUN_LIMIT_MS);
-          waiter = function () { window.clearTimeout(limit); resolve({ error: failure }); };
+          /* One more task before settling: the browser reports an unhandled rejection in
+             its own task, which must reach this run rather than the next one. */
+          var check = function () {
+            window.setTimeout(function () {
+              if (!failure && count > 0) { waiter = check; return; }
+              window.clearTimeout(limit);
+              resolve({ error: failure });
+            }, 0);
+          };
+          waiter = check;
           later();
         });
       },
@@ -1490,7 +1504,19 @@
       /* Babel raises Error.stackTraceLimit when it loads; programs must see Node's default. */
       Error.stackTraceLimit = 10;
       var start = performance.now();
-      var finish = function () { window.removeEventListener('unhandledrejection', onRejection); currentTimers = null; };
+      var finish = function () {
+        window.removeEventListener('unhandledrejection', onRejection);
+        currentTimers = null;
+        /* A rejection that still arrives just after the run ended belongs to it: report it in
+           this run's terminal instead of letting it leak into the page or the next run. */
+        var late = function (ev) {
+          ev.preventDefault();
+          var reason = ev.reason;
+          line('warn', 'Unhandled promise rejection after the program finished: ' + (reason && reason.message ? reason.message : String(reason)), '▲');
+        };
+        window.addEventListener('unhandledrejection', late);
+        window.setTimeout(function () { window.removeEventListener('unhandledrejection', late); }, 300);
+      };
       return Promise.resolve().then(function () { return fn.apply(null, timerArgs(timers).concat(runGlobals ? runGlobals.values : [])); }).then(function (result) {
         return timers.idle().then(function (state) {
           finish();

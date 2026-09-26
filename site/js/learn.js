@@ -8,6 +8,7 @@
  * Public API (used by scripts/site-learn.mjs --browser):
  *   window.ZudoLearn.run(index) → Promise<{ kind, text }[]>
  *   window.ZudoLearn.edit(index), window.ZudoLearn.markDone(slug)
+ *   window.ZudoLearn.runFiles(files, file, { dom, box }) → Promise<{ kind, text }[]>
  */
 (function () {
   'use strict';
@@ -61,14 +62,6 @@
 
   /* A DOM example runs against a frame built from its project's .html and .css files. */
   function domFrame(fig) {
-    var files = projectFiles(fig);
-    var html = '<!DOCTYPE html><html><head></head><body></body></html>';
-    var css = '';
-    Object.keys(files).forEach(function (name) {
-      if (/\.html$/.test(name)) html = files[name];
-      if (/\.css$/.test(name)) css += files[name] + '\n';
-    });
-    if (css) html = html.replace(/<\/head>/i, '<style>' + css + '</style></head>');
     var box = fig.querySelector('.lx-preview');
     if (!box) {
       box = document.createElement('div');
@@ -77,10 +70,22 @@
       var out = fig.querySelector('.lx-out');
       fig.insertBefore(box, out || null);
     }
+    return frameIn(box, projectFiles(fig), 'Preview of ' + fig.getAttribute('data-file'));
+  }
+
+  /* A fresh preview frame inside `box`, built from the .html and .css files in `files`. */
+  function frameIn(box, files, title) {
+    var html = '<!DOCTYPE html><html><head></head><body></body></html>';
+    var css = '';
+    Object.keys(files).forEach(function (name) {
+      if (/\.html$/.test(name)) html = files[name];
+      if (/\.css$/.test(name)) css += files[name] + '\n';
+    });
+    if (css) html = html.replace(/<\/head>/i, '<style>' + css + '</style></head>');
     var old = box.querySelector('iframe');
     if (old) old.remove();
     var frame = document.createElement('iframe');
-    frame.title = 'Preview of ' + fig.getAttribute('data-file');
+    frame.title = title;
     frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals');
     box.appendChild(frame);
     return new Promise(function (resolve) {
@@ -105,6 +110,19 @@
       if (fig.getAttribute('data-runtime') !== 'dom') return pg.exec(source(fig), fig.getAttribute('data-file'));
       return domFrame(fig).then(function (win) {
         return pg.exec(source(fig), fig.getAttribute('data-file'), { globals: domGlobals(win) });
+      });
+    });
+  }
+
+  /* Runs `file` from `files` (path → code) the way an example runs: in the terminal, or against
+     a preview frame in `box` when opts.dom is set. Used by js/exercise.js. */
+  function runFiles(files, file, opts) {
+    opts = opts || {};
+    return ready().then(function (pg) {
+      pg.registerFiles(files);
+      if (!opts.dom) return pg.exec(files[file], file, { show: false });
+      return frameIn(opts.box, files, 'Preview of ' + file).then(function (win) {
+        return pg.exec(files[file], file, { show: false, globals: domGlobals(win) });
       });
     });
   }
@@ -224,7 +242,7 @@
     paintDone();
     dockCopyButtons();
     requestAnimationFrame(dockCopyButtons);
-    window.ZudoLearn = { run: run, edit: edit, markDone: markDone };
+    window.ZudoLearn = { run: run, edit: edit, markDone: markDone, runFiles: runFiles, source: source };
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

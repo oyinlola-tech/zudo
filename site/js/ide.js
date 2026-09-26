@@ -8,8 +8,14 @@
  * - Run (Ctrl/Cmd+Enter) runs the active file in the browser terminal
  *   (js/playground.js). Files in the same folder can import each other.
  *
+ * - An exercise (js/exercise.js) opens it with `check`: a task bar and a Check
+ *   button appear. "run" checks run the learner's code and compare what it
+ *   prints; "paste" checks compare terminal output the learner pastes in.
+ *
  * Public API:
- *   ZudoIDE.open({ files?: [{ project, path, content, origin? }], focus?: { project, path }, onChange?: fn })
+ *   ZudoIDE.open({ files?: [{ project, path, content, origin? }], focus?: { project, path }, onChange?: fn,
+ *                  check?: { title, mode: "run"|"paste", project, file, command?, run(files) → Promise<lines>,
+ *                            verify(text) → { ok, line?, want?, got? }, onResult(ok) } })
  *   ZudoIDE.close()
  */
 (function () {
@@ -62,13 +68,15 @@
 
   /* ---------------- DOM ---------------- */
 
-  var root, treeEl, tabsEl, editorEl, termEl, statusEl, posEl, langEl, noticeEl, titleEl;
+  var root, treeEl, tabsEl, editorEl, termEl, statusEl, posEl, langEl, noticeEl, titleEl, taskEl, checkBtn;
+  var check = null;
   var lastFocus = null;
   var onChangeHook = null;
 
   var ICON = {
     files: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 2v6h6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
     run: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>',
+    check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5" fill="none" stroke="currentColor" stroke-width="2.6"/></svg>',
     newFile: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10z M12 11v6 M9 14h6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
     reset: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 3-6.3M4 4v5h5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
     download: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
@@ -89,6 +97,7 @@
       '<div class="ide-titlebar">' +
       '  <span class="ide-title"></span>' +
       '  <div class="ide-title-actions">' +
+      '    <button type="button" class="ide-check" data-act="check" title="Check your answer" hidden>' + ICON.check + '<span>Check</span></button>' +
       '    <button type="button" class="ide-run" data-act="run" title="Run the active file (Ctrl+Enter)">' + ICON.run + '<span>Run</span></button>' +
       '    <button type="button" class="ide-icon" data-act="close" title="Close the editor" aria-label="Close the editor">' + ICON.close + '</button>' +
       '  </div>' +
@@ -108,6 +117,7 @@
       '  </aside>' +
       '  <section class="ide-center">' +
       '    <div class="ide-tabs" role="tablist"></div>' +
+      '    <div class="ide-task" hidden></div>' +
       '    <div class="ide-notice" hidden></div>' +
       '    <div class="ide-editor"></div>' +
       '    <div class="ide-panel">' +
@@ -132,6 +142,8 @@
     langEl = root.querySelector('.ide-lang');
     noticeEl = root.querySelector('.ide-notice');
     titleEl = root.querySelector('.ide-title');
+    taskEl = root.querySelector('.ide-task');
+    checkBtn = root.querySelector('.ide-check');
     titleEl.textContent = (document.querySelector('.lx-hero h1') || document.querySelector('h1') || { textContent: 'Workspace' }).textContent + ' — Zudo Editor';
     root.addEventListener('click', onClick);
     root.addEventListener('keydown', onKey);
@@ -400,7 +412,7 @@
     if (kept.length) {
       noticeEl.hidden = false;
       noticeEl.innerHTML = 'You changed <strong>' + escapeHtml(kept.join(', ')) + '</strong> before, so your version is open. ' +
-        '<button type="button" class="ide-link" data-act="reset" data-file="' + escapeHtml(kept[0]) + '">Use the example code instead</button>';
+        '<button type="button" class="ide-link" data-act="reset" data-file="' + escapeHtml(kept[0]) + '">' + (check ? 'Start again from the starter code' : 'Use the example code instead') + '</button>';
     } else if (!plain) {
       noticeEl.hidden = true;
     }
@@ -445,6 +457,117 @@
     });
   }
 
+  /* ---------------- exercise check ---------------- */
+
+  function renderTask() {
+    checkBtn.hidden = !check;
+    taskEl.hidden = !check;
+    if (!check) { taskEl.innerHTML = ''; return; }
+    var how = check.mode === 'paste'
+      ? 'This one runs on your computer. Run <code>' + escapeHtml(check.command || '') + '</code> there, then press <strong>Check</strong> and paste what it printed.'
+      : 'Write your answer in <code>' + escapeHtml(check.file) + '</code>, then press <strong>Check</strong>. It runs your code and compares what it prints with the expected output.';
+    taskEl.innerHTML =
+      '<div class="ide-task-head"><span class="ide-task-label">EXERCISE</span> <span class="ide-task-title"></span>' +
+      '<button type="button" class="ide-link ide-task-toggle" data-act="toggle-task">Hide the task</button></div>' +
+      '<div class="ide-task-body"><div class="ide-task-text">' + (check.task || '') + '</div>' +
+      '<p class="ide-task-how">' + how + '</p></div>' +
+      '<div class="ide-task-result" role="status" aria-live="polite"></div>' +
+      '<div class="ide-task-hints"></div>' +
+      (check.mode === 'paste'
+        ? '<div class="ide-paste" hidden><textarea class="ide-paste-box" rows="5" spellcheck="false" aria-label="What your terminal printed" placeholder="Paste the output here"></textarea>' +
+          '<button type="button" class="ide-check ide-paste-go" data-act="compare">' + ICON.check + '<span>Compare</span></button></div>'
+        : '');
+    taskEl.querySelector('.ide-task-title').textContent = check.title;
+    renderHints();
+  }
+
+  /* Hints opened so far, a button for the next one, and whether the solution is ready. */
+  function renderHints() {
+    var box = taskEl.querySelector('.ide-task-hints');
+    if (!box || !check || !check.hints) return;
+    var h = check.hints();
+    var html = h.shown.map(function (hint, i) {
+      return '<div class="ide-hint"><span class="ide-task-label">HINT ' + (i + 1) + '</span>' + hint + '</div>';
+    }).join('');
+    if (h.canMore) {
+      html += '<button type="button" class="ide-hint-btn" data-act="hint">' + (h.shown.length ? 'Show another hint' : 'Show a hint') +
+        (h.left > 1 ? ' (' + h.left + ' left)' : '') + '</button>';
+    }
+    if (h.solutionReady && !h.solved) html += '<p class="ide-task-how">The solution is now open on the lesson page. Close the editor to compare, or keep trying.</p>';
+    box.innerHTML = html;
+  }
+
+  var TOOL_FAILURE = /^(?:Error: )?(?:Babel did not initialise|Could not load the TypeScript compiler)/;
+
+  function showResult(r, output) {
+    var box = taskEl.querySelector('.ide-task-result');
+    if (!r.ok && output && TOOL_FAILURE.test(output)) {
+      box.className = 'ide-task-result is-fail';
+      box.textContent = 'The terminal could not start (' + output + '). Check your connection and press Check again. This did not count as a try.';
+      if (check.onResult) check.onResult(false, output);
+      return;
+    }
+    box.className = 'ide-task-result ' + (r.ok ? 'is-pass' : 'is-fail');
+    if (r.ok) {
+      box.textContent = '✓ Correct. Your output matches. The solution is open on the lesson page, so you can compare.';
+      termLine('ok', 'Correct: the output matches.', '✓');
+    } else {
+      box.textContent = '✗ Not yet. ' + (r.line ? 'Line ' + r.line + ' is different.' : 'The output is different.') + ' Details are in the terminal.';
+      termLine('error', 'Not yet: ' + (r.line ? 'line ' + r.line + ' is different.' : 'the output is different.'), '✗');
+      if (r.line) {
+        termLine('sys', 'expected: ' + (r.want === undefined ? '(no more lines)' : r.want));
+        termLine('sys', 'yours:    ' + (r.got === undefined ? '(no more lines)' : r.got));
+      }
+    }
+    if (check.onResult) check.onResult(r.ok, output);
+    renderHints();
+  }
+
+  function projectFilesOf(project) {
+    var files = {};
+    Object.keys(ws.projects[project] || {}).forEach(function (path) { files[path] = ws.projects[project][path].content; });
+    return files;
+  }
+
+  function runCheck() {
+    if (!check || running) return;
+    save(true);
+    if (check.mode === 'paste') {
+      var paste = taskEl.querySelector('.ide-paste');
+      paste.hidden = false;
+      paste.querySelector('textarea').focus();
+      return;
+    }
+    var pg = window.ZudoPlayground;
+    if (!pg || !pg.onLine) { termLine('error', 'The terminal is still loading. Try again in a moment.', '✗'); return; }
+    running = true;
+    root.classList.add('is-running');
+    termEl.innerHTML = '';
+    termLine('sys', 'Checking ' + check.file + '…');
+    var off = pg.onLine(function (ev) { if (ev.kind !== 'clear') termLine(ev.kind, ev.text, ev.sig); });
+    var output = '';
+    check.run(projectFilesOf(check.project)).then(function (lines) {
+      output = (lines || []).filter(function (l) { return l.kind !== 'stack'; }).map(function (l) { return l.text; }).join('\n');
+      return check.verify(output);
+    }, function (e) {
+      output = String(e && e.message || e);
+      termLine('error', output, '✗');
+      return check.verify(output);
+    }).then(function (r) {
+      off();
+      running = false;
+      root.classList.remove('is-running');
+      showResult(r, output);
+    });
+  }
+
+  function comparePaste() {
+    var text = taskEl.querySelector('.ide-paste-box').value;
+    termEl.innerHTML = '';
+    termLine('sys', 'Comparing what you pasted with the expected output…');
+    showResult(check.verify(text), '');
+  }
+
   /* ---------------- open / close ---------------- */
 
   var ready = null;
@@ -452,8 +575,10 @@
     opts = opts || {};
     if (!root) build();
     lastFocus = document.activeElement;
+    check = opts.check || null;
     addFiles(opts.files);
     onChangeHook = opts.onChange && opts.focus ? { file: id(opts.focus.project, opts.focus.path), fn: opts.onChange } : null;
+    renderTask();
     root.hidden = false;
     document.body.classList.add('ide-open');
     renderTree();
@@ -489,6 +614,14 @@
       e.stopPropagation();
       if (act === 'close') close();
       else if (act === 'run') runActive();
+      else if (act === 'check') runCheck();
+      else if (act === 'hint') { if (check && check.showHint) { check.showHint(); renderHints(); } }
+      else if (act === 'toggle-task') {
+        var body = taskEl.querySelector('.ide-task-body');
+        body.hidden = !body.hidden;
+        btn.textContent = body.hidden ? 'Show the task' : 'Hide the task';
+      }
+      else if (act === 'compare') comparePaste();
       else if (act === 'new') newFile();
       else if (act === 'download') download();
       else if (act === 'clear') termEl.innerHTML = '';
