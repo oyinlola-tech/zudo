@@ -4,7 +4,10 @@
  * @module permission/permission
  */
 
-import type { Permission } from "../permissionTypes/index.js";
+import type {
+  Permission,
+  TypedPermissionString,
+} from "../permissionTypes/index.js";
 import { InvalidPermissionError } from "../permissionErrors/index.js";
 import { patternStrMatches, patternsOverlap } from "../rule/rule.pattern.js";
 
@@ -34,9 +37,26 @@ export function parsePermission(permission: string): Permission {
 
 /**
  * Check if a permission string is valid without throwing.
+ *
+ * Narrows to {@link TypedPermissionString} on success.
  */
-export function isValidPermission(permission: string): boolean {
+export function isValidPermission(
+  permission: string,
+): permission is TypedPermissionString {
   return PERMISSION_REGEX.test(permission);
+}
+
+/**
+ * Validate a runtime string and return it typed as a
+ * {@link TypedPermissionString}.
+ *
+ * @throws InvalidPermissionError if the string is not a valid permission
+ */
+export function toPermissionString(permission: string): TypedPermissionString {
+  if (!isValidPermission(permission)) {
+    throw new InvalidPermissionError(permission);
+  }
+  return permission;
 }
 
 /**

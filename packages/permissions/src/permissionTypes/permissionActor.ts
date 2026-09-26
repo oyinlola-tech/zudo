@@ -26,5 +26,22 @@ export interface Permission {
   readonly action: string;
 }
 
-/** Permission string format: "resource:action" or wildcards like "post:*", "*:*". */
+/**
+ * Permission string format: "resource:action" or wildcards like "post:*",
+ * "*:*".
+ *
+ * Kept as a plain `string` so existing call sites (values read from
+ * configuration, databases or tokens) keep compiling. Use
+ * {@link TypedPermissionString} where you want the compiler to insist on the
+ * `resource:action` shape, and `toPermissionString()` / `isValidPermission()`
+ * to move a runtime string into it.
+ */
 export type PermissionString = string;
+
+/**
+ * A permission string whose `resource:action` shape is checked by the
+ * compiler: `"post:read"` and `"billing.*:refund"` are accepted,
+ * `"postread"` is a type error. The full grammar (segment alphabet, no
+ * partial wildcards) is still enforced at runtime by `parsePermission()`.
+ */
+export type TypedPermissionString = `${string}:${string}`;

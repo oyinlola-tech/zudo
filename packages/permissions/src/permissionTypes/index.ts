@@ -8,6 +8,7 @@ export {
   type PermissionActor,
   type Permission,
   type PermissionString,
+  type TypedPermissionString,
 } from "./permissionActor.js";
 
 export {

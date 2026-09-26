@@ -8,6 +8,7 @@ export {
   parsePermission,
   parsePermissionSafe,
   isValidPermission,
+  toPermissionString,
   matches,
   matchesPermission,
   permissionsOverlap,
