@@ -756,7 +756,17 @@ fulfilled rejected fulfilled rejected
 still pending: [ 'PAY-2', 'PAY-4' ]
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`finally` runs whether the code above it returned normally or threw — that is exactly "however the payment ends". Move the cleanup there instead of leaving it as the last line of the success path.
+
+HINT 2
+
+`try { if (kobo > 5_000_000) throw new Error(...); await Promise.resolve(); return "paid"; } finally { pending.delete(id); }`
+
+SOLUTION
 
 pending-fixed.js
 
@@ -823,7 +833,17 @@ Output of `node checkout-leak.js` and of the browser terminal
 listeners that ran for closed pages: 5
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+One `AbortController` per call to `openCheckout`, its `signal` passed as the options object to every `addEventListener` in that call. Aborting it removes all of them together.
+
+HINT 2
+
+`const page = new AbortController(); const { signal } = page; cartEvents.addEventListener("item-added", () => calls++, { signal }); /* … same for the other two … */ return { close: () => page.abort() };`
+
+SOLUTION
 
 checkout-fixed.js
 
@@ -865,7 +885,17 @@ TRY IT YOURSELF
 
 A `shippingQuote(order)` function is slow and called many times for the same order objects. Memoize it with a `WeakMap` so results live exactly as long as their orders, and show how many times the slow part ran.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`results.has(obj)` tells you whether this exact object was seen before. Compute and store only on the first call for that object; every later call for the same object just reads the stored value.
+
+HINT 2
+
+`function memoizeByObject(fn) { const results = new WeakMap(); return (obj) => { if (!results.has(obj)) results.set(obj, fn(obj)); return results.get(obj); }; }`
+
+SOLUTION
 
 memo-weak.js
 

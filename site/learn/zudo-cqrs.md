@@ -502,7 +502,17 @@ TRY IT YOURSELF
 
 Add a `RenameTask` command with `taskId` and `title`. It must refuse a title shorter than 3 characters with a `ValidationError` from `@zudojs/errors`, and must only rename the caller's own task.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check the user first (`AuthenticationError`), then the title's trimmed length (`ValidationError`), then load the row and compare `row.userId` with `userId` (`NotFoundError`). Only after all three checks pass, write `row.title`.
+
+HINT 2
+
+`const userId = context?.userId; if (!userId) throw new AuthenticationError("Sign in first"); if (command.title.trim().length < 3) throw new ValidationError("Title must be at least 3 characters"); const row = rows.get(command.taskId); if (!row || row.userId !== userId) throw new NotFoundError(\`Task ${command.taskId} not found\`); row.title = command.title.trim();`.
+
+SOLUTION
 
 rename.ts
 
@@ -554,7 +564,17 @@ TRY IT YOURSELF
 
 Sort these into commands and queries: (a) `GetTaskCount`; (b) `MarkAllAsRead`; (c) `SearchTasks` that also records the search term for analytics; (d) `ArchiveOldTasks`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+(a), (b) and (d) are each clearly one or the other: does running it twice change anything in the world? (c) is the trap: it does two different jobs. What happens if you try to cache or retry it as written?
+
+HINT 2
+
+Split (c) in two: a pure read, and a side effect that a query must not have. What mechanism from [the events lesson](https://zudojs.oyinlola.site/learn/zudo-events) fits recording the search term without the query knowing about it?
+
+SOLUTION
 
 (a) Query. (b) Command. (d) Command. (c) is the interesting one: as described it is both, which breaks the rule. Make `SearchTasks` a pure query, and record the search term separately, for example by publishing a `search.performed` event that an analytics handler reacts to. Then the search can be cached and retried safely.
 
@@ -564,7 +584,17 @@ TRY IT YOURSELF
 
 Write a middleware that throws `AuthenticationError` for any request whose context has no `userId`, so no handler has to remember the check. Test it with and without a user.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The check goes before calling `next`: `if (!context?.userId) throw new AuthenticationError("Sign in first");`, then `return next(request, context);` when it passes.
+
+HINT 2
+
+`if (!context?.userId) throw new AuthenticationError("Sign in first"); return next(request, context);`.
+
+SOLUTION
 
 guard.ts
 

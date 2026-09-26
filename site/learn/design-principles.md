@@ -1077,7 +1077,17 @@ TRY IT YOURSELF
 
 The shop adds delivery: free for orders of ₦20,000 or more after discount, otherwise ₦1,500 in Lagos and ₦3,500 elsewhere. A developer wants to add these lines inside `createOrderService`. Instead, write the rule as a pure function `deliveryFeeKobo(afterDiscountKobo, state)` and test the edges: exactly ₦20,000, one kobo below, and a state other than Lagos.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check the threshold first: `if (afterDiscountKobo >= 2_000_000) return 0;`. The boundary test needs `>=`, not `>`.
+
+HINT 2
+
+After the threshold check, return a ternary: `state === "Lagos" ? 150_000 : 350_000`.
+
+SOLUTION
 
 delivery.ts
 
@@ -1112,7 +1122,17 @@ TRY IT YOURSELF
 
 Customers get a shop wallet. Today it is `{ balanceKobo: number }`, and three features change the balance directly; one of them once made a balance negative. Write a `Wallet` class whose balance can only change through `deposit` and `pay`, where amounts must be positive whole kobo and a payment may not exceed the balance. Test both refusals.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Both methods need the same "positive whole number" check. Write it once and call it from each, the way `pay` already does.
+
+HINT 2
+
+`deposit`: `this.#balanceKobo += amountKobo;` after the check. `pay`: throw `new Error(\`insufficient funds: balance ${this.#balanceKobo}, needed ${amountKobo}\`)` when `amountKobo > this.#balanceKobo`, otherwise `this.#balanceKobo -= amountKobo;`.
+
+SOLUTION
 
 wallet.ts
 
@@ -1173,7 +1193,17 @@ TRY IT YOURSELF
 
 Support wants a record of every message sent, including which channel sent it. Without editing `createOrderService` or `outboxNotifier`, write a `logged(name, notifier, log)` wrapper that logs `"<name> -> <to>"` before sending, and compose it with the notifiers you already have.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`logged` must return an object with a `send` method, exactly like `outboxNotifier` does: `{ async send(to, message) { ... } }`.
+
+HINT 2
+
+Inside `send`: `log(\`${name} -> ${to}\`);` first, then `await notifier.send(to, message);`.
+
+SOLUTION
 
 logged-notifier.ts
 

@@ -478,7 +478,17 @@ console.log(fn());
 console.log(level);
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+A function looks up a name in the scope where it was *written*, not where it is called from. Where was `inner` written?
+
+HINT 2
+
+`console.log(fn());` then `console.log(level);`.
+
+SOLUTION
 
 predict.js
 
@@ -513,7 +523,17 @@ TRY IT YOURSELF
 
 Write `limit(fn, max)` that returns a new function. The new function calls `fn` at most `max` times, and after that returns `"limit reached"`. Use a closure to count the calls. (This is the idea behind rate limiting, which you will use on login routes later.)
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep a `calls` counter in the closure. Check it against `max` before calling `fn`, and increase it only when you do call `fn`.
+
+HINT 2
+
+`let calls = 0; return (...args) => { if (calls >= max) return "limit reached"; calls += 1; return fn(...args); };`
+
+SOLUTION
 
 limit.js
 
@@ -568,7 +588,17 @@ Output of `node sum-bug.js` and of the browser terminal
 RangeError
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Recursion needs a base case: a value of `n` where the function returns directly, without calling itself again.
+
+HINT 2
+
+`if (n <= 0) return 0;` before the recursive line.
+
+SOLUTION
 
 sum-fix.js
 

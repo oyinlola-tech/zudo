@@ -730,7 +730,17 @@ TRY IT YOURSELF
 
 The shop launches in South Africa with a new provider, Ozow. Change the factory's types and tables so `providerFor("ZA")` works and refunds go to Ozow. What does the compiler force you to update, and what does it not catch?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Five small additions, in this order: add `"ZA"` to `Country`, add `"ozow"` to `ProviderName`, add `ozow: "k4"` to `keys`, add an `ozow` entry to `builders` shaped like the others, and add `ZA: "ozow"` to `routes`.
+
+HINT 2
+
+The `ozow` builder is `() => make("ozow", keys.ozow)`, and the route is `ZA: "ozow"`, matching the shape of the entries already there.
+
+SOLUTION
 
 launch-za.ts
 
@@ -777,7 +787,17 @@ TRY IT YOURSELF
 
 Add `placedBetween(from, to)` to `OrderQuery` as a new builder in your own file: it should add two filters, `placed_at >= $n` and `placed_at < $n`, and refuse a range where `from` is not before `to`. Show that a shared base query is not changed.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Guard first: `if (!(Date.parse(from) < Date.parse(to))) throw new Error(...)`. `!(a < b)` also catches unparseable dates, since any comparison with `NaN` is false.
+
+HINT 2
+
+Return `new OrderSearch([...this.filters, { sql: "placed_at >= ?", value: from }, { sql: "placed_at < ?", value: to }])`, the same pattern `status` uses.
+
+SOLUTION
 
 between.ts
 
@@ -837,7 +857,17 @@ TRY IT YOURSELF
 
 A `Clock` singleton makes invoice tests depend on the real date. Replace it: `isOverdue` should receive a clock object, production passes one that reads the real time, and a test passes a fixed one. Test an invoice due on 1 March against 28 February and 2 March.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`clock.now()` gives you a `Date`; compare its `.getTime()` with `Date.parse(invoice.dueAt)` using `>`.
+
+HINT 2
+
+`return clock.now().getTime() > Date.parse(invoice.dueAt);`
+
+SOLUTION
 
 clock.ts
 

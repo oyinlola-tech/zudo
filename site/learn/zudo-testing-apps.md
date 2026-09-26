@@ -1448,7 +1448,17 @@ TRY IT YOURSELF
 
 After a password change, the Task API calls `auth.logoutAll(userId)`. Write an auth test that logs Ada in on a laptop and a phone, calls `logoutAll`, and checks that both access tokens are refused, while Bola's session keeps working.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`await auth.logoutAll(toUserId("ada"));` comes first. Then two calls to `assertRejects`, one per device, and one `expect(...).resolves.toMatchObject({ sub: "bola" })` for the account that was never touched.
+
+HINT 2
+
+`await auth.logoutAll(toUserId("ada")); await assertRejects(() => auth.verifyToken(laptop.tokens.accessToken), "no longer active"); await assertRejects(() => auth.verifyToken(phone.tokens.accessToken), "no longer active"); await expect(auth.verifyToken(bola.tokens.accessToken)).resolves.toMatchObject({ sub: "bola" });`.
+
+SOLUTION
 
 tests/logout-all.test.ts
 
@@ -1495,7 +1505,17 @@ TRY IT YOURSELF
 
 Two tasks with the same due date: in which order do they come back? The contract does not say, so the fake and PostgreSQL could disagree, and some day a user would see their list jump around. Decide on "by id" and write a test that runs against both repositories.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Keep the id of the first task you create (`const packBags = await repo.create(...)`), so you can pass `packBags.id` to `repo.update` afterwards.
+
+HINT 2
+
+`const packBags = await repo.create({ ownerId: "bola", title: "Pack bags", dueAt: due }); await repo.create({ ownerId: "bola", title: "Book taxi", dueAt: due }); await repo.create({ ownerId: "bola", title: "Call Ada", dueAt: due }); await repo.update(packBags.id, { assigneeId: "ada" }); expect((await repo.listVisibleTo("bola")).map((t) => t.title)).toEqual(["Pack bags", "Book taxi", "Call Ada"]);`.
+
+SOLUTION
 
 tests/ordering.test.ts
 
@@ -1551,7 +1571,17 @@ TRY IT YOURSELF
 
 For each bug, name the cheapest test in this lesson that fails: (1) someone shortens the SQL in `listVisibleTo` to `ORDER BY id`; (2) the route for `POST /tasks/:id/complete` loses its `guarded` option; (3) `createApp` forgets to call `processEmails`; (4) the service lets the assignee assign; (5) the notifications handler queues `to: payload.assigneeId` instead of the looked-up address.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For each bug, ask: which layer's decision does it actually break, and does that layer's tests use a fake that would hide the bug or the real thing that would show it? Re-read the layer table near the top of the lesson.
+
+HINT 2
+
+(1) and (3) are two different kinds of "only one test would ever see this": one because most tests use the fake, the other because most tests build their own wiring instead of the composition root. (2), (4) and (5) each belong to one layer's own test file from this lesson.
+
+SOLUTION
 
 1. The repository contract, "lists what a user owns or is assigned, by due date", for `PgTaskRepository` only. The service tests stay green, because they use the fake.
 2. The HTTP test "maps the service's rules to status codes". Without the middleware no user reaches the context, so Bola's valid token gets `401 {"error":"Sign in first"}` from the command bus instead of the expected 404. That is **defence in depth**: even with the login check missing, the CQRS layer refused to act for nobody.

@@ -986,7 +986,17 @@ TRY IT YOURSELF
 
 The previous lesson's `chunk(iterable, size)` needed a hand-written `next()` and `return()`. Write `batches(iterable, size)` as a generator: it yields arrays of up to `size` items, the last one possibly shorter. Validate `size` before any iteration happens. Check that stopping early also stops the source.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Validate `size` first, outside the generator — a generator's body does not run until it is first iterated, so a plain `if`/`throw` at the top of `batches` runs immediately.
+
+HINT 2
+
+`return (function* () { let batch = []; for (const item of iterable) { batch.push(item); if (batch.length === size) { yield batch; batch = []; } } if (batch.length > 0) yield batch; })();`
+
+SOLUTION
 
 batches.js
 
@@ -1044,7 +1054,17 @@ TRY IT YOURSELF
 
 Write `retry(task, delays)`, where `task` is a function that may throw and `delays` is any iterable of wait times (such as `backoff().take(3)`). Call `task`; if it throws, take the next delay, log it and try again. When the delays run out, throw the last error. To keep the example fast, log the delays instead of waiting.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`delays[Symbol.iterator]()` gives you an iterator you can call `.next()` on by hand, one delay at a time, independent of the retry loop's own counter.
+
+HINT 2
+
+`for (let attempt = 1; ; attempt++) { try { return task(attempt); } catch (error) { const next = waits.next(); if (next.done) throw error; console.log(...); } }`, and `backoff` is `for (let delay = firstMs; ; delay = Math.min(delay * factor, maxMs)) yield delay;`.
+
+SOLUTION
 
 retry.js
 
@@ -1098,7 +1118,17 @@ TRY IT YOURSELF
 
 A storage bucket is a tree of folders with `files` (names) and `folders`. Write a generator `filePaths(folder, prefix)` that yields the full path of every file, depth first, using `yield*` for subfolders. Then use it to find the first `.pdf` without walking the rest.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`yield* filePaths(sub, here)` delegates to a nested call, forwarding every path it yields — that is what walks the whole tree without an explicit stack.
+
+HINT 2
+
+`visited += 1; const here = \`${prefix}${folder.name}/\`; for (const file of folder.files) yield here + file; for (const sub of folder.folders) yield* filePaths(sub, here);`
+
+SOLUTION
 
 file-paths.js
 

@@ -4,7 +4,7 @@ description: "Install, update and remove packages with npm, read package.json an
 source: https://zudojs.oyinlola.site/learn/npm-packages
 ---
 
-LEVEL 4 · LESSON 6 OF 20
+LEVEL 4 · LESSON 6 OF 21
 
 npm and packages Core
 
@@ -702,7 +702,17 @@ TRY IT YOURSELF
 
 Your `package.json` says `"ms": "~2.0.1"`. Which of `2.0.0`, `2.0.1`, `2.0.9`, `2.1.0` and `3.0.0` could npm install? Work it out, then check with `npx semver`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+A tilde range's job is narrower than a caret's. Re-read what each of the three symbols allows in [Versions and ranges](#semver).
+
+HINT 2
+
+`~2.0.1` allows a newer `PATCH` (the last number), but not a newer `MINOR` or `MAJOR`. `2.0.0` is older than the range's own version, so it is excluded too.
+
+SOLUTION
 
 Terminal on your computer
 
@@ -720,7 +730,17 @@ TRY IT YOURSELF
 
 Add a script called `dev` that runs `due.js` with `node --watch`. Run it, change a line in `due.js`, save, and watch it restart. Press Ctrl + C to stop it.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+`npm pkg set` is how the lesson added the earlier scripts, without opening `package.json` by hand: `npm pkg set scripts.<name>="<command>"`.
+
+HINT 2
+
+`npm pkg set scripts.dev="node --watch due.js"`, then run it with `npm run dev`.
+
+SOLUTION
 
 Terminal on your computer
 
@@ -746,7 +766,17 @@ TRY IT YOURSELF
 
 In the `packages/format` folder, add a `notes.txt` file. Run `npm pack --dry-run` and check whether it would be published. Explain the result.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look at how `packages/format/package.json` was changed just before this exercise, in [Publishing a package](#publishing).
+
+HINT 2
+
+The `files` field is an allow-list: only `index.js` (plus `package.json` and the README, which npm always adds) is named there, so anything else in the folder, including a brand new file, is left out.
+
+SOLUTION
 
 Terminal on your computer
 

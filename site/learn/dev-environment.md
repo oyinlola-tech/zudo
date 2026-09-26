@@ -295,7 +295,17 @@ projects/
     archive/
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Start from your home folder, then `cd` into each new folder before you can put something inside it — you can't `touch` a file into a folder you haven't entered yet.
+
+HINT 2
+
+The order is: `mkdir shopping`, `cd shopping`, `touch list.txt`, `mkdir archive`, then `ls` to check.
+
+SOLUTION
 
 Terminal on your computer
 
@@ -317,7 +327,17 @@ TRY IT YOURSELF
 
 A friend types `cd Projects` in their home folder and gets `No such file or directory`, but they are sure they made the folder. What is the most likely mistake, and how can they check?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Think about how `cd` matches names on Linux and macOS: is it case-sensitive?
+
+HINT 2
+
+Compare the name typed now, `Projects`, with the name made earlier — was it spelled with the same capitalisation both times? Running plain `ls` shows the real name.
+
+SOLUTION
 
 They made `projects` with a small `p`. On Linux and macOS, names are case-sensitive: `Projects` and `projects` are different names. Run `ls` to see the real name, or type `cd pro` and press Tab to let the shell complete it.
 
@@ -327,7 +347,17 @@ TRY IT YOURSELF
 
 In the devtools Console or the browser terminal, print how many letters are in the word `"developer"`, and the word in capitals. Hint: `"text".length` and `"text".toUpperCase()`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`"text".length` counts the characters. `"text".toUpperCase()` gives back a new, all-capitals copy of the text.
+
+HINT 2
+
+Two calls: `console.log("developer".length)` and `console.log("developer".toUpperCase())`.
+
+SOLUTION
 
 letters.js
 

@@ -4,7 +4,7 @@ description: "Track every change with Git, work on branches and resolve a real m
 source: https://zudojs.oyinlola.site/learn/git
 ---
 
-LEVEL 4 · LESSON 15 OF 20
+LEVEL 4 · LESSON 16 OF 21
 
 Professional development Core
 
@@ -444,7 +444,17 @@ TRY IT YOURSELF
 
 In your `task-api` repository, create a branch `health`, add a new file `health.js`, commit it, switch back to `main` and merge. Why is there no conflict, and what does `git log --oneline --graph` show?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+A conflict only happens when both sides changed the *same* lines of the *same* file. Did anything else touch `health.js`, or anything at all, on `main` while you worked?
+
+HINT 2
+
+When the branch you merge is simply ahead of `main`, with nothing new on `main`'s side, Git does not need to combine two histories at all — look up what it does instead in [Branches and merging](#branches).
+
+SOLUTION
 
 Run `git switch -c health`, create the file, `git add health.js`, `git commit -m "Add health check"`, `git switch main`, `git merge health`. There is no conflict because nobody else changed the same lines. If `main` got no new commits in the meantime, Git just moves `main` forward to your commit. That is a **fast-forward** merge, and the graph stays a straight line with no merge commit.
 
@@ -454,7 +464,17 @@ TRY IT YOURSELF
 
 Which of these belong in `.gitignore` for a Node.js project: `node_modules/`, `package.json`, `package-lock.json`, `.env`, `.env.example`, `dist/` (compiled output), `*.log`, `src/`?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask, for each one: could another developer regenerate this file from what *is* committed, or does it hold something secret? Those are the ones to leave out.
+
+HINT 2
+
+`node_modules/` and `dist/` are rebuilt by `npm install` and your build step; `.env` is secret; `*.log` is a byproduct of running the program. Everything else is source or the exact record needed to reproduce an install.
+
+SOLUTION
 
 Ignore `node_modules/`, `.env`, `dist/` and `*.log`: they are generated, secret or local. Commit `package.json` and `package-lock.json` (they let anyone reinstall the exact same packages), `.env.example` (names only, no values) and of course `src/`.
 
@@ -464,7 +484,17 @@ TRY IT YOURSELF
 
 Add a pattern to `scan.js` for lines like `SECRET=...` or `API_KEY=...` with a value of 16 or more characters, and test it on a line with a long value and on `API_KEY=` with no value.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The variable name can have letters before or after the word that matters: `[A-Z_]*(SECRET|KEY|TOKEN|PASSWORD)[A-Z_]*`. The value needs at least 16 non-space characters: `\S{16,}`.
+
+HINT 2
+
+`/^\s*[A-Z_]*(SECRET|KEY|TOKEN|PASSWORD)[A-Z_]*\s*=\s*\S{16,}/`
+
+SOLUTION
 
 scan-env.js
 

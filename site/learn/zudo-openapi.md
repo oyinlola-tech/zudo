@@ -491,6 +491,8 @@ The route options use short forms that save you the OpenAPI boilerplate:
 
 The same works for the operations of [the previous lesson](https://zudojs.oyinlola.site/learn/zudo-api): `toOpenAPIRouteDescriptors(registry, { basePath: "/api" })` turns them into route descriptions, and `createOpenAPIDocumentFromRoutes(routes, options)` from this package builds the document from any such list. The `middleware` option of `mountOpenAPI` can put the docs behind a sign-in when they are only for your team.
 
+`mountOpenAPI`'s `/docs` page is on by default, at `docsPath` (`/docs` unless you change it) — except when `NODE_ENV` is `production`, where it is off unless you pass `docsPath` yourself. `/openapi.json` stays mounted either way, since a machine reading it is not the same risk as a public HTML page: pass an explicit `docsPath` if your team still wants the browsable page in production, ideally behind the `middleware` sign-in check above.
+
 ## Practice
 
 TRY IT YOURSELF
@@ -499,7 +501,17 @@ TRY IT YOURSELF
 
 Add a route to `taskApiDocs()`'s manager for `PATCH /tasks/:id`: it takes an `id` path parameter and a body `{ done: boolean }`, and answers 200 with a `Task` or 404. Register the body schema as `TaskUpdate`. Validate the result.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The shape is the same as the worked example: `parameters` for `id`, `requestBody` with a `createComponentReference("schemas", "TaskUpdate")`, and two entries in `responses`.
+
+HINT 2
+
+`manager.addRoute({ method: "patch", path: "/tasks/:id", metadata: { openapi: { operationId: "tasks.update", parameters: [{ name: "id", in: "path", schema: { type: "integer", minimum: 1 } }], requestBody: { required: true, content: { "application/json": { schema: createComponentReference("schemas", "TaskUpdate") } } }, responses: { "200": { description: "The updated task", content: { "application/json": { schema: createComponentReference("schemas", "Task") } } }, "404": { description: "No task with this id" } } } } });`.
+
+SOLUTION
 
 patch.tsNode.js only
 
@@ -534,7 +546,17 @@ TRY IT YOURSELF
 
 Write `check-docs.ts`: it builds the Task API document for OpenAPI 3.0.3, prints `OpenAPI document OK` when it is valid, and otherwise prints the problems and sets `process.exitCode = 1`, so a CI job fails.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Branch on `result.valid`. In the success branch, `Object.keys(manager.generate().paths).length` gives you the number of paths to log next to `manager.generate().openapi`.
+
+HINT 2
+
+`if (result.valid) { console.log("OpenAPI document OK:", manager.generate().openapi, Object.keys(manager.generate().paths).length, "paths"); } else { for (const issue of result.errors) console.error(issue.path.join("."), issue.message); process.exitCode = 1; }`.
+
+SOLUTION
 
 check-docs.tsNode.js only
 

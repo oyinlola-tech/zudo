@@ -450,7 +450,7 @@ try {
 Output of `npx tsx locator-early.ts` and of the browser terminal
 
 ```ts
-DependencyResolutionError Failed to resolve DueTodayReminder: No registration found for token "Mailer". (chain: DueTodayReminder)
+DependencyResolutionError Failed to resolve DueTodayReminder: No registration found for token "Mailer" (required by "DueTodayReminder"). (chain: DueTodayReminder -> Mailer)
 ```
 
 The missing mailer stops the app at startup, with the chain that needed it. A deploy that fails to start is rolled back before a single user notices; a job that fails at 08:00 is a bug report.
@@ -716,8 +716,8 @@ Output of `npx tsx verify-run.ts` and of the browser terminal
 ```ts
 registrations checked: 5
 Wiring is broken:
-- TaskNotifier: Failed to resolve TaskNotifier: No registration found for token "Mailer". (chain: TaskNotifier)
-- InvoiceService: Failed to resolve InvoiceService: No registration found for token "PaymentGateway". (chain: InvoiceService)
+- TaskNotifier: Failed to resolve TaskNotifier: No registration found for token "Mailer" (required by "TaskNotifier"). (chain: TaskNotifier -> Mailer)
+- InvoiceService: Failed to resolve InvoiceService: No registration found for token "PaymentGateway" (required by "InvoiceService"). (chain: InvoiceService -> PaymentGateway)
 ```
 
 Both mistakes, including the one in a scoped registration that only a request would have reached, are reported before the app accepts traffic. Call the helper in the composition root, right after registering. The same call in a test checks the production wiring on every test run.
@@ -1028,7 +1028,17 @@ class InvoiceSender {
 }
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`constructor(private readonly clock: Clock, private readonly mailer: Mailer) {}`, the same as `TicketOpener`'s two-dependency constructor above.
+
+HINT 2
+
+`const month = new Date(this.clock.now()).toISOString().slice(0, 7); this.mailer.send(customer, \`Your invoice for ${month}: ₦12,500\`);`.
+
+SOLUTION
 
 invoice-injected.ts
 
@@ -1066,7 +1076,7 @@ Output of `npx tsx invoice-injected.ts` and of the browser terminal
 
 ```ts
 to chiamaka@example.com: Your invoice for 2026-09: ₦12,500
-Failed to resolve InvoiceSender: No registration found for token "Clock". (chain: InvoiceSender)
+Failed to resolve InvoiceSender: No registration found for token "Clock" (required by "InvoiceSender"). (chain: InvoiceSender -> Clock)
 ```
 
 The class now states its two dependencies, a test can build it with `new InvoiceSender(fakeClock, fakeMailer)` and no container, and a missing registration surfaces at resolve time, which the startup check turns into a failed deploy.
@@ -1077,7 +1087,17 @@ TRY IT YOURSELF
 
 Write `buildTestContainer(overrides)` for the `di` project. `overrides` may contain a `clock` and a `mailer`. It must use `registerTaskServices`, replace only what was given, and run `verifyContainer`. Show two containers with different clocks that do not affect each other.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`if (overrides.clock) container.replace(CLOCK, { useValue: overrides.clock });`, and the same shape for `overrides.mailer` and `MAILER`.
+
+HINT 2
+
+End with `await verifyContainer(container);` so a broken override still fails loudly, the same way `fresh.ts` above does it, one option at a time.
+
+SOLUTION
 
 test-container.ts
 
@@ -1128,7 +1148,17 @@ TRY IT YOURSELF
 
 The Task API will get a PostgreSQL repository. Define a `TaskRepository` interface with `save(title)` and `count()`, an in-memory and a (fake) PostgreSQL implementation, and a `TASK_REPOSITORY` token. Register it with a factory that reads a `storage: "memory" | "postgres"` setting. `TaskService`-like code must not contain an `if` about storage.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The factory receives the resolved `STORAGE` value as its `kind` parameter: compare it with `=== "postgres"`.
+
+HINT 2
+
+`(kind) => (kind === "postgres" ? new PostgresTaskRepository() : new MemoryTaskRepository())`.
+
+SOLUTION
 
 choose-storage.ts
 

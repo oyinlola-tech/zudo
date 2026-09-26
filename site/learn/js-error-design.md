@@ -981,7 +981,17 @@ TRY IT YOURSELF
 
 Write `rootCause(error)` that follows `.cause` links to the deepest error and returns it, and `findInChain(error, predicate)` that returns the first error in the chain for which `predicate` is true (or `undefined`). Both must stop on a chain that loops back on itself.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The loop condition needs two checks: `current instanceof Error` (so it stops at a non-error `cause`, including `undefined`) and `!seen.has(current)` (so a chain that loops back on itself stops instead of running forever).
+
+HINT 2
+
+`for (let current = error; current instanceof Error && !seen.has(current); current = current.cause) { seen.add(current); yield current; }`
+
+SOLUTION
 
 root-cause.js
 
@@ -1028,7 +1038,17 @@ TRY IT YOURSELF
 
 A registration form has `email`, `phone` (11 digits for a Nigerian number) and `password` (at least 10 characters). Write `validateSignup(form)` that throws one `AggregateError` listing every invalid field, where each inner error has a `field` property, and returns the form if everything is valid.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Test each field and `push` a `new FieldError(fieldName, message)` for every one that fails — do not stop at the first failure, since the whole point is to report all of them together.
+
+HINT 2
+
+`if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email ?? "")) problems.push(new FieldError("email", "enter a valid email address"));` — the same shape for `phone` and `password`, then `if (problems.length) throw new AggregateError(problems, "signup form has errors");`.
+
+SOLUTION
 
 signup.js
 
@@ -1102,7 +1122,17 @@ Output of `node bad-refund.js` and of the browser terminal
 refunded
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+All three problems point the same way: let the failure travel. `await` the call so its rejection can reach a `catch`, do not swallow it there, and remove the `finally` that would paper over any error with a hardcoded success.
+
+HINT 2
+
+`try { await gateway.refund(order.chargeId); return "refunded"; } catch (error) { throw new Error(\`refund for ${order.id} (${order.chargeId}) failed\`, { cause: error }); }` — no `finally` needed at all.
+
+SOLUTION
 
 Three problems: the promise from `gateway.refund` is not awaited, so its rejection can never reach the `catch` block; `.catch(() => {})` throws the rejection away (someone added it to silence an "unhandled rejection" warning, which was the one signal that something was wrong); and the `return` in `finally` would override any error anyway. Await the call, drop the swallowing, and wrap with context:
 

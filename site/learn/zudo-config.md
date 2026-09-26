@@ -685,7 +685,9 @@ TRY IT YOURSELF
 
 Add a `request_timeout_ms` setting to the [config schema](#validate), with a default of 30000 in the defaults source. It must be a whole number from 1000 to 120000. Check it with `TASKS_REQUEST_TIMEOUT_MS=500` and with `5000`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+SOLUTION
 
 timeout-setting.ts
 
@@ -723,7 +725,9 @@ TRY IT YOURSELF
 
 A teammate wants to debug a production problem and adds `console.log("config", config.toObject())` at startup. What is wrong, and what should the line be?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+SOLUTION
 
 `toObject()` returns the **real** values, so the JWT secret and the database password would be printed into the production logs, where anyone with log access can read them, and log services keep them for months. Use `config.toSafeObject()`, which replaces sensitive values with `"[REDACTED]"`, or better, log only the few settings you need, such as the port and the origins. If a secret was ever logged, treat it as leaked and replace it.
 

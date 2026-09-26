@@ -554,7 +554,17 @@ TRY IT YOURSELF
 
 Write `withFallback(check, mode)` that wraps an async limiter check. If the check throws (the store is down), it returns `{ allowed: true }` in `"open"` mode and `{ allowed: false, retryAfterMs: 1000 }` in `"closed"` mode, and logs a warning either way. Use it for a general API limit and a log-in limit while the store is down.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The whole risky part is `await check(key, now)`, in a `try`. Everything else is choosing what to return once you're in the `catch`.
+
+HINT 2
+
+`try { return await check(key, now); } catch (error) { console.log(\`warning: rate limit store failed (${error.message}); failing ${mode}\`); return mode === "open" ? { allowed: true } : { allowed: false, retryAfterMs: 1000 }; }`
+
+SOLUTION
 
 fallback.js
 
@@ -597,7 +607,17 @@ TRY IT YOURSELF
 
 An in-memory token bucket keeps an entry for every key it has seen. Add a `sweep(now)` function that deletes every bucket that would be *full* at `now`. Explain why deleting a full bucket changes nothing for that client, then show the map shrinking.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Call the existing `refill` helper for each bucket to find out what it would hold *right now*, without changing the bucket itself, then compare that to `capacity`.
+
+HINT 2
+
+`for (const [key, bucket] of buckets) { if (refill(bucket, now) >= capacity) buckets.delete(key); } return buckets.size;`
+
+SOLUTION
 
 sweep.js
 
@@ -649,7 +669,17 @@ TRY IT YOURSELF
 
 A free plan allows 1,000 requests per day (UTC), counted with a fixed window. Write `dailyQuota(limit)` returning `(key, now)` decisions with a `retryAfterSeconds` that points at the next UTC midnight. Test it at 23:59:30 UTC with the quota already used up.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The id needs both the key and the day number, exactly like the worked example's `id`, just built from `DAY` instead of `HOUR`.
+
+HINT 2
+
+`const day = Math.floor(now / DAY); const id = \`${key}:${day}\`; const count = used.get(id) ?? 0; if (count >= limit) return { allowed: false, retryAfterSeconds: Math.ceil(((day + 1) * DAY - now) / 1000) }; used.set(id, count + 1); return { allowed: true, remaining: limit - count - 1 };`
+
+SOLUTION
 
 daily.js
 

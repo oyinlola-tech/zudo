@@ -821,7 +821,17 @@ TRY IT YOURSELF
 
 Add an `editor` role to `roles.ts`. Editors can do everything a member can, and can update any task, but must not delete tasks. Print a small table of `task:update` and `task:delete` for a member, an editor and an admin.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Add one more role object to the array: `{ name: "editor", permissions: ["task:update"], inherits: ["member"] }`. It only needs the one permission it adds; `inherits` brings the rest.
+
+HINT 2
+
+Also change `admin`'s `inherits` from `["member"]` to `["editor"]`, so the hierarchy is viewer → member → editor → admin, and admin still gets everything through the chain.
+
+SOLUTION
 
 editor.ts
 
@@ -861,7 +871,17 @@ TRY IT YOURSELF
 
 A teammate wrote this condition so that support staff can read any task: `(ctx) => ctx.metadata?.get("support") === true`, and filled the metadata with `{ support: request.getHeader("x-support") === "yes" }`. What can an attacker do, and how do you fix it?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The fix is entirely in the role definition: give `{ name: "support", ... }` a `permissions` array instead of an empty one.
+
+HINT 2
+
+`{ name: "support", permissions: ["task:read"] }`. Nothing about `currentActor` or the request needs to change: the role, not a header, is what grants the read.
+
+SOLUTION
 
 Anyone can send the header `x-support: yes` and read every task. The fix is to make support a **role**, stored in your database, and grant it `task:read`. The client never gets to say which role it has:
 
@@ -894,7 +914,17 @@ TRY IT YOURSELF
 
 Change the deny rule from the deny section so that a locked task stops members, but an admin can still update it. Use `allOf` and `not` from the package to combine conditions.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`allOf(conditionA, conditionB)` is true only when both are true; `not(condition)` flips one. You want "locked, and not an admin".
+
+HINT 2
+
+`condition: allOf(isLocked, not(isAdmin))`. For grace, `isAdmin` is true, so `not(isAdmin)` is false, so the deny rule's condition is false and it does not apply.
+
+SOLUTION
 
 locked.ts
 

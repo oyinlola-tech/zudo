@@ -840,7 +840,17 @@ TRY IT YOURSELF
 
 Marketing wants to advertise "next-day delivery" and "two-day delivery" from Lagos. Write `zones(graph, start, maxDays)` that runs BFS but never expands a hub at distance `maxDays`, and returns the hubs grouped by day. How much of the network does it look at for `maxDays = 2`?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Right after taking `hub` off the queue, check whether it is already at `maxDays`. If so, `continue` before `expanded++` and before looking at its neighbours.
+
+HINT 2
+
+`if (dist.get(hub) === maxDays) continue;` as the first line inside the loop, before `expanded++`.
+
+SOLUTION
 
 zones.js
 
@@ -890,7 +900,17 @@ TRY IT YOURSELF
 
 A town grid has several parcel lockers (`L`) and buildings (`#`). For every free cell, compute the number of steps to the *nearest* locker. Running one BFS per cell would be O((R × C)²). Instead, start a single BFS with *all* lockers in the queue at distance 0 (a multi-source BFS), and print the distances as a map.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Walk the queue with a `head` index. For each `[r, c]` taken off, check its four neighbours; skip walls and any cell that already has a distance (`dist[nr][nc] !== -1`), and give the rest `dist[r][c] + 1`.
+
+HINT 2
+
+`for (let head = 0; head < queue.length; head++) { const [r, c] = queue[head]; for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) { const nr = r + dr, nc = c + dc; if (nr < 0 || nr >= height || nc < 0 || nc >= width) continue; if (rows[nr][nc] === "#" || dist[nr][nc] !== -1) continue; dist[nr][nc] = dist[r][c] + 1; queue.push([nr, nc]); } }`
+
+SOLUTION
 
 lockers.js
 
@@ -949,7 +969,17 @@ TRY IT YOURSELF
 
 Each road has a fuel cost and some have a toll, both in naira. Find the cheapest route from Lagos to Enugu using Dijkstra with cost = fuel + toll, and print the cost of each leg. Reuse `dijkstra` and `routeTo` by building a graph whose weights are the total cost.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Dijkstra only ever sees one number per edge. Add `fuel` and `toll` together before building the graph, the same way the worked example added minutes and difficulty.
+
+HINT 2
+
+`weightedGraph(legs.map(([a, b, fuel, toll]) => [a, b, fuel + toll]))`
+
+SOLUTION
 
 tolls.js
 

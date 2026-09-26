@@ -1308,7 +1308,17 @@ TRY IT YOURSELF
 
 Rewrite the workflow that actionlint complained about so that it passes: fix the `needs`, the step key, and pass the commit message and the deploy key through `env` instead of pasting them into the scripts.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read actionlint's three messages one at a time: a job name that does not exist, an unknown step key (a typo), and an expression pasted straight into a shell command.
+
+HINT 2
+
+`needs: test` (not `tests`), `timeout-minutes` (not `timeout-minute`), and an `env:` block on the step so the script reads `$MESSAGE` and `$DEPLOY_KEY` instead of `${{ … }}` being substituted into the command text.
+
+SOLUTION
 
 ```ts
 name: Deploy
@@ -1344,7 +1354,17 @@ TRY IT YOURSELF
 
 Extend the audit gate idea: an exception for a package that is no longer in the report is dead weight that could hide a future problem with the same package. Write `staleExceptions(report, exceptions)` that returns the package names of exceptions that match nothing in the report.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Take the package name of each exception, then keep only the ones that are *not* a key of `report.vulnerabilities`. The `in` operator asks whether a key exists.
+
+HINT 2
+
+`return exceptions.map((e) => e.packageName).filter((name) => !(name in report.vulnerabilities));`
+
+SOLUTION
 
 stale-exceptions.ts
 
@@ -1379,7 +1399,17 @@ TRY IT YOURSELF
 
 The team wants to rename `tasks.name` to `tasks.title`. Plan the releases so that every deploy can be rolled back to the release before it, and say what each migration and each release does.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+A rename cannot be one release: the old code must still work on the new schema until nothing older is running. Split it into expand, migrate reads, then contract, as the deployment lesson's migration rules describe.
+
+HINT 2
+
+Ask, for each release: if I rolled back to the one before it right now, which column would the rolled-back code expect, and is that column still being written?
+
+SOLUTION
 
 1. **Release A (expand).** Migration: add nullable `title`. Code: writes both `name` and `title`, reads `name`. Rolling back to the previous release is safe: it ignores `title`.
 2. **Release B (migrate reads).** Migration: `UPDATE tasks SET title = name WHERE title IS NULL`, then make `title` `NOT NULL`. Code: reads `title`, still writes both. Rolling back to A is safe: A reads `name`, which is still written.

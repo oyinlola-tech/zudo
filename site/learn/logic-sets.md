@@ -548,7 +548,17 @@ TRY IT YOURSELF
 
 The shop from the start has a third list: customers who unsubscribed. Build the final send list: everyone on the web or store list, minus anyone who unsubscribed, with emails normalised. Print the number of emails and the list.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+"On either list, but not unsubscribed" is (W ∪ S) \ U: union first, then difference.
+
+HINT 2
+
+`const sendTo = web.union(store).difference(unsubscribed);`
+
+SOLUTION
 
 send-list.js
 
@@ -583,7 +593,17 @@ TRY IT YOURSELF
 
 Products have tags. Write `similarity(a, b)`: the number of shared tags divided by the number of distinct tags on either product. (It is 1 for identical tag sets and 0 for no overlap. This measure is called the **Jaccard index**.) Compare a rice cooker with a blender and with a novel.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The ratio is `a.intersection(b).size` divided by `a.union(b).size`.
+
+HINT 2
+
+Guard first: `if (all.size === 0) return 0;` — otherwise dividing 0 by 0 gives `NaN`.
+
+SOLUTION
 
 similar.js
 
@@ -619,7 +639,17 @@ TRY IT YOURSELF
 
 Given the sets of customers who opened a promotion email, who clicked it, and who bought, find: (a) customers who clicked but did not buy, (b) customers who bought without clicking (they came some other way), (c) whether everyone who clicked had also opened it.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+"A but not B" is always `A.difference(B)`; the order of the two sets matters.
+
+HINT 2
+
+"Every A is a B" is always `A.isSubsetOf(B)`: here, `clicked.isSubsetOf(opened)`.
+
+SOLUTION
 
 funnel.js
 

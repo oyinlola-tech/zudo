@@ -849,7 +849,17 @@ TRY IT YOURSELF
 
 Write a `Duration` class holding whole seconds. In text it should read like `1h 05m 09s`. Unlike money, durations may be used as numbers (seconds) for comparisons and arithmetic, but a binary `+` with a string must still produce readable text. Use `Symbol.toPrimitive` to make `"number"` return seconds and both `"string"` and `"default"` return the text.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The `hint` argument is `"number"`, `"string"` or `"default"`. Only `"number"` needs special handling here — everything else falls into the same text branch.
+
+HINT 2
+
+`if (hint === "number") return this.seconds; const h = Math.floor(this.seconds / 3600); const m = Math.floor((this.seconds % 3600) / 60); const s = this.seconds % 60; return \`${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s\`;`
+
+SOLUTION
 
 duration.js
 
@@ -892,7 +902,17 @@ TRY IT YOURSELF
 
 A shop platform loads plugins from separate packages. A plugin is any object marked with the registry symbol `Symbol.for("shop.plugin")` whose value is `{ name, version }`. Write `loadPlugins(candidates)` that returns the names and versions of the marked objects and ignores the rest, including an object with a *string* key `"shop.plugin"`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`typeof value === "object" && value !== null` guards against `null` and primitives like `"text"` before you read `value[PLUGIN]`. The string key `"shop.plugin"` is a completely different key from the symbol, so `lookalike[PLUGIN]` is `undefined`.
+
+HINT 2
+
+`candidates.filter((value) => typeof value === "object" && value !== null && typeof value[PLUGIN] === "object").map((plugin) => \`${plugin[PLUGIN].name}@${plugin[PLUGIN].version}\`)`
+
+SOLUTION
 
 plugins.js
 
@@ -926,7 +946,17 @@ TRY IT YOURSELF
 
 Write an `OrderLog` class with `add(event)`. Make it iterable with `Symbol.iterator` (events in order) and async-iterable with `Symbol.asyncIterator` (the same events, one per tick, as if streamed from a server). Give it the tag `OrderLog`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`yield*` delegates to another iterable in one line: `yield* this.#events;` yields everything `this.#events` would yield, in order.
+
+HINT 2
+
+`*[Symbol.iterator]() { yield* this.#events; }`, `async *[Symbol.asyncIterator]() { for (const event of this.#events) { await null; yield event; } }`, and `get [Symbol.toStringTag]() { return "OrderLog"; }`.
+
+SOLUTION
 
 order-log.js
 

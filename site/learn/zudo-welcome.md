@@ -204,7 +204,17 @@ TRY IT YOURSELF
 
 For each need, name the ZudoJS package: (a) send a welcome e-mail in the background after sign-up; (b) let only admins delete books; (c) read `DATABASE_URL` and fail if it is missing; (d) count requests per second on a dashboard.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Two of these are about who may do something or where a setting comes from; the other two are about work that happens later, or in a separate view.
+
+HINT 2
+
+"In the background" and "on a dashboard" each point at a package named for exactly that job in the shelf diagram above.
+
+SOLUTION
 
 (a) `@zudojs/queue`, for background jobs. (b) `@zudojs/permissions`, for who may do what. (c) `@zudojs/config`. (d) `@zudojs/observability`, for metrics.
 
@@ -214,7 +224,17 @@ TRY IT YOURSELF
 
 Change the example so that `BookService` also has `findByTitle(title)`, which throws `NotFoundError` when no book has that exact title. Try it with a title that exists and one that does not.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`books.find((b) => b.title === title)` gives you the match, or `undefined`.
+
+HINT 2
+
+When it is `undefined`: `throw new NotFoundError(\`No book called "${title}"\`);`, otherwise return it.
+
+SOLUTION
 
 find-by-title.ts
 

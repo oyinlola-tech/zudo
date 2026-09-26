@@ -860,7 +860,17 @@ TRY IT YOURSELF
 
 Orders wants to add a required `channel` field (`"web"`, `"mobile"` or `"pos"`). Every order placed before the change came from the web. Write an upcaster chain that turns v1 and v2 bodies into v3, and show that both old fixtures and a real v3 body come out in the same shape.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The v1 step reads `body.totalKobo`, the number that already exists, into `total.amountMinor` — it must not invent a fixed number. The v2 step's channel is `"web"`, exactly as the task says.
+
+HINT 2
+
+`1: (body) => ({ ...body, total: { amountMinor: body.totalKobo, currency: "NGN" }, totalKobo: undefined })`, and `2: (body) => ({ ...body, channel: "web" })`.
+
+SOLUTION
 
 upcast-v3.ts
 
@@ -941,7 +951,17 @@ false
 false
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Drop `.strict()` entirely, so an object with an extra field like `courier` is no longer rejected.
+
+HINT 2
+
+`status: schema.string().transform((value) => (value === "paid" || value === "shipped" ? value : "other" as const))` — `orderId: schema.string()` stays required, exactly as it is now.
+
+SOLUTION
 
 tolerant-notifications.ts
 
@@ -978,7 +998,17 @@ TRY IT YOURSELF
 
 Using the provider verification from this lesson, add a fourth candidate that changes `lines` from `[{ sku, quantity }]` to `[{ sku, qty }]`. Before running it, predict which consumers fail. Then explain why the inventory pact with `like([{ sku: "lamp", quantity: 2 }])` does *not* catch it, and change the pact so it does.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Only inventory reads `lines` from `order.placed` — look at what the other consumers' pacts actually assert on before predicting who fails.
+
+HINT 2
+
+`like([...])` only checks that `lines` is an array shaped like the example overall — it never looks inside the array at what each element contains. What would a matcher need to describe to reach into `lines[0].quantity` specifically?
+
+SOLUTION
 
 Prediction: only inventory should fail, since it is the only consumer that reads `lines`. But with this lesson's `check`, it passes: `like([…])` only checks that `lines` is an array, not what is inside. That is a real gap, and real tools handle it with an "each like" matcher that checks every element against the example's shape. The quick fix here is to describe the element explicitly, for example `expects: { lines: { 0: { sku: like("lamp"), quantity: exact(2) } } }`: the nested expectation walks into `lines[0]` and reports `$.lines.0.quantity is missing` for the candidate. A contract test is only as precise as its matchers, so test your test: run it once against a response you know is broken and check that it fails.
 

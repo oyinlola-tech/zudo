@@ -278,6 +278,7 @@ const declined = new PaymentDeclinedError("ORD-1001", "Insufficient Funds");
 const down = new PaymentProviderError("paystack", "ORD-1002", new Error("ECONNRESET"));
 
 console.log(serializePublicError(declined));
+console.log(serializePublicError(declined, { publicMetadataKeys: ["reason"] }));
 console.log(serializePublicError(down));
 console.log(String(down), "| cause for the log:", (down.cause as Error).message);
 console.log(isPaymentError(down), isPaymentError(new Error("other")));
@@ -290,8 +291,14 @@ Output of `npx tsx errors-demo.ts`
   code: 'ERR_PAYMENT_DECLINED',
   message: 'Payment ORD-1001 was declined: Insufficient Funds',
   category: 'business',
+  statusCode: 402
+}
+{
+  code: 'ERR_PAYMENT_DECLINED',
+  message: 'Payment ORD-1001 was declined: Insufficient Funds',
+  category: 'business',
   statusCode: 402,
-  metadata: { reference: 'ORD-1001', reason: 'Insufficient Funds' }
+  metadata: { reason: 'Insufficient Funds' }
 }
 {
   code: 'ERR_PAYMENT_PROVIDER',
@@ -303,7 +310,9 @@ PaymentProviderError [ERR_PAYMENT_PROVIDER]: Provider paystack failed for paymen
 true false
 ```
 
-The declined card is exposed with its reason, because the customer needs to know to try another card. The provider failure is reduced to a generic message: "ECONNRESET" and the provider's name mean nothing to a customer and tell an attacker about your infrastructure. The full detail stays on the error for your logs. The [error system lesson](https://zudojs.oyinlola.site/learn/zudo-errors#serialize) explains both views. One gap to know: `serializePublicError` leaves out a `ValidationError`'s `issues`, so an app's error handler adds them to the response itself, as the Task API's handler in that lesson does. Say so in your README, because the issues are the useful part of `ERR_PAYMENT_INVALID`.
+Since `@zudojs/errors` 1.3, `expose: true` only says the *message* is safe for a client; metadata is left out by default even on an exposed error, because plenty of exposed errors carry decline codes, upstream ids or other internal state alongside the message. The bare `serializePublicError(declined)` call above shows that: no `reason`, even though `PaymentDeclinedError` is a 402 the customer must act on. Your host app opts a field in by name, with `publicMetadataKeys`, at the point it serializes the error, not inside your package: `serializePublicError(declined, { publicMetadataKeys: ["reason"] })` reveals `reason` and nothing else, not even `reference` (which is already in the message anyway). The alternative, `exposeMetadata: true`, reveals every metadata key on every exposed error, which is usually more than you want to promise. Document which keys are safe to allow-list per error code in your README, exactly like the codes and statuses table already there.
+
+The provider failure is reduced to a generic message: "ECONNRESET" and the provider's name mean nothing to a customer and tell an attacker about your infrastructure. The full detail stays on the error for your logs, via `.cause`, regardless of any serializer options. The [error system lesson](https://zudojs.oyinlola.site/learn/zudo-errors#serialize) explains both views. One more gap to know: `serializePublicError` leaves out a `ValidationError`'s `issues` unless you ask for them the same way, so an app's error handler adds them to the response itself, as the Task API's handler in that lesson does. Say so in your README, because the issues are the useful part of `ERR_PAYMENT_INVALID`.
 
 ## The provider adapter
 
@@ -972,12 +981,15 @@ tags: [payments, errors]
 ---
 # Errors
 
-| Code | Class | Status | Shown to clients |
-| --- | --- | --- | --- |
-| ERR_PAYMENT_INVALID | InvalidPaymentError | 400 | yes, with issues |
-| ERR_PAYMENT_DECLINED | PaymentDeclinedError | 402 | yes, with the reason |
-| ERR_PAYMENT_CONFLICT | PaymentConflictError | 409 | yes |
-| ERR_PAYMENT_PROVIDER | PaymentProviderError | 502 | no, generic message |
+| Code | Class | Status | Shown to clients | Safe `publicMetadataKeys` |
+| --- | --- | --- | --- | --- |
+| ERR_PAYMENT_INVALID | InvalidPaymentError | 400 | yes, with issues | — (pass the error's own `issues` instead) |
+| ERR_PAYMENT_DECLINED | PaymentDeclinedError | 402 | yes, with the reason | `["reason"]` |
+| ERR_PAYMENT_CONFLICT | PaymentConflictError | 409 | yes | none needed: the reference is already in the message |
+| ERR_PAYMENT_PROVIDER | PaymentProviderError | 502 | no, generic message | none: never allow-list this one |
+
+Pass the listed keys to `serializePublicError(error, { publicMetadataKeys: [...] })`
+in your own error handler. `@zudojs/errors` never exposes metadata on its own.
 
 Back to the [README](../README.md).
 ```
@@ -1181,7 +1193,17 @@ TRY IT YOURSELF
 
 `maxAmountKobo` is documented but untested. Add a Vitest test: with `maxAmountKobo: 100_000`, a charge of 100,001 kobo fails with `ERR_PAYMENT_INVALID` and an issue on `amountKobo`, and exactly 100,000 kobo succeeds.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Two assertions: `await expect(payments.charge({ ...base, reference: "A", amountKobo: 100_001 })).rejects.toMatchObject({ code, issues })`, then the mirror `.resolves.toMatchObject(...)` for exactly 100,000 kobo.
+
+HINT 2
+
+`await expect(payments.charge({ ...base, reference: "A", amountKobo: 100_001 })).rejects.toMatchObject({ code: PaymentErrorCode.INVALID, issues: [{ field: "amountKobo", message: "must be at most 100000" }] }); await expect(payments.charge({ ...base, reference: "B", amountKobo: 100_000 })).resolves.toMatchObject({ amountKobo: 100_000 });`
+
+SOLUTION
 
 tests/limit.test.ts
 
@@ -1224,7 +1246,17 @@ TRY IT YOURSELF
 
 The package is at 1.4.2. Give the next version for each release, on its own: (a) the Paystack adapter now retries once on HTTP 503; (b) `PaymentDeclinedError` gets a new `retryable` property; (c) the default `maxAmountKobo` drops from ₦5,000,000 to ₦1,000,000; (d) `createFakeProvider` moves from `/testing` to the main entry, and `/testing` is removed.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For each change, ask: does existing, correctly-typed calling code stop compiling, or start behaving differently, without any change on its own part? That question is the line between minor and major.
+
+HINT 2
+
+The versioning table earlier in this lesson already covers the closest match for three of these four: a new field, a changed default, and removing or moving an export. Find the matching row before you decide (a), the one case not already in the table.
+
+SOLUTION
 
 - (a) **1.4.3** or **1.5.0**. Retrying a failed call is a behaviour change callers do not have to adapt to; most teams call it a patch. If you document it as a feature ("adapters now retry"), a minor is fine.
 - (b) **1.5.0**: a new property is an addition.
@@ -1237,7 +1269,17 @@ TRY IT YOURSELF
 
 The adapter aborts a call after `timeoutMs`. Prove it: give the provider a fake `fetch` that never answers until its signal aborts, set `timeoutMs: 50`, and show that the service turns the timeout into `ERR_PAYMENT_PROVIDER` with the `TimeoutError` as its cause.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Add an `abort` listener on `init.signal` inside the promise executor, and reject with the signal's own reason when it fires. Do not resolve or reject any other way.
+
+HINT 2
+
+`init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));` — and remove the placeholder `reject(new Error("not implemented"))` below it.
+
+SOLUTION
 
 timeout.tsNode.js only
 

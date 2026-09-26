@@ -213,7 +213,7 @@ Output of `npx tsx hashing.ts`
 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 sha512 64 bytes, 86 chars
 true
-RangeError - HMAC key must be at least 16 bytes.
+CryptoError - HMAC key must be at least 16 bytes, received 6.
 ```
 
 The last call shows a safety rule in the package: an HMAC key shorter than 16 bytes is refused. A six-letter "secret" can be guessed offline from one signed value. Use 32 random bytes, stored as base64 in an environment variable, as below.
@@ -392,8 +392,8 @@ v1$scrypt$16384$8$5 … 86 chars
 true
 false
 scrypt 16 byte salt, 32 byte hash
-RangeError - scrypt cost for a new password hash must be at least 16384.
-RangeError - Password must not exceed 1024 characters.
+CryptoError - scrypt cost for a new password hash must be at least 16384.
+CryptoError - Password must not exceed 1024 characters.
 policy: { MIN_LENGTH: 8, RECOMMENDED_MIN_LENGTH: 12, MAX_LENGTH: 1024 } short ok? false - hashPassword('abc') works: true
 ```
 
@@ -450,7 +450,7 @@ The envelope carries a version (`v1`), the algorithm, the IV, the tag and the ci
 
 > LET THE PACKAGE CHOOSE THE IV
 >
-> The lower-level `encrypt(plaintext, key, { iv })` accepts an IV you pass in, and does not stop you from passing the same one twice. With the same key, a repeated IV lets an attacker recover plaintexts and forge tags, as [the node:crypto lesson](https://zudojs.oyinlola.site/learn/node-crypto#encryption) showed. Never pass `iv`; the package generates a fresh one for every call.
+> The lower-level `encrypt(plaintext, key, { iv })` accepts an IV you pass in. With the same key, a repeated IV lets an attacker recover plaintexts and forge tags, as [the node:crypto lesson](https://zudojs.oyinlola.site/learn/node-crypto#encryption) showed, so `@zudojs/crypto` 1.4.0 made it a refusal: passing an IV this process has already used under the same key throws a `CryptoError` instead of encrypting. The guard only remembers what this one process has seen, so it is a safety net, not a proof of uniqueness across a restart or a fleet of servers. Never pass `iv` yourself; the package generates a fresh one for every call, which never trips the guard.
 
 ### Keys: load, name, rotate
 
@@ -765,7 +765,17 @@ TRY IT YOURSELF
 
 Team invites are read aloud and typed on phones. Write `inviteCode()` that returns 12 characters from an alphabet without `0`, `O`, `1`, `I` or `L`, formatted in groups of four (`ABCD-EFGH-JKMN`). How many bits of entropy does it have, and is that enough for a code that expires in 7 days and allows 10 attempts?
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`await randomFromAlphabet(12, ALPHABET)` gives you 12 raw characters. `raw.match(/.{4}/g)` splits a string into chunks of four.
+
+HINT 2
+
+`const raw = await randomFromAlphabet(12, ALPHABET); return raw.match(/.{4}/g)!.join("-");`.
+
+SOLUTION
 
 invite-code.tsNode.js only
 
@@ -799,7 +809,17 @@ TRY IT YOURSELF
 
 Use `signValue` and `verifyValue` to build `confirmationLink(userId, email)` and `confirm(sig, now)`. The link lasts 24 hours and must only work for confirmations. Show that a confirmation link cannot be used as a download link, and that a download link cannot confirm an e-mail.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`confirmationLink`: `const sig = await signValue(signing, "email-confirmation", { user: userId, email }, now + DAY); return \`/confirm?sig=${sig}\`;`.
+
+HINT 2
+
+`confirm`: `const result = await verifyValue(signing, "email-confirmation", sig, at); return result.ok ? \`confirmed ${result.data["email"]}\` : \`refused: ${result.reason}\`;`.
+
+SOLUTION
 
 confirm-email.tsNode.js only
 
@@ -847,7 +867,17 @@ TRY IT YOURSELF
 
 Write `rotateAll(vault, rows)` that re-seals every row whose value `needsRotation`, and returns how many it changed. Rows look like `{ owner: "freelancer:17", sealed: "…" }`. Run it twice and show the second run changes nothing.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Skip a row when `!vault.needsRotation(row.sealed)`. Otherwise read its plaintext first: `await vault.open(row.sealed, row.owner)`.
+
+HINT 2
+
+`if (!vault.needsRotation(row.sealed)) continue; row.sealed = await vault.seal(await vault.open(row.sealed, row.owner), row.owner); changed++;`. The second run finds every row already sealed with the current key, so it changes nothing.
+
+SOLUTION
 
 rotate-all.tsNode.js only
 

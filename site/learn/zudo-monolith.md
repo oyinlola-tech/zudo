@@ -1065,7 +1065,17 @@ TRY IT YOURSELF
 
 Write `cancelOrder(db, orderId)`: in one transaction, put every line's quantity back into stock and mark the order `cancelled`. Refuse to cancel an order that is already cancelled. Check it with a paid order, then cancel it twice.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Start with `const { rows } = await tx.query<{ status: string }>("SELECT status FROM orders WHERE id = $1 FOR UPDATE", [orderId]);`, then the two guard `if`s with their `throw`s.
+
+HINT 2
+
+`for (const line of await orders.lines(orderId)) await products.changeStock(line.sku, line.quantity);` then `await orders.setStatus(orderId, "cancelled");`.
+
+SOLUTION
 
 cancel.tsNode.js only
 
@@ -1123,7 +1133,17 @@ TRY IT YOURSELF
 
 Decide which area owns each table: users own `users`, products own `products`, orders own `orders`, `order_lines` and `payments`, notifications own `notifications`. Extend the "who uses what" idea: for a list of files with their area and the tables they touch, print every use of a table owned by *another* area.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Two nested loops: `for (const { file, area, tables } of files) { for (const table of tables) { ... } }`.
+
+HINT 2
+
+Inside both loops: `if (owner[table] !== area) console.log(\`${file} (${area}) uses ${table}, owned by ${owner[table]}\`);`.
+
+SOLUTION
 
 ownership.js
 
@@ -1163,7 +1183,17 @@ TRY IT YOURSELF
 
 For each situation, choose: keep the monolith, make it a modular monolith, or extract a service. (a) Three developers, 200 orders a day, weekly releases. (b) The catalog is slow on sale days because product pages are read constantly. (c) Five teams, 40 developers; releases wait for each other and teams break each other's tables. (d) A new fraud-checking feature needs a different language and must keep running even when the shop is being deployed.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Is the strain about people (teams blocking each other), about one hot path being slow, or about something a monolith genuinely cannot do at all (a different language, independent uptime)?
+
+HINT 2
+
+A modular monolith fixes boundaries inside one codebase; it does not, by itself, give a component its own language or its own deploy schedule. When do you actually need that?
+
+SOLUTION
 
 1. **Keep the monolith.** None of the strains exists yet; splitting would add work and no benefit.
 2. **Keep it, and cache.** Slow reads are fixed with an index, a cache ([the cache lesson](https://zudojs.oyinlola.site/learn/zudo-cache)) or a read replica long before they need a separate service.

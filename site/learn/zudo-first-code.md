@@ -306,7 +306,17 @@ TRY IT YOURSELF
 
 Add an `update(id, changes)` method to `TaskService`. It should accept any subset of the fields, so use `NewTaskSchema.partial()`, which makes every field optional. It must throw `NotFoundError` for a missing task. Try it with a good change, a bad one and a missing task.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`const changes = TaskChanges.parse(input);` gives you an object where a missing field is `undefined`.
+
+HINT 2
+
+`const updated: Task = { ...task, title: changes.title ?? task.title, done: changes.done ?? task.done }; tasks.set(id, updated); return updated;`.
+
+SOLUTION
 
 task.update.ts
 

@@ -745,7 +745,17 @@ TRY IT YOURSELF
 
 A payment provider sometimes sends the same transfer twice. Write `firstRepeat(references)` that returns the first reference that appears for the second time (the earliest second occurrence), or `null`. It must be O(n).
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+One pass, one `Set`. Check `seen.has(ref)` before you `seen.add(ref)`, so a reference is only reported the second time it appears.
+
+HINT 2
+
+`for (const ref of references) { if (seen.has(ref)) return ref; seen.add(ref); }`, then `return null;` after the loop.
+
+SOLUTION
 
 first-repeat.js
 
@@ -780,7 +790,17 @@ TRY IT YOURSELF
 
 Support staff look customers up by email, and they type emails in any case with stray spaces. Write a `PhoneBook` class backed by a `Map` with `add(email, phone)` and `find(email)`, so that `" Ada@Shop.NG"` finds the entry added as `"ada@shop.ng"`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Normalize once, in `#key`: trim the string, then lower-case it. Both `add` and `find` should compute the key the same way before touching `#entries`.
+
+HINT 2
+
+`static #key(email) { return email.trim().toLowerCase(); }`, then `this.#entries.set(PhoneBook.#key(email), phone)` in `add`, and `this.#entries.get(PhoneBook.#key(email)) ?? null` in `find`.
+
+SOLUTION
 
 phone-book.js
 
@@ -826,7 +846,17 @@ TRY IT YOURSELF
 
 Build a tiny hash set of strings with **linear probing**: a fixed array of 16 slots; to add a key, start at `fnv1a(key) % 16` and move to the next slot (wrapping around at the end) until you find the key or an empty slot. Implement `add` and `has`, and count probes. What happens when the array is full?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Compute the starting index once with `fnv1a(key) % this.slots.length`. Then loop, moving to `(i + 1) % this.slots.length` each time you don't find an empty slot or the key itself.
+
+HINT 2
+
+`let i = fnv1a(key) % this.slots.length; for (let tries = 0; tries < this.slots.length; tries++) { this.probes++; if (this.slots[i] === null || this.slots[i] === key) return i; i = (i + 1) % this.slots.length; } return -1;`
+
+SOLUTION
 
 linear-probing.js
 

@@ -619,7 +619,7 @@ export function createErrorHandler(logger: Logger) {
 }
 ```
 
-Why not simply send `serializePublicError(error)` from [the errors lesson](https://zudojs.oyinlola.site/learn/zudo-errors#serialize)? Because for an error the client is allowed to see, it includes the error's whole `metadata`, and metadata is written for your logs:
+Why not simply send `serializePublicError(error)` from [the errors lesson](https://zudojs.oyinlola.site/learn/zudo-errors#serialize)? By default it is safe now: an exposed error's `metadata` is *not* published unless you opt in with `publicMetadataKeys` or `exposeMetadata: true` — until that changed, an exposed error published its whole metadata, and metadata is written for your logs, not your clients:
 
 public-errors.tsNode.js only
 
@@ -633,7 +633,8 @@ const error = new DomainError("Product 99 does not exist", {
   code: "UNKNOWN_PRODUCT",
   metadata: { productId: 99, warehouse: "lagos-ikeja-2", supplierCost: 910000 },
 });
-console.log("serializePublicError:", serializePublicError(error).metadata);
+console.log("default:        ", serializePublicError(error).metadata);
+console.log("exposeMetadata: ", serializePublicError(error, { exposeMetadata: true }).metadata);
 
 const handle = createErrorHandler(createLogger({ name: "demo", transports: [] }));
 const response = await handle(error, createRequestContext({ method: "POST", url: "/v1/orders" }));
@@ -643,15 +644,16 @@ console.log("our handler:", response.status, response.body);
 Output of `npx tsx public-errors.ts`
 
 ```ts
-serializePublicError: { productId: 99, warehouse: 'lagos-ikeja-2', supplierCost: 910000 }
+default:         undefined
+exposeMetadata:  { productId: 99, warehouse: 'lagos-ikeja-2', supplierCost: 910000 }
 our handler: 422 {"error":{"code":"UNKNOWN_PRODUCT","message":"Product 99 does not exist"}}
 ```
 
-The warehouse name and the supplier cost would have gone to the client. The handler builds the body from `code` and `message` only. For 500s it does the opposite of hiding: it logs the full error with a new request id, and the client gets only that id. Note that `@zudojs/logger` replaces fields named like secrets (`password`, `token`, `authorization`) with `[REDACTED]` by default, so logging request details does not leak passwords.
+Nobody set `exposeMetadata` here, so the default call already keeps the warehouse name and the supplier cost out of the response — `expose: true` says the *message* is safe for a client, not the metadata, which routinely carries internal state. The one line that opts in shows why the option exists at all: reach for `publicMetadataKeys` to allow-list the one or two fields a client genuinely needs, never `exposeMetadata: true` on an error whose metadata you have not read field by field. Oja's own handler builds the body from `code` and `message` only, which needs no such review. For 500s it does the opposite of hiding: it logs the full error with a new request id, and the client gets only that id. Note that `@zudojs/logger` replaces fields named like secrets (`password`, `token`, `authorization`) with `[REDACTED]` by default, so logging request details does not leak passwords.
 
 > IF YOU STARTED FROM THE CLI
 >
-> The server that `zudojs create` generates answers exposed 4xx errors itself and passes everything else on to `@zudojs/http`, which answers a plain 500 **without logging it** (see [the errors lesson](https://zudojs.oyinlola.site/learn/zudo-errors#task-api)). In production that means a bug leaves no trace. Replace it with a handler that logs, like this one.
+> A project made with `zudojs create` already logs an unexposed error and answers a generic 500 from inside the middleware pipeline, so the 500 carries the app's security headers too (see [the CLI project lesson](https://zudojs.oyinlola.site/learn/zudo-cli-project#known-problems)). Oja's own `createErrorHandler` exists for a different reason: to give every failure — 4xx and 5xx alike — the one envelope shape (`{ error: { code, message, issues?, requestId? } }`) the contract promises, which a generic project has no reason to standardise on its own.
 
 ## The routes and the OpenAPI document
 
@@ -1132,7 +1134,7 @@ Output of `npx tsx crash.ts`
     requestId: '458a35ba-e4d7-4870-98b5-644a3c4ad7c9'
   }
 }
-404 { code: 'NO_SUCH_ROUTE', message: 'No such route' } | 405 GET, POST METHOD_NOT_ALLOWED
+404 { code: 'NO_SUCH_ROUTE', message: 'No such route' } | 405 GET, POST, HEAD, OPTIONS METHOD_NOT_ALLOWED
 ```
 
 The client learned nothing about tables; the log line has the real cause and the same request id the client received. The typo and the wrong method got the Oja envelope, and the 405 lists the allowed methods in an `Allow` header, as HTTP requires.
@@ -1320,7 +1322,21 @@ TRY IT YOURSELF
 
 Oja's staff need `GET /v1/admin/orders?status=placed`: the latest 100 orders of every customer, optionally filtered by status, admins only, documented in OpenAPI. Add it from outside `api.ts`, using the `router` and `requireUser` that `startMarket` returns, and check that a customer gets 403.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Register it with `market.router.get(path, handler, options)`, the same shape `api.ts` uses for every other route. Inside the handler call `requireAdmin(ctx)` first, then `AdminOrderQuery.parse(ctx.query)`.
+
+HINT 2
+
+`middleware: [market.requireUser]` must run before the handler, or `requireAdmin(ctx)` finds no user on `ctx.state` and throws its own error instead of a clean 403.
+
+HINT 3
+
+The query is `\`SELECT id, user_id AS "userId", status, total_kobo AS "totalKobo" FROM orders WHERE ($1::text IS NULL OR status = $1) ORDER BY id DESC LIMIT 100\`` with `[status ?? null]` as the parameter — the same pattern `products.list` uses for its category filter.
+
+SOLUTION
 
 admin-orders.tsNode.js only
 
@@ -1378,7 +1394,17 @@ TRY IT YOURSELF
 
 A partner writes: "We show a numbered pager: 1, 2, 3 … 12. Please add `?page=7`." Is that a reasonable request for Oja's catalogue, and what would you answer?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+What must the server compute to answer "page 7" that a cursor never needs — think about `OFFSET` and a total count.
+
+HINT 2
+
+Does answering "yes" mean *replacing* the cursor, or adding a second, separate way to ask for the same data? The mobile app's infinite scroll depends on one of them never repeating a product.
+
+SOLUTION
 
 Page numbers need offset pagination and a total count. Both have costs: `OFFSET 120` reads and throws away 120 rows (slow on big tables), pages shift when products are added (the old API's bug), and `count(*)` runs on every request. For Oja's small catalogue the cost is fine, and a pager is a real product need, so a reasonable answer is a *separate* parameter, `?page=7&limit=20`, documented as "may shift while the catalogue changes", next to the cursor for apps that scroll. What you should not do is replace the cursor: the mobile app's infinite scroll relies on it never repeating a product.
 
@@ -1388,7 +1414,21 @@ TRY IT YOURSELF
 
 A teammate adds a profile route for the support team: `router.get("/v1/users/:id", (ctx) => db.queryRawUnsafe("SELECT * FROM users WHERE id = $1", [ctx.params.id]))`, with `requireUser`. Name every problem, and the test that would have caught each one.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Compare this route's `SELECT` against every other query in `products.ts` and `orders.ts`: what do they always name, and what does this one select instead?
+
+HINT 2
+
+`requireUser` only checks that *someone* is signed in. Which check from `access.ts`-style ownership (as in `orders.load`) is missing here, and what should a stranger's id return — the same table look at how `load` answers for someone else's order.
+
+HINT 3
+
+`ctx.params.id` goes straight into a query with no schema. What does `IdParams.parse` do elsewhere that this route skips, and what happens to `/v1/users/abc` without it?
+
+SOLUTION
 
 - **It leaks `password_hash`** (and every column added later) because of `SELECT *` and no output schema. Fix: select named columns and return `UserOut.parse(row)`. Test: assert the exact keys of the response, `expect(Object.keys(body)).toEqual(["id", "email", "name", "role"])`; the contract check alone would not catch it.
 - **Any signed-in customer can read any user**, by changing the id (the old API's complaint 5). Fix: only the user themselves or support staff, and 404 otherwise. Test: Bola asks for Ada's profile and gets 404.

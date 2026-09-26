@@ -713,7 +713,17 @@ Output of `node predict-payment.js` and of the browser terminal
 6
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+All synchronous code runs first, top to bottom, including the async function's body up to its first `await`. Only after that does JavaScript drain the whole microtask queue, and only after *that* does the next task (a timer callback) get a turn.
+
+HINT 2
+
+Synchronous: `1`, `4` (the async function up to `await`), `9`. Microtasks, in queue order: `5` (the resumed async function, which also queues timer `6` behind the already-queued timer for `2`), then `7`, whose own `.then` queues `8` in the same drain. Tasks: timer `2` runs, its microtask prints `3` before anything else can, then timer `6`.
+
+SOLUTION
 
 Synchronous first: `1`, then the async function runs up to its `await`: `4`, then `9`. Microtasks in queue order: the async function's continuation prints `5` (and queues timer 6 behind timer 2), then `7`, whose promise then queues `8`, which runs in the same drain. Tasks: timer 2 prints `2`, its microtask prints `3` before the next task, then timer `6`.
 
@@ -723,7 +733,17 @@ TRY IT YOURSELF
 
 A warehouse function `reportLow(sku)` is called many times while a delivery is processed. Change it so that all SKUs reported in one task are sent in a single alert, with duplicates removed, using `queueMicrotask`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Only the *first* call in a batch needs to schedule the flush — check `pending.size === 0` before adding `sku`. Every later call in the same task just adds to the set that the already-scheduled microtask will read.
+
+HINT 2
+
+`if (pending.size === 0) { queueMicrotask(() => { console.log("ALERT low stock:", [...pending].join(", ")); pending.clear(); }); } pending.add(sku);`
+
+SOLUTION
 
 stock-alerts.js
 
@@ -782,7 +802,17 @@ Output of `node reminders.js` and of the browser terminal
 timer ran before the last reminder: false
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`await sendText(n)` resolves through the microtask queue only, which always runs to completion before the next task (a timer) gets a turn. A promise that resolves via `setTimeout` instead forces a wait for the next task.
+
+HINT 2
+
+Add `const yieldToLoop = () => new Promise((resolve) => setTimeout(resolve, 0));` above the loop, then `await yieldToLoop();` right after `await sendText(n);` inside it.
+
+SOLUTION
 
 reminders-fixed.js
 

@@ -237,7 +237,17 @@ TRY IT YOURSELF
 
 Give the mini framework three modules where `orders` needs `payments`, `payments` needs `mailer`, and `mailer` needs `orders`. What does `start` do?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Three objects, each with a `name` and a `dependsOn` array of one name, forming a ring: `{ name: "orders", dependsOn: ["payments"] }`, and so on.
+
+HINT 2
+
+`[{ name: "orders", dependsOn: ["payments"] }, { name: "payments", dependsOn: ["mailer"] }, { name: "mailer", dependsOn: ["orders"] }]`.
+
+SOLUTION
 
 cycle.ts
 
@@ -271,7 +281,17 @@ TRY IT YOURSELF
 
 If the database fails to start, the config module is already running and is never stopped. Write `startAll(modules)`: it starts the modules in the given order, and if one throws, it stops the ones already started, in reverse, then rethrows the error.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Wrap the loop in `try`: `for (const module of modules) { await module.start?.(); started.push(module); } return started;`.
+
+HINT 2
+
+In `catch (error)`: `for (const module of [...started].reverse()) { await module.stop?.(); }`, then `throw error;` so the caller still sees the original failure.
+
+SOLUTION
 
 rollback.ts
 

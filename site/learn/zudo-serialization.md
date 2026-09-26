@@ -422,7 +422,7 @@ Output of `npx tsx envelope.ts` and of the browser terminal
   data: '{"taskId":1,"remindAt":{"$type":"Date","$value":"2026-10-05T09:00:00.000Z"}}'
 }
 true
-newer version: Unsupported envelope schema version 2: this build understands up to 1
+newer version: Unsupported envelope wire-format version 2: this build understands up to 1
 wrong format: Envelope format mismatch: expected "messagepack", got "json"
 ```
 
@@ -530,7 +530,17 @@ TRY IT YOURSELF
 
 Serialize a task with a `createdAt` date, a `Set` of watcher ids and a `Map` from user id to a last-seen date, with `pretty: true`, and check that everything comes back with the right type.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`const text = serializer.serialize(task, { pretty: true });` gives you the text to log. `serializer.deserialize<typeof task>(text)` gives you a fresh value with real `Date`, `Set` and `Map` instances back.
+
+HINT 2
+
+`const text = serializer.serialize(task, { pretty: true }); console.log(text); const back = serializer.deserialize<typeof task>(text);`.
+
+SOLUTION
 
 roundtrip.ts
 
@@ -590,7 +600,17 @@ TRY IT YOURSELF
 
 Version 3 of the reminder adds `channel: "email" | "push"`. Extend `upgrade` so that version 1 and 2 payloads become version 3 with `channel: "email"`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Handle the three cases from newest to oldest: already v3, already v2, or v1 needing `toV2` first. Only the v1 and v2 cases fall through to building the v3 object.
+
+HINT 2
+
+`if (payload.v === 3) return payload; const v2 = payload.v === 1 ? toV2(payload) : payload; return { v: 3, taskId: v2.taskId, userId: v2.userId, channel: "email" };`.
+
+SOLUTION
 
 v3.ts
 

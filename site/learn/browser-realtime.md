@@ -4,7 +4,7 @@ description: "Push live updates to a page with Server-Sent Events and WebSockets
 source: https://zudojs.oyinlola.site/learn/browser-realtime
 ---
 
-LEVEL 4 · LESSON 14 OF 20
+LEVEL 4 · LESSON 15 OF 21
 
 JavaScript in the browser Core
 
@@ -794,7 +794,17 @@ TRY IT YOURSELF
 
 Write `parseEvent(block)` for a single SSE event block (the text between two blank lines). It returns `{ event, id, data, retry }`, joins several `data` lines with `"\n"`, removes one space after the colon, ignores comments, and returns `null` when there is no data.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Reuse the worked example's colon-splitting almost exactly, but branch on the field name into four cases instead of one, and keep `data` as an array until the very end.
+
+HINT 2
+
+`if (field === "data") result.data.push(value); else if (field === "event") result.event = value; else if (field === "id") result.id = value; else if (field === "retry" && /^[0-9]+$/.test(value)) result.retry = Number(value);` then `return result.data.length === 0 ? null : { ...result, data: result.data.join("\n") };`
+
+SOLUTION
 
 parse-event.js
 
@@ -852,7 +862,17 @@ TRY IT YOURSELF
 
 A browser `WebSocket` does not reconnect by itself. Write `reconnectDelay(attempt, random)`: the base delay doubles from 500 ms for attempt 1, is capped at 30 seconds, and the actual delay is a random amount between half the base and the full base. `random` is a function returning a number from 0 to 1, so tests can control it.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`Math.min(cap, base)` is the same shape as the worked example's cap; only the starting value (500 instead of 200) and the cap (30,000 instead of 10,000) differ.
+
+HINT 2
+
+`const base = Math.min(30_000, 500 * 2 ** (attempt - 1)); return Math.round(base / 2 + random() * (base / 2));`
+
+SOLUTION
 
 backoff.js
 
@@ -886,7 +906,17 @@ TRY IT YOURSELF
 
 The courier's location arrives up to 20 times a second, but redrawing the map more often than the screen refreshes is wasted work. Write `latestPerFrame(render)`: it returns a function that stores each new value and makes sure `render` runs at most once per animation frame, with the latest value.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Guard with the `scheduled` flag before requesting a frame, the same way the worked example guards with `frameQueued`, and reset it inside the frame callback, before calling `render`.
+
+HINT 2
+
+`if (scheduled) return; scheduled = true; requestAnimationFrame(() => { scheduled = false; render(latest); });` (remove the placeholder `render(latest);` call above it)
+
+SOLUTION
 
 per-frame.js
 

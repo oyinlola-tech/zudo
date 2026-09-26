@@ -607,7 +607,17 @@ TRY IT YOURSELF
 
 Write an `async` function `completeTask(id)` that waits 30 ms, finds the task, throws an error with the message `Task 9 not found` (with the real id) if it is missing, and otherwise returns a copy with `done: true`. Call it for an existing task and a missing one.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Inside an `async` function, `await wait(30)` pauses it for 30 ms. Then `db.find((t) => t.id === id)` gives you the task, or `undefined`.
+
+HINT 2
+
+Build the message with a template literal: `throw new Error(\`Task ${id} not found\`)`. For the copy, spread the task and override one field: `{ ...task, done: true }`.
+
+SOLUTION
 
 complete.js
 
@@ -647,7 +657,17 @@ TRY IT YOURSELF
 
 Write `retry(fn, attempts)` that calls the async function `fn`. If it fails, wait 20 ms and try again, up to `attempts` times in total. If every attempt fails, throw the last error. Test it with a fake service that fails twice and then works.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Use a `for` loop from 1 to `attempts` with a `try`/`catch` inside it. `return await fn(attempt)` leaves the loop as soon as one call works.
+
+HINT 2
+
+Declare `let lastError;` before the loop and store the error in `catch`. When the loop ends without returning, every try failed: `throw lastError`. Only wait when `attempt < attempts`.
+
+SOLUTION
 
 retry.js
 
@@ -701,7 +721,17 @@ TRY IT YOURSELF
 
 Load the tasks with ids 1 to 6 using `fetchTask` from the timing example, but never more than 2 at a time: split the ids into batches of 2, and use `Promise.all` for each batch. Print the ids in order.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Step through the ids two at a time: `for (let i = 0; i < ids.length; i += 2)`, and take one batch with `ids.slice(i, i + 2)`.
+
+HINT 2
+
+`await Promise.all(batch.map((id) => fetchTask(id)))` waits for the whole batch. Then log it with `console.log("batch done:", batch)` and add the results with `loaded.push(...tasks)`.
+
+SOLUTION
 
 batches.js
 

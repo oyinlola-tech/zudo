@@ -657,7 +657,17 @@ TRY IT YOURSELF
 
 Add `history(userId)` to the orders module: the caller's orders, newest first, each with its total. Then write the rule for `GET /orders/:id` in one sentence. Where must the check happen: in the SQL, or after loading the order?
 
-**Show a solution**
+Write it in the editor and run it. Hints and the solution open up once you have tried.
+
+HINT 1
+
+The query is `SELECT id, total_cents AS "totalCents" FROM orders WHERE user_id = $1 ORDER BY id DESC LIMIT 50`, with a single parameter, `[userId]`.
+
+HINT 2
+
+Compare it with `one`: both filter ownership as a `WHERE` condition, not as an `if` after the query returns. That is what makes the check impossible to forget.
+
+SOLUTION
 
 history.tsNode.js only
 
@@ -694,7 +704,17 @@ TRY IT YOURSELF
 
 A teammate rewrites the checkout line as "`SELECT stock`, if it is enough then `UPDATE products SET stock = $new`". The tests still pass. Explain what goes wrong in production, and which test would catch it.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+What happens between the `SELECT` finishing and the `UPDATE` starting, when a second checkout runs at the same moment? Is there anything stopping both from reading the same number?
+
+HINT 2
+
+A single test running one checkout at a time can never see this. What would a test need to do differently, and on which database (not PGlite) would it need to run to actually see the failure?
+
+SOLUTION
 
 Two checkouts for the last mug run at the same time. Both `SELECT` and see 1. Both decide it is enough. Both write `stock = 0`. Two mugs are sold, one exists. This is a **race condition**: the gap between reading and writing. The single `UPDATE … WHERE stock >= $1` has no gap. The "never oversells" test with four parallel checkouts catches it on a real PostgreSQL server with several connections. PGlite runs one transaction at a time, so it can hide this race: run that test against real PostgreSQL in CI too.
 

@@ -575,7 +575,17 @@ TRY IT YOURSELF
 
 Write a server for `/tasks` that answers `GET` with 200 and a JSON list, and any other method except `POST` with **405**, an `Allow: GET, POST` header and a JSON error. Test it with `fetch` for `GET` and `DELETE`, then close the server.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Check `req.method`: handle `"GET"` first, then treat everything that is not `"POST"` as not allowed.
+
+HINT 2
+
+The 405 branch needs both the header and a JSON body: `res.writeHead(405, { "Content-Type": "application/json", Allow: "GET, POST" })`, then `res.end(JSON.stringify({ error: \`${req.method} is not allowed here\` }))`.
+
+SOLUTION
 
 allow.jsNode.js only
 
@@ -617,7 +627,17 @@ TRY IT YOURSELF
 
 Write `sessionCookie(id)` that returns a `Set-Cookie` value for a cookie named `sid`, valid for 7 days, with all the safe attributes from this lesson. Then write `clearSessionCookie()` that logs the user out. Hint: a cookie with `Max-Age=0` is deleted at once.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Build the string with a template literal: start with `sid=`, then `encodeURIComponent(id)`, then the shared attributes joined with `; `.
+
+HINT 2
+
+`Max-Age` is in seconds: `7 * DAY` for the session, `0` to clear it. Keep `Path=/; HttpOnly; Secure; SameSite=Lax` the same in both functions.
+
+SOLUTION
 
 session-cookie.js
 
@@ -651,7 +671,21 @@ TRY IT YOURSELF
 
 For each situation, pick a status code: (a) a task was created; (b) `DELETE /tasks/9` worked and there is nothing to return; (c) the client is logged in but tries to delete another user's task; (d) the client sent `{"title": ""}`; (e) the database is down.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Which of these responses carries a body, and which is deliberately empty?
+
+HINT 2
+
+For (c), consider whether telling an attacker "that task exists, but it isn't yours" is safe, or whether hiding its existence is better.
+
+HINT 3
+
+Re-read the [Status codes](#status) section above for the 2xx, 4xx and 5xx ranges before you commit to an answer.
+
+SOLUTION
 
 (a) 201 Created, with a `Location` header. (b) 204 No Content. (c) 403 Forbidden, or 404 Not Found if you do not want to reveal that the task exists. (d) 400 Bad Request (or 422, if that is your API's style). (e) 503 Service Unavailable, or 500.
 

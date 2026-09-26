@@ -570,7 +570,17 @@ TRY IT YOURSELF
 
 A courier prices deliveries by postcode prefix: "1" is ₦3,000, "10" is ₦2,000, "100" is ₦1,500 and "2" is ₦4,500. The rate for a postcode is the one with the *longest* prefix that matches it. Store the prefixes in a trie and write `rateFor(postcode)` that walks the postcode once, remembering the last rate it passed.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Walk the postcode one character at a time, moving `node` to `node.children.get(ch)`. Stop as soon as there is no such child. Every time the node you land on has a defined `rate`, that is your new best answer so far.
+
+HINT 2
+
+`for (const ch of postcode) { node = node.children.get(ch); if (!node) break; if (node.rate !== undefined) best = node.rate; }`
+
+SOLUTION
 
 zones.js
 
@@ -626,7 +636,17 @@ TRY IT YOURSELF
 
 Use the `Trie` class for the catalogue, but show the three *best-selling* products for a prefix instead of the first three alphabetically. Sales are in a `Map` from name to units. Walk every product under the prefix and keep the best three. What does this cost after one typed letter, and after a whole brand name?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Push the name in, sort `best` by `sales.get(b) - sales.get(a)` so the biggest sellers come first, then pop the last (weakest) entry once `best` has grown past `k`.
+
+HINT 2
+
+`best.push(name); best.sort((a, b) => sales.get(b) - sales.get(a)); if (best.length > k) best.pop();`
+
+SOLUTION
 
 top-sellers.js
 
@@ -672,7 +692,17 @@ TRY IT YOURSELF
 
 Customers type "cafe" and expect to find "Café Latte Mug" and "CAFÉ Espresso Cups". Write a key function that lower-cases and removes accents, insert names with the `Trie` class using that key, and make sure the suggestions still show the original names.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`text.normalize("NFD")` splits an accented letter such as "é" into "e" plus a separate combining mark. A regular expression with `\p{Mark}` and the `u` flag matches those marks so you can remove them.
+
+HINT 2
+
+`return text.normalize("NFD").replace(/\p{Mark}/gu, "").toLowerCase();`
+
+SOLUTION
 
 accents.js
 

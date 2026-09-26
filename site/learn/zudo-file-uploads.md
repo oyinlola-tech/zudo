@@ -476,7 +476,8 @@ export class AttachmentService {
       return toAttachmentResponse(row);
     } catch (error) {
       await this.files.delete(key);
-      if ((error as { code?: string }).code === "23503") throw new NotFoundError(`Task ${taskId} not found`);
+      const metadata = (error as { metadata?: { databaseCode?: string } }).metadata;
+      if (metadata?.databaseCode === "23503") throw new NotFoundError(`Task ${taskId} not found`);
       throw error;
     }
   }
@@ -662,7 +663,7 @@ await db.disconnect();
 Output of `npx tsx try-limits.ts`
 
 ```ts
-8 MB body:           413 {"error":"Payload Too Large"}
+8 MB body:           413 {"error":"Payload Too Large","code":"PAYLOAD_TOO_LARGE"}
 3 MB file:           413 {"error":"Uploaded file exceeds the configured file size limit.","code":"ERR_HTTP_MULTIPART_LIMIT"}
 4 files:             413 {"error":"Maximum number of uploaded files exceeded.","code":"ERR_HTTP_MULTIPART_LIMIT"}
 wrong field:         400 {"error":"Send at least one file in the field \"file\"","code":"BAD_REQUEST"}
@@ -1007,7 +1008,17 @@ TRY IT YOURSELF
 
 Add GIF to the allow-list. A GIF starts with the text `GIF87a` or `GIF89a`, so it needs two signatures. Write the new `SIGNATURES` entries and show that `sniff` recognises both versions and still refuses `GIF90a`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+A signature is `{ type, ext, magic }`, where `magic` is an array of byte values. `ascii("GIF87a")` turns that text into the array of character codes `sniff` compares byte by byte.
+
+HINT 2
+
+Add two entries: `{ type: "image/gif", ext: "gif", magic: ascii("GIF87a") }` and the same with `"GIF89a"`. `GIF90a` matches neither, so it still falls through to `refused`.
+
+SOLUTION
 
 gif.tsNode.js only
 
@@ -1051,7 +1062,17 @@ TRY IT YOURSELF
 
 Limit each task to 5 attachments. Add a check to `AttachmentService.uploadAll` that counts the task's existing attachments and answers **409** with a clear message when the new files would go over. Which race does a count-then-insert check still have, and how would you close it?
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Count first: `const existing = await this.repo.count({ task_id: taskId });`. Compare `existing + incoming.length` with `MAX_PER_TASK` before calling `super.uploadAll(...)`.
+
+HINT 2
+
+`if (existing + incoming.length > MAX_PER_TASK) throw new ConflictError(\`Task ${taskId} already has ${existing} of ${MAX_PER_TASK} attachments\`);`, then `return super.uploadAll(taskId, incoming);` when the check passes.
+
+SOLUTION
 
 quota.tsNode.js only
 
@@ -1110,7 +1131,17 @@ TRY IT YOURSELF
 
 Add a `DELETE /attachments/:id` route that removes the row and the object and answers **204**, and 404 for an unknown id. Show that the object is gone afterwards.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`router.delete(path, handler)` registers a route the same way `router.post` and `router.get` already do above. Inside, call `service.remove(Number(ctx.params.id))` and return a response with no body.
+
+HINT 2
+
+`router.delete("/attachments/:id", async (ctx) => { await service.remove(Number(ctx.params.id)); return createResponseContext().setStatus(204); });` registered before `adapter.start()`.
+
+SOLUTION
 
 delete-route.tsNode.js only
 

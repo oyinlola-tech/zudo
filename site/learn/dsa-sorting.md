@@ -944,7 +944,17 @@ TRY IT YOURSELF
 
 Rank these players for a weekly quiz: most points first; on equal points, whoever finished faster (fewer seconds) first; if that is also equal, by name A to Z. Print the ranking with positions. Use one comparator and `toSorted`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Chain the three comparisons with `||`: points descending (`b.points - a.points`), then seconds ascending, then the name with `localeCompare`.
+
+HINT 2
+
+`const ranking = (a, b) => b.points - a.points || a.seconds - b.seconds || a.name.localeCompare(b.name);`
+
+SOLUTION
 
 quiz-board.js
 
@@ -980,7 +990,17 @@ TRY IT YOURSELF
 
 The Lagos and Abuja reports are both sorted by order id, but some orders were reported by both branches (a customer paid in one and collected in the other). Write `mergeUnique(a, b)` that merges two lists of ids sorted in ascending order into one sorted list with no duplicates, in O(n) time, and print how many comparisons it made.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Compare `a[i]` and `b[j]`: add whichever is smaller and advance its pointer. On a tie, add once and advance *both* pointers, so the duplicate is not written twice.
+
+HINT 2
+
+`while (i < a.length && j < b.length) { comparisons++; if (a[i] < b[j]) add(a[i++]); else if (b[j] < a[i]) add(b[j++]); else { add(a[i++]); j++; } } while (i < a.length) add(a[i++]); while (j < b.length) add(b[j++]);`
+
+SOLUTION
 
 merge-unique.js
 
@@ -1031,7 +1051,17 @@ TRY IT YOURSELF
 
 Instead of a random pivot, many libraries use the **median of three**: look at the first, middle and last items of the range and use the middle value of those three as the pivot. Add a `pivot: "median3"` option to a copy of the Lomuto quick sort and compare its comparisons with the last-item pivot on 2,000 already sorted and 2,000 reversed items.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`[lo, mid, hi].sort((x, y) => compare(a[x], a[y]))` sorts the three *indexes* by the values they point at. The middle of that sorted trio is the index whose value is the median.
+
+HINT 2
+
+`const trio = [lo, mid, hi].sort((x, y) => compare(a[x], a[y])); return trio[1];`
+
+SOLUTION
 
 median3.js
 

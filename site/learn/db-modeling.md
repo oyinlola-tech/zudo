@@ -951,7 +951,17 @@ TRY IT YOURSELF
 
 Customers can review products they bought: a rating from 1 to 5 and an optional text. A customer may review each product at most once, and deleting a product deletes its reviews. Add the table to the shop and show that a second review of the same product by the same customer is refused.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+A composite primary key names *two or more* columns together: `primary key (customer_id, product_id)` means that pair, not either column alone, must be unique.
+
+HINT 2
+
+`customer_id integer not null references customers (id), product_id integer not null references products (id) on delete cascade, rating integer not null check (rating between 1 and 5), body text check (length(body) <= 2000), primary key (customer_id, product_id)`
+
+SOLUTION
 
 reviews.jsNode.js only
 
@@ -991,7 +1001,17 @@ TRY IT YOURSELF
 
 Name the normal form each table breaks, and fix it: (a) `products (id, name, supplier_id, supplier_phone)`; (b) `order_lines (order_id, product_id, quantity, product_name)` with key `(order_id, product_id)`; (c) `customers (id, name, phone1, phone2, phone3)`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For each column, ask: does it depend on the *whole* key, on only *part* of a multi-column key, or on something that is not a key at all? And does any group of columns look like the same kind of value repeated under different names?
+
+HINT 2
+
+(a) `supplier_phone` would be the same for every product from that supplier — it depends on `supplier_id`, not on the product. (b) the key is the pair `(order_id, product_id)`; `product_name` only needs `product_id`. (c) `phone1`/`phone2`/`phone3` are the same kind of fact, repeated as separate columns instead of separate rows.
+
+SOLUTION
 
 (a) 3NF: `supplier_phone` depends on `supplier_id`, not on the product. Move it into `suppliers (id, phone)`. (b) 2NF: `product_name` depends on only part of the key, `product_id`. Drop it and join to `products`. (Keeping `unit_price_kobo` would be fine, because the price *at the time of sale* depends on the whole key.) (c) 1NF: a repeating group. Use `customer_phones (customer_id, phone, label)`, which also removes the arbitrary limit of three.
 
@@ -1001,7 +1021,17 @@ TRY IT YOURSELF
 
 For every category, count the distinct products in it or in any category below it. Hint: build a recursive CTE of `(ancestor_id, descendant_id)` pairs, where every category is its own descendant at the start.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The base case of the recursive CTE is every category paired with *itself* — that is what makes a category count its own direct products, not only its subcategories'. The recursive case adds one more level each time, following `parent_id` down.
+
+HINT 2
+
+`with recursive pairs as (select id as ancestor_id, id as descendant_id from categories union all select p.ancestor_id, c.id from pairs p join categories c on c.parent_id = p.descendant_id) select c.name, count(distinct pc.product_id)::int as products from categories c join pairs p on p.ancestor_id = c.id left join product_categories pc on pc.category_id = p.descendant_id group by c.id, c.name order by products desc, c.name`
+
+SOLUTION
 
 category-counts.jsNode.js only
 

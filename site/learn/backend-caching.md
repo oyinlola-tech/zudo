@@ -884,7 +884,17 @@ TRY IT YOURSELF
 
 Missing products are cached for the full 60 seconds, like real ones. If product 4 is created a moment after someone asked for it, it stays invisible for a minute. Write `getProduct` so that found products are cached for 60 seconds and missing ones for 5.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The TTL only needs to depend on whether `product` is `null`: a ternary right inside the `cache.set` call.
+
+HINT 2
+
+`cache.set(key, product, product === null ? 5_000 : 60_000);`
+
+SOLUTION
 
 negative-ttl.ts
 
@@ -929,7 +939,17 @@ TRY IT YOURSELF
 
 Write `withJitter(ttlMs, fraction, random)` that returns a TTL randomly spread by ± `fraction` (0.1 means ±10%). Take `random` as a parameter (a function returning a number from 0 to 1) so it can be tested. Show the spread for 1,000 keys with a TTL of 60 seconds.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`const spread = ttlMs * fraction;` gives you how far to move in either direction from `ttlMs`.
+
+HINT 2
+
+`Math.round(ttlMs - spread + random() * 2 * spread)`: at `random() === 0` this is `ttlMs - spread`, at `1` it is `ttlMs + spread`.
+
+SOLUTION
 
 jitter.ts
 
@@ -972,7 +992,17 @@ async function getCart(customerId: number): Promise<Cart> {
 }
 ```
 
-**Show a solution**
+Write it in the editor and run it. Hints and the solution open up once you have tried.
+
+HINT 1
+
+Look at the cache key: does it depend on `customerId` at all?
+
+HINT 2
+
+Every call reads and writes the exact same key, `"cart"`, no matter who is asking. What must go into the key so two different customers never share an entry?
+
+SOLUTION
 
 The key `"cart"` does not contain the customer id. The first customer's cart is cached, and for the next 30 seconds every other customer gets it: their name, address and items. It is a privacy breach, and the checkout would charge the wrong customer for the wrong items. The fix is to put every input in the key:
 

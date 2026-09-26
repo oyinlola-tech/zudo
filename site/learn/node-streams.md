@@ -4,7 +4,7 @@ description: "Learn what bytes and buffers are, then process files far bigger th
 source: https://zudojs.oyinlola.site/learn/node-streams
 ---
 
-LEVEL 4 · LESSON 3 OF 20
+LEVEL 4 · LESSON 3 OF 21
 
 Node.js Core
 
@@ -333,7 +333,17 @@ TRY IT YOURSELF
 
 Print how many characters and how many UTF-8 bytes `"done ✅"` has, and its base64 form. Then decode the base64 back.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`Buffer` has a `toString(encoding)` method for turning bytes into text, and `Buffer.from(text, encoding)` for the reverse.
+
+HINT 2
+
+`const encoded = bytes.toString("base64"); console.log(encoded); console.log(Buffer.from(encoded, "base64").toString());`
+
+SOLUTION
 
 emoji.jsNode.js only
 
@@ -363,7 +373,17 @@ TRY IT YOURSELF
 
 Write a pipeline that decompresses `tasks.log.gz` (use `createGunzip`) into `copy.log`. Then prove the copy is identical to `tasks.log` by comparing SHA-256 hashes, reading both files as streams.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Swap `createGzip` for `createGunzip` in a `pipeline` call, the same shape as `compress.js` above. A hash object also takes data through `update`, piece by piece.
+
+HINT 2
+
+`await pipeline(createReadStream("tasks.log.gz"), createGunzip(), createWriteStream("copy.log"));` then, inside `sha256`, `for await (const chunk of createReadStream(file)) hash.update(chunk);` before `return hash.digest("hex");`.
+
+SOLUTION
 
 unzip.jsNode.js only
 
@@ -398,7 +418,17 @@ TRY IT YOURSELF
 
 Use `readline` to find the longest line in `tasks.log` and its line number.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Compare `line.length` with `longest.text.length`, and keep the line together with the line number it belongs to.
+
+HINT 2
+
+`if (line.length > longest.text.length) longest = { number, text: line };`
+
+SOLUTION
 
 longest.jsNode.js only
 

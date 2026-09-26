@@ -657,7 +657,7 @@ Output of `npx tsx attack.ts`
    https://app.example.com: 200 allow-origin = https://app.example.com
    https://evil.example: 200 allow-origin = null
 3. A 50 KB task title
-   413 {"error":"Payload Too Large"}
+   413 {"error":"Payload Too Large","code":"PAYLOAD_TOO_LARGE"}
 4. SSRF through the preview feature
    400 {"error":"That URL cannot be previewed","code":"BAD_REQUEST"}
    400 {"error":"That URL cannot be previewed","code":"BAD_REQUEST"}
@@ -665,7 +665,7 @@ Output of `npx tsx attack.ts`
 5. Headers on every response
    x-frame-options: DENY
    x-content-type-options: nosniff
-   strict-transport-security: max-age=31536000; includeSubDomains; preload
+   strict-transport-security: max-age=63072000; includeSubDomains; preload
 ```
 
 Every attack was stopped by a different layer:
@@ -676,9 +676,9 @@ Every attack was stopped by a different layer:
 4. The metadata address and the IPv6 form of a private address got `400`. A public URL was accepted.
 5. The security middleware added its headers to every response.
 
-> THAT HEADER CHECK ONLY ASKED A 200
+> ERROR RESPONSES GET HEADERS TOO
 >
-> Step 5 above only asks a plain `200` response for its headers. In the published `@zudojs/http` 1.4.4, a response built outside the normal route return — the `401` from a thrown `unauthorized()`, the adapter's own `413` for an oversized body, or an uncaught `500` — comes back without `createSecurityMiddleware()`'s headers, because the pipeline never gets to run on it. [A production security review](https://zudojs.oyinlola.site/learn/zudo-production-security) covers checking every status code a route can return, not just its happy path.
+> Step 5 above only checked a plain `200` response, but the `401` and `413` above carry the same headers. Since `@zudojs/http` 1.5.0, every response the adapter builds itself — the request guard's refusal, the adapter's own `413`, an uncaught `500`, or a thrown `HttpError` such as the `401` from `unauthorized()` — gets the default security headers filled in even though it never reached `createSecurityMiddleware()` in the pipeline. (Before 1.5.0, only a response built inside the pipeline got them; an error thrown before or around it came back bare.) The adapter's new `securityHeaders` option controls this (default `true`) and only fills in header names a response does not already set. Still check every status code a route can return, not just its happy path: a custom `errorHandler` or a header your own code sets can leave a gap a happy-path test never sees. [A production security review](https://zudojs.oyinlola.site/learn/zudo-production-security) covers that in depth.
 
 Run it on your computer. Both files go in the same folder:
 
@@ -699,7 +699,17 @@ TRY IT YOURSELF
 
 Besides the strict login limit, add a generous limit for every route: 3 requests per minute for this exercise (use something like 300 in real life). Build it with `createRateLimiter` from @zudojs/security and check it for one IP, four times.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`createRateLimiter({ windowMs: 60_000, max: 3 })` is the limiter. Each loop iteration calls `apiLimiter.check({ ip: "203.0.113.7" })` and reads `result.allowed` and `result.remaining` off what it returns.
+
+HINT 2
+
+`const result = apiLimiter.check({ ip: "203.0.113.7" }); console.log(request, result.allowed ? "ok" : "429", "remaining:", result.remaining);`.
+
+SOLUTION
 
 api-limit.tsNode.js only
 
@@ -731,7 +741,17 @@ TRY IT YOURSELF
 
 Your team also runs a staging copy of the web app at `https://staging.app.example.com`. Change the CORS configuration so it is allowed too, and prove that `https://staging.app.example.com.evil.example` is still refused.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`origin` takes an array of exact strings. Add the new one next to the existing entry, rather than replacing it.
+
+HINT 2
+
+`origin: ["https://app.example.com", "https://staging.app.example.com"]`. The look-alike domain still fails, because it is a different, longer string that only starts with the allowed one.
+
+SOLUTION
 
 staging.tsNode.js only
 
@@ -762,7 +782,17 @@ TRY IT YOURSELF
 
 For each attack, name the layer that stops it: (a) a script on `evil.example` reads a user's tasks with `fetch`; (b) a hidden form on `evil.example` posts to the API using the user's session cookie; (c) a user sets their avatar URL to `http://localhost:6379/`; (d) a task title contains `<script>`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+(a) and (b) both involve a browser and another site, but one is a plain `fetch` that only needs to *read* the response, and the other is a form `POST` that only needs to be *sent*. Which layer stops a read; which stops a write that carries cookies?
+
+HINT 2
+
+(c) is a URL your server would fetch on the user's behalf, pointing inside your own network. (d) is text that ends up shown back to other users. Look at the table in [defense in depth](#layers) for the layer named for each.
+
+SOLUTION
 
 (a) CORS: the browser hides the response because the origin is not on the allow-list. (b) CSRF protection: the form cannot send the token, and a `SameSite` cookie is not sent at all. (c) SSRF checks: `isSafeUrl` refuses `localhost`, and the DNS check refuses names that point to private addresses. (d) Output encoding: `escapeHtml` (or your frontend framework) shows it as text, and the CSP stops injected scripts from running. A detector may log it, but it is not the defence.
 

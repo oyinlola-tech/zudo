@@ -274,13 +274,12 @@ failed: mailer (SMTP server smtp.shop.ng refused the connection)
 state: ready
 database  ready   initialize:ok start:ok ready:ok
 mailer    failed  initialize:ok start:failed
-stop mailer
 stop database
 ```
 
 - The `component:failed` event reported the mailer, and `start()` still resolved: the manager is `ready`.
 - `getStatus()` shows each component's state and the result of every phase it ran. The mailer never reached `ready`.
-- On shutdown the manager still called the mailer's `stop`, although it never started. Write `stop` so it is safe on a component that failed to start.
+- On shutdown the manager called only `database`'s `stop`: a component whose `start` threw does not get `stop` called on it, since there is nothing that started for `stop` to undo. A component's `dispose`, if it has one, still runs whenever its `initialize` was invoked, whether or not `start` went on to succeed.
 
 Every component is critical unless you say otherwise. Mark something optional only when the application is genuinely useful without it, and make sure something (a health check, an alert on `component:failed`) tells a human that it is down.
 
@@ -399,28 +398,23 @@ try {
   for (let e: unknown = error; e instanceof Error; e = e.cause) chain.push(e.name);
   console.log(chain.join(" <- "));
   console.log(((error as Error).cause as Error).cause instanceof Error ? (((error as Error).cause as Error).cause as Error).message : "");
-  console.log("start() rejected after", Date.now() - t0 >= 450 ? "about 500 ms, not 100 ms" : "about 100 ms");
+  console.log("start() rejected after", Date.now() - t0 < 300 ? "about 100 ms" : "much longer");
 }
 ```
 
 Output of `npx tsx timeout.ts`
 
 ```ts
-stop payments-api
 LifecycleStartError <- LifecycleComponentError <- LifecycleTimeoutError
 Lifecycle operation timed out for component "payments-api" during start after 100ms.
-start() rejected after about 500 ms, not 100 ms
+start() rejected after about 100 ms
 ```
 
 The error chain is informative: `LifecycleStartError` (the start failed), caused by `LifecycleComponentError` (this component, this phase), caused by `LifecycleTimeoutError` (after 100 ms). The loop `for (let e = error; e instanceof Error; e = e.cause)` walks such a chain.
 
-But look at the last line. The timeout *marked* the component as failed after 100 ms, yet `start()` only rejected after the hook finished on its own, 500 ms later. The manager waits for a timed-out hook to settle before it rolls back, so a later `stop` never runs in parallel with a `start` that is still going. The `signal` passed to the hook is not aborted by a component timeout either.
+Look at the last line: `start()` rejects at the timeout, around 100 ms, not 500 ms later when the slow hook would have finished on its own. Each hook gets its own `signal`, aborted when its `timeout` elapses, and the manager detaches from a hook that ignores that signal instead of waiting for it: the rest of the application is not held hostage by one slow dependency. `stop` is not called for `payments-api` here, because its `start` never completed; there is nothing for `stop` to undo. Even a hook whose promise never settles at all no longer hangs `start()` — the timeout still fires and the manager still moves on.
 
-> A HOOK THAT NEVER SETTLES HANGS START
->
-> In the published version, a `start` hook whose promise never resolves keeps `start()` waiting forever, whatever `timeout` you set. The timeout protects you only from hooks that eventually finish.
-
-The fix is to make the work itself cancellable. Most Node.js network APIs accept an `AbortSignal`, and `AbortSignal.timeout(ms)` creates one that aborts on its own:
+Detaching does not cancel the hook itself: the abandoned `setTimeout` above keeps running for its full 500 ms, doing nothing anyone waits for. Making the work itself cancellable is still worth doing, to free whatever it was holding (a socket, a file) instead of leaking it for those extra 400 ms. Most Node.js network APIs accept an `AbortSignal`, and `AbortSignal.timeout(ms)` creates one that aborts on its own:
 
 cancellable.tsNode.js only
 
@@ -512,7 +506,6 @@ initialize http
 start      database
 start      queue
 start      http
-stop       http
 stop       queue
 stop       database
 dispose    http
@@ -534,8 +527,7 @@ ready      http
 state: ready
 ```
 
-- After the failure the queue and the database were stopped and disposed in reverse order. No connection is left open.
-- `stop http` ran too, although `http` failed to start. As with non-critical parts, `stop` must cope with a component that never got going.
+- After the failure the queue and the database were stopped and disposed in reverse order. No connection is left open. `http` itself is not stopped: its `start` threw, so it never has anything for `stop` to undo, but it is still `disposed`, because its `initialize` did run.
 - The manager is `disposed`. Calling `start()` again returns the same failure: `start()` is **idempotent**, it hands back the same promise every time. To try again, build a new manager, as the second half does. A small function that creates and registers everything makes that easy.
 
 ## Shutdown: failures and the deadline
@@ -608,11 +600,11 @@ console.log(`shutdown returned after about ${Math.round((Date.now() - t0) / 100)
 Output of `npx tsx deadline.ts`
 
 ```ts
-worker: giving up, Lifecycle shutdown exceeded its 200ms deadline.
+worker: giving up, Lifecycle operation timed out for component "application" during stop after 200ms.
 shutdown returned after about 200 ms, state disposed
 ```
 
-The worker listened to `context.signal` and gave up its batch cleanly when the deadline passed. A hook that ignores the signal is simply abandoned: `shutdown()` still returns at the deadline, without an error or a `component:failed` event, and `getStatus()` leaves that component in `stopping`. So a silent shutdown after exactly `shutdownTimeout` milliseconds is itself a sign that something hung. Set `shutdownTimeout` a few seconds below your platform's grace period, so your own clean-up runs before the hard kill.
+The worker listened to `context.signal` and gave up its batch cleanly when the deadline passed. A shutdown deadline is no longer silent: the component is marked `failed` with a `LifecycleTimeoutError` result, a `component:failed` event fires for it, one `application:shutdown-timeout` event fires for the whole run, and `manager.shutdownTimedOut` reads `true`. A hook that ignores the signal is still abandoned rather than waited for, so `shutdown()` returns at the deadline either way, but now you have an event and a flag to alert on instead of only a suspiciously round duration. Set `shutdownTimeout` a few seconds below your platform's grace period, so your own clean-up runs before the hard kill.
 
 ## SIGINT and SIGTERM
 
@@ -696,7 +688,7 @@ component:ready        cache     0ms
 application:ready      app       100ms
 ```
 
-A slow start is now measurable per component: the database took 100 ms of the total. Two naming quirks to know when you subscribe: during the `ready` phase the manager emits `application:starting` and `component:starting` again, and during `dispose` it emits `component:stopping` and `component:stopped`. Filter on the event you care about (`component:started`, `component:ready`, `component:failed`, `application:ready`, `application:stopped`) rather than counting "starting" events.
+A slow start is now measurable per component: the database took 100 ms of the total. Each phase has its own pair of events: `start` emits `component:starting` then `component:started`; `ready` emits `component:readying` then `component:ready`; `stop` emits `component:stopping` then `component:stopped`; `dispose` emits `component:disposing` then `component:disposed`, each with an `application:…` counterpart. Earlier versions reused `starting`/`started` for the ready phase and `stopping`/`stopped` for dispose, so a listener that counted "starting" events to detect a start actually saw one for `ready` too; with a name per phase, filtering on the exact event you care about (`component:started`, `component:ready`, `component:failed`, `application:ready`, `application:stopped`) now needs no extra check to tell the phases apart.
 
 ## Put it together: database, queue, HTTP server
 
@@ -907,7 +899,17 @@ TRY IT YOURSELF
 
 In `task-shop-broken.ts`, the database closes during the queue's drain. Give two different fixes, and say which one you prefer.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+One fix changes what the queue declares about the database; the other changes which phase the database's own closing happens in.
+
+HINT 2
+
+Re-read the rule at the top of this lesson: which phase only begins after every component has stopped, whatever the dependencies say?
+
+SOLUTION
 
 - Declare the dependency again: `manager.register(queue, { dependsOn: ["database"] })`. The queue then stops in an earlier stage than the database, as in `task-shop.ts`.
 - Or move the database's closing from `stop` to `dispose`. The `dispose` phase only begins after every component has stopped, so the drain always sees an open database, whatever the dependencies say.
@@ -920,7 +922,17 @@ TRY IT YOURSELF
 
 A search cluster may take up to a few seconds to come up after a deploy. Register a `search` component that fails its first four starts, with at most four retries, a first wait of 50 ms and exponential backoff capped at 150 ms. Print the planned waits, and check that the real ones were at least that long.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`waits.map((_, i) => Math.min(retry.delay * 2 ** i, retry.maxDelay))`: one planned value per real wait, doubling each time, capped at `maxDelay`.
+
+HINT 2
+
+`const planned = waits.map((_, i) => Math.min(retry.delay * 2 ** i, retry.maxDelay));`.
+
+SOLUTION
 
 capped.tsNode.js only
 
@@ -969,7 +981,17 @@ TRY IT YOURSELF
 
 Change the queue's `stop` in `task-shop.ts` so that it finishes early when `context.signal` aborts, and create the manager with `shutdownTimeout: 20`. What happens to the pending orders, and what should the queue do with them in a real system?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Compare the deadline with how long the queue's own drain normally takes; which one wins the race?
+
+HINT 2
+
+"Finish early" is not the same as "finish safely". Where would work that was only ever held in a process's memory need to live for a restart not to lose it?
+
+SOLUTION
 
 With a 20 ms deadline and a 50 ms wait, the signal aborts before the job in progress finishes. The queue returns early without draining, the database closes, and the orders stay `pending`. In a real system the queue must not keep pending work only in memory: it writes jobs to durable storage (a database table, Redis, a message broker) when they are accepted, so a worker can pick them up after the restart. The [queue lesson](https://zudojs.oyinlola.site/learn/zudo-queue) covers `@zudojs/queue`, including why its published in-memory queue does not survive a restart either. A deadline decides how long you wait; durability decides what you lose when the wait is not enough.
 
@@ -979,7 +1001,7 @@ With a 20 ms deadline and a 50 ms wait, the signal aborts before the job in prog
 - The manager and each component follow the state machine from `@zudojs/constants`; a manager goes from `idle` to `ready` to `disposed` and is used once.
 - `dependsOn` orders components; independent ones run in parallel; `priority` is a barrier (higher first, stopped last).
 - `critical: false` lets a part fail without failing the start. `retry.attempts` counts retries; backoff is exponential by default.
-- A component `timeout` marks it failed but waits for the hook to settle: make hooks cancellable with `AbortSignal.timeout`.
+- A component `timeout` marks it failed and lets `start()` move on at once, detaching from a hook that ignores its `signal` rather than waiting for it to settle: make hooks cancellable with `AbortSignal.timeout` so the abandoned work actually stops.
 - A critical failure rolls back and disposes the manager. Stop failures are recorded and shutdown continues; `shutdownTimeout` aborts `context.signal` and abandons hooks that ignore it.
 - Signals are handled by default; one owner per process.
 

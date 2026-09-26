@@ -4,7 +4,7 @@ description: "Work like a professional team: issues, pull requests, code review,
 source: https://zudojs.oyinlola.site/learn/git-collaboration
 ---
 
-LEVEL 4 · LESSON 16 OF 20
+LEVEL 4 · LESSON 17 OF 21
 
 Professional development Core
 
@@ -878,7 +878,17 @@ TRY IT YOURSELF
 
 Create a bare repository and two clones in a temporary folder, as at the start of this lesson. In clone A, change line 1 of a file on `main` and push. In clone B, create a branch from the old `main`, change the same line differently, commit, then `git rebase origin/main` after fetching. Resolve the conflict keeping both changes, and finish the rebase. Then undo it all with `git reflog`: find the entry from before the rebase and `git reset --hard` to it.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Follow the exact shape of the walkthrough above: `git init --bare`, two `git clone`s, a commit and push in one clone, a branch and a conflicting commit in the other, then `git fetch` and `git rebase origin/main`.
+
+HINT 2
+
+`git reflog` shows every position `HEAD` has been at, even ones no branch points to any more. Find the line for right before you ran `git rebase`, and pass that entry (such as `HEAD@{3}`) to `git reset --hard`.
+
+SOLUTION
 
 The commands follow the sessions above: `git init --bare origin.git`, `git clone origin.git a`, `git clone origin.git b`; commit and push in `a`; `git switch -c change`, commit, `git fetch`, `git rebase origin/main` in `b`. After resolving: `git add`, `git rebase --continue`.
 
@@ -890,7 +900,17 @@ TRY IT YOURSELF
 
 Extend `next-version.js` so that `bumpFor` also treats `perf:` as a patch, and returns `null` when nothing needs a release. Test it on `["perf: cache delivery fees", "docs: fix typo"]` from version `1.1.0`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`PATCH_TYPES.has(type)` replaces checking each patch-level type by name one at a time, the same way `CRITICAL.has(label)` did in the worked example.
+
+HINT 2
+
+`if (breaking || subject.includes("BREAKING CHANGE")) return "major"; if (type === "feat") bump = "minor"; else if (PATCH_TYPES.has(type) && bump === null) bump = "patch";`
+
+SOLUTION
 
 next-version-perf.js
 
@@ -932,7 +952,17 @@ TRY IT YOURSELF
 
 A PR titled "update" changes 1,200 lines across 30 files, has no description, and contains the line `const API_KEY = "sk_live_...";` in `src/payments/client.js`. Write the review you would leave: which comments, which labels, and what outcome.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read [What to look for, in order](#review) and the Conventional Comments labels in [Code review](#review). One of the three problems here is far more urgent than the other two — which, and why?
+
+HINT 2
+
+A live secret in a diff is not just a style note: once pushed, treat it as already leaked ([Git and GitHub](#secrets)'s rule applies here too). Size and a missing description are real blockers as well, but they can wait a few minutes for the fix that cannot.
+
+SOLUTION
 
 **issue (blocking):** `src/payments/client.js` contains a live secret key. Please remove it and read it from `process.env` instead. Because it has been pushed, the key must be treated as leaked: please ask the payments owner to rotate it today.
 

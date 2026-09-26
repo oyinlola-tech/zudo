@@ -480,7 +480,17 @@ TRY IT YOURSELF
 
 Add a `projects` table (id and a unique, non-empty name) and give `tasks` a **nullable** `project_id`, so a task may belong to no project. When a project is deleted, its tasks should stay but lose their project. Hint: `on delete set null`. Show it working.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The `tasks.project_id` column needs a foreign key: `references projects (id)`.
+
+HINT 2
+
+Add `on delete set null` right after the reference, so a deleted project clears `project_id` on its tasks instead of blocking the delete or removing them.
+
+SOLUTION
 
 projects.jsNode.js only
 
@@ -522,7 +532,17 @@ TRY IT YOURSELF
 
 Name the relationship and where the key goes: (a) an order and its order lines; (b) students and courses; (c) a user and their settings row; (d) a comment and the task it is on.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Can either side of the relationship have more than one of the other? If both can, one foreign key on either table cannot express it.
+
+HINT 2
+
+(b) needs a table of its own, just to hold the pairs. (c) is the special case of one-to-many where the "many" side is capped at one.
+
+SOLUTION
 
 (a) One-to-many: `order_id` on `order_lines`. (b) Many-to-many: a join table `enrollments (student_id, course_id)`. (c) One-to-one: a unique `user_id` on `settings`. (d) One-to-many: `task_id` on `comments`.
 
@@ -532,7 +552,17 @@ TRY IT YOURSELF
 
 Add a fourth migration to the runner that creates an index on `tasks (due_date)`. Why must it be a new migration instead of a change to migration 3?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look at how the migration runner earlier in this lesson decides which migrations still need to run.
+
+HINT 2
+
+It checks the `id`s already recorded in `schema_migrations`. What happens to a database that already has migration 3's `id` recorded, if you edit migration 3 instead of adding a new one?
+
+SOLUTION
 
 Add `{ id: 4, name: "index due date", sql: "create index tasks_due_date_idx on tasks (due_date)" }` to the list. Every database that already ran migration 3 has it recorded in `schema_migrations` and will never run it again, so a change to it would never reach them. A new id runs everywhere exactly once.
 

@@ -759,7 +759,17 @@ TRY IT YOURSELF
 
 Bank alerts contain narrations like `"TRF FROM ADA OBI/REF:PSK-99812/AMT:NGN12,500.00"`. Write `parseNarration(text)` that returns `{ sender, ref, kobo }` using one anchored regex with named groups, and `null` when the format does not match. Convert the amount to kobo without floating point.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Build the pattern piece by piece: `TRF FROM `, then a named `sender` group of letters and spaces, `/REF:`, a named `ref` group, `/AMT:NGN`, a named `naira` group with optional comma groups of three digits, a literal `.`, and a named two-digit `kobo` group.
+
+HINT 2
+
+`/^TRF FROM (?<sender>[A-Z][A-Z ]*[A-Z])\/REF:(?<ref>[A-Z]{3}-\d+)\/AMT:NGN(?<naira>\d{1,3}(?:,\d{3})*)\.(?<kobo>\d{2})$/`
+
+SOLUTION
 
 narration.js
 
@@ -794,7 +804,17 @@ TRY IT YOURSELF
 
 Write `highlight(text, term)` that wraps every case-insensitive occurrence of `term` in `[` and `]`. It must work for terms with special characters such as `"c++"` and `"(bulk)"`, and keep the original capitalisation of the text.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`RegExp.escape(term)` turns any special regex characters in `term` into their literal form, so `"c++"` and `"(bulk)"` match themselves rather than being read as regex syntax.
+
+HINT 2
+
+`const pattern = new RegExp(RegExp.escape(term), "giu"); return text.replace(pattern, (match) => \`[${match}]\`);`
+
+SOLUTION
 
 highlight.js
 
@@ -839,7 +859,17 @@ Output of `node slow-tags.js` and of the browser terminal
 true false
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The old pattern lets a run of letters split across repetitions of `([a-z-]+,?)+` in many different ways. Require the comma to sit *between* two `[a-z-]+` groups instead of trailing each one, and there is only one way to split any string.
+
+HINT 2
+
+`/^[a-z-]+(?:,[a-z-]+)*$/` — one required run of tag characters, then zero or more `,` followed by another run.
+
+SOLUTION
 
 `([a-z-]+,?)+` is a quantifier inside a quantifier, and the comma is optional, so a run of letters can be split into repetitions in exponentially many ways. On a failing input, the engine tries them all. Requiring the comma *between* repetitions leaves one way to split any string:
 

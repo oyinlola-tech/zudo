@@ -878,7 +878,17 @@ TRY IT YOURSELF
 
 Reorder ShopFlow's steps to reserve, charge, ship. Using plain JavaScript, simulate 100 orders where 20% fail at the stock check and 5% have their card declined, and count how many refunds each order of steps causes. Use a seeded sequence so the result is the same every run.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Walk the steps for one order with a `done` list, the same as the validate/save example. When a step fails, look at what's already in `done` to decide what needs undoing.
+
+HINT 2
+
+`if (done.includes("charge")) refunds++; if (done.includes("reserve")) releases++; break;` — otherwise push the step onto `done` and keep going.
+
+SOLUTION
 
 step-order.js
 
@@ -925,7 +935,17 @@ TRY IT YOURSELF
 
 PGlite cannot run two deliveries at once, but JavaScript can show the race. Write a consumer that checks `seen.has(id)`, then awaits a 10 ms "database call", then adds the id and charges. Deliver the same message twice at the same time and count the charges. Then fix it by claiming the id *before* the await, the way `INSERT … ON CONFLICT DO NOTHING` claims it in one step.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Both versions start with `if (state.seen.has(id)) return;`. The difference is only where `state.seen.add(id)` goes relative to `await sleep(10)`.
+
+HINT 2
+
+Check-then-act: `await sleep(10); state.seen.add(id); state.charges++;` — claim-first: `state.seen.add(id); await sleep(10); state.charges++;`
+
+SOLUTION
 
 inbox-race.js
 
@@ -968,7 +988,17 @@ TRY IT YOURSELF
 
 Add an `updated_at timestamptz` column to `orders.sagas` (set by `save`), and write the query an alert would run: every saga still `running` or `compensating` whose last update is older than 10 minutes, oldest first, with its step. Which index helps it?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+The `WHERE` clause needs two conditions joined together: the status is one of the active ones (`IN (...)`), and `updated_at` is older than the cutoff. "Oldest first" says what to put in `ORDER BY`.
+
+HINT 2
+
+A plain index on `updated_at` would also index thousands of finished sagas. A **partial** index, with a `WHERE` clause of its own, only covers the rows the alert actually reads.
+
+SOLUTION
 
 The query: `SELECT id, status, step, now() - updated_at AS stuck_for FROM orders.sagas WHERE status IN ('running', 'compensating') AND updated_at < now() - interval '10 minutes' ORDER BY updated_at`. A partial index keeps it cheap however many completed sagas pile up: `CREATE INDEX sagas_active ON orders.sagas (updated_at) WHERE status IN ('running', 'compensating')`. It only contains the few active sagas, which is exactly what the alert reads. `save` sets `updated_at = now()` in the same `UPDATE` as the step, so the timestamp always describes the last real progress.
 

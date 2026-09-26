@@ -773,7 +773,17 @@ router.get("/auth/google/callback", async (ctx) => {
 });
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Compare this handler with `pending.ts` and `try-state.ts`: where does the real flow get its `state` and PKCE verifier from, and where does this one get them from instead?
+
+HINT 2
+
+Look at `findOrCreateAccount`: what does it key an account by, and what does this handler match on instead? And once the flow finishes, whose token does the client end up holding — yours, or the provider's?
+
+SOLUTION
 
 1. No state check. Anyone can send a victim a callback link with the attacker's code (login CSRF). Take the pending login from the server and call `verifyState` first.
 2. The PKCE verifier comes from the query string, so it travelled through the browser next to the code. A thief who has one has both. Keep the verifier on the server, as in `pending.ts`.
@@ -785,7 +795,17 @@ TRY IT YOURSELF
 
 Write `githubConfig()` like `googleConfig()`, reading `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, with the callback `http://localhost:3000/auth/github/callback` and only the `read:user` scope. Print the `scope` and `redirect_uri` of its authorization URL.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Add a `scopes` field to the returned object: `scopes: ["read:user"]`. Without it, the preset's own default scopes are used instead.
+
+HINT 2
+
+`return { provider: "github", clientId: requireEnv("GITHUB_CLIENT_ID"), clientSecret: requireEnv("GITHUB_CLIENT_SECRET"), allowedRedirectUris: [GITHUB_CALLBACK], scopes: ["read:user"] };`.
+
+SOLUTION
 
 github.tsNode.js only
 

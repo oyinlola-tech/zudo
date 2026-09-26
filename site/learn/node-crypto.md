@@ -4,7 +4,7 @@ description: "Use node:crypto correctly: unguessable tokens, hashes and HMAC web
 source: https://zudojs.oyinlola.site/learn/node-crypto
 ---
 
-LEVEL 4 · LESSON 5 OF 20
+LEVEL 4 · LESSON 5 OF 21
 
 Node.js Core
 
@@ -820,7 +820,17 @@ TRY IT YOURSELF
 
 Add a `needsRehash(stored)` function to the password module that returns `true` when a stored scrypt value used different parameters than the current `PARAMS`. Show it on a hash made with `N = 2 ** 15` and one made with the current parameters.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`stored.split("$")` gives you `["scrypt", N, r, p, salt, key]` as text. Convert the three cost numbers with `Number(...)` before comparing.
+
+HINT 2
+
+`const [, N, r, p] = stored.split("$").map(Number); return N !== PARAMS.N || r !== PARAMS.r || p !== PARAMS.p;`
+
+SOLUTION
 
 rehash.jsNode.js only
 
@@ -852,7 +862,17 @@ TRY IT YOURSELF
 
 Some providers sign the raw body alone with HMAC-SHA512 and send the hex digest in a header, with no timestamp. Write `verifySha512(secret, rawBody, headerHex)` with a constant-time comparison, test it on a genuine body, a changed body and an empty header, and explain what protects you from replays in this scheme.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`createHmac("sha512", secret).update(rawBody).digest()` with no argument to `digest()` gives you a `Buffer`, ready to compare against another buffer.
+
+HINT 2
+
+`const expected = createHmac("sha512", secret).update(rawBody).digest(); const received = Buffer.from(headerHex ?? "", "hex"); return received.length === expected.length && timingSafeEqual(received, expected);`
+
+SOLUTION
 
 sha512-webhook.jsNode.js only
 
@@ -890,7 +910,17 @@ TRY IT YOURSELF
 
 Write `decryptAny(keys, sealed, context)` that takes a map of key versions (`{ v1: oldKey, v2: newKey }`) and picks the key by the prefix, and `reencrypt` that moves a value from `v1` to `v2`. Use `encrypt` and `decrypt` from `vault.js`, replacing the `v1` label.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+A template literal's replace can rewrite a prefix either way: `sealed.replace(/^v1\./, \`${CURRENT}.\`)` for `seal`, and `sealed.replace(/^v\d+\./, "v1.")` for `decryptAny` before calling `decrypt`.
+
+HINT 2
+
+`decryptAny`: `if (!keys[version]) throw new Error(\`no key for ${version}\`); return decrypt(keys[version], sealed.replace(/^v\d+\./, "v1."), context);`
+
+SOLUTION
 
 rotate.jsNode.js only
 

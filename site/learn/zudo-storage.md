@@ -763,7 +763,17 @@ TRY IT YOURSELF
 
 Write `saveAttachment(taskId, fileName, bytes)` that stores the file under `tasks/<taskId>/<random id>`, keeps the original name in the metadata, and returns the key. `taskId` must be a positive whole number. Save `"../../secret.txt"` and show that its name is kept but its key is safe.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Check `taskId` with `Number.isSafeInteger(taskId) && taskId >= 1`; when it fails, `throw new RangeError(...)`. Build the key as a template literal: `\`tasks/${taskId}/${randomUUID()}\``.
+
+HINT 2
+
+`await files.put(key, bytes, { metadata: { fileName: fileName.slice(0, 200) } })`, then `return key`. The key never contains `fileName`, so a value like `"../../secret.txt"` cannot climb out of the folder; it only ever ends up in the metadata.
+
+SOLUTION
 
 save-attachment.tsNode.js only
 
@@ -809,7 +819,17 @@ TRY IT YOURSELF
 
 Write `withTaskLock(taskId, work)` that acquires `task:<id>` with a 5 second TTL and a 1 second wait, runs `work(fence)`, and always releases the lock, even when `work` throws. Run two calls for the same task at the same time and print the order they run in.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`const lock = await locks.acquire(\`task:${taskId}\`, { ttl: 5_000, timeout: 1_000 });` gives you the lock and its `fence`. Wrap the call to `work` in `try`/`finally`.
+
+HINT 2
+
+`try { return await work(lock.fence); } finally { await lock.release(); }`. Because B's `acquire` waits for A's lock, B only starts after A calls `release()`, which happens right after A's `work` settles.
+
+SOLUTION
 
 task-lock.tsNode.js only
 

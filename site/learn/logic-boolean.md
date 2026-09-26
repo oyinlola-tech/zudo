@@ -644,7 +644,17 @@ TRY IT YOURSELF
 
 A shop gives free delivery when the order total is at least ₦20,000 or the customer has a premium membership, but only for addresses in Lagos. Write `freeDelivery(bigOrder, isPremium, inLagos)`, print its truth table with nested loops, and count the rows where delivery is free.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The rule is `(bigOrder or isPremium) and inLagos`: write the OR first, inside parentheses, then AND with `inLagos` outside them.
+
+HINT 2
+
+`return (bigOrder || isPremium) && inLagos;`
+
+SOLUTION
 
 free-delivery.js
 
@@ -688,7 +698,17 @@ TRY IT YOURSELF
 
 Using the XOR idea, write `validPayment(card, transfer)` that is true only when exactly one method is chosen. Then extend it to three methods (card, transfer, wallet): still exactly one. Hint: count the true values.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`card !== transfer` is true exactly when they differ from each other — that is XOR for two values.
+
+HINT 2
+
+For three, count how many are `true` with three `if` statements, then check `on === 1`.
+
+SOLUTION
 
 one-method.js
 
@@ -728,7 +748,17 @@ TRY IT YOURSELF
 
 Write `careless` as the file-deletion rule without the parentheses: `!isSuspended && isOwner || isAdmin && !onLegalHold`. Loop over all 16 rows and print every row where it disagrees with `canDelete`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`&&` binds tighter than `||`, so removing the parentheses changes which parts group together. Trace one row by hand, like the banned-creator example, to see it.
+
+HINT 2
+
+`careless` is `canDelete`'s exact rule with the parentheses deleted: `!isSuspended && isOwner || isAdmin && !onLegalHold`.
+
+SOLUTION
 
 careless.js
 

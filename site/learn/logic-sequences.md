@@ -518,7 +518,17 @@ TRY IT YOURSELF
 
 For each sequence, print the differences and the ratios between neighbours, decide whether it is arithmetic or geometric, and compute term 10 with a formula (the first term is term 0). A: 4500, 4350, 4200, 4050 (stock). B: 1000, 1200, 1440, 1728 (followers).
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop from `i = 1`: `a[i] - a[i - 1]` is the difference, `(a[i] / a[i - 1]).toFixed(3)` is the ratio — do this for `a`, then for `b`.
+
+HINT 2
+
+A is arithmetic with difference −150: term 10 is `4500 + 10 * -150`. B is geometric with ratio 1.2: term 10 is `Math.round(1000 * 1.2 ** 10)`.
+
+SOLUTION
 
 find-rule.js
 
@@ -554,7 +564,17 @@ TRY IT YOURSELF
 
 Plan A pays you ₦1,000,000 now and ₦100,000 more each year. Plan B pays ₦800,000 now and 15% more each year. Use a loop to find the first year in which Plan B pays more than Plan A.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The loop condition is the same shape as the bacteria example: keep going while `planB <= planA` and `year` is under 100.
+
+HINT 2
+
+Each round: `year = year + 1; planA = planA + 100000; planB = planB * 1.15;`
+
+SOLUTION
 
 crossover.js
 
@@ -584,7 +604,17 @@ TRY IT YOURSELF
 
 A saver deposits ₦50,000 at the end of each month into an account paying 1% a month. Using the recurrence, find how many months until the balance reaches at least ₦1,000,000, and compare with how long it would take without interest.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The loop is the same shape as the score example: `while (balance < 1000000 && months < 600) { ... }`.
+
+HINT 2
+
+Each round: `months = months + 1; balance = balance * 1.01 + 50000;`
+
+SOLUTION
 
 savings-goal.js
 

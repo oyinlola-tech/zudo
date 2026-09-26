@@ -549,7 +549,17 @@ TRY IT YOURSELF
 
 Free delivery: `(bigOrder || isPremium) && inLagos`. Use De Morgan to write `noFreeDelivery` without an outer `!( … )`, then prove with nested loops that it is the exact opposite in all 8 rows.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The outer operator is AND, so De Morgan turns the opposite into an OR: `!(bigOrder || isPremium) || !inLagos`.
+
+HINT 2
+
+The first part is itself a negated OR, which becomes an AND: `(!bigOrder && !isPremium) || !inLagos`.
+
+SOLUTION
 
 The outer operator is AND, so the opposite is an OR of the negated parts: `!(bigOrder || isPremium) || !inLagos`. The first part is itself a negated OR, which becomes an AND: `(!bigOrder && !isPremium) || !inLagos`.
 
@@ -606,7 +616,17 @@ Output of `node cancel-bug.js` and of the browser terminal
 true true true
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+"Neither shipped nor delivered" is `!(shipped || delivered)`. De Morgan turns that into `!shipped && !delivered` — an AND, not an OR.
+
+HINT 2
+
+Change the single `||` in `canCancel` to `&&`: `status !== "shipped" && status !== "delivered"`.
+
+SOLUTION
 
 cancel-fixed.js
 
@@ -632,7 +652,17 @@ TRY IT YOURSELF
 
 A hotel lets a guest book a room only if the guest is logged in, the room exists, the number of nights is a whole number from 1 to 30, and the room is not already booked. Write `checkBooking(guest, room, nights)` with guard clauses in a sensible order, and test each reason plus the 1 and 30 night boundaries.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check `guest` and `room` exist before anything else: a later guard reads `room.booked`, which would crash if `room` were `undefined`.
+
+HINT 2
+
+"From 1 to 30" is `nights >= 1 && nights <= 30`; by De Morgan its opposite, for the guard, is `!Number.isInteger(nights) || nights < 1 || nights > 30`.
+
+SOLUTION
 
 booking.js
 

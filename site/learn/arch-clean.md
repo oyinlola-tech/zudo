@@ -1357,7 +1357,17 @@ TRY IT YOURSELF
 
 Write a PGlite adapter for `OrderRepository` (the order in one row, its lines in a `jsonb` column, reusing `toRecord` and `fromRecord`). Then write `orderRepositoryContract(name, make)`: three tests that any `OrderRepository` must pass, and run them against both adapters.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+In `pglite-orders.ts`, follow the SQL comments literally: `get` and `listPlacedBefore` both use `this.db.query<OrderRecord>(sql, params)` then map with `fromRecord`; `save` builds the row with `toRecord(order)` first.
+
+HINT 2
+
+In `orders-contract.ts`, the first test's expected value is `["placed", 900_000, "2026-09-24T09:00:00.000Z"]` (the line was 450,000 kobo × 2). The second is `"placed"` (a fake that returns the same live object would fail here). The third is `["ord-1"]`: `ord-2` is paid and `ord-3` is placed after the cutoff.
+
+SOLUTION
 
 src/adapters/pglite-orders.tsNode.js only
 
@@ -1472,7 +1482,17 @@ TRY IT YOURSELF
 
 The import checker cannot see a use case that calls `new Date()` or `crypto.randomUUID()`: those are globals, not imports. Write `checkPurity(files)`, which reports lines in the domain and the application that read the clock, make random values, read `process.env` or write to the console, each with a hint about the port to use instead.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Each entry is a regex/message pair, like `BAD_WORDS` above: `[/\bDate\.now\(|\bnew Date\(\s*\)/, "reads the system clock: take a Clock port"]`.
+
+HINT 2
+
+The other three: `[/\bMath\.random\(|\bcrypto\.randomUUID\(/, "makes random values: take an IdGenerator port"]`, `[/\bprocess\.env\b/, "reads the environment: pass the setting in"]`, `[/\bconsole\.\w+\(/, "writes to the console: publish an event or take a logger port"]`.
+
+SOLUTION
 
 purity.ts
 
@@ -1532,7 +1552,17 @@ TRY IT YOURSELF
 
 Three change requests arrive. For each, say which files change, and which rings stay untouched. (1) Customers may now order up to 10 copies. (2) The finance team wants every paid order sent to their accounting system. (3) Staff want the phone tool to print totals without the kobo.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For each request, ask: is this a business rule (domain), a step of a use case (application), or how something is shown or stored (adapter)? A change should touch exactly one ring.
+
+HINT 2
+
+(2) re-read [Driven adapters](#driven): the use case already publishes an event when an order is paid. (3) re-read how the CLI and HTTP adapters each format money in their own words, from [Driving adapters](#driving).
+
+SOLUTION
 
 (1) One constant in `src/domain/order.ts`. The HTTP 400 and the CLI message both read `max` from the failure, so they follow automatically. If the limit differed per customer group, it would become an argument of `Order.place`, filled in by the use case.
 

@@ -943,7 +943,7 @@ Output of `npx tsx try-limits.ts`
 8 423 retry after 900 s {"error":"Account is locked due to too many failed attempts","code":"ERR_ACCOUNT_LOCKED"}
 9 423 retry after 900 s {"error":"Account is locked due to too many failed attempts","code":"ERR_ACCOUNT_LOCKED"}
 10 423 retry after 900 s {"error":"Account is locked due to too many failed attempts","code":"ERR_ACCOUNT_LOCKED"}
-11 429  {"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}}
+11 429  {"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"},"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}
 ```
 
 Guesses 1 to 5 get 401. Guesses 6 to 10 hit the account lockout: 423 with the code `ERR_ACCOUNT_LOCKED`, and a `Retry-After` header that tells a well-behaved client how long to wait. The error carries the header itself, so the server sends it without any extra code. Request 11 never reaches the login code: the rate limiter answers 429 (Too Many Requests) first. Its `Retry-After` is the number of seconds left in the current minute.
@@ -965,7 +965,17 @@ const body = JSON.parse(text);
 await saveUser({ email: body.email, passwordHash: await hashPassword(body.password), roles: body.roles ?? ["user"] });
 ```
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`schema.string().trim().toLowerCase().max(254)` for the email. For the password, `schema.string().min(12).max(1024)`: that minimum is what makes the second check `false` below.
+
+HINT 2
+
+`email: schema.string().trim().toLowerCase().max(254), password: schema.string().min(12).max(1024)`. The object has no `roles` key, so parsing silently drops one a client sends.
+
+SOLUTION
 
 Anyone can register with `"roles": ["admin"]` and become an admin. The body is also not validated at all. Validate it with a schema that has no `roles` field, and let the server choose the role. A schema object drops keys it does not know:
 
@@ -999,7 +1009,17 @@ TRY IT YOURSELF
 
 Change the token settings so access tokens live 5 minutes and refresh tokens 1 day. Prove it by checking that `exp - iat` in a verified access token is 300.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Spread `tokenConfig` into a new object and override the two TTLs on it: `{ ...tokenConfig, accessTtl: …, refreshTtl: … }`, in seconds.
+
+HINT 2
+
+`const config = { ...tokenConfig, accessTtl: 5 * 60, refreshTtl: 24 * 60 * 60 };`.
+
+SOLUTION
 
 short-ttl.tsNode.js only
 
@@ -1028,7 +1048,17 @@ TRY IT YOURSELF
 
 Describe the steps of a `POST /auth/password` route that lets a logged-in user change their password. Which functions from this lesson do you call, and in which order?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Where does the user id for "whose password is this" come from: the request body, or `currentUser(ctx)`? Look at how `/auth/logout` in `server.ts` answers that same question.
+
+HINT 2
+
+Which two functions from [password hashing](#passwords) check the old password and produce the new hash? And after saving it, which function from [logout, expiry and refresh](#sessions) makes every other device's session stop working?
+
+SOLUTION
 
 1. Protect the route with `requireUser` and take the user id from `currentUser(ctx).sub`, never from the body.
 2. Validate the body (`currentPassword`, `newPassword` with your length rules) with a schema.

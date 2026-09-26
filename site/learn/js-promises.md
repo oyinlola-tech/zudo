@@ -966,7 +966,17 @@ D
 E undefined
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Walk down the chain one link at a time, tracking whether the promise at that point is fulfilled or rejected. A `.then(onFulfilled)` with no second argument is skipped entirely when the promise is rejected — it does not run and does not "clear" the rejection.
+
+HINT 2
+
+`20 > 10`, so the second step throws, and the chain becomes rejected before the `A` handler. `.catch` logs `B` and returns `5`, which re-fulfils the chain, so `C` runs; its handler returns nothing, and `.finally` passes that `undefined` straight through to the last `.then`.
+
+SOLUTION
 
 `2` becomes `20`. The next step throws because `20 > 10`, so the chain is rejected. `A` has no rejection handler and is skipped. The `catch` prints `B too big: 20` and returns `5`, which fulfils the chain again, so `C 5` runs. `C`'s handler returns nothing, so the chain is now fulfilled with `undefined`. `finally` prints `D` and passes that `undefined` through, so the last line is `E undefined`.
 
@@ -976,7 +986,17 @@ TRY IT YOURSELF
 
 A warehouse SDK calls back with *three* values: `callback(error, sku, quantity, location)`. Write `promisifyMany(fn)` that fulfils with an array of all result values, keeps `this`, and turns a synchronous throw into a rejection. Test it on a success, an error and a synchronous throw.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The callback now takes a rest parameter for everything after the error: `(error, ...results) => ...`. Resolve with the `results` array itself, not a single value.
+
+HINT 2
+
+`function promisifyMany(fn) { return function (...args) { return new Promise((resolve, reject) => { fn.call(this, ...args, (error, ...results) => (error ? reject(error) : resolve(results))); }); }; }`
+
+SOLUTION
 
 promisify-many.js
 
@@ -1027,6 +1047,18 @@ TRY IT YOURSELF
 
 This function is supposed to fail when the order cannot be saved, but the caller always sees success. Find the two bugs, fix them, and show that the caller now sees the error.
 
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+A `.then` handler with a block body and no `return` throws its result away. A promise whose rejection nothing is attached to yet is not "handled" until something returns it up the chain.
+
+HINT 2
+
+Bug 1: `.then((o) => saveOrder(o))` — return it. Bug 2: inside `.catch`, after logging, add `throw error;` so the rejection continues past the `catch` instead of turning into a fulfilled chain.
+
+SOLUTION
+
 lost-error.jsNode.js only
 
 ```ts
@@ -1049,8 +1081,6 @@ Output of `node lost-error.js`
 caller sees: order placed
 unhandled: database is read-only, order 7 not saved
 ```
-
-**Show a solution**
 
 Bug 1: the first handler has braces and no `return`, so `saveOrder`'s promise floats and its rejection never reaches the chain. Bug 2: the `catch` only logs, which turns the failure into a success. Return the promise, and rethrow after logging:
 

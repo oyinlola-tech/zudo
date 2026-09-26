@@ -581,7 +581,17 @@ TRY IT YOURSELF
 
 A bank statement and the shop's ledger are both sorted by amount (in kobo). Write `mergeSorted(a, b)` that returns one sorted array with every entry of both, in O(n + m) time, without calling `sort`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+While both `i` and `j` are in range, compare `a[i]` and `b[j]`; push the smaller one and advance that pointer. When one list runs out, copy the rest of the other.
+
+HINT 2
+
+`while (i < a.length && j < b.length) { if (a[i] <= b[j]) out.push(a[i++]); else out.push(b[j++]); } while (i < a.length) out.push(a[i++]); while (j < b.length) out.push(b[j++]);`
+
+SOLUTION
 
 merge-sorted.js
 
@@ -623,7 +633,17 @@ TRY IT YOURSELF
 
 A customer has a gift card for ₦20,000 and wants to buy exactly two different items. Given the item prices sorted ascending (in naira, whole numbers), count how many pairs of positions cost at most ₦20,000 together, in O(n).
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Wrap the check in `while (left < right)`. When `prices[left] + prices[right] <= budget`, every price between them fits with `left` too, so add `right - left` to `pairs` at once and move `left` forward. Otherwise move `right` backward.
+
+HINT 2
+
+`while (left < right) { if (prices[left] + prices[right] <= budget) { pairs += right - left; left++; } else { right--; } }`
+
+SOLUTION
 
 budget-pairs.js
 
@@ -662,7 +682,17 @@ TRY IT YOURSELF
 
 Sometimes no two payouts add up exactly, because a fee was deducted. Write `closestPair(amounts, target)` for a sorted list that returns the pair of positions whose sum is closest to the target. What is the argument that the pointer moves stay safe?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Compare `Math.abs(sum - target)` with `Math.abs(best.sum - target)` — but only when `best` already exists, since there is nothing to compare against on the first pair.
+
+HINT 2
+
+`if (best === null || Math.abs(sum - target) < Math.abs(best.sum - target)) { best = { left, right, sum }; }`
+
+SOLUTION
 
 closest-pair.js
 

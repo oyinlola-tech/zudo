@@ -667,7 +667,17 @@ TRY IT YOURSELF
 
 A moderator wants to see clusters of look-alike accounts. Write `groupAnagrams(names)` that returns only the groups with two or more names, each group in input order. Use the signature idea, but with a `Map` of counts so any character works.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Spread `counts` into an array of `[character, count]` pairs, sort the pairs by character, and turn the sorted array into a string with `JSON.stringify`.
+
+HINT 2
+
+`return JSON.stringify([...counts].sort(([x], [y]) => (x < y ? -1 : 1)));`
+
+SOLUTION
 
 group-anagrams.js
 
@@ -705,7 +715,17 @@ TRY IT YOURSELF
 
 A CSV import of 40,000 orders must be rejected if any order id appears more than once. Write `duplicateIds(rows)` that returns each duplicated id once, with how many times it appears, sorted by count (highest first). What should it return for a clean file?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Spread `counts` into an array, `filter` for a count above 1, `sort` by count descending, then `map` each `[id, n]` pair into a string.
+
+HINT 2
+
+`return [...counts].filter(([, n]) => n > 1).sort((a, b) => b[1] - a[1]).map(([id, n]) => \`${id} x${n}\`);`
+
+SOLUTION
 
 duplicate-ids.js
 
@@ -742,7 +762,17 @@ TRY IT YOURSELF
 
 Given a day's payments, return the payment method or methods used most often, as an array. If card and transfer are both used 40 times and nothing more, return both. Do it with one counting pass and one pass over the table.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop over `counts`: when `n > best`, this method is the new sole leader (`methods = [method]`); when `n === best`, add it alongside the current leaders.
+
+HINT 2
+
+`for (const [method, n] of counts) { if (n > best) { best = n; methods = [method]; } else if (n === best) { methods.push(method); } }`
+
+SOLUTION
 
 top-methods.js
 

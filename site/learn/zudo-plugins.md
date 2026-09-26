@@ -279,15 +279,15 @@ Output of `npx tsx rollback.ts`
 ```ts
 audit-log: stopped
 audit-log: file closed
-start failed: cannot reach slack.com
-total 2, healthy 0, failed 1
-audit-log disposed degraded
+start failed: Plugin "slack" failed to start: cannot reach slack.com
+total 2, healthy 1, failed 1
+audit-log disposed healthy
 slack disposed unhealthy cannot reach slack.com
 ```
 
 - The audit log had started, so it was stopped and its cleanup ran. Nothing is left running.
-- `diagnostics()` reports every plugin's state and health. The failed plugin keeps its error message in `health.details`, so a health endpoint or a log line can say *why*.
-- `hookTimeout` fails a hook that takes longer than the limit, so one hanging plugin cannot freeze the start-up of the whole Task API.
+- `diagnostics()` reports every plugin's state and health. A plugin that finished stopping or disposing cleanly reads `healthy`, same as one that never started; only a plugin still mid-boot, mid-shutdown, or actually failed is `degraded`/`unhealthy`. Slack's raw `Error` was not already a typed plugin error, so the manager re-throws it as a `PluginStartError` naming the plugin and quoting the original message; `diagnostics()` and the failed plugin's own `health.details` still keep that original message.
+- `hookTimeout` fails a hook that takes longer than the limit, so one hanging plugin cannot freeze the start-up of the whole Task API. `start()` rejects with a `PluginTimeoutError` naming the plugin and the limit (`Plugin "slow-plugin" timed out after 100ms.`), and the manager rolls it back the same as any other failed start.
 
 A disposed plugin cannot be started again: calling `manager.start` a second time throws a `PluginStateError`. To retry, create a new manager with fresh plugin objects.
 
@@ -492,7 +492,17 @@ TRY IT YOURSELF
 
 Write `createStatsPlugin()`: it counts `task.completed` events per user and, in `stop`, logs the counts with `context.logger`. Remember to unsubscribe in the cleanup list.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Inside `start(context)`, write a handler that receives the event's payload directly — `const onCompleted = (event: unknown) => { const { userId } = event as { userId: string }; ... };` — and does `perUser.set(userId, (perUser.get(userId) ?? 0) + 1)`. Register it with `context.events?.on("task.completed", onCompleted)`.
+
+HINT 2
+
+Add `context.onDispose(() => context.events?.off("task.completed", onCompleted));` right after subscribing, so the same function reference is removed later. A plugin that starts and stops more than once must not pile up duplicate handlers.
+
+SOLUTION
 
 src/plugins/stats.tsNode.js only
 
@@ -543,7 +553,17 @@ TRY IT YOURSELF
 
 Plugins: `api` depends on `db` and `cache`, `cache` depends on `db`. They are registered as `api`, `cache`, `db`. In which order do they start, and in which order do they stop? What happens if `db` also declares a dependency on `api`?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Registration order is not start order: the manager starts a plugin only once everything it depends on has already started, regardless of the order you called `register` in.
+
+HINT 2
+
+Stop order is the exact reverse of start order — the same rule you saw in the reminders example, where cleanup ran after the dependent plugins had already been asked to stop. For the last question, think about what a dependency *from* `db` *to* `api` would mean for "everything api depends on must start first" when api already depends on db.
+
+SOLUTION
 
 Start: `db`, `cache`, `api`: every plugin starts after everything it depends on. Stop: the reverse, `api`, `cache`, `db`. If `db` depended on `api`, there would be a cycle (`api` → `db` → `api`) with no valid order. `manager.start` throws a `PluginDependencyCycleError` that names the cycle, before any hook runs.
 

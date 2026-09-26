@@ -557,7 +557,17 @@ TRY IT YOURSELF
 
 Each order has the hour (0 to 23) it was placed. Build a frequency table, print only the hours that had orders, and print the busiest hour.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+For each hour, if `perHour[hour]` has never been set, start it at 0 first: `if (perHour[hour] === undefined) perHour[hour] = 0;`
+
+HINT 2
+
+Then add 1 every time: `perHour[hour] = perHour[hour] + 1;`
+
+SOLUTION
 
 busiest-hour.js
 
@@ -599,7 +609,17 @@ TRY IT YOURSELF
 
 A lunch deal is: one main (4 rice dishes or 3 swallows), one protein (chicken, beef, fish or goat), and any 2 different sides from 5 (order does not matter). How many different lunches are there? Compute it with the principles, then confirm the sides count with a brute-force loop.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Nest two loops over the 5 sides, with the inner loop starting at `i + 1`, so each pair like (plantain, salad) is counted only once.
+
+HINT 2
+
+`for (let i = 0; i < 5; i++) { for (let j = i + 1; j < 5; j++) sidePairs = sidePairs + 1; } `
+
+SOLUTION
 
 menu.js
 
@@ -630,7 +650,17 @@ TRY IT YOURSELF
 
 A voucher code uses the 32 symbols A to Z and 2 to 7 (no 0, 1, O or I, which people confuse). The shop will issue 100,000 vouchers, and wants the chance that a random guess hits *any* valid voucher to be below one in a million. Find the shortest length that works.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The loop condition mirrors the PIN example: `while (issued / symbols ** length >= 1 / 1000000) { length = length + 1; }`
+
+HINT 2
+
+Each round only changes `length`; the two `console.log` lines below already use it correctly once the loop is right.
+
+SOLUTION
 
 voucher-length.js
 

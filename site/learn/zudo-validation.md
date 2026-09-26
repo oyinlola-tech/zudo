@@ -884,7 +884,9 @@ TRY IT YOURSELF
 
 Add a `q` parameter to `ListTasksQuery` for searching titles. It is optional, is trimmed, must be 1 to 50 characters, and is compared in lower case, so turn it to lower case in the schema. Test it with `?q=%20MILK%20` (the `%20` are spaces) and with `?q=`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+SOLUTION
 
 search.ts
 
@@ -926,7 +928,9 @@ function updateTask(task: StoredTask, body: Record<string, unknown>): StoredTask
 }
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+SOLUTION
 
 `{ ...task, ...body }` copies *every* field of the request body onto the task: `id`, `createdAt`, and in later lessons `ownerId`. A client could move a task to another user or overwrite its id. The `as StoredTask` hides the problem from TypeScript. The fix parses first and copies only known fields:
 

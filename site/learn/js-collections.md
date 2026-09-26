@@ -862,7 +862,17 @@ TRY IT YOURSELF
 
 Given a list of product views (SKU strings), build a `Map` of counts in one pass and print the three most viewed products with their counts, most viewed first; ties keep the order of first appearance.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`counts.get(sku) ?? 0` gives 0 for a sku seen for the first time. Loop over `views` once, updating the count each time.
+
+HINT 2
+
+`for (const sku of views) counts.set(sku, (counts.get(sku) ?? 0) + 1);` then `[...counts].toSorted((a, b) => b[1] - a[1]).slice(0, 3)`.
+
+SOLUTION
 
 top-views.js
 
@@ -898,7 +908,17 @@ TRY IT YOURSELF
 
 Write `memoizeByObject(fn)` that returns a function of one object argument that calls `fn` at most once per object, using a `WeakMap`. It must also cache results that are `undefined`. Show with a counter that repeated calls with the same object do not call `fn` again, and that an equal-looking object does.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`cache.has(obj)` tells you whether an object was already seen, even when the stored result is `undefined` — checking `cache.get(obj)` for truthiness would not.
+
+HINT 2
+
+`if (cache.has(obj)) return cache.get(obj); const result = fn(obj); cache.set(obj, result); return result;`
+
+SOLUTION
 
 memoize-object.js
 
@@ -943,7 +963,17 @@ TRY IT YOURSELF
 
 You have a `Set` of customers with an open cart and a `Map` from customer id to the date of their last order. Using the set methods and the fact that a `Map` is set-like, print the customers with an open cart who have *never* ordered, and those who have ordered before.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`aSet.difference(other)` keeps what is in `aSet` but not in `other`; `aSet.intersection(other)` keeps what is in both. A `Map` works as `other` because it has `size`, `has` and `keys`.
+
+HINT 2
+
+`[...openCart.difference(lastOrder)]` for never ordered. `[...openCart.intersection(lastOrder)].map((id) => \`${id} (${lastOrder.get(id)})\`)` for ordered before.
+
+SOLUTION
 
 reminders.js
 

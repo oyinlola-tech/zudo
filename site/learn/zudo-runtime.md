@@ -398,13 +398,13 @@ Output of `npx tsx readiness-stop.ts`
 initialize store
 ready      store
 shutdown   store (finishing its work)
-state: stopping | runtime.ready: true
+state: stopping | runtime.ready: false
 safe answer: false
 destroy    store
-state: stopped | runtime.ready: true
+state: stopped | runtime.ready: false
 ```
 
-Look at `runtime.ready`. In the published `@zudojs/runtime`, running the checks while the runtime stops sets `ready` back to `true`, and it stays `true` after the runtime has stopped. So never answer a probe from `runtime.ready` alone: combine it with `runtime.state === "running"`, as the "safe answer" line does. The generated project is protected twice: `src/app.ts` registers a check called `modules` that returns `runtime.state === "running"`, and the `health` function in `src/server.ts` checks `runtime.state` itself. At the [end of this lesson](#task-api), `/health` reports every readiness check and keeps that state check.
+Look at `runtime.ready`: it is already `false` the moment `stop()` begins, and running the checks again while the store's own check still returns `true` does not flip it back. `shutting_down` is **sticky**: once the runtime starts to stop, only a fresh `setState()` can leave it, so a check that races the shutdown and still passes cannot make `ready` true again. This is a newer fix; before it, running the checks during `stop()` did set `ready` back to `true`, and it stayed `true` after the runtime had fully stopped, so a probe timed just wrong could route a request to an instance with its connections already closing. It is still worth combining `runtime.ready` with `runtime.state === "running"`, as the "safe answer" line does: a state check reads cleanly in one line, does not depend on which patch version of the package you have, and says directly what you mean, "handling traffic right now". The generated project is protected twice this way: `src/app.ts` registers a check called `modules` that returns `runtime.state === "running"`, and the `health` function in `src/server.ts` checks `runtime.state` itself. At the [end of this lesson](#task-api), `/health` reports every readiness check and keeps that state check.
 
 ## Signals and graceful shutdown
 
@@ -792,7 +792,17 @@ TRY IT YOURSELF
 
 Using `traceModule` and `buildRuntime` from this lesson, add a `mailer` module that needs `tasks`, next to `http`, which also needs `tasks`. Before running it, write down the order you expect for all four rounds of hooks. Then run it.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Add two more entries to the array, in the same shape as `traceModule("tasks", ["store"])`: `traceModule("mailer", ["tasks"])` and `traceModule("http", ["tasks"])`.
+
+HINT 2
+
+Order inside the array does not matter for modules that do not depend on each other; the runtime still starts `store` and `tasks` first, since `mailer` and `http` both need `tasks`.
+
+SOLUTION
 
 mailer.tsNode.js only
 
@@ -838,7 +848,17 @@ TRY IT YOURSELF
 
 Make the `tasks` module throw `new Error("Schema is out of date")` in `onInitialize`. Which hooks run, what is the error's `phase`, and why does `onShutdown` run for no module at all?
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`onInitialize: () => { console.log("initialize tasks"); throw new Error("Schema is out of date"); }`, replacing the key `traceModule` already gave `tasks`.
+
+HINT 2
+
+Once `tasks` throws, `store` (already ready) and `tasks` (half-initialized) both get destroyed; `http`, which depends on `tasks`, is never reached at all.
+
+SOLUTION
 
 init-fail.tsNode.js only
 
@@ -884,7 +904,17 @@ TRY IT YOURSELF
 
 In the Task API, `src/server.ts` calls `await runtime.start()` without a `try`, just before it creates the HTTP server. Change it so that a failed start logs the error, calls `runtime.stop()` and exits with code 1.
 
-**Show a solution**
+Write it in the editor and run it. Hints and the solution open up once you have tried.
+
+HINT 1
+
+Wrap the call in `try`/`catch`. A failed start still leaves some modules registered and possibly partially started, so the `catch` block should still call `runtime.stop()` before exiting.
+
+HINT 2
+
+`try { await runtime.start(); } catch (error) { console.error("Startup failed:", error); await runtime.stop(); process.exit(1); }`.
+
+SOLUTION
 
 src/server.ts (part)Node.js only
 

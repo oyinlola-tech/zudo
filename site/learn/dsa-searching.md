@@ -706,7 +706,17 @@ TRY IT YOURSELF
 
 Products are sorted by price. Using `lowerBound` and `upperBound` with a `key` function, print every product that costs exactly ₦12,000, and how many cost between ₦10,000 and ₦50,000 inclusive.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+An inclusive range `[a, b]` is everything from `lowerBound(a)` up to, but not including, `upperBound(b)`. The count is the difference between those two indexes.
+
+HINT 2
+
+`const count = upperBound(products, 5_000_000, price) - lowerBound(products, 1_000_000, price);`
+
+SOLUTION
 
 price-range.js
 
@@ -744,7 +754,17 @@ TRY IT YOURSELF
 
 Delivery slots are sorted minutes after midnight. A customer asks for a time; offer the slot closest to it (earlier or later; on a tie, the earlier one). Use `lowerBound` to find the first slot at or after the time, then compare it with the slot just before it. Handle times before the first slot and after the last.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Handle the two edges first: `i === 0` means every slot is later than `wanted`; `i === slots.length` means every slot is earlier. Otherwise compare `slots[i - 1]` and `slots[i]` by how far each is from `wanted`.
+
+HINT 2
+
+`if (i === 0) return slots[0]; if (i === slots.length) return slots.at(-1); const before = slots[i - 1]; const after = slots[i]; return wanted - before <= after - wanted ? before : after;`
+
+SOLUTION
 
 nearest-slot.js
 
@@ -787,7 +807,17 @@ TRY IT YOURSELF
 
 A product's price history is a list of changes sorted by the time they took effect. A customer disputes an order placed at a given time. Find the price that was in effect then: the last change at or before that time. Which bound gives it directly?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`upperBound(history, time, (change) => change.from)` gives the first change strictly *after* `time`. The change in effect at `time` is one index before that.
+
+HINT 2
+
+`const i = upperBound(history, time, (change) => change.from) - 1; return i < 0 ? undefined : history[i].kobo;`
+
+SOLUTION
 
 price-history.js
 

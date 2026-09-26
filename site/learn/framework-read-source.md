@@ -104,9 +104,9 @@ for (const path of ["/books/new", "/books/42", "/admin/a/b/c", "/shop/a/b/c"]) {
 Output of `npx tsx ranking.ts`
 
 ```ts
-/books/new  /books/:id  /books/:id(\d+)  /admin/*rest  /:a/:b/:c/:d
+/books/new  /books/:id(\d+)  /books/:id  /admin/*rest  /:a/:b/:c/:d
 /books/new -> /books/new {}
-/books/42 -> /books/:id {"id":"42"}
+/books/42 -> /books/:id(\d+) {"id":"42"}
 /admin/a/b/c -> /admin/*rest {"rest":"a/b/c"}
 /shop/a/b/c -> /:a/:b/:c/:d {"a":"shop","b":"a","c":"b","d":"c"}
 ```
@@ -114,7 +114,7 @@ Output of `npx tsx ranking.ts`
 Three things in that output deserve an explanation:
 
 1. `/books/new` won over `/books/:id` although it was registered later, and the four-parameter catch-all, registered first, came last. So the router ranks routes. By what rule?
-2. `/books/:id(\d+)`, a parameter that only accepts digits, never matched `/books/42`. The plain `/books/:id` took it. Is that a bug, or a rule you must know?
+2. `/books/:id(\d+)`, a parameter that only accepts digits, matched `/books/42` even though the plain `/books/:id` was registered first. Does a constraint rank higher than a plain parameter, or did something else decide the order?
 3. With 400 routes, what does finding one cost? The package also exports a `RouteTree`, the fast structure from [Tries](https://zudojs.oyinlola.site/learn/dsa-tries). Does the router use it?
 
 Documentation describes what a package promises. The source describes what it does. When you need to know exactly, you read the source, and every framework you depend on is sitting in `node_modules`, readable. This lesson teaches how to read it efficiently: where to start, what to trust, how to follow one request through code you did not write, and how to confirm each conclusion with an experiment. The subjects are the published ZudoJS packages; the method works for any framework.
@@ -134,7 +134,7 @@ Reading without a question is slow: a package like `@zudojs/http` ships hundreds
 
 **Show the reasoning**
 
-A reasonable set of hypotheses: routes are *compiled* into segments when registered, and *ranked* either then or at match time. "More specific" compares segment kinds (literal beats parameter beats wildcard), left to right, as your router did. A tie is broken by registration order, because a stable sort keeps it. A constraint is a regular expression, which the router cannot compare with another pattern in general, so an author may deliberately rank `:id(\d+)` the same as `:id` and leave the order to you. To find the matching code, search for the words the public API uses (`match`, `dispatch`) and for the names in the error messages you saw.
+A reasonable set of hypotheses: routes are *compiled* into segments when registered, and *ranked* either then or at match time. "More specific" compares segment kinds (literal beats parameter beats wildcard), left to right, as your router did. A tie is broken by registration order, because a stable sort keeps it. A constraint narrows what a parameter accepts, so a reasonable design ranks a constrained parameter above a plain one regardless of a general comparison between two arbitrary regular expressions, the same way a literal segment outranks any parameter. To find the matching code, search for the words the public API uses (`match`, `dispatch`) and for the names in the error messages you saw.
 
 Each hypothesis tells you what to look for and what would prove it wrong. That is the difference between reading and wandering.
 
@@ -156,7 +156,7 @@ for (const name of ["@zudojs/http", "@zudojs/container"]) {
   console.log("  depends on:", Object.keys((pkg.dependencies as Record<string, string>) ?? {}).join(", "));
 }
 
-const specifier = "@zudojs/http/dist/httpAdapter/httpAdapter.errorResponse.js";
+const specifier = "@zudojs/http/dist/httpAdapter/errorResponse/httpAdapterError.response.js";
 try {
   await import(specifier);
 } catch (error) {
@@ -244,7 +244,7 @@ import { grep } from "./source.js";
 
 const declarations = grep(
   "@zudojs/container",
-  /registerFactory<|^export type InjectedDependencies|^export type InjectedFactory|^export type ProviderToken|-readonly \[K in keyof Deps\]/,
+  /registerFactory<|^export type InjectedDependencies|^export type InjectedFactory|^export type ProviderToken|-readonly \[K in keyof Deps\]: Deps\[K\] extends ProviderToken<infer U> \? U : never;/,
   ".d.ts",
 );
 for (const hit of declarations) console.log(`${hit.file.replace("dist/", "")}:\n  ${hit.text}`);
@@ -380,29 +380,29 @@ Output of `npx tsx read-match.ts`
 
 ```ts
 // dist/httpRouter/core/register/httpRouter.register.js
- 123      match(method, path) {
- 124          const normalizedMethod = method.toUpperCase();
- 125          const normalizedPath = normalizePath(path);
- 126          const matchPath = normalizeMatchPath(path);
- 127          const candidates = this.sortedRoutes();
- 128          const allowedForPath = () => collectAllowedMethods(candidates, matchPath, this.routerOptions.caseSensitive);
- 129          const allowed = new Set();
- 130          let pathMatched = false;
- 131          for (const route of candidates) {
- 132              const params = matchCompiledRoute(route, matchPath, this.routerOptions.caseSensitive);
- 133              if (!params) {
- 134                  continue;
+ 135      match(method, path) {
+ 136          const normalizedMethod = method.toUpperCase();
+ 137          const normalizedPath = normalizePath(path);
+ 138          const matchPath = normalizeMatchPath(path);
+ 139          const candidates = this.sortedRoutes();
+ 140          const allowedForPath = () => this.withAutomaticMethods(collectAllowedMethods(candidates, matchPath, this.routerOptions.caseSensitive));
+ 141          let pathMatched = false;
+ 142          for (const route of candidates) {
+ 143              const params = matchCompiledRoute(route, matchPath, this.routerOptions.caseSensitive);
+ 144              if (!params) {
+ 145                  continue;
+ 146              }
    …
 // dist/httpRouter/core/register/httpRouter.register.js
- 296      sortedRoutes() {
- 297          return [...this.routes].sort((left, right) => {
- 298              const specificity = compareSegmentSpecificity(left.segments, right.segments);
- 299              if (specificity !== 0) {
- 300                  return specificity;
- 301              }
- 302              return (extractRouteSequence(left.definition.id) -
- 303                  extractRouteSequence(right.definition.id));
- 304          });
+ 386      sortedRoutes() {
+ 387          if (this.sortedCache === undefined) {
+ 388              this.sortedCache = [...this.routes].sort((left, right) => this.compareRoutes(left, right));
+ 389          }
+ 390          return this.sortedCache;
+ 391      }
+ 392  }
+ 393  /**
+ 394   * Builds the conflict error for a shadowed route, naming the route that
 ```
 
 This is the answer to the cost question. `match` calls `sortedRoutes()`, which copies and sorts all routes, *on every call*, then tries them one by one with `matchCompiledRoute`. With *n* routes that is a sort, O(*n* log *n*), plus a linear scan, O(*n*), per request. For a typical API of a few dozen routes it does not matter. For thousands, it would: the order could be computed once when a route is added, as your router did. That is a precise, testable observation worth reporting to the maintainers, not a reason to panic.
@@ -414,41 +414,66 @@ read-specificity.tsNode.js only
 ```ts
 import { excerpt } from "./source.js";
 
-console.log(excerpt("@zudojs/http", "dist/httpRouter/pattern/httpRoute.pattern.parse.js", /^ \* Compares two compiled patterns by specificity/, 23));
+console.log(excerpt("@zudojs/http", "dist/httpRouter/pattern/httpRoute.pattern.parse.js", /^ \* Scores one segment by how narrowly/, 27));
+console.log("   …");
+console.log(excerpt("@zudojs/http", "dist/httpRouter/core/register/httpRouter.register.js", /^    compareRoutes\(left, right\) \{/, 17));
 ```
 
 Output of `npx tsx read-specificity.ts`
 
 ```ts
 // dist/httpRouter/pattern/httpRoute.pattern.parse.js
-  85   * Compares two compiled patterns by specificity, most specific first.
-  86   *
-  87   * Segments are compared left to right by kind (literal, then parameter, then
-  88   * wildcard), which is how a router is expected to rank patterns. Summing the
-  89   * kinds into one scalar — as this used to — let a longer but entirely
-  90   * parameterised pattern such as `/:p/:q/:r/:s` outrank a literal-anchored
-  91   * `/admin/*rest`, so a request to `/admin/a/b/c` bypassed the admin route and
-  92   * every guard registered on it.
-  93   *
-  94   * @param left - The first pattern's segments.
-  95   * @param right - The second pattern's segments.
-  96   * @returns A negative number when `left` is more specific.
-  97   */
-  98  export function compareSegmentSpecificity(left, right) {
-  99      const length = Math.max(left.length, right.length);
- 100      for (let index = 0; index < length; index += 1) {
- 101          const difference = segmentScore(right[index]) - segmentScore(left[index]);
- 102          if (difference !== 0) {
- 103              return difference;
- 104          }
- 105      }
- 106      return 0;
- 107  }
+  96   * Scores one segment by how narrowly it matches: a literal, then a parameter
+  97   * with a regular expression constraint, then a plain parameter, then the end
+  98   * of the pattern, then an optional parameter, then a wildcard.
+  99   *
+ 100   * A constrained parameter used to score the same as an unconstrained one, so
+ 101   * `/x/:slug` registered before `/x/:id(\\d+)` left the id route unreachable.
+ 102   * The end of a pattern used to score lowest of all, so `/files/*path` (whose
+ 103   * wildcard matches an empty tail) and `/users/:id?` were tried before the
+ 104   * exact `/files` and `/users` routes, which could then never answer.
+ 105   */
+ 106  export function segmentScore(segment) {
+ 107      if (segment === undefined) {
+ 108          return SEGMENT_SCORE_ABSENT;
+ 109      }
+ 110      if (segment.type === "literal") {
+ 111          return SEGMENT_SCORE_LITERAL;
+ 112      }
+ 113      if (segment.type === "parameter") {
+ 114          if (segment.pattern !== undefined) {
+ 115              return SEGMENT_SCORE_CONSTRAINED_PARAMETER;
+ 116          }
+ 117          return segment.optional
+ 118              ? SEGMENT_SCORE_OPTIONAL_PARAMETER
+ 119              : SEGMENT_SCORE_PARAMETER;
+ 120      }
+ 121      return SEGMENT_SCORE_WILDCARD;
+ 122  }
+   …
+// dist/httpRouter/core/register/httpRouter.register.js
+ 368      compareRoutes(left, right) {
+ 369          const specificity = compareSegmentSpecificity(left.segments, right.segments);
+ 370          if (specificity !== 0) {
+ 371              return specificity;
+ 372          }
+ 373          /*
+ 374           * At equal specificity a method-specific route is tried before an
+ 375           * `all()` route, so `all("/x/:id")` no longer swallows a later
+ 376           * `get("/x/:id")`.
+ 377           */
+ 378          const leftAny = left.definition.method === "*" ? 1 : 0;
+ 379          const rightAny = right.definition.method === "*" ? 1 : 0;
+ 380          if (leftAny !== rightAny) {
+ 381              return leftAny - rightAny;
+ 382          }
+ 383          return (extractRouteSequence(left.definition.id) -
+ 384              extractRouteSequence(right.definition.id));
 ```
 
-Now the opening output makes sense. Segments are compared left to right by kind (literal 3, parameter 2, wildcard 1): `/books/new` beats `/books/:id` at the second segment, and `/admin/*rest` beats `/:a/:b/:c/:d` at the first. `:id(\d+)` is still a parameter, so it ties with `:id`, and the tie goes to the lower sequence number: the route registered first. The constrained route was not broken; it was registered second. Register it first and it wins for digits, while `/books/b1` falls through to the plain one.
+Now the opening output makes sense. `segmentScore` gives a constrained parameter its own score, between a literal and a plain parameter, so `:id(\d+)` outranks `:id` regardless of which was registered first; that is why `/books/42` went to the constrained route above even though the plain one was registered earlier. `/books/new` still beats `/books/:id` at the second segment (literal outranks parameter), and `/admin/*rest` still beats `/:a/:b/:c/:d` at the first. Only when two routes score exactly the same does `compareRoutes` fall back to a tiebreak: a method-specific route (`get(...)`) before a catch-all `all(...)` route, and only after that, the lower sequence number — the route registered first.
 
-The comment also records history: the rule used to be a sum, and that let a catch-all route bypass `/admin/*rest` and every guard on it. Comments that say "used to" are some of the most valuable lines in a codebase: each describes an edge case that once broke, which is exactly the kind of case you should test in your own code.
+The comment above `segmentScore` records two bugs this fixed: a constrained parameter used to score the same as a plain one, so registration order silently decided which route answered a numeric id; and the end of a pattern used to score lowest of all, so a wildcard or an optional parameter was tried before the exact, shorter route it should have lost to. Comments that say "used to" are some of the most valuable lines in a codebase: each describes an edge case that once broke, which is exactly the kind of case you should test in your own code.
 
 ### 3. Dispatch: middleware, then the handler, then normalisation
 
@@ -463,40 +488,44 @@ read-errors.tsNode.js only
 ```ts
 import { excerpt } from "./source.js";
 
-const file = "dist/httpAdapter/httpAdapter.errorResponse.js";
+const file = "dist/httpAdapter/errorResponse/httpAdapterError.response.js";
 console.log(excerpt("@zudojs/http", file, /deliberately internal/, 1));
 console.log("   …");
-console.log(excerpt("@zudojs/http", file, /^export function resolveErrorResponse/, 18));
+console.log(excerpt("@zudojs/http", file, /^export function resolveErrorResponse/, 22));
 ```
 
 Output of `npx tsx read-errors.ts`
 
 ```ts
-// dist/httpAdapter/httpAdapter.errorResponse.js
+// dist/httpAdapter/errorResponse/httpAdapterError.response.js
   14   * This module is deliberately internal: it is not part of the public API.
    …
-// dist/httpAdapter/httpAdapter.errorResponse.js
- 100  export function resolveErrorResponse(error) {
- 101      const statusError = findStatusError(error, 0, new Set());
- 102      if (!statusError) {
- 103          return {
- 104              status: 500,
- 105              body: { error: "Internal Server Error" },
- 106              headers: {},
- 107          };
- 108      }
- 109      const status = statusError.statusCode;
- 110      const expose = statusError.expose === true;
- 111      const message = expose && typeof statusError.message === "string" && statusError.message
- 112          ? statusError.message
- 113          : getStatusText(status);
- 114      const body = { error: message };
- 115      if (expose && typeof statusError.code === "string" && statusError.code) {
- 116          body.code = statusError.code;
- 117      }
+// dist/httpAdapter/errorResponse/httpAdapterError.response.js
+  43  export function resolveErrorResponse(error) {
+  44      const statusError = findStatusError(error, 0, new Set());
+  45      if (!statusError) {
+  46          return {
+  47              status: 500,
+  48              body: { error: "Internal Server Error", code: "INTERNAL_SERVER_ERROR" },
+  49              headers: {},
+  50          };
+  51      }
+  52      const status = statusError.statusCode;
+  53      const expose = statusError.expose === true;
+  54      const message = expose && typeof statusError.message === "string" && statusError.message
+  55          ? statusError.message
+  56          : getStatusText(status);
+  57      const code = expose && typeof statusError.code === "string" && statusError.code
+  58          ? statusError.code
+  59          : statusName(status);
+  60      const body = { error: message, code };
+  61      const issues = expose ? publicIssues(statusError.issues) : undefined;
+  62      if (issues !== undefined) {
+  63          body.issues = issues;
+  64      }
 ```
 
-The mapper does not check for an `@zudojs/errors` class. It looks for any error with a numeric `statusCode` between 400 and 599 (**duck typing**: if it has a status, it is treated as an HTTP error), and it shows the message and `code` only when the error sets `expose: true`. That is a design decision with consequences, so confirm it with your own error class:
+The mapper does not check for an `@zudojs/errors` class. It looks for any error with a numeric `statusCode` between 400 and 599 (**duck typing**: if it has a status, it is treated as an HTTP error). Every body now carries an `error` and a `code`: without `expose: true` they are the generic status text and the status's own symbolic name (`"INTERNAL_SERVER_ERROR"`, say); with it, the error's own `message` and `code` go out instead. That is a design decision with consequences, so confirm it with your own error class:
 
 status-errors.tsNode.js only
 
@@ -537,12 +566,12 @@ await server.stop();
 Output of `npx tsx status-errors.ts`
 
 ```ts
-/hidden 410 {"error":"Gone"}
+/hidden 410 {"error":"Gone","code":"GONE"}
 /exposed 410 {"error":"Book b7 is out of print","code":"ERR_OUT_OF_PRINT"}
-/bug 500 {"error":"Internal Server Error"}
+/bug 500 {"error":"Internal Server Error","code":"INTERNAL_SERVER_ERROR"}
 ```
 
-Confirmed on all three counts. An error class that `@zudojs/errors` has never heard of got its 410. Without `expose`, the client saw only the status text, so the supplier contract number stayed private; with it, the message and the code went out. And an ordinary `Error` became a 500 whose body says nothing about the pool or the database host. Your part 2 framework made the same promise with an `instanceof HttpError` check; ZudoJS makes it with a duck-typed `statusCode` and an opt-in `expose`, which lets errors from other libraries carry statuses too.
+Confirmed on all three counts. An error class that `@zudojs/errors` has never heard of got its 410. Without `expose`, the client saw only the status text and its symbolic name, `"GONE"`, so the supplier contract number and `OutOfPrintError`'s own `ERR_OUT_OF_PRINT` code both stayed private; with it, the message and the class's own code went out. And an ordinary `Error` became a 500 whose body says nothing about the pool or the database host, only the generic `INTERNAL_SERVER_ERROR`. Your part 2 framework made the same promise with an `instanceof HttpError` check; ZudoJS makes it with a duck-typed `statusCode` and an opt-in `expose`, which lets errors from other libraries carry statuses too.
 
 ## Following a resolution through @zudojs/container
 
@@ -574,15 +603,15 @@ Output of `npx tsx read-resolve.ts`
  125          let registration = this.registry.get(token);
    …
 // dist/containerResolution/containerResolution.core.js
- 155          else if (registration.scope === Scope.SCOPED) {
- 156              if (singletonAncestor !== undefined)
- 157                  throw new CaptiveDependencyError(describeToken(singletonAncestor), describeToken(token), currentPath.map((t) => describeToken(t)));
- 158              if (!state.scopeCache)
- 159                  throw new ScopedResolutionError(describeToken(token), currentPath.map((t) => describeToken(t)));
- 160              if (state.scopeCache.has(token)) {
+ 164          else if (registration.scope === Scope.SCOPED) {
+ 165              if (singletonAncestor !== undefined)
+ 166                  throw new CaptiveDependencyError(describeToken(singletonAncestor), describeToken(token), currentPath.map((t) => describeToken(t)));
+ 167              if (!state.scopeCache)
+ 168                  throw new ScopedResolutionError(describeToken(token), currentPath.map((t) => describeToken(t)));
+ 169              if (state.scopeCache.has(token)) {
    …
 // dist/containerResolution/containerResolution.core.js
- 171          const nextAncestor = registration.scope === Scope.SINGLETON ? token : singletonAncestor;
+ 180          const nextAncestor = registration.scope === Scope.SINGLETON ? token : singletonAncestor;
 ```
 
 Compare it with your `#resolve` from part 1. The shape is the same: a depth limit, cycle detection on the current path (here with a `Set` alongside the array, so the check is O(1)), a registry lookup, the lifetime rules, then creation. One design is better than yours: instead of scanning the whole path for a singleton, as your container did, it passes down `singletonAncestor`, the nearest singleton above the current token. A scoped token reached with any singleton above it, even through transients, is captive. Reading the code produced four predictions; the experiment checks each:
@@ -704,7 +733,7 @@ This lesson's findings, written that way:
 | --- | --- | --- |
 | Routes rank by segment kind, left to right; ties go to registration order | `httpRoute.pattern.parse.js`, `httpRouter.register.js` | `ranking.ts` |
 | Every match sorts all routes, then scans them; `RouteTree` is not used by the router | `httpRouter.register.js`; search for `RouteTree` | `find.ts`, `read-match.ts` |
-| Any error with a 4xx/5xx `statusCode` sets the status; details only with `expose: true` | `httpAdapter.errorResponse.js` (internal) | `status-errors.ts` |
+| Any error with a 4xx/5xx `statusCode` sets the status; details only with `expose: true` | `httpAdapterError.response.js` (internal) | `status-errors.ts` |
 | Parameterless classes auto-register as transient; default parameters count as none | `containerResolution.autoRegister.js` | `container-experiments.ts` |
 | Captive checks follow the nearest singleton ancestor; async singletons are refused | `containerResolution.core.js` | `container-experiments.ts` |
 
@@ -720,7 +749,17 @@ TRY IT YOURSELF
 
 `@zudojs/events`: when three handlers listen to one event and the second throws, do they run one after another or at the same time, and does the third still run? Find the defaults in the source, then confirm with an experiment that cannot pass by luck.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The second handler: `throw new Error("SMS gateway down");`.
+
+HINT 2
+
+The third handler: `log.push("stock: done");`. If handlers ran in parallel, this would appear before `"receipt: done"`, since it does not wait.
+
+SOLUTION
 
 Search for the option names you expect (`mode`, `errorMode`) with a default after `??`:
 
@@ -785,48 +824,70 @@ TRY IT YOURSELF
 
 How large may a request body be with `createNodeHttpAdapter`, and what happens to the connection when a body is too large? Compare with your part 2 adapter.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The constant declaration reads `export const DEFAULT_MAX_BODY_SIZE = ...`; search for that exact prefix.
+
+HINT 2
+
+The 413 branch checks an error class: search for `/if \(error instanceof NodeRequestBodyTooLargeError\)/`.
+
+SOLUTION
 
 body-limit.tsNode.js only
 
 ```ts
 import { excerpt, grep } from "./source.js";
 
-for (const hit of grep("@zudojs/http", /DEFAULT_MAX_BODY_SIZE = |maxBodySize: \d/)) {
+for (const hit of grep("@zudojs/http", /export const DEFAULT_MAX_BODY_SIZE = /)) {
   console.log(`${hit.file}:${hit.line}  ${hit.text}`);
 }
-console.log(excerpt("@zudojs/http", "dist/httpAdapter/node/httpNode.adapter.js", /if \(error instanceof NodeRequestBodyTooLargeError\)/, 9));
+console.log(excerpt("@zudojs/http", "dist/httpAdapter/node/httpNode.adapter.js", /if \(error instanceof NodeRequestBodyTooLargeError\)/, 13));
 ```
 
 Output of `npx tsx body-limit.ts`
 
 ```ts
-dist/httpAdapter/fetch/httpFetch.type.js:6  export const DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB
-dist/httpAdapter/node/httpNode.type.js:22  export const DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024;
-dist/httpSecurity/httpSecurity.config.js:18  maxBodySize: 1_048_576, // 1MB
+dist/httpSecurity/httpSecurity.config.js:24  export const DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024;
 // dist/httpAdapter/node/httpNode.adapter.js
- 225          if (error instanceof NodeRequestBodyTooLargeError) {
- 226              /*
- 227               * The request body was never drained, so this connection cannot be
- 228               * safely reused for a following request.
- 229               */
- 230              context.setHeader("connection", "close");
- 231              await this.writeNodeResponse(response, context.setStatus(413).json({ error: "Payload Too Large" }));
- 232              return;
- 233          }
+ 239          if (error instanceof NodeRequestBodyTooLargeError) {
+ 240              /*
+ 241               * The request body was never drained, so this connection cannot be
+ 242               * safely reused for a following request.
+ 243               */
+ 244              context.setHeader("connection", "close");
+ 245              context.setStatus(413).json({
+ 246                  error: "Payload Too Large",
+ 247                  code: "PAYLOAD_TOO_LARGE",
+ 248              });
+ 249              await this.writeNodeResponse(response, finalizeErrorResponse(context, this.securityHeaders));
+ 250              return;
+ 251          }
 ```
 
-The Node and fetch adapters default to 10 MB. The 1 MB value belongs to the security module's validator, a different check: two limits in one package, and the search found both, which a documentation page might not. The 413 branch sets `connection: close`, and its comment explains why: the rest of the oversized body was never read, so the connection cannot carry another request. Your part 2 adapter stopped reading too, but left the connection open and relied on Node to discard what was left. Closing it is the more robust choice; add `connection: close` to your 413 response.
+One default limit now, not two: the search finds a single `DEFAULT_MAX_BODY_SIZE`, in the security module, which the Node adapter, the fetch adapter and the security validator all share. A request over 10 MB is refused the same way everywhere, instead of one adapter enforcing 10 MB while the validator's own check used a different 1 MB. The 413 branch sets `connection: close`, and its comment explains why: the rest of the oversized body was never read, so the connection cannot carry another request. Its body also carries a `code` now (`PAYLOAD_TOO_LARGE`), the same shape every framework-built error response uses. Your part 2 adapter stopped reading too, but left the connection open and relied on Node to discard what was left. Closing it is the more robust choice; add `connection: close` to your 413 response.
 
 TRY IT YOURSELF
 
 ### Make the constrained route win
 
-Using only what you learned from the source, predict what `/books/42` and `/books/b1` match when `/books/:id(\d+)` is registered *before* `/books/:id`, and what `/books/new` matches if `/books/new` is registered last. Then check.
+Using only what you learned from the source, predict what `/books/42` and `/books/b1` match when the plain `/books/:id` is registered *before* the constrained `/books/:id(\d+)`, and what `/books/new` matches if it is registered last. Then check.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
 
-Prediction: all three routes compare equal at the first segment (literal `books`); at the second, `new` is a literal (3) and both parameters score 2, so `/books/new` wins whatever its registration order. Between the two parameter routes the tie goes to the earlier registration, so `/books/42` goes to `:id(\d+)`; `/books/b1` fails that route's pattern and falls through to `:id`.
+HINT 1
+
+Three calls, in this order: `router.get("/books/:id", ...)`, then `router.get("/books/:id(\\d+)", ...)`, then `router.get("/books/new", ...)`. Each handler can return any string; only the pattern matters here.
+
+HINT 2
+
+If your prediction was that registration order still decides the numeric route, re-read `segmentScore` above: a constrained parameter has its own score now, so order should not matter. Register the constrained route last and check that `/books/42` still goes to it.
+
+SOLUTION
+
+Prediction: all three routes compare equal at the first segment (literal `books`). At the second segment, `new` is a literal, which always outranks a parameter, so `/books/new` wins whatever its registration order. Between the two parameter routes, `:id(\d+)` scores higher than `:id` by itself now — a constrained parameter, not a tie — so `/books/42` goes to it regardless of which was registered first; `/books/b1` fails that route's pattern and falls through to the plain `:id`.
 
 constrained.tsNode.js only
 
@@ -834,8 +895,8 @@ constrained.tsNode.js only
 import { createRouter } from "@zudojs/http";
 
 const router = createRouter();
-router.get("/books/:id(\\d+)", () => "numeric");
 router.get("/books/:id", () => "any");
+router.get("/books/:id(\\d+)", () => "numeric");
 router.get("/books/new", () => "form");
 
 for (const path of ["/books/42", "/books/b1", "/books/new"]) {
@@ -851,7 +912,7 @@ Output of `npx tsx constrained.ts`
 /books/new -> /books/new
 ```
 
-The rule to remember for this router: register constrained parameters before plain ones at the same position. A comment next to your routes, pointing at this behaviour, will save the next developer an afternoon.
+The rule to remember for this router: a constrained parameter always outranks a plain one, whichever order they were registered in. Before this was fixed, registration order was the only thing deciding a numeric id, which is exactly the kind of dependency on line order that a comment next to your routes should call out, not rely on.
 
 ## Recap
 
@@ -860,7 +921,7 @@ The rule to remember for this router: register constrained parameters before pla
 - Exported and documented is API; exported by a barrel is incidental; unreachable through `exports` is internal. Read internals freely, build on them never.
 - `.d.ts` files are the contract. Read generics from the inside out, and let a deliberate type error show you what a type computes.
 - Search `dist/` for names and messages, read one path top-down, read the comments, and confirm every conclusion with a small experiment.
-- `@zudojs/http` ranks routes by segment kind with registration order as the tie-break, sorts on every match, maps any error with a `statusCode` and exposes details only on request. `@zudojs/container` resolves like your container, with a sharper captive check, class auto-registration and a refusal of async singletons.
+- `@zudojs/http` ranks routes by segment kind, a constrained parameter above a plain one, with a method-specific route before an `all()` route and registration order only as the last resort; it sorts on every match, and maps any error with a `statusCode` to a body that always carries `error` and `code`, exposing the error's own message and code only on request. `@zudojs/container` resolves like your container, with a sharper captive check, class auto-registration and a refusal of async singletons.
 
 That completes the software architecture course: you can shape an application, choose a system style, build a framework and read one. Next, the ZudoJS fundamentals course starts with [Welcome to ZudoJS](https://zudojs.oyinlola.site/learn/zudo-welcome), where you will use these packages as their authors intended.
 

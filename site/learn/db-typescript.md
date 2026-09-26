@@ -893,7 +893,17 @@ TRY IT YOURSELF
 
 A `payments` table has `id integer`, `order_id integer not null`, `amount numeric(12, 2) not null` (in naira, from an old integration), `failure_reason text` (null when the payment succeeded) and `paid_at timestamptz` (null until paid). Write `PaymentRow`, a `Payment` entity with `amountKobo: number`, and `toPayment`, converting the naira string to kobo exactly (no floating point).
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Parsing the amount as text and multiplying its whole-naira part by 100 keeps every kobo exact; letting `Number("1150.15") * 100` do the conversion is the bug the last line of output is there to show.
+
+HINT 2
+
+`const match = /^(\d+)\.(\d{2})$/.exec(amount); if (!match) throw new RangeError(...); const kobo = Number(match[1]) * 100 + Number(match[2]); if (!Number.isSafeInteger(kobo)) throw new RangeError(...); return kobo;` — then `toPayment` just renames each field, calling `nairaToKobo(row.amount)` for `amountKobo`.
+
+SOLUTION
 
 payments.tsNode.js only
 
@@ -976,7 +986,17 @@ TRY IT YOURSELF
 
 A teammate writes `return { ...customer, orderCount }` in a handler whose return type is `CustomerSummary { id; fullName; orderCount }`. It compiles. What goes out in the response, why does TypeScript allow it, and how do you fix it so the compiler protects you next time?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+TypeScript's excess property check only looks closely at object *literals* written directly where a type is expected. Ask what kind of value `{ ...customer, orderCount }` actually is once the spread has run.
+
+HINT 2
+
+A spread's result is structurally compatible with `CustomerSummary` (it has at least those fields), so the assignment is allowed even though it also carries `email`, `phone` and `passwordHash`. List the fields by hand instead — `{ id: customer.id, fullName: customer.fullName, orderCount }` — so that specific object literal *is* checked for excess properties.
+
+SOLUTION
 
 The response contains every property of the customer entity, including `email`, `phone` and `passwordHash`, plus `orderCount`. The excess property check does not fire, because properties that come from a spread are not checked as excess, and structurally the object has everything `CustomerSummary` needs. Fix it by listing fields: `return { id: customer.id, fullName: customer.fullName, orderCount }`. Now any extra property someone adds to that literal is a compile error, and add a `// @ts-expect-error` type test that reads `passwordHash` from a `CustomerSummary`, plus a response test that asserts the exact set of JSON keys.
 
@@ -986,7 +1006,17 @@ TRY IT YOURSELF
 
 Pick an approach for each team: (a) two developers building an admin panel with mostly CRUD screens, no SQL experience; (b) a payments team whose statements use `for update`, CTEs and serializable retries; (c) a reporting service with 40 complex read-only queries; (d) an API with dynamic filters and sorting chosen by the client.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask, for each team: how much of their work is plain CRUD versus SQL only an expert would write by hand? Do queries need to compose at runtime, or are they mostly fixed and numerous?
+
+HINT 2
+
+(a) favours an ORM's generated CRUD over hand-written SQL. (b) needs exact control over locks and isolation, which raw SQL (typed) gives and an ORM tends to hide. (c) is many fixed queries, each wanting its own exact result type — a codegen tool over raw SQL fits. (d) needs queries assembled at runtime from untrusted pieces, which is what a typed query builder is for.
+
+SOLUTION
 
 (a) An ORM such as Prisma or Drizzle: fast CRUD and migrations, with the indexes and N+1 queries watched. (b) Typed raw SQL, or a query builder with raw fragments: they need exact control over locks, isolation and statement shape, and the lessons' repositories fit that well. (c) Raw SQL with codegen (pgtyped or sqlc): every report query gets exact result types without rewriting SQL in another API. (d) A query builder such as Kysely: composable, typed conditions, with sort columns from an allow-list rather than pasted text.
 

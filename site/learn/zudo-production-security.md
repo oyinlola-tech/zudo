@@ -54,7 +54,7 @@ This lesson is that review for the Task API. You will not see how to break anyth
 | 16 | [Error leakage](#errors) | Error bodies carry no stack, no internal message and no private metadata; security headers are on error responses too | [Errors](https://zudojs.oyinlola.site/learn/zudo-errors) |
 | 17 | [Logging leakage](#logs) | No password, token or secret appears in any log line | [Logging](https://zudojs.oyinlola.site/learn/zudo-logging#redaction) |
 
-Two of the findings at the end are in published ZudoJS packages, not in the Task API. Reviews find those too, and the right response is the same: prove the problem, configure around it, and keep a test that tells you when the package fixes it.
+Some of the findings at the end were in published ZudoJS packages, not in the Task API. Reviews find those too, and the right response is the same: prove the problem, configure around it, and keep a test that tells you when the package fixes it — as, since this lesson was written, it has.
 
 ## How to review
 
@@ -996,11 +996,11 @@ PASS  the error response has the security headers
 PASS  the log has the message, the stack and the request id
 ```
 
-Two review findings came out of this section while the Task API was being prepared. Both are worth knowing, because both pass every normal functional test.
+Two things came out of this section while the Task API was being prepared, worth knowing even though `@zudojs/http` now handles both for you. Both pass every normal functional test, which is exactly why a review has to check them on purpose.
 
-### Finding: error responses skipped the security headers
+### Security headers reach every kind of response
 
-The first draft of `app.ts` let errors propagate out of the pipeline, like many examples do. The adapter then turns the error into a safe response, but that response is built *outside* the pipeline, after the security middleware has already been skipped. Here is that shape reduced to its core, next to the fixed one:
+An early draft of `app.ts` let errors propagate out of the pipeline, like many examples do, reasoning that the adapter turns an uncaught error into a safe response anyway. The worry was that a response built *outside* the pipeline, after the security middleware had already run and been skipped, would go out with no security headers at all. Here is that shape reduced to its core:
 
 finding-headers.tsNode.js only
 
@@ -1040,15 +1040,15 @@ for (const [label, middlewares] of [
 Output of `npx tsx finding-headers.ts`
 
 ```ts
-errors thrown out of the pipeline: 401, nosniff=null, X-Frame-Options=null
+errors thrown out of the pipeline: 401, nosniff=nosniff, X-Frame-Options=DENY
 errors turned into responses inside it: 401, nosniff=nosniff, X-Frame-Options=DENY
 ```
 
-Same status, same body, but the first 401 carries no security headers. That is why `app.ts` has `errorsToResponses` *after* `createSecurityMiddleware()`: the security middleware wraps it and decorates whatever it returns. Two responses are still built by the adapter itself and so still come without these headers: the `413` for an oversized body and the `400` from the request guard. Both are small JSON bodies, so the risk is low; have your reverse proxy add the headers to every response as the backstop (Caddy's `header` directive).
+Same status, same body, same headers: `@zudojs/http` now stamps security headers onto every response it sends, including one thrown past the security middleware and the two the adapter builds itself before any middleware runs at all, the `413` for an oversized body and the `400` from the request guard. Before this round's release, only the first line carried headers, which is why this check exists: it pins the safe behaviour so a future change that reintroduces the gap fails a test instead of shipping quietly. `app.ts` still keeps `errorsToResponses` *inside* the pipeline, after `createSecurityMiddleware()`: that is no longer load-bearing for the headers, but it is still where errors are mapped to the right status and a safe body, and where a 5xx gets logged. A reverse proxy that adds these headers to every response (Caddy's `header` directive) is still a sound backstop, for this and anything else in front of your app.
 
-### Finding: `serializePublicError` publishes metadata
+### `serializePublicError` keeps metadata private by default
 
-`serializePublicError` from `@zudojs/errors` makes an error safe for a response: for a 5xx it replaces the message with a generic one. But for an error with `expose: true`, which every 4xx error in `@zudojs/errors` has by default, it copies the error's whole `metadata` into the public result. Only keys with secret-looking names are redacted. Metadata is where developers put things for the logs:
+`serializePublicError` from `@zudojs/errors` makes an error safe for a response: for a 5xx it replaces the message with a generic one. For an error with `expose: true`, which every 4xx error in `@zudojs/errors` has by default, the message itself is safe to show, but `metadata` is where developers put things for the logs, so it stays on the server unless you opt in:
 
 finding-public-error.ts
 
@@ -1061,6 +1061,7 @@ const error = new ConflictError("A task with this title already exists", {
 console.log("exposed:", error.expose);
 console.log("default:", serializePublicError(error));
 console.log("allow-list:", serializePublicError(error, { publicMetadataKeys: ["field"] }));
+console.log("exposeMetadata:", serializePublicError(error, { exposeMetadata: true }));
 ```
 
 Output of `npx tsx finding-public-error.ts` and of the browser terminal
@@ -1068,6 +1069,19 @@ Output of `npx tsx finding-public-error.ts` and of the browser terminal
 ```ts
 exposed: true
 default: {
+  code: 'ERR_CONFLICT',
+  message: 'A task with this title already exists',
+  category: 'conflict',
+  statusCode: 409
+}
+allow-list: {
+  code: 'ERR_CONFLICT',
+  message: 'A task with this title already exists',
+  category: 'conflict',
+  statusCode: 409,
+  metadata: { field: 'title' }
+}
+exposeMetadata: {
   code: 'ERR_CONFLICT',
   message: 'A task with this title already exists',
   category: 'conflict',
@@ -1079,16 +1093,9 @@ default: {
     apiToken: '[REDACTED]'
   }
 }
-allow-list: {
-  code: 'ERR_CONFLICT',
-  message: 'A task with this title already exists',
-  category: 'conflict',
-  statusCode: 409,
-  metadata: { field: 'title' }
-}
 ```
 
-With the defaults, a conflict tells the caller that another user's task exists and whose it is. `apiToken` was caught by the name-based redaction; `ownerEmail` was not, because an email address does not look like a secret. The fix is the `publicMetadataKeys` option: an allow-list of keys that may leave the server, here only `field`. The Task API passes it in `errorsToResponses`, and this check guards it:
+With the defaults, no metadata at all leaves the server: a conflict says a task with this title already exists, and nothing about whose it is. Before this round's release, an exposed error published its whole `metadata` by default, redacting only keys with secret-looking names; `ownerEmail` would have slipped through, because an email address does not look like a secret. Now you opt in on purpose: `publicMetadataKeys` is an allow-list of keys that may leave the server, here only `field`; `exposeMetadata: true` publishes everything, with the same name-based redaction as before, for when you trust every key you put in metadata. The Task API still passes `publicMetadataKeys: ["field"]` explicitly in `errorsToResponses`, which is good practice either way: it says on purpose which fields are public, so a new field added to metadata next year stays private until someone decides otherwise. This check guards it:
 
 check-public-error.tsNode.js only
 
@@ -1160,9 +1167,9 @@ PASS  the failure was logged
 
 The last check matters: a log that contains nothing passes every "no leak" check. The Task API uses `@zudojs/logger`, which also redacts metadata keys that look secret (`password`, `token`, `authorization`, …) by default, as [the logging lesson](https://zudojs.oyinlola.site/learn/zudo-logging#redaction) shows. Redaction works on key *names* only, so the canary search is still needed: it also catches a secret glued into a message string.
 
-### Finding: the `@zudojs/core` logger does not redact by default
+### `ConsoleLogger` redacts secret-looking keys by default
 
-Apps assembled with `createApplication` from [@zudojs/core](https://zudojs.oyinlola.site/learn/zudo-core) get a different logger: `ConsoleLogger`. Unlike `@zudojs/logger`, it redacts nothing unless you give it a redaction hook. Here are both, logging the same failed login:
+Apps assembled with `createApplication` from [@zudojs/core](https://zudojs.oyinlola.site/learn/zudo-core) get a different logger: `ConsoleLogger`. Before this round's release it redacted nothing unless you gave it a redaction hook yourself, which meant a plain `createApplication()` logged passwords and bearer tokens in clear. Now it redacts secret-looking keys out of the box, and `createLogRedactor` is there to widen that to fields that do not look like secrets, such as personal data:
 
 finding-core-logger.tsNode.js only
 
@@ -1172,17 +1179,17 @@ import { ConsoleLogger, createLogRedactor } from "@zudojs/core";
 const attempt = { email: "ada@example.com", password: "hunter2", authorization: "Bearer eyJhbGciOi..." };
 
 new ConsoleLogger({ timestamps: false }).info("login failed", attempt);
-new ConsoleLogger({ timestamps: false, redact: createLogRedactor() }).info("login failed", attempt);
+new ConsoleLogger({ timestamps: false, redact: createLogRedactor({ patterns: ["email"] }) }).info("login failed", attempt);
 ```
 
 Output of `npx tsx finding-core-logger.ts`
 
 ```json
-{"level":"info","message":"login failed","context":{"email":"ada@example.com","password":"hunter2","authorization":"Bearer eyJhbGciOi..."}}
 {"level":"info","message":"login failed","context":{"email":"ada@example.com","password":"[REDACTED]","authorization":"[REDACTED]"}}
+{"level":"info","message":"login failed","context":{"email":"[REDACTED]","password":"[REDACTED]","authorization":"[REDACTED]"}}
 ```
 
-The first line prints the password and the bearer token in clear. `createLogRedactor()` replaces values under secret-looking keys, and `patterns` adds your own (`createLogRedactor({ patterns: ["email"] })` for personal data). When you use `createApplication`, pass it through the logger options, and keep a canary check so that a refactor which drops it fails:
+Even with no `redact` option at all, the password and the bearer token come out as `[REDACTED]`. The e-mail address does not, because it does not look like a secret by name; passing `patterns: ["email"]` to `createLogRedactor` catches that too, for logs that must not carry personal data at all. When you use `createApplication`, a canary check still earns its place: it pins the safe behaviour so a future change to the logger configuration fails a test instead of shipping a leak quietly.
 
 check-core-logger.tsNode.js only
 
@@ -1212,12 +1219,12 @@ A review ends with a short report that someone can act on. One row per finding: 
 
 | ID | Finding | Severity | Fix | Guarded by |
 | --- | --- | --- | --- | --- |
-| F1 | `@zudojs/core` `ConsoleLogger` logs `password` and `authorization` values in clear by default (package) | High, if the app uses `createApplication` | Pass `redact: createLogRedactor()` | `check-core-logger.ts` |
-| F2 | `serializePublicError` copies all metadata of exposed errors into responses (package) | Medium: leaks whatever a developer put in metadata | `publicMetadataKeys: ["field"]` | `check-public-error.ts` |
-| F3 | Error responses thrown out of the pipeline had no security headers | Low | Turn errors into responses inside the pipeline; proxy adds headers as backstop | `check-errors.ts` |
-| F4 | Adapter-level 400 and 413 responses have no security headers (package) | Low | Reverse proxy adds them | A check against the deployed URL |
+| F1 | `@zudojs/core` `ConsoleLogger` logged `password` and `authorization` values in clear by default (package) | High, if the app uses `createApplication` | Fixed upstream: `ConsoleLogger` now redacts secret-looking keys by default; `createLogRedactor` widens it | `check-core-logger.ts` |
+| F2 | `serializePublicError` copied all metadata of exposed errors into responses (package) | Medium: leaked whatever a developer put in metadata | Fixed upstream: metadata stays private unless you opt in with `publicMetadataKeys` or `exposeMetadata` | `check-public-error.ts` |
+| F3 | Error responses thrown out of the pipeline had no security headers | Low | Fixed upstream: `@zudojs/http` now stamps headers on every response; proxy headers are still a good backstop | `check-errors.ts`, `finding-headers.ts` |
+| F4 | Adapter-level 400 and 413 responses had no security headers (package) | Low | Fixed upstream, same release as F3 | A check against the deployed URL |
 
-F1, F2 and F4 are in the framework, so they also go to its maintainers as bug reports, with the example that reproduces each. Your own checks stay in place after the packages are fixed: they protect against the next regression, in either codebase.
+All four were reported to ZudoJS's maintainers as bug reports, with the example that reproduced each, and all four are fixed in the version of the packages this lesson now runs against. That is the point of keeping the checks: a check written against a bug still guards the fix, in either codebase, and tells you the moment either one regresses.
 
 ### Run the review on every change
 
@@ -1231,7 +1238,17 @@ TRY IT YOURSELF
 
 Check 16 tested the headers on one 500. Write a check that sends four requests to the Task API (a 200, a 401, a 404 for an unknown path, and a 400 for a body that is not JSON) and checks that each response has `X-Content-Type-Options: nosniff` and `X-Frame-Options: DENY`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Read both headers off `res.headers` and combine the two comparisons with `&&` before passing the result to `check`.
+
+HINT 2
+
+`const ok = res.headers.get("x-content-type-options") === "nosniff" && res.headers.get("x-frame-options") === "DENY"; check(\`${label} (${res.status}) has the headers\`, ok);`
+
+SOLUTION
 
 check-headers.tsNode.js only
 
@@ -1271,7 +1288,17 @@ TRY IT YOURSELF
 
 A `ValidationError` for the task title carries `field`, `maxLength` and `receivedValue` in its metadata. The client should learn the field and the limit, but never see its own input echoed back (it may be a pasted password, and echoing input is how reflected XSS starts). Serialize it so only the first two keys leave the server.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`publicMetadataKeys` is an allow-list: name exactly the keys that may leave the server, and everything else in `metadata` stays behind.
+
+HINT 2
+
+`const safe = serializePublicError(error, { publicMetadataKeys: ["field", "maxLength"] });`
+
+SOLUTION
 
 validation-error.ts
 
@@ -1305,7 +1332,17 @@ TRY IT YOURSELF
 
 A colleague's review of another service lists four problems. Give each a severity (high, medium, low) and a fix: (a) `GET /invoices/:id` answers 403 for other customers' invoices and 404 for missing ones; (b) the login route has no rate limit, but accounts lock after 5 failures; (c) the `/health` response includes the PostgreSQL version and host name; (d) `CORS_ORIGINS` is read from the environment and defaults to `*` when unset.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For each item, ask what an attacker actually learns or can do because of it, not just whether it looks untidy. Section 2 of this lesson is the model for (a).
+
+HINT 2
+
+(b) and (d) both come down to "what happens when nobody set something up correctly": a lockout that ignores where requests come from, and a CORS setting with no safe default.
+
+SOLUTION
 
 - (a) **Medium.** Nobody reads the invoice, but the status difference lets anyone enumerate which invoice ids exist, and in what range. Answer 404 for both, with the same body, and add the check from section 2.
 - (b) **Medium.** Lockout stops guessing one account, not trying one common password against thousands of accounts, and it lets anyone lock real users out on purpose. Add a per-address limit (section 8) and keep the lockout.
@@ -1319,7 +1356,7 @@ A colleague's review of another service lists four problems. Give each a severit
 - Authorization failures on other users' data answer exactly like missing data. Tokens are checked for issuer, audience, type and key; cookies are `HttpOnly`, `Secure` and `SameSite`; cookie-authenticated writes need the session's CSRF token.
 - Input is stored as data and encoded where it lands: parameters for SQL, JSON with `nosniff` and a CSP for responses, `escapeHtml` for HTML, schemas that refuse `__proto__`, public-only webhook URLs checked by DNS too, and a strict HTTP parser with a `Host` allow-list.
 - Search logs and responses for canaries: known secrets, passwords and tokens used only in the test. Check that the thing you expect to be logged is there, too.
-- Two package findings to configure around: pass `createLogRedactor()` to `@zudojs/core` loggers, and `publicMetadataKeys` to `serializePublicError`. Turn errors into responses inside the pipeline so they get the security headers.
+- `@zudojs/core` loggers and `serializePublicError` now keep secrets and metadata private by default; widen either on purpose with `createLogRedactor` patterns or `publicMetadataKeys`/`exposeMetadata`. `@zudojs/http` stamps security headers on every response, including ones built outside your pipeline.
 
 Next: [diagnosing performance](https://zudojs.oyinlola.site/learn/zudo-performance), where the same rule applies. Measure first, then change one thing, then measure again.
 

@@ -707,7 +707,17 @@ TRY IT YOURSELF
 
 Add `GET /authors/:id`. It answers 200 with the author, 404 when there is none, and 400 for an id like `abc`. Check it with a script that starts the server on port 0.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Reuse `toId`, exactly as `books.ts` does for `/books/:id`: `authors.get(toId(request.params["id"], "id"))`.
+
+HINT 2
+
+When the lookup gives `undefined`: `throw new HttpError(404, "not_found", "Author not found")`. Otherwise: `return { status: 200, body: author }`. `toId` already handles the 400 case.
+
+SOLUTION
 
 Add this route inside `addAuthorRoutes`, and import `toId` from `../http/params.js`. Here it is in its own file so you can run it:
 
@@ -754,7 +764,17 @@ TRY IT YOURSELF
 
 Start the server with `PORT=eighty npm start`. What happens, and why is that better than starting on port 3000 anyway?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look at `loadConfig` in `src/config.ts`: what does it do with a `PORT` value it cannot parse?
+
+HINT 2
+
+Compare "the server refuses to start, loudly" with "the server starts anyway, quietly, on a port nobody asked for". Which failure is easier to notice?
+
+SOLUTION
 
 Terminal on your computer
 

@@ -4,7 +4,7 @@ description: "Build safe file paths, read and write files, handle missing files,
 source: https://zudojs.oyinlola.site/learn/node-apis
 ---
 
-LEVEL 4 · LESSON 2 OF 20
+LEVEL 4 · LESSON 2 OF 21
 
 Node.js Core
 
@@ -514,7 +514,17 @@ TRY IT YOURSELF
 
 Write a program that lists the `notes` folder from earlier and counts its files by extension. Create a few files first, so the answer is interesting.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`path.extname(name)` gives you the extension, or `""` when there isn't one. `counts[ext] = (counts[ext] ?? 0) + 1` counts one more of each key.
+
+HINT 2
+
+`for (const name of (await readdir("notes")).sort()) { const ext = path.extname(name) || "(none)"; counts[ext] = (counts[ext] ?? 0) + 1; }`
+
+SOLUTION
 
 extensions.jsNode.js only
 
@@ -547,7 +557,17 @@ TRY IT YOURSELF
 
 Add a `remove(id)` method to `TaskStore` that deletes a task, emits `"removed"`, and throws `task 9 not found` (with the real id) when it is missing.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Reuse the shape of `complete(id)` above: load the list, `find` the task, and throw when it is missing.
+
+HINT 2
+
+`await this.save(tasks.filter((t) => t.id !== id));` keeps every task except the removed one. Emit and return the task you found, not the filtered list.
+
+SOLUTION
 
 remove.jsNode.js only
 
@@ -598,7 +618,17 @@ TRY IT YOURSELF
 
 Write `fingerprint(file)` that returns the SHA-256 hash of a file's contents. Show that the fingerprint changes after you append a line.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`await readFile(file)`, with no encoding, gives you a `Buffer` of raw bytes. `createHash` can hash that directly.
+
+HINT 2
+
+`return createHash("sha256").update(await readFile(file)).digest("hex");`
+
+SOLUTION
 
 fingerprint.jsNode.js only
 

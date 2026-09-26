@@ -1522,7 +1522,7 @@ Output of `npx tsx zudo-bookstore.ts`
 => POST /books 409 {"error":"\"Purple Hibiscus\" is already in the catalog","code":"ERR_CONFLICT"}
 => POST /books 400 {"error":"validation_failed","details":["title: String must be at least 1 character","priceKobo: Expected >= 100, received 5","(body): Unknown key: isbn"]}
 => POST /books 401 {"error":"Send a valid X-Api-Key header","code":"ERR_HTTP_UNAUTHORIZED"}
-=> DELETE /books/b1 405 {"error":"Method Not Allowed","method":"DELETE","path":"/books/b1","allowed":["GET"]}
+=> DELETE /books/b1 405 {"error":"Method Not Allowed","code":"METHOD_NOT_ALLOWED","method":"DELETE","path":"/books/b1","allowed":["GET","HEAD","OPTIONS"]}
 => GET /books/b9 404 {"error":"Book b9 was not found","code":"ERR_RESOURCE_NOT_FOUND"}
 ```
 
@@ -1557,7 +1557,17 @@ TRY IT YOURSELF
 
 Write `rateLimit(max, windowMs, now)`: at most `max` requests per API key per fixed window; the next ones get 429 with a `Retry-After` header in seconds. Take the clock as a parameter and test it with `compose`, without a server.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Start or reset the window: `let window = windows.get(key); if (window === undefined || time - window.start >= windowMs) { window = { start: time, count: 0 }; windows.set(key, window); }`, then `window.count++;`.
+
+HINT 2
+
+`if (window.count > max) { const retryAfter = Math.ceil((window.start + windowMs - time) / 1000); return json(429, { error: "too_many_requests" }, { "retry-after": String(retryAfter) }); } return next();`.
+
+SOLUTION
 
 rate-limit.ts
 
@@ -1617,7 +1627,17 @@ TRY IT YOURSELF
 
 Add `array(item, max)` to the validation builder, as a separate function that returns a `Schema<T[]>`. Issues inside the list must carry their index, like `body.items[1].quantity`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Guard first, in order: `if (!Array.isArray(input)) return { ok: false, issues: [{ path, message: "must be a list" }] }; if (input.length > max) return { ok: false, issues: [{ path, message: \`must have at most ${max} items\` }] };`.
+
+HINT 2
+
+Then walk the array: `input.forEach((element, index) => { const result = item.parse(element, \`${path}[${index}]\`); if (result.ok) value.push(result.value); else issues.push(...result.issues); });`, and return based on whether `issues` collected anything.
+
+SOLUTION
 
 array-schema.ts
 
@@ -1678,7 +1698,17 @@ TRY IT YOURSELF
 
 For each requirement, choose router, global middleware, route middleware, controller, service or event listener: (1) every response gets an `X-Request-Id` header; (2) only staff may add books; (3) a book's price may not drop more than 50% at once; (4) `/books/:id` answers 400 for an id that is not `b` followed by digits; (5) the sales dashboard counts new books; (6) requests over 100 per minute get 429.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask: does this apply to every route or one route, is it about HTTP shapes or business rules, and could something outside HTTP (a CLI, a bulk import) need the same rule?
+
+HINT 2
+
+(3) and (5) are not about requests or responses at all; re-read [Clean architecture](https://zudojs.oyinlola.site/learn/arch-clean) for where a rule that must hold everywhere, and a fact other features react to, each belong.
+
+SOLUTION
 
 1. **Framework or global middleware**: it is the same for every route. Your adapter already does it.
 2. **Route middleware** (`requireStaff`) for authentication; if the rule gets richer ("editors may add, only admins may delete"), the authorization check moves into the service.

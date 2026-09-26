@@ -4,7 +4,7 @@ description: "Use the browser's tools with their failure modes: fetch, localStor
 source: https://zudojs.oyinlola.site/learn/browser-apis
 ---
 
-LEVEL 4 · LESSON 12 OF 20
+LEVEL 4 · LESSON 12 OF 21
 
 JavaScript in the browser Core
 
@@ -876,7 +876,17 @@ TRY IT YOURSELF
 
 Write `searchUrl(base, filters)` that returns the address for a product search. `filters` has optional `q` (text), `tags` (an array), `maxPriceKobo` (a number) and `page` (a number, left out when it is 1). Leave out empty values.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`set` replaces a single value, `append` adds another with the same name. Check each optional value before adding it, the same way the worked example checked `by !== "date"`.
+
+HINT 2
+
+`if (q?.trim()) url.searchParams.set("q", q.trim()); for (const tag of tags) url.searchParams.append("tag", tag); if (maxPriceKobo !== undefined) url.searchParams.set("max", String(maxPriceKobo)); if (page !== 1) url.searchParams.set("page", String(page));`
+
+SOLUTION
 
 search-url.js
 
@@ -911,7 +921,17 @@ TRY IT YOURSELF
 
 Write `readJson(storage, key, fallback)` and `writeJson(storage, key, value)`. Reading returns `fallback` when the key is missing or holds invalid JSON; writing returns `true` or `false` instead of throwing. Test them with a fake storage object.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Both functions share one shape: attempt the risky call inside `try`, and turn any thrown error into a safe return value in `catch`, never re-throwing.
+
+HINT 2
+
+`readJson`: `const text = storage.getItem(key); return text === null ? fallback : JSON.parse(text);` wrapped in `try/catch { return fallback; }`. `writeJson`: `storage.setItem(key, JSON.stringify(value)); return true;` wrapped in `try/catch { return false; }`.
+
+SOLUTION
 
 safe-storage.js
 
@@ -970,7 +990,17 @@ TRY IT YOURSELF
 
 A checkout page shows the order total counting up from ₦0 to the final amount in 400 ms. Write `countUp(element, totalKobo, durationMs)` with `requestAnimationFrame`, so the last frame always shows the exact total.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`start ??= now` records the timestamp of the first frame only. Every later frame computes `progress` from how far `now` is past that first timestamp.
+
+HINT 2
+
+`let start; requestAnimationFrame(function step(now) { start ??= now; const progress = Math.min((now - start) / durationMs, 1); element.textContent = naira(Math.round(totalKobo * progress)); if (progress < 1) requestAnimationFrame(step); else resolve(); });`
+
+SOLUTION
 
 count-up.js
 

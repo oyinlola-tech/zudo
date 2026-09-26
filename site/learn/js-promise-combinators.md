@@ -751,7 +751,17 @@ Output of `node order-page.js` and of the browser terminal
 Bola 250000 | most requests in flight at once: 1
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`customer` and `quote` both depend on `order`, which is why `getOrder` must finish first — but they do not depend on each other, so nothing stops them from running at the same time.
+
+HINT 2
+
+`const [customer, quote] = await Promise.all([getCustomer(order.customerId), getShippingQuote(order.city)]);`
+
+SOLUTION
 
 The order must come first. After that, the customer and the quote are independent, so start them together. The page now takes two rounds of 30 ms instead of three:
 
@@ -789,7 +799,17 @@ TRY IT YOURSELF
 
 Write `allWithin(promises, ms)`: like `Promise.allSettled`, but any promise that has not settled after `ms` gets the report `{ status: "timeout" }`. The function itself must finish after at most about `ms`. Test it with a fast success, a fast failure and a slow promise.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Turn every promise into one that never rejects first — a report object either way — so racing it against the deadline with `Promise.all` is safe: nothing can reject and skip the rest.
+
+HINT 2
+
+`Promise.race([Promise.resolve(p).then((value) => ({ status: "fulfilled", value }), (reason) => ({ status: "rejected", reason: reason.message })), deadline]).then((r) => (r === TIMEOUT ? { status: "timeout" } : r))`, mapped over every promise, then `Promise.all(...)​.finally(() => clearTimeout(timer))`.
+
+SOLUTION
 
 all-within.js
 
@@ -842,7 +862,17 @@ TRY IT YOURSELF
 
 Product images are stored on three mirrors. Using `Promise.any` and `withTimeout` from the kit, get the first image URL from a mirror that answers within 40 ms. Print the winner, and for a second call where no mirror answers in time, print each reason.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Wrap each mirror's call with `withTimeout` before handing the array to `Promise.any` — each one gets its own clock, and a mirror that answers too slowly is treated as a failure, just like `any` treats a rejection.
+
+HINT 2
+
+`return Promise.any(mirrors.map((ask, i) => withTimeout(ask(), 40, \`mirror ${i + 1}\`)));`
+
+SOLUTION
 
 mirrors.js
 

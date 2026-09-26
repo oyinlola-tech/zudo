@@ -951,7 +951,17 @@ TRY IT YOURSELF
 
 Your team wants every public page to have a description of at least 20 characters, because search engines and link previews show it. Write `requireDescriptions(documents)` that returns a `ValidationResult` with one `DESCRIPTION_TOO_SHORT` error per page that breaks the rule. Use `toValidationResult` to build the result, so `valid` follows the same rule as the package's validators.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+A description "breaks the rule" when it is missing, or when `description.trim().length` is under 20. Push one issue object per broken document, with `severity: "error"`, `code: "DESCRIPTION_TOO_SHORT"`, and a `documentId` set to `doc.id`.
+
+HINT 2
+
+Once you have collected every issue, the whole function ends with `return toValidationResult(issues);` — you don't compute `valid` yourself.
+
+SOLUTION
 
 rule-description.tsNode.js only
 
@@ -1012,7 +1022,17 @@ TRY IT YOURSELF
 
 At the bottom of each page you want "previous" and "next" links that continue across sections, like a book. `getAdjacent` stops at the edge of a section. Write `pager(id)` with `flattenNavigation`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`flattenNavigation(navigation)` returns every document id in whole-site reading order, as a plain array. Find `documentId`'s position in that array with `indexOf`.
+
+HINT 2
+
+If the id isn't found, `indexOf` returns `-1` — return `{}` in that case. Otherwise return `{ previous: order[index - 1], next: order[index + 1] }`; indexing past either end of the array gives `undefined`, which is exactly what an edge page should show.
+
+SOLUTION
 
 pager.tsNode.js only
 
@@ -1048,7 +1068,17 @@ TRY IT YOURSELF
 
 Write `search(query)` over the `search.json` file the build wrote. Score each page 3 points for every query word in its title and 1 point for every word in its text, drop pages with no points, and sort by score, then by id. Return `SearchResult` objects.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Lowercase the query and split it on whitespace to get a list of words (`filter(Boolean)` drops empty strings from repeated spaces). For each entry, add 3 for every word found in `entry.title.toLowerCase()` and 1 for every word found in `entry.content.toLowerCase()`.
+
+HINT 2
+
+Only keep entries whose total score is greater than 0. Sort the survivors with `(a, b) => (b.score ?? 0) - (a.score ?? 0) || a.id.localeCompare(b.id)` — score descending first, id alphabetically to break ties.
+
+SOLUTION
 
 search.tsNode.js only
 

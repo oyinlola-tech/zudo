@@ -4,7 +4,7 @@ description: "Find bugs with a repeatable method: observe, reproduce, isolate, h
 source: https://zudojs.oyinlola.site/learn/debug-method
 ---
 
-LEVEL 4 · LESSON 18 OF 20
+LEVEL 4 · LESSON 19 OF 21
 
 Tooling and debugging Core
 
@@ -947,7 +947,17 @@ TRY IT YOURSELF
 
 The [automatic shrinker](#isolate) left a one-line cart whose `subtotal` is the text `"27000"`. Using only that line, form a hypothesis about the value `cartTotal` printed, write the experiment that tests it, and fix the code so that the bug cannot happen again.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`+=` does addition when both sides are numbers, but concatenation the moment either side is a string. Which one does `0 += "27000"` trigger?
+
+HINT 2
+
+`total += "27000"; console.log(total, typeof total); total += 1000; console.log(total);`
+
+SOLUTION
 
 Hypothesis: `total` starts as the number 0, and `0 + "27000"` is string concatenation, not addition, so the total becomes the text `"027000"`. Prediction: `typeof` the result is `"string"`, and adding a second line appends digits instead of adding.
 
@@ -976,7 +986,17 @@ TRY IT YOURSELF
 
 A bug report: "The booking app sends Bola's reminder at the wrong time." Write down (a) three facts you would collect before reading any code, (b) the question you would ask about what changed recently, and (c) a first hypothesis that makes a testable prediction.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For (a), re-read the "what would you ask the owner" question in [Step 1: observe](#observe) and apply the same kind of thinking to a time instead of a price.
+
+HINT 2
+
+For (c), a good hypothesis names a mechanism and a number it predicts (like "off by exactly one hour"), not just "the time zone is wrong" — a vague version can't be disproved by a single test.
+
+SOLUTION
 
 (a) Facts: the time Bola booked and the time the reminder arrived (exact, with time zone); whether other users' reminders are also wrong, and by how much; the server's time zone and the date of the first wrong reminder.
 
@@ -990,7 +1010,17 @@ TRY IT YOURSELF
 
 Use the [reminder.js trace](#stack-traces) above. (a) Which frame is the first in your own code? (b) Which function that you wrote is missing from the trace, and why? (c) What single log line would you add, and where, so that the next time this crashes you know which booking caused it without a debugger?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For (b), look at [Traces that leave out the caller](#stack-traces): a callback run later by a timer starts on a fresh stack. Which of `reminder.js`'s own functions never appears above `sendReminder` in the trace?
+
+HINT 2
+
+For (c), the useful log line names the one piece of data the trace itself cannot give you: which booking (by id) reached the crashing line with a missing field.
+
+SOLUTION
 
 (a) `sendReminder` at `reminder.js:2:29`; the arrow function inside the `setTimeout` (line 8) called it.
 

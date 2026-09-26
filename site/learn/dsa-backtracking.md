@@ -743,7 +743,17 @@ TRY IT YOURSELF
 
 In [Greedy algorithms](https://zudojs.oyinlola.site/learn/dsa-greedy#change-fails), largest-note-first failed when the till had one ₦500 and three ₦200 notes. Write a backtracking search that finds the fewest notes for an amount from a till with limited counts, pruning any branch that already uses as many notes as the best answer found so far. Try ₦600, ₦900 and ₦300.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop `use` from `most` down to 0. For each count, push `use` copies of `value` onto `handed`, recurse, then pop them back off before trying one fewer — the choose/explore/undo pattern.
+
+HINT 2
+
+`for (let use = most; use >= 0; use--) { for (let k = 0; k < use; k++) handed.push(value); explore(i + 1, left - use * value); for (let k = 0; k < use; k++) handed.pop(); }`
+
+SOLUTION
 
 till.js
 
@@ -794,7 +804,17 @@ TRY IT YOURSELF
 
 Six guests sit in a row at a dinner. Some pairs must not sit next to each other. Count the valid seatings and print the first one, pruning as soon as the last two guests seated are a forbidden pair. Compare the nodes explored with the 720 complete seatings a brute force would check.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Before seating `g`, check whether `row` already has someone in it, and if so, whether `g` clashes with the guest at the end of it (`row.at(-1)`).
+
+HINT 2
+
+`if (row.length > 0 && clash(row.at(-1), g)) continue;`
+
+SOLUTION
 
 seating.js
 
@@ -847,7 +867,17 @@ TRY IT YOURSELF
 
 A well-formed sudoku has exactly one solution. Modify the idea of the solver to *count* solutions, stopping at 2 (all you need to know is "unique or not"). Test it on the lesson's puzzle and on the same puzzle with its first two given digits removed.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop `d` from 1 to 9, skip when `!ok(i, d)`, otherwise place the digit, recurse into the next cell, and always reset the cell to 0 afterwards so the next digit starts clean.
+
+HINT 2
+
+`for (let d = 1; d <= 9; d++) { if (!ok(i, d)) continue; grid[i] = d; fill(i + 1); grid[i] = 0; }`
+
+SOLUTION
 
 unique.js
 

@@ -535,7 +535,17 @@ TRY IT YOURSELF
 
 Add a `ConflictError` class with status 409 (Conflict) and code `CONFLICT`, extending `AppError`. Write `createUser(users, email)` that throws it when the e-mail is already taken, and show the status and message when it happens.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`ConflictError` only needs to pass the right status and code up to `AppError`'s constructor: `super(message, { status: 409, code: "CONFLICT" });`.
+
+HINT 2
+
+In `createUser`: `if (users.some((user) => user.email === email)) throw new ConflictError(\`${email} is already registered\`);` then push and return the new user.
+
+SOLUTION
 
 conflict.js
 
@@ -612,7 +622,17 @@ null
 null
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Put only the `JSON.parse` call inside the `try`. In its `catch`, check `error instanceof SyntaxError` before deciding to return `null`; otherwise re-throw.
+
+HINT 2
+
+After a successful parse, check the title *outside* the `try`: `if (typeof data.title !== "string") throw new TypeError("title must be a string");`
+
+SOLUTION
 
 The third input is valid JSON, but it has no `title`, so `data.title.toUpperCase()` throws a `TypeError`. The `catch` catches *every* error and hides that bug behind `null`. Only catch what you expect, and re-throw the rest:
 
@@ -658,7 +678,17 @@ TRY IT YOURSELF
 
 Add a `power` operation to the calculator. Make it throw a `ValidationError` on field `b` when the exponent is larger than 100, so nobody can ask the server for huge numbers. What status code will the API answer with?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Guard first: `if (b > 100) throw new ValidationError("b must be at most 100", "b");`
+
+HINT 2
+
+After the guard, the only line left is `return a ** b;`.
+
+SOLUTION
 
 Add a `power` entry to `OPERATIONS` in `calculator.js`. Here it is on its own, with a copy of `ValidationError` so you can run it:
 

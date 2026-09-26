@@ -851,7 +851,17 @@ console.log(null + 1, undefined + 1, "" - 1);
 console.log(Object.is(-0, 0), [-0].includes(0));
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Predict on paper first: which operators convert to numbers, which join text with `+`, and which follow the `==` coercion steps from this lesson?
+
+HINT 2
+
+Type the four `console.log` lines exactly as listed in the task above, then compare your predictions line by line with what prints.
+
+SOLUTION
 
 predict-coercion.js
 
@@ -892,7 +902,17 @@ a.settings.sms = false;
 console.log(b.settings.sms);
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Copy the defaults into a new object for each shop, with spread: `{ ...defaultSettings }`. Otherwise every shop's `settings` property points at the very same object.
+
+HINT 2
+
+`return { name, settings: { ...defaultSettings } };` Freezing `defaultSettings` also makes a future mistake fail loudly instead of silently changing every shop.
+
+SOLUTION
 
 `createShop` creates a new shop object each time, but its `settings` property holds a reference to the one `defaultSettings` object. All shops share it. Create a new settings object per shop, and freeze the defaults so a future mistake fails loudly instead of changing every shop:
 
@@ -925,7 +945,17 @@ TRY IT YOURSELF
 
 A form sends the quantity of an item as text. Write `parseQuantity(text)` that returns a whole number from 1 to 99, or `null` for anything else. Reason first: what do `Number("")`, `Number(" 3 ")` and `Number("2.5")` give, and which of them should be accepted?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Trim first, and reject empty text before converting: `Number("")` is `0`, not a rejection.
+
+HINT 2
+
+`Number.isInteger(n)` rejects decimals like `2.5`; also check that `n` is between 1 and 99, inclusive.
+
+SOLUTION
 
 `Number("")` is 0 and `Number(" 3 ")` is 3, so `Number()` alone would accept empty text as 0 and quietly accept spaces. Decide: trim spaces (people type them by accident), refuse empty text, then require a whole number in range.
 

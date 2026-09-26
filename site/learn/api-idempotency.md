@@ -782,7 +782,17 @@ TRY IT YOURSELF
 
 Not every operation needs a key table. Write `markShipped(db, orderId)` for a table `orders (id, status)` so that calling it twice has the same effect as calling it once, and the second call is still reported as a success. Only a `paid` order may be shipped; a `cancelled` order must give an error.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The conditional `UPDATE ... RETURNING` tells you whether *this call* made the change. Only when it did not do you need a second query to find out why.
+
+HINT 2
+
+`const changed = await db.query("UPDATE orders SET status = 'shipped' WHERE id = $1 AND status = 'paid' RETURNING id", [orderId]); if (changed.rows.length === 1) return "shipped"; const { rows: [order] } = await db.query("SELECT status FROM orders WHERE id = $1", [orderId]); if (order?.status === "shipped") return "already shipped (ok)"; return \`error: order is ${order?.status ?? "missing"}\`;`
+
+SOLUTION
 
 Make the state change conditional on the current state, then decide what "no row changed" means by looking at the row:
 
@@ -827,7 +837,17 @@ TRY IT YOURSELF
 
 Write the SQL for a nightly job that deletes idempotency keys older than 24 hours, but never deletes a key that is still `in_progress` with a valid lock. Run it on the bank database with three keys: a completed one from two days ago, a completed one from an hour ago, and an in-progress one from two days ago whose lock has expired.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Two conditions joined by `AND`: one about age (`created_at`), one about safety to delete (`OR` of "already completed" and "lock expired"). Pass `hoursAgo(24)` and `now` as `$1`/`$2`.
+
+HINT 2
+
+`DELETE FROM idempotency_keys WHERE created_at < $1 AND (status = 'completed' OR locked_until < $2) RETURNING key`, called with `[hoursAgo(24), now]`.
+
+SOLUTION
 
 cleanup.jsNode.js only
 
@@ -872,7 +892,17 @@ TRY IT YOURSELF
 
 Write `shouldRetry(outcome)` for the client, where `outcome` is either an HTTP status number or the string `"network"`. Test it with `"network"`, 201, 400, 409, 422, 429, 500 and 503.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Handle the special string case first, then combine the numeric cases with `||`, the same shape as the worked example.
+
+HINT 2
+
+`if (outcome === "network") return true; return outcome === 409 || outcome === 429 || outcome >= 500;`
+
+SOLUTION
 
 should-retry.js
 

@@ -822,7 +822,17 @@ TRY IT YOURSELF
 
 Using the simulator with seed 8 (loss 0 this time, duplicates 0.1), make the inventory service process messages 1 to 10 exactly once and in order, whatever order they arrive in. Hold back a message until the one before it has been processed, and ignore numbers already processed.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`n < next` means this number was already processed — ignore it. Otherwise add it to `waiting`, then drain `waiting` while it holds `next`, in order.
+
+HINT 2
+
+`waiting.add(n); while (waiting.has(next)) { waiting.delete(next); processed.push(next); next++; }`
+
+SOLUTION
 
 in-order.ts
 
@@ -867,7 +877,17 @@ TRY IT YOURSELF
 
 ShopFlow's wallet balances live on 5 replicas. (a) Which W and R make every read see the latest confirmed write while tolerating 2 unavailable replicas for both reads and writes? (b) The product catalogue is read 1,000 times more often than it is written and may be a little stale. What would you choose, and what do you give up?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For every read to overlap every write, `W + R` must be more than `N` (5 replicas here). Which pairs satisfy that while still leaving 3 replicas reachable when 2 are down, for both reads and writes?
+
+HINT 2
+
+For (b), read cost matters far more than write cost or freshness. Which extreme of `W` and `R` makes a read touch only one replica, and what does that trade away?
+
+SOLUTION
 
 (a) W = 3 and R = 3: 3 + 3 > 5, so every read overlaps every write, and with 2 replicas down 3 are still reachable for both. W = 5, R = 1 would make reads cheap but a single down replica would block every write. (b) For example W = 5, R = 1, or simply asynchronous replication with reads from any follower. Reads become as cheap as possible. You give up linearizable reads (a follower may be slightly behind), and with W = 5 you give up write availability when any replica is down, which is acceptable for data edited by staff a few times a day. Add session guarantees for the staff member who just edited a product.
 
@@ -877,7 +897,17 @@ TRY IT YOURSELF
 
 Three services start with Lamport clocks at 0. Orders has a local event (a), then sends message m1 to payments. Payments has a local event (b), then receives m1 (c), then sends m2 to shipping. Shipping has two local events (d, e), then receives m2 (f). Write down the Lamport time of every event. Which pairs of events are concurrent?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Each line is one of the three rules: `tick()` for a local event, `send()` (which is just `tick()`), and `receive(remoteTime)`, which jumps to `max(local, remote)` before counting the event.
+
+HINT 2
+
+`const a = orders.tick(); const m1 = orders.send(); const b = payments.tick(); const c = payments.receive(m1); const m2 = payments.send(); const d = shipping.tick(); const e = shipping.tick(); const f = shipping.receive(m2);`
+
+SOLUTION
 
 by-hand.ts
 

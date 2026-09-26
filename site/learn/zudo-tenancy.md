@@ -364,7 +364,7 @@ This is the test that matters. Acme asked for task 2 by its id, which is easy to
 
 > TIP
 >
-> Scope other keys to the tenant too, but through [the cache's](https://zudojs.oyinlola.site/learn/zudo-cache) own `namespace` option, not by joining the tenant into the key text yourself: `cache.set("tasks.list", value, { namespace: tenantId })` keeps one tenant's cached list from ever being served to another. `@zudojs/cache` rejects any key or namespace containing its `:` separator with `ERR_INVALID_INPUT`, so a colon-joined string such as what `tenantKey(tenantId, "tasks:list")` builds would throw the moment you passed it in as a single cache key, rather than scoping anything. `assertTenantOwnership(resource, tenantId)` still throws a `TenantIsolationError` if an object from the wrong tenant reaches your code.
+> Scope other keys to the tenant too, but through [the cache's](https://zudojs.oyinlola.site/learn/zudo-cache) own `namespace` option, not by joining the tenant into the key text yourself. `createTenantCacheScope(tenantId, key)` returns `{ namespace: "tenant.acme", key: "tasks.list" }`, the shape the cache accepts: `cache.set(scope.key, value, { namespace: scope.namespace })` keeps one tenant's cached list from ever being served to another. `@zudojs/cache` rejects any key or namespace containing its `:` separator with `ERR_INVALID_INPUT`, so a colon-joined string such as what `tenantKey(tenantId, "tasks:list")` builds would throw the moment you passed it in as a single cache key, rather than scoping anything; `createTenantCacheScope` never builds one. `assertTenantOwnership(resource, tenantId)` still throws a `TenantIsolationError` if an object from the wrong tenant reaches your code.
 
 ## Put it together: a multi-tenant Task API
 
@@ -453,7 +453,7 @@ ada lists tasks        200 [{"id":1,"title":"Acme: ship order 1001"}]
 ada guesses id 2       404 {"error":"Task not found","code":"NOT_FOUND"}
 ada sends x-tenant-id  200 [{"id":1,"title":"Acme: ship order 1001"}]
 header, no session     401 {"error":"Log in first","code":"UNAUTHORIZED"}
-suspended tenant       404 {"error":"Tenant not found"}
+suspended tenant       404 {"error":"Tenant not found","code":"ERR_TENANT_NOT_FOUND"}
 ```
 
 Read the five answers:
@@ -464,7 +464,7 @@ Read the five answers:
 - A header without a session is not even looked at: the request is not logged in.
 - Initech's user logged in before the tenant was suspended. The middleware answers `404 Tenant not found`, the same as for a tenant that does not exist, so a caller cannot learn which tenants exist or which are suspended. If only a header had named a tenant, the answer would be `403`: an `untrusted` source is refused.
 
-`.asResolver()` turns the chain into the single resolver the middleware takes. The guard refusals are real HTTP answers with their own status codes (since @zudojs/tenancy 1.3.0 with @zudojs/http 1.4.0), and the middleware fits the route's `middleware` list without a cast.
+`.asResolver()` turns the chain into the single resolver the middleware takes. The guard refusals are real HTTP answers with their own status codes (since @zudojs/tenancy 1.3.0 with @zudojs/http 1.4.0), and the middleware fits the route's `middleware` list without a cast. Every refusal also carries a machine-readable `code` next to `error` (`ERR_TENANT_NOT_FOUND`, `ERR_TENANT_REQUIRED`, `ERR_TENANT_FORBIDDEN`, `ERR_TENANT_UNAVAILABLE`, `ERR_TENANT_RESOLUTION_CONFLICT`; exported as `TENANCY_RESPONSE_CODE`), the same `{ error, code }` shape `@zudojs/http` uses, so code that branches on the reason for a 404 does not have to parse the message text.
 
 ## Practice
 
@@ -474,7 +474,17 @@ TRY IT YOURSELF
 
 Add `rename(id, title)` and `delete(id)` to `TaskRepository`. Both must only touch the current tenant's row, and return whether a row was changed. Show that Acme cannot rename Globex's task.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Read the current tenant with `tenantContext.requireCurrentTenant().id`, then add it as a third bound parameter: `where id = $2 and tenant_id = $3`, passed as `[title, id, tenantId]`.
+
+HINT 2
+
+Return `(result.affectedRows ?? 0) > 0` instead of always `true`. Zero rows changed means either the id does not exist or it belongs to another tenant — the caller cannot tell which, which is exactly the point.
+
+SOLUTION
 
 Put `tenant_id` in the `where` of every write, just like in the reads. PGlite reports how many rows changed in `affectedRows`:
 
@@ -524,7 +534,17 @@ TRY IT YOURSELF
 
 For each case, say which resolver you would use and whether it is safe on its own: (a) a mobile app whose users log in; (b) each company opens `acme.tasks.test` in the browser, and users still log in; (c) a partner system calls your API with an API key; (d) a `?tenant=acme` query parameter.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask who wrote the value the resolver reads. A session or token was set by your own server after it checked something. A subdomain, header or query parameter was set by whoever sent the request.
+
+HINT 2
+
+(b) is the tricky one: a hostname is `verified`, not `untrusted`, but it is still worth double-checking against the trusted session once the user is logged in, because two different sources naming two different tenants is itself a signal something is wrong.
+
+SOLUTION
 
 (a) The session or token claim (`createJwtResolver`): trusted. (b) The subdomain is fine for choosing the login page and the look of the site, but after login, check that the session's tenant equals the subdomain's, with `createResolverChain(..., { detectConflicts: true })`, which throws `TenantResolutionConflictError` when they disagree. (c) Look the tenant up from the API key on the server: trusted, because your server issued the key. (d) Never on its own: the client writes it, like a header. It is untrusted.
 

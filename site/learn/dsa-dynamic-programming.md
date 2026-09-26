@@ -634,7 +634,17 @@ TRY IT YOURSELF
 
 The shop's search should suggest "sneakers" when a customer types "sneekers". The **edit distance** (Levenshtein distance) between two words is the fewest single-letter insertions, deletions and replacements that turn one into the other. Define `D[i][j]` as the distance between the first `i` letters of one word and the first `j` of the other, write the recurrence, and use it to pick the closest product name.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Compute all three options and take the smallest: `D[i-1][j-1]` plus 0 or 1 depending on whether `a[i-1]` equals `b[j-1]` (replace), `D[i-1][j] + 1` (delete), and `D[i][j-1] + 1` (insert).
+
+HINT 2
+
+`const replace = D[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1); D[i][j] = Math.min(replace, D[i - 1][j] + 1, D[i][j - 1] + 1);`
+
+SOLUTION
 
 edit-distance.js
 
@@ -674,7 +684,17 @@ TRY IT YOURSELF
 
 A dispatch rider works on known days of the month. A one-day bus pass costs ₦1,000, a 7-day pass ₦5,000 and a 30-day pass ₦15,000; a pass bought on day d covers days d to d + 6 (or d + 29). Find the cheapest way to cover all working days. Define `cost[d]` as the cheapest way to cover all working days from day d to the end.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Set `cost[d] = Infinity` first, then loop over `Object.entries(prices)`: for each `[length, naira]`, compare `naira + cost[d + Number(length)]` against the current best and keep the smaller, remembering which `length` won.
+
+HINT 2
+
+`cost[d] = Infinity; for (const [length, naira] of Object.entries(prices)) { const total = naira + cost[d + Number(length)]; if (total < cost[d]) { cost[d] = total; choice[d] = Number(length); } }`
+
+SOLUTION
 
 passes.js
 
@@ -730,7 +750,17 @@ TRY IT YOURSELF
 
 Two vans leave together, and the dispatcher wants their loads as equal as possible so neither driver is overloaded. Given parcel weights, find the heaviest load for the first van that is at most half the total (the second van takes the rest). This is a subset-sum DP: `possible[w]` is true if some set of parcels weighs exactly `w`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop `s` from `half` down to `w`. Going downward, not upward, makes sure each parcel is only ever used once (the same reason the one-row knapsack goes down).
+
+HINT 2
+
+`for (let s = half; s >= w; s--) { if (possible[s - w]) possible[s] = true; }`
+
+SOLUTION
 
 two-vans.js
 

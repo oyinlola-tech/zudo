@@ -274,9 +274,47 @@ Found 1 error in factory-check.ts:17
 
 The second token is `CLOCK`, so the second parameter is a `Clock`, even though it is called `store`. The constructor wants a `TaskStore` there, and a `Clock` has no `titles`. The names of the parameters do not matter; their order does.
 
-> THE CLASS INJECT LIST IS NOT TYPE-CHECKED
->
-> For `registerClass`, TypeScript still does not compare `inject: [TaskStore, CLOCK]` with the constructor. If you swap the two tokens there, the code compiles and fails when it runs. Keep the `inject` list next to the constructor and in the same order, and let a test resolve every service once, so a mistake shows up in the test run. When you want the compiler to check the wiring, register the class with a factory instead: `registerFactory(TaskService, (store, clock) => new TaskService(store, clock), [TaskStore, CLOCK])`.
+`registerClass` checks the same way: swap the tokens in its `inject` list and the registration itself fails to compile, no factory needed:
+
+class-check.ts
+
+```ts
+import { createContainer, createToken } from "@zudojs/container";
+import type { Clock } from "@zudojs/types";
+
+class TaskStore {
+  readonly titles: string[] = [];
+}
+class TaskService {
+  constructor(readonly store: TaskStore, readonly clock: Clock) {}
+}
+
+const CLOCK = createToken<Clock>("Clock");
+const container = createContainer();
+container.registerClass(TaskService, TaskService, { inject: [CLOCK, TaskStore] });
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+class-check.ts:13:38 - error TS2345: Argument of type 'typeof TaskService' is not assignable to parameter of type 'InjectedConstructor<TaskService, NoInfer<readonly [InjectionToken<Clock>, typeof TaskStore]>>'.
+  Types of parameters 'store' and 'args' are incompatible.
+    Type '{ [x: number]: Clock | TaskStore; toString: never; toLocaleString: never; concat: never; join: never; slice: never; indexOf: never; lastIndexOf: never; every: never; some: never; ... 24 more ...; length: never; }' is not assignable to type '[store: TaskStore, clock: Clock]'.
+      Type at position 0 in source is not compatible with type at position 0 in target.
+        Property 'titles' is missing in type 'Clock' but required in type 'TaskStore'.
+
+13 container.registerClass(TaskService, TaskService, { inject: [CLOCK, TaskStore] });
+                                        ~~~~~~~~~~~
+
+  class-check.ts:5:12 - 'titles' is declared here.
+    5   readonly titles: string[] = [];
+                 ~~~~~~
+
+
+Found 1 error in class-check.ts:13
+```
+
+Keep the `inject` list next to the constructor and in the same order regardless: the message above is accurate but not exactly friendly, and a wiring mistake is cheaper to read as a type error here than to debug from a runtime crash three files away.
 
 ## Lifetimes: singleton, scoped and transient
 
@@ -697,7 +735,7 @@ true
 $ npx tsc --noEmit
 ```
 
-The service got the store and the fixed clock without calling a single constructor, and the store it wrote to is the same singleton the rest of the app sees. `registerClass` checks nothing about the order of `inject`, as the warning above said, so this script doubles as the test that resolves every service once.
+The service got the store and the fixed clock without calling a single constructor, and the store it wrote to is the same singleton the rest of the app sees. `registerClass` catches a wrong `inject` order at compile time, as [above](#providers), but resolving every service at least once, the way this script does, is still the surest way to catch a token that is missing entirely.
 
 ## Practice
 
@@ -707,7 +745,17 @@ TRY IT YOURSELF
 
 Register an `IdGenerator` class whose `next()` method returns 1, 2, 3, … Resolve it twice and call `next()` on each. Try it first as transient (the default), then as a singleton. Explain the difference in output.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Give the class a private field, `private last = 0;`, and increment it inside `next()` before returning it: `this.last += 1; return this.last;`, the same shape as `TokenPool` above.
+
+HINT 2
+
+With this fix, transient gives each resolve its own `IdGenerator` (both print 1), while singleton shares one across both resolves (1, then 2).
+
+SOLUTION
 
 ids.ts
 
@@ -746,7 +794,17 @@ TRY IT YOURSELF
 
 Register a scoped `RequestContext` class with a `requestId` property, and a transient `AuditLog` that receives it. Simulate two requests with two scopes, resolve `AuditLog` twice in each, and show that both logs in the same request share the same `RequestContext`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Give `RequestContext` one readonly field, initialised inline: `readonly requestId = \`req-${++counter}\`;`, the same shape as `TenantContext` above.
+
+HINT 2
+
+Once `requestId` exists, both `a` and `b` in one scope read the same value, because `RequestContext` is scoped; the two scopes each get their own.
+
+SOLUTION
 
 per-request.ts
 
@@ -787,7 +845,7 @@ The two `AuditLog`s are different objects (transient), but inside one scope they
 
 - **Dependency injection**: a class receives its dependencies instead of creating them, so they can be shared and replaced.
 - A **token** names a dependency: a class, or `createToken<T>("Name")` for interfaces and values.
-- Providers: `registerValue`, `registerClass` with an `inject` list, `registerFactory` (its parameters are typed from its `inject` list, so TypeScript checks the wiring), `registerExisting`.
+- Providers: `registerValue`, `registerClass` and `registerFactory` with an `inject` list (both type-checked against the constructor or the factory's parameters, in order), `registerExisting`.
 - Lifetimes: **singleton** (one per container), **scoped** (one per `createScope()`), **transient** (new every time, the default). A singleton may not depend on a scoped dependency.
 - Cycles fail with `CircularDependencyError`. `dispose()` cleans up singletons and scopes, newest first.
 - For tests: `replace` a registration with a fake, then `restoreSnapshot`.

@@ -1076,7 +1076,17 @@ TRY IT YOURSELF
 
 Write `oldestWaitingSeconds(db, now)`, which returns how many seconds the oldest delivery that is still `queued` or `running` has been waiting (0 when none is). Give two deliveries fixed creation times, and print the lag before and after the older one is sent.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`extract(epoch from ($1::timestamptz - min(created_at)))::int` gives whole seconds between the passed-in clock and the earliest matching row; `min()` over no rows is `null`, which is why the result needs `?? 0`.
+
+HINT 2
+
+The `where` clause is `status in ('queued', 'running')` — the same two states `claimDue` looks for, since both are "still waiting" from an operator's point of view.
+
+SOLUTION
 
 ex-lag.tsNode.js only
 
@@ -1121,7 +1131,17 @@ TRY IT YOURSELF
 
 INV-0004 went dead because its amount was missing. Somebody fixes the amount. Use the ledger's `replay` to put the delivery back in line, show that replaying twice only works once, and show that a dispatcher claims it again with a fresh claim count.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`replay` takes the delivery's id (`1`, not the invoice id `4`) and returns whether it changed a row — call it twice in the same `console.log`, the way the accounts example does.
+
+HINT 2
+
+`ledger.claimDue("worker-a", new Date(), LEASE_MS, MAX_CLAIMS)` returns the claimed rows; map them to `\`${row.id} claims=${row.claims}\`` to see the counter reset.
+
+SOLUTION
 
 ex-replay.tsNode.js only
 
@@ -1159,7 +1179,21 @@ TRY IT YOURSELF
 
 The provider has just accepted delivery 7, and the database goes down for 30 seconds, so `markSent` throws. Walk through what happens next, step by step, until the delivery is `sent`. Does the customer get a second e-mail? Which line of `worker.ts` would turn this into a lost delivery if it were written carelessly?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+The processor threw, so the queue does what it always does with a failure: think about backoff, the claim counter, and what happens once every attempt within the crash budget has failed.
+
+HINT 2
+
+The delivery's row is still `running` with a lease. What ends a lease, and who notices when it does? That is what gives this delivery a second chance without anyone intervening by hand.
+
+HINT 3
+
+When the processor finally calls the provider again, it sends the same idempotency key as the first, accepted call. What does that guarantee about how many e-mails go out, whatever the provider does with the second call?
+
+SOLUTION
 
 The processor throws, so the queue retries with backoff. Each retry loads the delivery, which also fails while the database is down, so all 4 attempts fail within a fraction of a second and the job is dead-lettered in memory. The `job:dead-lettered` handler tries `markDead`, which fails too, and is logged. The ledger row is still `running` with its lease. When the lease expires, a dispatcher claims it again (claim 2), the processor calls the provider with the same key, the provider replays `msg_7`, and `markSent` now works. One e-mail. The careless version is a `void deps.ledger.markDead(...)` without `.catch`: its rejection would be unhandled, and Node.js ends the whole process on an unhandled rejection, taking every other running delivery with it. A catch-all `try { … } catch {}` around `markSent` that ignored the error would be worse: the job would count as completed, and nothing would ever retry it.
 

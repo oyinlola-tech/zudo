@@ -489,7 +489,17 @@ TRY IT YOURSELF
 
 Write a middleware that stores the start time in `ctx.state` before `next()`, and after it prints the message type and whether the dispatch threw. Test it with one handler that works and one that throws.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`ctx.state.set("startedAt", Date.now())` is a plain `Map` write. Wrap `await next()` in `try`/`catch`: log and return on success, log and re-throw on failure.
+
+HINT 2
+
+`ctx.state.set("startedAt", Date.now()); try { const value = await next(); console.log(\`${ctx.message.type}: ok\`); return value; } catch (error) { console.log(\`${ctx.message.type}: failed\`); throw error; }`.
+
+SOLUTION
 
 timing.ts
 
@@ -536,7 +546,17 @@ TRY IT YOURSELF
 
 Which fits each case: (a) "user.registered", which starts a welcome email, an analytics entry and a Slack notice; (b) "tax.calculate", which needs the tax amount back for an invoice?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look at the table under [events tell, messages ask](#why): how many handlers does each case need, and does the caller need a value back?
+
+HINT 2
+
+(a) has three independent reactions and nobody waits for a result. (b) has exactly one answer that the caller cannot proceed without.
+
+SOLUTION
 
 (a) An event: something happened, several independent reactions, and nobody needs an answer. (b) A message: it asks for a result and needs exactly one handler, so use a bus with `allowMultipleHandlers: false`. The next lesson, CQRS, builds on this split between "do something" and "tell me something".
 
@@ -546,7 +566,17 @@ TRY IT YOURSELF
 
 This handler ignores its signal: `async () => { await wait(300); return "done"; }`. Rewrite it so a dispatch with `timeout: 45` stops it soon after the timeout, by waiting in steps of 30 ms.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Turn the single `wait(300)` into a loop: `for (let i = 0; i < 10; i++) { ...; await wait(30); steps += 1; }`, and check the signal at the top of each iteration.
+
+HINT 2
+
+`for (let i = 0; i < 10; i++) { context.signal.throwIfAborted(); await wait(30); steps += 1; } return "done";`. `throwIfAborted()` throws once the signal is aborted, which stops the loop from inside.
+
+SOLUTION
 
 respect.ts
 

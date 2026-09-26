@@ -226,7 +226,7 @@ db.ts
 
 ```ts
 import { PGlite, type Transaction as PgTransaction } from "@electric-sql/pglite";
-import { createTransactionContext, createTransactionManager, type Transaction, type TransactionAdapter } from "@zudojs/transactions";
+import { createTransactionManager, type Transaction, type TransactionAdapter } from "@zudojs/transactions";
 
 interface Handle {
   readonly tx: PgTransaction;
@@ -286,23 +286,22 @@ export type Queryable = Pick<PGlite, "query">;
 export async function createDatabase() {
   const pg = new PGlite();
   await pg.exec(SCHEMA);
-  const context = createTransactionContext();
-  const transactions = createTransactionManager({ adapter: pgliteAdapter(pg), context });
+  const transactions = createTransactionManager({ adapter: pgliteAdapter(pg) });
   const sql = (): Queryable => transactions.getCurrentHandle<Handle>()?.tx ?? pg;
-  /** Runs `work` after `tx` commits, outside it: work started there must not inherit a finished transaction. */
-  const afterCommit = (tx: Transaction, work: () => Promise<void>) => tx.afterCommit(() => context.exit(work));
+  /** Runs `work` after `tx` commits, detached from it: `fee.paid`'s handler must not join a finished transaction. */
+  const afterCommit = (tx: Transaction, work: () => Promise<void>) => tx.afterCommit(work);
   return { pg, transactions, sql, afterCommit, close: () => pg.close() };
 }
 
 export type Database = Awaited<ReturnType<typeof createDatabase>>;
 ```
 
-What is `afterCommit` for, and why does it call `context.exit`? FeesDesk publishes `fee.paid` after the payment commits, and a handler of that event queues the receipt job. Here is what happens without the `exit`, with a stand-in adapter so only the transaction logic runs:
+What is `afterCommit` for? FeesDesk publishes `fee.paid` after the payment commits, and a handler of that event queues the receipt job — a job that opens its *own* transaction a little later, once `render-receipt` reaches the front of the queue. That job must never find itself inside the payment's transaction, which has already committed by then. `afterCommit` callbacks run detached from the transaction that registered them, so a `manager.run` called from inside one starts a genuinely new transaction rather than joining a closed one. Here it is, with a stand-in adapter so only the transaction logic runs:
 
 tx-context.tsNode.js only
 
 ```ts
-import { createTransactionContext, createTransactionManager, type TransactionAdapter, type TransactionManagerOptions } from "@zudojs/transactions";
+import { createTransactionManager, type TransactionAdapter } from "@zudojs/transactions";
 
 // A stand-in adapter: begin, commit and rollback do nothing, so only the context logic runs.
 const adapter: TransactionAdapter = {
@@ -312,34 +311,31 @@ const adapter: TransactionAdapter = {
   rollback: async () => {},
 };
 
-async function publishAfterCommit(label: string, options: Partial<TransactionManagerOptions>, wrap = (work: () => Promise<void>) => work()) {
-  const manager = createTransactionManager({ adapter, ...options });
-  let receiptJob: Promise<void> = Promise.resolve();
-  await manager.run(async (payment) => {
-    payment.afterCommit(() => wrap(async () => {
-      // "publish fee.paid": a handler queues a job that runs a little later and opens its own transaction
-      receiptJob = new Promise((resolve) => setTimeout(async () => {
-        await manager.run(async (job) => console.log(`${label.padEnd(26)} job sees: ${job.kind}, same transaction as the payment: ${job.id === payment.id}`));
-        resolve();
-      }, 5));
-    }));
+const manager = createTransactionManager({ adapter });
+let receiptJob: Promise<void> = Promise.resolve();
+await manager.run(async (payment) => {
+  payment.afterCommit(async () => {
+    console.log("inside afterCommit, manager.getCurrent():", manager.getCurrent());
+    // "publish fee.paid": a handler queues a job that runs a little later and opens its own transaction
+    receiptJob = new Promise((resolve) => setTimeout(async () => {
+      await manager.run(async (job) => {
+        console.log(`job sees: ${job.kind}, same transaction as the payment: ${job.id === payment.id}`);
+      });
+      resolve();
+    }, 5));
   });
-  await receiptJob;
-}
-
-await publishAfterCommit("plain afterCommit", {});
-const context = createTransactionContext();
-await publishAfterCommit("afterCommit + context.exit", { context }, (work) => context.exit(work));
+});
+await receiptJob;
 ```
 
 Output of `npx tsx tx-context.ts`
 
 ```ts
-plain afterCommit          job sees: participant, same transaction as the payment: true
-afterCommit + context.exit job sees: root, same transaction as the payment: false
+inside afterCommit, manager.getCurrent(): undefined
+job sees: root, same transaction as the payment: false
 ```
 
-With a plain `afterCommit`, the job that starts later still runs inside the payment's asynchronous context. Its own `manager.run` believes a transaction is in progress and *joins the one that has already committed* as a participant. In FeesDesk that surfaced as the receipt job failing with PGlite's "Transaction is closed", retried over and over. Running the callback through `context.exit` (with a context you create and pass to the manager) starts the job with no transaction in scope. This is a defect in the published `@zudojs/transactions`: callbacks registered with `afterCommit` should not inherit the finished transaction. Until it is fixed, wrap them as `db.afterCommit` does.
+`manager.getCurrent()` is `undefined` even while the callback runs, and the later job's own `manager.run` opens a fresh, root transaction rather than joining the payment's. Before `@zudojs/transactions` 1.3, an `afterCommit` callback inherited the finished transaction's asynchronous context, so its own `manager.run` believed a transaction was already in progress and joined it as a *participant* — in FeesDesk that surfaced as the receipt job failing with PGlite's "Transaction is closed", retried forever, and the only fix was to run the callback through a separately created context's `exit`. That workaround is gone; a plain `afterCommit` is now the correct and only thing to write.
 
 ## Identity and tenancy
 
@@ -1627,7 +1623,7 @@ The academy began with "what is a program?". It ends with this list. A graduate 
 | Choose an architecture and change it when the evidence says so | [Architecture styles](https://zudojs.oyinlola.site/learn/arch-styles), [Modular monolith](https://zudojs.oyinlola.site/learn/zudo-modular-monolith), [Microservices](https://zudojs.oyinlola.site/learn/zudo-microservices) | Milestone 6 |
 | Serialize data that crosses service boundaries, and version its contracts | [Serialization](https://zudojs.oyinlola.site/learn/zudo-serialization), [Contracts between services](https://zudojs.oyinlola.site/learn/dist-contracts) | Milestone: the RPC service split |
 | Scale the system: find the real bottleneck by measuring, then fix that | [Diagnosing performance](https://zudojs.oyinlola.site/learn/zudo-performance) | Milestone: production |
-| Read a framework's source to answer "how does this really work?" | [Reading ZudoJS internals](https://zudojs.oyinlola.site/learn/zudo-internals) | The afterCommit defect |
+| Read a framework's source to answer "how does this really work?" | [Reading ZudoJS internals](https://zudojs.oyinlola.site/learn/zudo-internals) | Why `afterCommit` detaches |
 | Extend ZudoJS with your own packages and plugins | [Creating a ZudoJS package](https://zudojs.oyinlola.site/learn/zudo-create-package), [Building a complete ZudoJS plugin](https://zudojs.oyinlola.site/learn/zudo-create-plugin) | Milestone: plugins |
 
 ## Practice
@@ -1638,7 +1634,17 @@ TRY IT YOURSELF
 
 Replace the per-IP login limit. Count only *failed* logins, per school and e-mail, allow 5 in 15 minutes, clear the count on a success, and keep refusing a locked account even when the right password arrives. Use `createRateLimiter`'s `keyGenerator`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Pass `keyGenerator: (request) => String(request.headers?.["x-login-account"])` to `createRateLimiter`, the same way the reset limiter reads `"x-reset-account"`.
+
+HINT 2
+
+Check `failures.getCount(key) >= 5` first and throw before anything else. Only call `failures.check(request)` on a wrong password (that is what counts the failure), and only call `failures.reset(key)` on a right one.
+
+SOLUTION
 
 login-limit.tsNode.js only
 
@@ -1687,7 +1693,17 @@ TRY IT YOURSELF
 
 Payment 7 was left pending because KoboPay did not answer in time. Show that the reconciliation job can safely resend the charge with the same reference, and list what the job must do after it gets the answer.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`chargeWithRetry(...).then((r) => r.status, (error: Error) => error.name)` turns either outcome into a string you can log, without a `try`/`catch`.
+
+HINT 2
+
+After setting `kobopay.controls.latencyMs = 0`, `await new Promise((resolve) => setTimeout(resolve, 1700))` gives KoboPay's delayed first answer time to arrive before you call `chargeWithRetry` again with the identical `request` object.
+
+SOLUTION
 
 reconcile.tsNode.js only
 
@@ -1727,7 +1743,21 @@ TRY IT YOURSELF
 
 For each new requirement, name the file(s) of the core that change, and the one test you would write first: (a) a bursar records a cash payment; (b) Unity College enables instalments; (c) receipts must also go by SMS; (d) a school is suspended for not paying FeesDesk.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Match each requirement to the file that owns that concern: `access.ts` decides who may do what, `billing.ts` holds the money rules, `notices.ts` holds what happens after a payment, and `app.ts` wires flags and dependencies together.
+
+HINT 2
+
+For (b) and (d), a column or a mechanism already in [the schema](#database) and [identity.ts](#identity) does most of the work before you write a single new line — look for what already refuses a request, rather than reaching for new code.
+
+HINT 3
+
+For (c), ask which existing handler already reacts to `fee.paid`, and what a second one next to it would need from the payment that the first one does not.
+
+SOLUTION
 
 - (a) `access.ts` (bursar may `bill:record-cash`), a new `RecordCashPayment` command handled in `billing.ts` that reuses `reserve` and `settle` with a `cash` ledger account, and a route in `http.ts`. First test: a parent sending the same request gets 403, and the ledger still sums to zero.
 - (b) Only the flag's rules in `app.ts` (or, in production, the flag provider's data): add `"unity"` to the tenant rule. No code in billing changes. First test: a part payment at Unity answers 201.
@@ -1740,7 +1770,7 @@ For each new requirement, name the file(s) of the core that change, and the one 
 - Money rules live in three places at once: the code (reserve, settle), the database (constraints and unique keys) and the protocol (idempotency keys and provider references). Any one of them alone has a gap.
 - A timeout is not a failure. An unknown outcome is answered with "pending" and settled later by reconciliation.
 - Tenancy is carried by the session into every query, cache key, job and file key, and background work re-enters the school explicitly.
-- The acceptance suite tests the promises, not the functions, and it found two design problems that no type checker could: a login limit that punishes shared networks, and a transaction context that leaks into later work.
+- The acceptance suite tests the promises, not the functions, and it found a design problem no type checker could: a login limit that punishes shared networks (Exercise 1). `afterCommit` callbacks run detached from the transaction that registered them, so background work triggered from one starts its own transaction rather than inheriting a closed one.
 - Six milestones finish the product; the graduation table tells you where to go for any item you cannot yet do alone.
 
 One step is left: [the final challenge](https://zudojs.oyinlola.site/learn/final-challenge), where you take someone else's broken feature and make it production-ready on your own.

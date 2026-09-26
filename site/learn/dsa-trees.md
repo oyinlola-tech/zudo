@@ -1094,7 +1094,17 @@ TRY IT YOURSELF
 
 Each leaf category has a `products` count. Print the menu with the total number of products under every category, including the invisible root. Which traversal do you need to *compute* the totals, and which one to *print* them in menu order?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+This is post-order: add up every child's total first (by calling `addTotals` on it), then add this node's own `products`. Store the result on `node.total` before you `return` it.
+
+HINT 2
+
+`node.total = node.products ?? 0; for (const child of node.children) node.total += addTotals(child); return node.total;`
+
+SOLUTION
 
 category-totals.js
 
@@ -1148,7 +1158,17 @@ TRY IT YOURSELF
 
 Using the `BST` class, write `range(tree, low, high)` that returns the keys between `low` and `high` inclusive, in order. Do not walk subtrees that cannot contain an answer. Count how many nodes you visit for the range 3000 to 4500 in a tree of 15 orders.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Only look left if smaller keys could still be in range (`low < node.key`), and only look right if larger ones could (`node.key < high`). Push the key itself when it falls between `low` and `high`.
+
+HINT 2
+
+`if (low < node.key) range(node.left, low, high, out); if (low <= node.key && node.key <= high) out.push(node.key); if (node.key < high) range(node.right, low, high, out);`
+
+SOLUTION
 
 range.js
 
@@ -1190,7 +1210,17 @@ TRY IT YOURSELF
 
 A courier charges by weight band: from 0 kg ₦1,500, from 2 kg ₦2,800, from 5 kg ₦4,500, from 10 kg ₦7,000, from 20 kg ₦12,000. Store the bands in a BST keyed by the starting weight, and write `floor(tree, weight)`: the node with the largest key that is less than or equal to `weight`. Print the rate for 0.5 kg, 5 kg, 7.3 kg and 25 kg.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Walk down as if searching for `weight`. Every time you are at a key *less than or equal to* `weight`, it is a valid candidate — remember it and keep looking to the right for a closer one. Every time the key is too big, go left.
+
+HINT 2
+
+`if (current.key === weight) return current; if (current.key < weight) { best = current; current = current.right; } else { current = current.left; }`
+
+SOLUTION
 
 floor.js
 

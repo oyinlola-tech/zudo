@@ -244,12 +244,12 @@ for (const name of ["adapters", "plugins", "container", "events", "errors", "htt
 Output of `npx tsx surface.ts`
 
 ```ts
-adapters      20 names   index.js: 0 "export *", 4 "export { … }"
-plugins       36 names   index.js: 0 "export *", 12 "export { … }"
+adapters      25 names   index.js: 0 "export *", 4 "export { … }"
+plugins       37 names   index.js: 0 "export *", 12 "export { … }"
 container     84 names   index.js: 9 "export *", 1 "export { … }"
-events       142 names   index.js: 8 "export *", 0 "export { … }"
+events       143 names   index.js: 8 "export *", 0 "export { … }"
 errors       548 names   index.js: 5 "export *", 0 "export { … }"
-http        1379 names   index.js: 44 "export *", 20 "export { … }"
+http        1392 names   index.js: 44 "export *", 20 "export { … }"
 ```
 
 `@zudojs/adapters` and `@zudojs/plugins` list their public names one by one: small, deliberate surfaces. `@zudojs/http` re-exports whole folders and ends up with well over a thousand names, including the internal machinery of its router. Those names are reachable, but nobody promised to keep them.
@@ -258,7 +258,7 @@ http        1379 names   index.js: 44 "export *", 20 "export { … }"
 
 | Signal | Example in the published packages | Treat it as |
 | --- | --- | --- |
-| Not in the `exports` map | `withRetry` in `@zudojs/adapters` | Private. You cannot import it anyway. |
+| Not in the `exports` map | `retryAttempts` in `@zudojs/adapters` | Private. You cannot import it anyway. |
 | `@internal` in the JSDoc | `resolveInScope` on the container | Private, even though TypeScript lets you call it. |
 | A folder or class named "internal", or a low-level engine class | `lifecycleInternal/` (re-exported as `topologicalSort`, `withTimeout`), `ContainerResolver` | Private unless the README documents it. |
 | Documented in the README and the site's package page | `createRouter`, `createContainer`, `getOrSet` | Public: covered by semantic versioning. |
@@ -316,7 +316,7 @@ const questions: [string, string][] = [
   ["@zudojs/http", "matchCompiledRoute"],
   ["@zudojs/container", "CircularDependencyError"],
   ["@zudojs/container", "ScopedResolutionError"],
-  ["@zudojs/adapters", "withRetry"],
+  ["@zudojs/adapters", "retryAttempts"],
 ];
 for (const [pkg, name] of questions) {
   const chain = findExport(pkg, name);
@@ -343,7 +343,7 @@ Output of `npx tsx where.ts`
   dist/index.js
   -> dist/containerResolution/index.js
   -> dist/containerResolution/containerResolution.error.js
-@zudojs/adapters withRetry
+@zudojs/adapters retryAttempts
   not exported
 ```
 
@@ -471,17 +471,18 @@ console.log("isBaseError():", byBrand);
 Output of `npx tsx who-checks.ts`
 
 ```ts
-instanceof BaseError: [
-  'cqrs/cqrsErrors/cqrsError.base.js',
-  'cqrs/cqrsMiddleware/cqrsMiddleware.core.js'
-]
+instanceof BaseError: []
 isBaseError(): [
+  'cqrs/cqrsErrors/cqrsError.base.js',
+  'cqrs/cqrsMiddleware/cqrsMiddleware.core.js',
   'database/databaseClient/databaseClient.errors.js',
-  'rpc/rpc/server/rpcBaseErrorMapping.helper.js'
+  'rpc/rpc/server/rpcBaseErrorMapping.helper.js',
+  'schema/schemaBase/schemaBase.result.js',
+  'storage/repository/baseRepository.errors.js'
 ]
 ```
 
-`rpc` and `database` use the safe check; `cqrs` uses `instanceof`. With two copies of `@zudojs/errors` installed, the CQRS middleware would not recognise a `NotFoundError` from the other copy and would wrap it in a generic `CqrsError`, losing its code and status. It is a small bug with a clear reproduction: exactly the kind of finding you report upstream rather than work around.
+Every package that checks here now uses the safe brand check; the `instanceof BaseError` list is empty. That is a change worth noticing on its own: an earlier release had the CQRS middleware comparing with `instanceof`, so with two copies of `@zudojs/errors` installed it would not have recognised a `NotFoundError` from the other copy and would have wrapped it in a generic `CqrsError`, losing its code and status. Whoever filed that finding was right at the time, and the fix landed without anyone updating this lesson by hand, which is exactly why you re-run the scan after every upgrade instead of trusting a finding (yours or a blog post's) from a previous release.
 
 ## Context propagation
 
@@ -648,12 +649,12 @@ Output of `npx tsx trace-routing.ts`
 ```ts
 /admin/a/b/c           -> /admin/*rest {"rest":"a/b/c"}
 /acme/reports/2026/7   -> /:org/:page/:section/:id {"org":"acme","page":"reports","section":"2026","id":"7"}
-/payments/42           -> /payments/:reference {"reference":"42"}
+/payments/42           -> /payments/:id(\d+) {"id":"42"}
 ```
 
-The admin route wins although it was registered second and has fewer segments, and registering it first would change nothing: order only breaks ties. `/payments/42` goes to `:reference`: the constrained `:id(\d+)` route tied, lost on registration order, and can never run. The [routing lesson](https://zudojs.oyinlola.site/learn/zudo-routing#matching) shows how to catch such dead routes in a test.
+The admin route wins although it was registered second and has fewer segments, and registering it first would change nothing: order only breaks ties. `/payments/42` goes to `:id(\d+)`: a constrained parameter now outranks an unconstrained one at the same position, so the digits-only route is considered more specific than the catch-all reference. A non-digit reference such as `PSK-42` still falls through to `:reference` (the next trace shows exactly that path). Before this rule existed, the tie was broken by registration order, so a constrained route registered after its unconstrained sibling could quietly never run at all; that is why registering a route another route already shadows now throws `RouteConflictError` at startup instead of failing silently at request time (pass `createRouter({ shadowedRoutes: "ignore" })` to keep the old behaviour). No error fires here, because both routes still get real traffic: one for digits, one for everything else. The [routing lesson](https://zudojs.oyinlola.site/learn/zudo-routing#matching) shows how to catch a route that really is unreachable.
 
-### An exported matcher that disagrees with the router
+### An exported matcher, still unused by the router
 
 [Reading framework source](https://zudojs.oyinlola.site/learn/framework-read-source)'s search found that `RouteTree`, exported from the barrel as `createRouteTree`, is mentioned only inside its own folder: the router never uses it. Unused is one thing. Is it at least correct? Someone who finds it in the export list will assume it matches like the router:
 
@@ -676,12 +677,14 @@ for (const path of ["/admin/a/b/c", "/payments/PSK-42", "/PAYMENTS/PSK-42"]) {
 Output of `npx tsx route-tree.ts`
 
 ```ts
-/admin/a/b/c -> tenant page {"id":"c"}
+/admin/a/b/c -> admin {"rest":"a/b/c"}
 /payments/PSK-42 -> payment {"reference":"PSK-42"}
-/PAYMENTS/PSK-42 -> no match
+/PAYMENTS/PSK-42 -> payment {"reference":"PSK-42"}
 ```
 
-It does not. The tree sends `/admin/a/b/c` to the tenant page, reports only one of its four parameters, and treats paths as case-sensitive, while the router matches `/PAYMENTS/PSK-42` by default. Nothing breaks in your app, because the router does not call it, but anyone who finds `createRouteTree` in the export list and builds on it gets the old admin bypass back. This is why you trace from the entry point you actually use: a promising exported name proves nothing.
+It agrees, in the version this lesson installed. That is new: an earlier `@zudojs/http` sent `/admin/a/b/c` to the tenant page, reported only one of its four parameters, and matched paths case-sensitively while the router does not, which brought the old admin-bypass ordering back for anyone who built on `createRouteTree` instead of the router. The current release brought the tree's matching in line with the router's on every case above: named wildcards, every parameter reported, and case-insensitive literals by default.
+
+That agreement is still worth distrusting a little. The router still never calls `createRouteTree`, so nothing forces the two to stay in step on the *next* release; the only reason you can say they agree today is that you ran both and compared. A promising exported name proves nothing by itself, correct or not, until you trace from the entry point you actually use and check. The exercises turn today's agreement into a test that will complain the day it stops being true.
 
 ## Trace 3: how the container resolves a scoped dependency
 
@@ -884,6 +887,7 @@ try {
 } catch (error) {
   const all = error as AggregateError;
   console.log(all.message, all.errors.map((e: Error) => e.message));
+  console.log("original message:", (all.errors[0] as Error & { cause?: Error }).cause?.message);
 }
 ```
 
@@ -892,10 +896,13 @@ Output of `npx tsx adapters-start.ts`
 ```ts
 started paystack-webhooks
 started metrics
-One or more adapters failed to start. [ 'http-server: port 8080 is in use' ]
+One or more adapters failed to start. [ 'Adapter "http-server" operation "start" failed.' ]
+original message: http-server: port 8080 is in use
 ```
 
 Two adapters are running and nobody will stop them unless you call `registry.stopAll()` in that `catch`. Compare this with `PluginManager` in [the plugins lesson](https://zudojs.oyinlola.site/learn/zudo-plugins#rollback) and `createLifecycleManager` in [the lifecycle lesson](https://zudojs.oyinlola.site/learn/zudo-lifecycle#rollback): both roll back what they started. Neither choice is wrong, but you must know which one you are calling, and only the code tells you.
+
+Notice, too, that the failure inside `all.errors` is no longer the bare `Error` the adapter threw: it is a structured `AdapterOperationError` with its own `code` (`ERR_ADAPTER_OPERATION_FAILED`) and a generic message that names the adapter and the operation, not the reason. The original error survives as `.cause`. If your code logs `all.errors[i].message` expecting the adapter's own text, log `.cause` instead.
 
 The lifecycle package has one more lesson in package boundaries. Its state machine class holds the *behaviour*, but the table of allowed transitions is *data* in `@zudojs/constants`, so any package can check a state change without depending on the lifecycle engine:
 
@@ -994,7 +1001,17 @@ TRY IT YOURSELF
 
 A security fix lands in `@zudojs/middleware`. Use the graph tools to list every package that depends on it directly or through other packages, so you know which ones need a new release.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`direct` is every entry of `[...graph]` whose dependency record has a `"middleware"` key, mapped down to just the name. "All affected" is one call: `dependents(graph, "middleware")`.
+
+HINT 2
+
+`const direct = [...graph].filter(([, deps]) => "middleware" in deps).map(([name]) => name); console.log("all affected:", dependents(graph, "middleware").join(", "));`
+
+SOLUTION
 
 affected.tsNode.js only
 
@@ -1022,7 +1039,17 @@ TRY IT YOURSELF
 
 Using the `getOrSet` code above, predict: two concurrent calls with the same key but namespaces `"ngn"` and `"ghs"`. How many loads? Then check with `findExport` where `CacheService` lives, and prove your prediction.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Call `cache.getOrSet("usd", load, { namespace: "ngn" })` and `cache.getOrSet("usd", load, { namespace: "ghs" })` at the same time, and `await` both with `Promise.all`.
+
+HINT 2
+
+`await Promise.all([cache.getOrSet("usd", load, { namespace: "ngn" }), cache.getOrSet("usd", load, { namespace: "ghs" })]);`
+
+SOLUTION
 
 namespaces.tsNode.js only
 
@@ -1053,34 +1080,54 @@ Two loads. The in-flight map is keyed by `fullKey`, which `buildKey` makes from 
 
 TRY IT YOURSELF
 
-### Write the bug report for the route tree
+### Pin today's agreement with a characterization test
 
-Write the issue you would open for `createRouteTree`: a title, the versions, a reproduction of at most fifteen lines, the actual and expected output, and why it matters.
+`createRouteTree` now agrees with `createRouter` on every case this lesson tried, but the router still never calls it, and an earlier release disagreed in exactly the ways you'd fear (wildcard route losing, params missing, case-sensitive matching). Write the assertions you would add to `zudojs-behaviour.test.ts` so that a future release which reintroduces a mismatch fails the suite instead of surprising whoever built on `createRouteTree`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
 
-A good report is short and runnable:
+HINT 1
 
-**createRouteTree disagrees with createRouter: wildcard route loses, params missing, case-sensitive**
+Reuse the exact inputs already run in this lesson: the `route-tree.ts` and `trace-routing.ts` examples between them cover the admin wildcard, the case difference, and the four-parameter tenant page. Each is already a case worth asserting on.
 
-Versions: `@zudojs/http` as shown by `npm ls @zudojs/http`, Node 24.
+HINT 2
 
-Reproduction: the `route-tree.ts` script from this lesson.
+Assert each tree lookup against `router.match(...)` called with the same path, not against a hand-copied expected value, so the test still catches a regression even if the router's own behaviour changes on the next release too.
 
-Actual: `/admin/a/b/c` matches `/:org/:page/:section/:id` with only `{"id":"c"}`; `/ADMIN/a/b/c` matches nothing.
+SOLUTION
 
-Expected: the same result as `createRouter().match`: `/admin/*rest` with `{"rest":"a/b/c"}`, case-insensitive by default.
+Three assertions, built the same way as the `characterization.ts` checks earlier in this lesson: build one router and one route tree from the same patterns, then compare their answers to the same paths directly, so the test never has to trust a value written by hand.
 
-Why it matters: `createRouteTree` is exported and typed as a public API, and anyone who uses it gets the admin-bypass ordering that `compareSegmentSpecificity` fixed. Either make it match the router, or stop exporting it.
+```ts
+["admin wildcard: tree agrees with router", () => {
+  const router = createRouter();
+  router.get("/admin/*rest", () => "admin");
+  const tree = createRouteTree();
+  tree.insert("/admin/*rest", "admin", ["GET"]);
+  const path = "/admin/a/b/c";
+  assert.equal(tree.lookup(path, "GET")?.handler, router.match("GET", path).route?.handler);
+}],
+["tree reports every parameter, not just the last one", () => {
+  const tree = createRouteTree();
+  tree.insert("/:org/:page/:section/:id", "tenant", ["GET"]);
+  assert.deepEqual(tree.lookup("/acme/reports/2026/7", "GET")?.params,
+    { org: "acme", page: "reports", section: "2026", id: "7" });
+}],
+["tree matches literals case-insensitively, like the router", () => {
+  const tree = createRouteTree();
+  tree.insert("/payments/:reference", "payment", ["GET"]);
+  assert.ok(tree.lookup("/PAYMENTS/PSK-42", "GET"));
+}],
+```
 
-Notice what the report does not contain: a guess at the fix inside the tree's code. The maintainers know their code; your job is to make the problem impossible to misunderstand.
+None of these prove `createRouteTree` is correct in general, only that it still agrees with the router on the three cases this lesson found interesting. That is the point of a characterization test: it does not certify the code, it freezes today's observed behaviour so the next dependency upgrade has to explain itself.
 
 ## Recap
 
 - The code that runs is in `node_modules/@zudojs/*/dist`: readable `tsc` output plus `.d.ts` declarations, with no `src` and no source maps. Read that, not the repository's main branch.
 - Compute the dependency graph from the manifests. `errors` and `types` are at the bottom; every internal dependency is an exact pin, so keep all packages from one release and check for duplicates.
 - Public means exported *and* documented. The `exports` map is enforced by Node; barrels with `export *` make internals reachable without making them public.
-- Trace from the entry point you use, not from a promising name. `createRouteTree` is exported, unused by the router and wrong.
+- Trace from the entry point you use, not from a promising name. `createRouteTree` is exported, unused by the router, and happens to agree with it today — a fact worth pinning with a test, not trusting because the export list looks official.
 - All errors are `BaseError`s from `@zudojs/errors`; use `isBaseError` and `code` across package boundaries. Each context package owns its own `AsyncLocalStorage`.
 - Reading gives a hypothesis, a script proves it, a characterization test keeps it proven.
 

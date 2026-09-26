@@ -813,7 +813,17 @@ TRY IT YOURSELF
 
 Sellers also need to upload price lists as PDF. Write `sniffDocument(head)` that recognises a PDF (`%PDF-`) and returns the headers to serve it with: its type, and `Content-Disposition: attachment` so the browser downloads it instead of opening it inside your site.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`Buffer.from(head.subarray(0, 5)).toString("latin1") === "%PDF-"` tests the magic number, exactly as the PNG example does with 8 bytes.
+
+HINT 2
+
+On a match: `return { contentType: "application/pdf", disposition: \`attachment; filename="${displayName}"\` };`.
+
+SOLUTION
 
 sniff-pdf.tsNode.js only
 
@@ -851,7 +861,17 @@ TRY IT YOURSELF
 
 Extend the signed-URL idea to uploads: a link that allows exactly one `PUT` of one key, until an expiry time. Sign the method, the key and the expiry together, and show that a link issued for `GET` cannot be used for `PUT`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`sign` should hash all three: `createHmac("sha256", secret).update(\`${method}\n${key}\n${expires}\`).digest("base64url")`.
+
+HINT 2
+
+In `allowed`: `const expected = Buffer.from(sign(method, key, expires)); const given = Buffer.from(sig); return now < expires && given.length === expected.length && timingSafeEqual(given, expected);`.
+
+SOLUTION
 
 signed-put.tsNode.js only
 
@@ -896,7 +916,17 @@ TRY IT YOURSELF
 
 For each rule, say whether it belongs in the upload request, in a background job, or in the download request: (a) the file is at most 5 MB; (b) the file is a real JPEG, PNG or WebP; (c) the image has no hidden payload and no GPS data; (d) only the product's seller may upload its photos; (e) an invoice link works for 10 minutes.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Which of these checks are cheap enough to do before or while streaming the bytes in, and which need real processing time?
+
+HINT 2
+
+(d) is about who is allowed to spend your bandwidth at all; when should that be decided, relative to reading the body?
+
+SOLUTION
 
 (a) Upload request, while streaming (and also at the proxy). (b) Upload request: the magic number is in the first bytes, so it costs nothing. (c) Background job: re-encoding is slow and risky, so the photo stays pending until the job passes it. (d) Upload request, before reading the body: an unauthorised upload should not cost you bandwidth. (e) Download request: the signed URL's expiry is checked when the link is used.
 

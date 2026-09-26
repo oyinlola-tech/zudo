@@ -953,7 +953,17 @@ TRY IT YOURSELF
 
 Write `describeChain(value)` that returns the chain of any value as text, using each prototype's own `constructor.name`, for example `"SavingsAccount.prototype -> Account.prototype -> Object.prototype -> null"`. Use it on a class instance, an array and a null-prototype object.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Start from `Object.getPrototypeOf(value)` and keep calling `Object.getPrototypeOf` on the result until you reach `null`, collecting one name per step.
+
+HINT 2
+
+Each link's name is `Object.hasOwn(p, "constructor") ? p.constructor.name + ".prototype" : "(anonymous)"`. Push `"null"` at the end and `.join(" -> ")`.
+
+SOLUTION
 
 describe-chain.js
 
@@ -1015,7 +1025,17 @@ Output of `node basket-bug.js` and of the browser terminal
 [ 'RICE-5' ]
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`this.items.push(...)` only *reads* `items` through the prototype chain. Since no cart ever creates its own `items`, every cart reads and mutates the one array on `Cart.prototype`.
+
+HINT 2
+
+Set `this.items = [];` inside the `Cart` constructor, and remove the `Cart.prototype.items = [];` line entirely. Leave `add` on the prototype — it should stay shared.
+
+SOLUTION
 
 `this.items.push` *reads* `items`, finds the one array on `Cart.prototype`, and changes it. No cart ever gets an own `items`. Data belongs on the instance, created in the constructor; only the method stays on the prototype:
 
@@ -1073,7 +1093,17 @@ Output of `node class-original.js` and of the browser terminal
 INV-9: ₦2500 [ 'id', 'totalKobo' ]
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Inside a function called with `new`, `new.target` is that function; called plainly, it is `undefined`. Throw at the top of `Invoice` when `new.target` is falsy.
+
+HINT 2
+
+`Object.defineProperty(Invoice.prototype, "describe", { value: function () { ... }, writable: true, enumerable: false, configurable: true })` — `enumerable: false` is what keeps it out of `for...in`.
+
+SOLUTION
 
 class-by-hand.js
 

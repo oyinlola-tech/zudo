@@ -12,11 +12,11 @@ Course Core
 
 Use JavaScript where it runs: the DOM, events and browser APIs, networking from the browser, Node.js and its core modules, npm and the tooling around it, professional debugging, and Git.
 
-- **20 lessons**
+- **21 lessons**
 - **17 h** to read and try
 - **Before this:** [JavaScript fundamentals](https://zudojs.oyinlola.site/learn/javascript)
 
-0 of 20 lessons done
+0 of 21 lessons done
 
 [Start lesson 1 →](https://zudojs.oyinlola.site/learn/node-runtime)
 
@@ -63,24 +63,25 @@ MODULE 4
 1. [10**The DOM**Read and change a web page from JavaScript: find, create, update and remove elements safely, avoid innerHTML XSS, and build a task list UI rendered from data.50 min](https://zudojs.oyinlola.site/learn/browser-dom)
 2. [11**Events**Make a shopping cart respond to clicks, typing and forms with listeners, bubbling and capturing, preventDefault, delegation, custom events and a debounce.55 min](https://zudojs.oyinlola.site/learn/browser-events)
 3. [12**Browser APIs**Use the browser's tools with their failure modes: fetch, localStorage, URL and URLSearchParams, the History API, timers, requestAnimationFrame and Web Workers.55 min](https://zudojs.oyinlola.site/learn/browser-apis)
-4. [13**Networking from JavaScript**Connect a page to your Node.js Task API: the request lifecycle, JSON, the same-origin policy, CORS and preflight, HttpOnly session cookies and cancellation.60 min](https://zudojs.oyinlola.site/learn/browser-networking)
-5. [14**Real-time and background work**Push live updates to a page with Server-Sent Events and WebSockets, each with a Node.js server, and move heavy page work to Web Workers with messages.60 min](https://zudojs.oyinlola.site/learn/browser-realtime)
+4. [13**Theming a site with CSS variables**Build a light, dark and system theme switch the way this site does it: colour tokens in CSS, one attribute on the root element, a boot script that stops the flash, a preference that survives reloads and follows other tabs, and an event other code can listen to.45 min](https://zudojs.oyinlola.site/learn/browser-theming)
+5. [14**Networking from JavaScript**Connect a page to your Node.js Task API: the request lifecycle, JSON, the same-origin policy, CORS and preflight, HttpOnly session cookies and cancellation.60 min](https://zudojs.oyinlola.site/learn/browser-networking)
+6. [15**Real-time and background work**Push live updates to a page with Server-Sent Events and WebSockets, each with a Node.js server, and move heavy page work to Web Workers with messages.60 min](https://zudojs.oyinlola.site/learn/browser-realtime)
 
 MODULE 5
 
 ## Professional development
 
-1. [15**Git and GitHub**Track every change with Git, work on branches and resolve a real merge conflict, keep node_modules and secrets out of the repository, and share work on GitHub.40 min](https://zudojs.oyinlola.site/learn/git)
-2. [16**Professional Git**Work like a professional team: issues, pull requests, code review, merge versus rebase, rebase conflicts, tags, releases, changelogs and open source.55 min](https://zudojs.oyinlola.site/learn/git-collaboration)
+1. [16**Git and GitHub**Track every change with Git, work on branches and resolve a real merge conflict, keep node_modules and secrets out of the repository, and share work on GitHub.40 min](https://zudojs.oyinlola.site/learn/git)
+2. [17**Professional Git**Work like a professional team: issues, pull requests, code review, merge versus rebase, rebase conflicts, tags, releases, changelogs and open source.55 min](https://zudojs.oyinlola.site/learn/git-collaboration)
 
 MODULE 6
 
 ## Tooling and debugging
 
-1. [17**JavaScript tooling**Learn why each JavaScript tool exists, run Prettier and ESLint for real, see what a bundler does, map a minified stack trace back to source and validate config.50 min](https://zudojs.oyinlola.site/learn/js-tooling)
-2. [18**The debugging method**Find bugs with a repeatable method: observe, reproduce, isolate, hypothesize, test, fix and verify. Read stack traces, log well and shrink a minimal repro.50 min](https://zudojs.oyinlola.site/learn/debug-method)
-3. [19**Debugging tools**Pause a program at breakpoints, step through it and watch values in Node.js and the browser, read network traffic, and map compiled code back with source maps.55 min](https://zudojs.oyinlola.site/learn/debug-tools)
-4. [20**Debugging practice**Find a regression with binary search and git bisect run, dig to root causes with the five whys, and work five complete bug hunts from report to regression test.60 min](https://zudojs.oyinlola.site/learn/debug-practice)
+1. [18**JavaScript tooling**Learn why each JavaScript tool exists, run Prettier and ESLint for real, see what a bundler does, map a minified stack trace back to source and validate config.50 min](https://zudojs.oyinlola.site/learn/js-tooling)
+2. [19**The debugging method**Find bugs with a repeatable method: observe, reproduce, isolate, hypothesize, test, fix and verify. Read stack traces, log well and shrink a minimal repro.50 min](https://zudojs.oyinlola.site/learn/debug-method)
+3. [20**Debugging tools**Pause a program at breakpoints, step through it and watch values in Node.js and the browser, read network traffic, and map compiled code back with source maps.55 min](https://zudojs.oyinlola.site/learn/debug-tools)
+4. [21**Debugging practice**Find a regression with binary search and git bisect run, dig to root causes with the five whys, and work five complete bug hunts from report to regression test.60 min](https://zudojs.oyinlola.site/learn/debug-practice)
 
 ## Course checkpoint
 

@@ -834,7 +834,17 @@ TRY IT YOURSELF
 
 Add a `get(id)` method for orders that throws `NotFoundError` when the order does not exist, like `BookRepository.get`. Try it on an order that exists and on one that does not.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The query is a straight `SELECT` by id, with the same column renames as `OrderRepository.list`: `book_id AS "bookId"`, `total_cents AS "totalCents"`.
+
+HINT 2
+
+`if (rows[0] === undefined) throw new NotFoundError(\`Order ${id}\`);`, otherwise `return rows[0];`.
+
+SOLUTION
 
 Add the method to `OrderRepository`. Here it is as a function so you can run it:
 
@@ -882,7 +892,17 @@ TRY IT YOURSELF
 
 What should happen when a client deletes an author who still has books? Write an `AuthorRepository`-style `remove(id)` that turns the foreign key error `23503` into a `ConflictError`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Wrap the delete in `try`/`catch`: `const { rows } = await db.query("DELETE FROM authors WHERE id = $1 RETURNING id", [id]);`, then check `rows.length === 0` for `NotFoundError`.
+
+HINT 2
+
+In `catch`: `if (isPgError(error) && error.code === "23503") throw new ConflictError(...)`, then `throw error;` to let anything else through unchanged.
+
+SOLUTION
 
 try-remove-author.tsNode.js only
 

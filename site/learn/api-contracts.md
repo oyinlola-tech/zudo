@@ -749,7 +749,17 @@ TRY IT YOURSELF
 
 Partners want to attach their own payment reference to a transfer. Add an optional `reference` (string, at most 64 characters) to `TransferRequest`, and a `reference` of type `["string", "null"]` to `Transfer`. Run the compatibility checker on both. Is this safe to ship without a new version?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Compare your two versions of `request` against the worked example's `afterOptional` and `afterRequired`: which one matches what you have right now?
+
+HINT 2
+
+Delete the `request.required.push("reference");` line entirely. A field you never add to `required` is optional by default.
+
+SOLUTION
 
 add-reference.js
 
@@ -782,7 +792,17 @@ TRY IT YOURSELF
 
 The notifications service sends "You sent ₦10,000 to account 2". Write its consumer expectation (the request it relies on, the status, and the fields and types it reads), and verify it against both handlers.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The message says "You sent ₦<amount> to account <to>", so the fields notifications depends on are exactly the ones that message reads.
+
+HINT 2
+
+`status: 201, fields: { amountKobo: "integer", to: "integer" }`
+
+SOLUTION
 
 notifications-contract.js
 
@@ -820,7 +840,17 @@ TRY IT YOURSELF
 
 Write a `replacer` for `JSON.stringify` that writes `BigInt` values as strings, and a `toTransfer(row)` mapper that accepts `amount_kobo` as a number, a numeric string or a `BigInt`, and always returns a safe integer (throwing otherwise). Test it with the PGlite row, the `pg` row and an amount too large to be safe.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`typeof value === "bigint"` is the one case the replacer treats specially, the same shape as checking `"symbol"` in the worked example. `Number(value)` converts a numeric string, a number or a bigint the same way.
+
+HINT 2
+
+`return typeof value === "bigint" ? value.toString() : value;` and `const n = Number(value); if (!Number.isSafeInteger(n)) throw new Error(\`${field} is not a safe integer: ${value}\`); return n;`
+
+SOLUTION
 
 safe-json.js
 

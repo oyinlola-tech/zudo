@@ -999,7 +999,17 @@ TRY IT YOURSELF
 
 Fix the circular dependency between `base-payment.cjs` and `card-payment.cjs` from the lesson, so that `BasePayment.fromMethod("card")` returns a `CardPayment` that is also an instance of `BasePayment`. Keep CommonJS.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The module that requires the other one *first*, at the top of the file, is the one that gets the half-finished, still-empty exports back. Delaying the `require` until the method actually runs means both files have finished loading by then.
+
+HINT 2
+
+Move `const { CardPayment } = require("./card-payment.cjs");` from the top of the file to the first line inside `fromMethod`, right before `if (method === "card")`.
+
+SOLUTION
 
 The factory only needs `CardPayment` when it *runs*, not when the module loads. Move the `require` into the function, so it happens after both modules have finished loading:
 
@@ -1052,7 +1062,17 @@ TRY IT YOURSELF
 
 Write the `package.json` for a package `shop-tax` whose public API is the main entry (`src/index.js`, exporting `vatFor`) and a `shop-tax/rates` subpath (`src/rates.js`). Its helper `src/round.js` must not be importable from outside. Prove it with a file that imports the package by its own name.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+An `exports` map is also a whitelist: once it exists, only the paths listed in it can be imported by name from outside the package, however many other files the package has.
+
+HINT 2
+
+The stub above still lists `"./src/round.js"`, which is exactly what should be missing: drop that entry entirely so only `"."` and `"./rates"` remain, and the deep import starts rejecting with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
+
+SOLUTION
 
 package.json
 
@@ -1117,7 +1137,17 @@ TRY IT YOURSELF
 
 A CommonJS script, `nightly.cjs`, must use the ESM module `invoice.js`, which has a default export and a named export. Use `require` (Node.js 24). Then explain what you would do if `invoice.js` started using top-level `await`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`require` on an ESM file gives you back its whole namespace object, the same shape as `import * as invoice from "./invoice.js"` would. A default export has no name of its own in that object, so it is stored under the key `default`.
+
+HINT 2
+
+`const invoice = require("./invoice.js"); const invoiceNumber = invoice.default;`
+
+SOLUTION
 
 invoice.jsNode.js only
 

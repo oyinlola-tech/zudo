@@ -351,7 +351,17 @@ TRY IT YOURSELF
 
 Fix `broken.js` so both lines print, and run it in the browser. (Once Node.js is installed, run it with `node broken.js` too.)
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Look back at `broken.js` above and the error Node.js gave for it: it names the line and marks with `^` exactly where the grammar breaks. This is the same line.
+
+HINT 2
+
+Count the parentheses: `console.log(` opens one that must close with `)` after the whole argument, the string `"This line is missing a bracket"`.
+
+SOLUTION
 
 fixed.js
 
@@ -379,7 +389,17 @@ For each case, say whether it is a syntax error, a runtime error or a logic erro
 2. The program prints three lines, then stops with `TypeError`.
 3. A shop's total shows 5 when it should show 50, and there is no message.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For each case, ask: did nothing run at all, did some lines run before it stopped, or did everything run to the end but with a wrong value?
+
+HINT 2
+
+"Unexpected end of input" is reported before the program ever starts running — which of the three headings above matches that?
+
+SOLUTION
 
 1. A syntax error. Nothing printed because the file was rejected before it ran. "Unexpected end of input" usually means a missing `}` or `)` at the end.
 2. A runtime error. The first lines ran, then one statement could not be carried out.
@@ -391,7 +411,17 @@ TRY IT YOURSELF
 
 Add a third function, `onStop`, to the object you pass to `runTaskApp`, and change `runTaskApp` so it calls it just before `[framework] stopped`. Make it print `Goodbye`. You do not need to know the rules for writing functions yet: copy the shape of `onStart`, and remember the comma between the functions.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Copy the shape of `onStart() { ... }` to write `onStop() { ... }`, and don't forget the comma after `onTask`'s closing `}`.
+
+HINT 2
+
+Inside `runTaskApp`, add the line `app.onStop();` right before `console.log("[framework] stopped")`.
+
+SOLUTION
 
 framework-stop.js
 

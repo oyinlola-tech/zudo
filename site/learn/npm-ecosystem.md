@@ -4,7 +4,7 @@ description: "Go beyond npm install: exact semver rules, the dependency tree and
 source: https://zudojs.oyinlola.site/learn/npm-ecosystem
 ---
 
-LEVEL 4 · LESSON 7 OF 20
+LEVEL 4 · LESSON 7 OF 21
 
 npm and packages Core
 
@@ -1053,7 +1053,17 @@ TRY IT YOURSELF
 
 Write `maxSatisfying(versions, range)` for caret ranges without prereleases, using the `desugar` idea: a version satisfies `^X.Y.Z` when it is at least `X.Y.Z` and below the upper bound. Try it on `^1.2.0`, `^0.2.0` and `^2.0.0`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`upperBound` is exactly the desugaring table from earlier in this lesson, written as code instead of a string. `maxSatisfying` filters, then picks the last one after sorting with `lessThan`.
+
+HINT 2
+
+`const ok = versions.filter((v) => !lessThan(parse(v), low) && lessThan(parse(v), high)); return ok.sort((a, b) => (lessThan(parse(a), parse(b)) ? -1 : 1)).at(-1) ?? null;`
+
+SOLUTION
 
 max-satisfying.js
 
@@ -1100,7 +1110,17 @@ TRY IT YOURSELF
 
 Write a program that reads the `packages` of a lockfile and lists every package name installed in more than one version, with the paths. Test it on this excerpt of the `shop-api` lockfile after `npm install debug@2`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Build two levels of `Map`, the same shape as the worked example: `byName` maps a package name to another `Map`, which maps a version to an array of paths.
+
+HINT 2
+
+`const name = path.split("node_modules/").at(-1); if (!byName.has(name)) byName.set(name, new Map()); const versions = byName.get(name); if (!versions.has(info.version)) versions.set(info.version, []); versions.get(info.version).push(path);`
+
+SOLUTION
 
 duplicates.js
 
@@ -1151,7 +1171,17 @@ TRY IT YOURSELF
 
 A teammate ran `npm install eslint-plugin-shop@3` and got `ERESOLVE` with `peer eslint@"^9.0.0" from eslint-plugin-shop@3.0.0` and `Found: eslint@8.57.0`. List the three possible fixes, and say which one you would choose and why.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read the `react`/`react-dom` walkthrough in [Kinds of dependencies](#kinds): the same three routes apply whenever a peer range and an installed version disagree.
+
+HINT 2
+
+One route changes the peer (upgrade ESLint), one changes the plugin (an older major that already accepts ESLint 8), and one route overrides the check itself instead of resolving the disagreement.
+
+SOLUTION
 
 1. **Upgrade ESLint to 9** so it satisfies the peer range. This is usually right, but ESLint 9 is a major version, so read its migration notes and run the linter on the whole project.
 2. **Use the previous major of the plugin** (`eslint-plugin-shop@2`), if its peer range includes ESLint 8. This is the safe short-term choice when you cannot upgrade ESLint yet.

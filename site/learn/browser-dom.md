@@ -4,7 +4,7 @@ description: "Read and change a web page from JavaScript: find, create, update a
 source: https://zudojs.oyinlola.site/learn/browser-dom
 ---
 
-LEVEL 4 · LESSON 10 OF 20
+LEVEL 4 · LESSON 10 OF 21
 
 JavaScript in the browser Core
 
@@ -1055,7 +1055,17 @@ TRY IT YOURSELF
 
 Add a filter to the task list without rebuilding any rows. Write `showOnly(filter)`, where `filter` is `"all"`, `"open"` or `"done"`. It sets the `hidden` property of each row and returns how many rows are visible. Test it on three rows made from the template.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+One boolean expression covers both filters: a row should hide when the filter wants the opposite of what the row is.
+
+HINT 2
+
+`li.hidden = (filter === "open" && isDone) || (filter === "done" && !isDone); if (!li.hidden) visible++;`
+
+SOLUTION
 
 filter.js
 
@@ -1101,7 +1111,17 @@ TRY IT YOURSELF
 
 Write `highlight(element, text, term)` that shows `text` inside `element` with every case-insensitive match of `term` wrapped in a `<mark>`. It must be safe for any `text`, so no `innerHTML`: build text nodes and `<mark>` elements yourself.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop with `lower.indexOf(needle, from)` to find each next match, the same way you would with a plain string search, and remember `text.slice(...)` gives you the original casing even though you searched on `lower`.
+
+HINT 2
+
+`let at = needle === "" ? -1 : lower.indexOf(needle); while (at !== -1) { parts.push(text.slice(from, at)); const mark = document.createElement("mark"); mark.textContent = text.slice(at, at + needle.length); parts.push(mark); from = at + needle.length; at = lower.indexOf(needle, from); } parts.push(text.slice(from));`
+
+SOLUTION
 
 highlight.js
 
@@ -1157,7 +1177,17 @@ function render(tasks) {
 }
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Three separate fixes, matching the three problems named above: throw when `#tasks` is missing, build with `createElement`/`textContent` instead of a string, and insert once with a fragment instead of `+=` in the loop.
+
+HINT 2
+
+Reuse the worked example's shape almost exactly: `if (!list) throw new Error(...)`, a `DocumentFragment` built in the loop with `li.dataset.id` and `li.textContent`, then one `list.replaceChildren(fragment)` after the loop.
+
+SOLUTION
 
 - **XSS**: `task.title` is parsed as HTML. A title with an `onerror` attribute runs code for every user who sees the list.
 - **Slow**: every `+=` turns the whole list back into a string and parses all of it again, so rendering *n* tasks does work proportional to *n*², and every earlier row is thrown away and rebuilt each time.

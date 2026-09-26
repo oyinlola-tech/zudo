@@ -615,7 +615,17 @@ TRY IT YOURSELF
 
 Move `formatTask` into its own file `format.js` as a named export, and `isOverdue` into `dates.js`. Import both into `main.js` and print the result for one task that is overdue.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Each file needs an `export` in front of its function, and `main.js` imports both by their relative path, with the `.js` extension.
+
+HINT 2
+
+`import { isOverdue } from "./dates.js"; import { formatTask } from "./format.js";` then `const warning = isOverdue(task, "2026-09-23") ? " (overdue)" : "";`
+
+SOLUTION
 
 format.js
 
@@ -673,7 +683,17 @@ module.exports = { LIMIT, paginate };
 // const { paginate } = require("./old.cjs");
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`module.exports = { LIMIT, paginate }` becomes two separate `export` keywords, one in front of each declaration.
+
+HINT 2
+
+`import { LIMIT, paginate } from "./paginate.js";` then `console.log(LIMIT, paginate(items, 3));`
+
+SOLUTION
 
 paginate.js
 
@@ -706,7 +726,17 @@ TRY IT YOURSELF
 
 `users.js` imports `getTasksFor` from `tasks.js`, and `tasks.js` imports `findUser` from `users.js`. Both only use the imported function *inside* their own functions, never at the top level. Will it crash? Is it still a problem?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read the circular dependency example: the crash there came from a line that read the other module's export *while the module was still loading*, not from a function body.
+
+HINT 2
+
+A function body only runs later, when something calls it, by which point both modules have finished loading. Ask whether that makes the cycle harmless, or just harder to notice.
+
+SOLUTION
 
 It will usually not crash. By the time any function is *called*, both modules have finished loading, so both imports are ready. Only code that runs at the top level while the modules are still loading, like the `prefix` line above, hits the error. It is still a warning sign: the two modules cannot be understood or tested separately, and the first top-level use of either import will break. Move the shared logic into a third module, or have one side receive the function as an argument.
 

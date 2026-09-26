@@ -1072,7 +1072,17 @@ TRY IT YOURSELF
 
 Add a `loyalty` consumer that gives the customer 1 point per ₦100 of the order total, stored in a `points` table keyed by email. It must be idempotent. Deliver one v1 and one v2 event, then deliver the v2 event again, and print the points table.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`const points = Math.floor(order.totalKobo / 10_000);`, computed before the `handleOnce` call so the transaction only needs to write it.
+
+HINT 2
+
+Inside `handleOnce`'s callback: `await tx.query("INSERT INTO points (email, points) VALUES ($1, $2) ON CONFLICT (email) DO UPDATE SET points = points.points + EXCLUDED.points", [order.customer.email, points]);`.
+
+SOLUTION
 
 loyalty.tsNode.js only
 
@@ -1126,7 +1136,17 @@ TRY IT YOURSELF
 
 The product team wants to know whether an order came from the web or the app. Design `order.created` v3 with a `channel: "web" | "app" | "unknown"` field. Write the 2 → 3 upcaster. What value does it give old events, and why not `"web"`?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The default must not silently claim something nobody recorded. Is `"web"` a fact about old orders, or just a guess?
+
+HINT 2
+
+`channel: "unknown"`. Filling in a specific channel would make every historical report of "web vs app" wrong.
+
+SOLUTION
 
 v3.ts
 
@@ -1157,7 +1177,17 @@ TRY IT YOURSELF
 
 For each failure, decide whether the consumer should throw (so the queue retries) or park the event: (a) the database connection was reset; (b) the payload fails the contract because `totalKobo` is `-5`; (c) the payment provider answers 429 Too Many Requests; (d) the SMS provider says the phone number is not a valid Nigerian number.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Will trying again, unchanged, a moment later plausibly succeed? Or is the event itself wrong, so every retry would fail the exact same way?
+
+HINT 2
+
+(b) never becomes valid by waiting; who can actually fix it, and how would they know it happened?
+
+SOLUTION
 
 (a) Throw: a reset connection usually works on the next try. (b) Park, although it arrives there through a few retries in this lesson's code. A negative total is a bug in the producer, and no retry fixes it; it needs a developer, and the dead letter is the evidence. (c) Throw, with backoff: 429 means "later", and backoff with jitter is exactly the right answer. (d) Park: the number will not become valid by waiting. Tell a person, or the customer, so it can be corrected.
 

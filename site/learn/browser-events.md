@@ -4,7 +4,7 @@ description: "Make a shopping cart respond to clicks, typing and forms with list
 source: https://zudojs.oyinlola.site/learn/browser-events
 ---
 
-LEVEL 4 · LESSON 11 OF 20
+LEVEL 4 · LESSON 11 OF 21
 
 JavaScript in the browser Core
 
@@ -970,7 +970,17 @@ TRY IT YOURSELF
 
 Write `openMenu(menu)` that shows a menu element and closes it (sets `hidden`) when the user presses Escape or clicks anywhere outside it, but not when they click inside it. Clean up both listeners when the menu closes, and do not use `stopPropagation`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Decide "inside or outside" with `menu.contains(event.target)`, never `stopPropagation`. Give every listener the same `{ signal }` so one `controller.abort()` removes them all.
+
+HINT 2
+
+`document.addEventListener("click", (event) => { if (!menu.contains(event.target)) close("outside click"); }, { signal: controller.signal });` and the same shape for `"keydown"`, checking `event.key === "Escape"`.
+
+SOLUTION
 
 menu.js
 
@@ -1021,7 +1031,17 @@ TRY IT YOURSELF
 
 Write `throttle(fn, periodMs)`: the first call runs straight away, and further calls within `periodMs` of the last run are ignored. Test it with calls every 40 ms for 400 ms and a 100 ms period.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep `last` in the closure, the same way the worked example does. Compare `performance.now() - last` with `periodMs` before deciding to call `fn`.
+
+HINT 2
+
+`return (...args) => { const now = performance.now(); if (now - last < periodMs) return; last = now; fn(...args); };`
+
+SOLUTION
 
 throttle.js
 
@@ -1066,7 +1086,17 @@ TRY IT YOURSELF
 
 Pressing n anywhere on the task page should focus the "new task" box, but not when the user is already typing in a text field (they want the letter n). Write the listener and test both cases.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+One `if` with several conditions joined by `||` covers every reason to do nothing; only when none of them is true do you `preventDefault()` and focus.
+
+HINT 2
+
+`const typing = event.target.closest("input, textarea, select, [contenteditable]"); if (event.key !== "n" || typing || event.ctrlKey || event.metaKey || event.altKey) return; event.preventDefault(); nameBox.focus();`
+
+SOLUTION
 
 shortcut.js
 

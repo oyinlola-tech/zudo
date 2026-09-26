@@ -877,7 +877,17 @@ TRY IT YOURSELF
 
 A price tracker pushes each day's price for a product onto a stack and pops when a day's entry is corrected. It must answer "what is the lowest price currently on the stack?" in O(1). Write `MinStack` with `push`, `pop` and `min`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep `#mins` the same length as `#items`: every `push` should add one entry to each, the new one being the smallest value seen so far.
+
+HINT 2
+
+`this.#mins.push(this.#mins.length === 0 ? price : Math.min(price, this.#mins.at(-1)));`
+
+SOLUTION
 
 min-stack.js
 
@@ -929,7 +939,17 @@ TRY IT YOURSELF
 
 An admin dashboard has Back and Forward buttons. Write `History` with `visit(page)`, `back()` and `forward()`, each returning the current page. Visiting a new page after going back must clear the forward history, like a browser.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`visit`: push `this.current` onto `#back` before changing it, then set `#forward.length = 0`.
+
+HINT 2
+
+`back() { if (this.#back.length) { this.#forward.push(this.current); this.current = this.#back.pop(); } return this.current; }`. `forward()` is the same code with `#back` and `#forward` swapped.
+
+SOLUTION
 
 history.js
 
@@ -991,7 +1011,17 @@ TRY IT YOURSELF
 
 Some calculators and pricing engines store formulas in **postfix** (reverse Polish) notation, where the operator comes after its two operands: `"2 3 + 4 *"` means `(2 + 3) * 4`. There are no brackets to check. Write `evaluate(formula)` with a stack: numbers are pushed; an operator pops two numbers, applies itself and pushes the result. Throw a clear error for a malformed formula.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Pop the top of the stack first — that is the *right* operand, because it was pushed most recently — then pop again for the left operand.
+
+HINT 2
+
+`const b = stack.pop(); const a = stack.pop(); stack.push(OPS.get(token)(a, b));` Without this order, `"10 4 -"` would compute `4 - 10` instead of `10 - 4`.
+
+SOLUTION
 
 postfix.js
 

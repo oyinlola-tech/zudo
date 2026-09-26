@@ -227,9 +227,19 @@ TRY IT YOURSELF
 
 ### Make it yours
 
-Change the first example so it prints your name and one backend you want to build. Run it in the browser.
+Change the first example so it prints your name and one backend you want to build. To check your work here, print exactly `My name is Ada.` on the first line, and on the second line print the label `I want to build:` followed by `a booking API for my salon`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`console.log` can take more than one value, separated by commas. It prints them on one line with a space between them.
+
+HINT 2
+
+Two calls to `console.log`: the first with one piece of text, the second with two values, `"I want to build:"` and the idea.
+
+SOLUTION
 
 about-me.js
 
@@ -258,7 +268,17 @@ For each person, where should they start?
 3. Kemi builds websites with JavaScript and has never used types.
 4. Lee writes TypeScript backends every day.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read the table in "Where to start" above: each row matches a level of experience to a starting lesson or course.
+
+HINT 2
+
+Sam and Chidi have both never used JavaScript, but only one of them has never written any code at all — that difference decides which of them starts at level 1.
+
+SOLUTION
 
 1. Sam starts with the next lesson, [Your developer environment](https://zudojs.oyinlola.site/learn/dev-environment), and follows every level in order.
 2. Chidi starts at [JavaScript fundamentals](https://zudojs.oyinlola.site/learn/javascript). Level 1 is about thinking like a programmer, which he already does; the language is what is new.

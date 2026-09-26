@@ -538,7 +538,9 @@ TRY IT YOURSELF
 
 Add a `complete(id)` method to the `TaskService`: it throws `TaskAlreadyDoneError` when the task is already done, and `NotFoundError` when it does not exist. Try both through `toErrorResponse`-style handling: print the status and code of each outcome.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+SOLUTION
 
 complete.ts
 
@@ -603,7 +605,9 @@ function leakyHandler(error: unknown) {
 }
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+SOLUTION
 
 - `message` of a bug or database error can contain SQL, table names, internal host names or file paths.
 - `stack` shows your file layout, the libraries and versions you use, and the exact lines that failed: a map for an attacker.

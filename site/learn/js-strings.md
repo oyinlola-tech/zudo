@@ -785,7 +785,17 @@ TRY IT YOURSELF
 
 Write `initials(fullName)` that returns the first grapheme of each word, upper-cased, for an avatar badge. `"ìyábọ̀ ọlá"` should give `"ÌỌ"` (the dot below and the tone mark stay on the letter) and `"👩🏾‍🍳 Ada"` should keep the whole cook emoji. Split words on whitespace.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`fullName.normalize("NFC").trim().split(/\s+/).filter(Boolean)` gives you the words, with no empty ones from leading/trailing spaces.
+
+HINT 2
+
+For a word's first grapheme: `segmenter.segment(word)[Symbol.iterator]().next().value.segment`. Map every word to its upper-cased first grapheme, then `.join("")`.
+
+SOLUTION
 
 initials.js
 
@@ -825,7 +835,17 @@ TRY IT YOURSELF
 
 Staff keep creating the same product twice with different spelling: `"Àkàrà"` and `"akara"`, `"Rice 5kg"` and `"rice  5KG"`. Write `findDuplicates(names)` that groups names whose cleaned search keys are equal, and returns only the groups with more than one name.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`\p{M}` matches a combining mark (an accent that NFKD split off as its own code point). Removing marks after `normalize("NFKD")` makes accented and plain letters compare equal.
+
+HINT 2
+
+`const key = (name) => name.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();`. For the groups, `[...groups.values()].filter((group) => group.length > 1)`.
+
+SOLUTION
 
 duplicates.js
 
@@ -860,7 +880,17 @@ TRY IT YOURSELF
 
 Write `padGraphemes(text, width)` that pads with spaces to `width` *graphemes* (not code units), and use it to print a two-column receipt where the prices line up for `"Rice 5kg"`, `"Àkàrà"` (decomposed, with separate combining marks) and `"Jollof 🍲"`. Assume each grapheme is one column wide.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`width(text)` is already given: the number of graphemes in `text`. The padding you need is `size - width(text)` spaces, never fewer than zero.
+
+HINT 2
+
+`return text + " ".repeat(Math.max(0, size - width(text)));`
+
+SOLUTION
 
 receipt-columns.js
 

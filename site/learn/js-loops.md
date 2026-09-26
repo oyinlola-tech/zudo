@@ -468,7 +468,17 @@ TRY IT YOURSELF
 
 Change `play` so that it prints `won in 1 try` for one guess and `won in 3 tries` for three.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Use a ternary to pick between `"try"` and `"tries"`, based on whether `tries === 1`.
+
+HINT 2
+
+`return \`won in ${tries} ${tries === 1 ? "try" : "tries"}\`;`
+
+SOLUTION
 
 Only the winning line changes. Choose the word with a ternary:
 
@@ -498,7 +508,17 @@ TRY IT YOURSELF
 
 Print the numbers 1 to 15, but print `Fizz` for multiples of 3, `Buzz` for multiples of 5 and `FizzBuzz` for multiples of both. Put everything on one line, separated by spaces.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check `i % 15 === 0` first, or 15 would already match "multiple of 3" and stop there.
+
+HINT 2
+
+`if (i % 15 === 0) line += "FizzBuzz "; else if (i % 3 === 0) line += "Fizz "; else if (i % 5 === 0) line += "Buzz "; else line += \`${i} \`;`
+
+SOLUTION
 
 fizzbuzz.js
 
@@ -527,7 +547,17 @@ TRY IT YOURSELF
 
 Given `["Buy milk", "Call Ada", "Write the quarterly report", "Pay rent"]`, find and print the first title longer than 10 characters and its position, then stop looking.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+You need the position, so a counting `for (let i = 0; i < titles.length; i++)` loop fits better than `for...of`.
+
+HINT 2
+
+Inside the loop: `if (titles[i].length > 10) { console.log(...); break; }`.
+
+SOLUTION
 
 first-long.js
 

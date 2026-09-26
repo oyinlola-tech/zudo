@@ -1016,7 +1016,9 @@ TRY IT YOURSELF
 
 Write a composer for hotel bookings `{ room, nights, guests, promoCode? }` using constraints: `nights` an integer from 1 to 30, `guests` from 1 to 4, and a promo code, when present, of 4 to 12 letters or digits. Report every problem at once, each with its field path.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+SOLUTION
 
 booking-rules.ts
 
@@ -1077,7 +1079,9 @@ TRY IT YOURSELF
 
 Write `respond(schema, value)` for a Zod response schema: on success return the parsed value; on failure throw an `InternalServerError` whose metadata lists each failing path and code, but no messages. Show it with a user record that has a numeric `email` field and an internal `passwordHash`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+SOLUTION
 
 respond.ts
 

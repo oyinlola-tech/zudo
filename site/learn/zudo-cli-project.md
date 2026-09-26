@@ -1,6 +1,6 @@
 ---
 title: "A whole project through the CLI — ZudoJS Academy"
-description: "Build a hall-booking API from zudojs create to a Docker image, generating each layer with the CLI and fixing the five things the generator gets wrong."
+description: "Build a hall-booking API from zudojs create to a Docker image, generating each layer with the CLI and writing the business rules and tests the generator can't."
 source: https://zudojs.oyinlola.site/learn/zudo-cli-project
 ---
 
@@ -10,7 +10,7 @@ Capstone Production
 
 # A whole project through the CLI
 
-Build a hall-booking API from zudojs create to a Docker image, generating each layer with the CLI and fixing the five things the generator gets wrong.
+Build a hall-booking API from zudojs create to a Docker image, generating each layer with the CLI and writing the business rules and tests the generator can't.
 
 - **70 min** to read and try
 - **You need:** The ZudoJS CLI in depth, Anatomy of a ZudoJS project and Deploying a ZudoJS app
@@ -21,9 +21,9 @@ Build a hall-booking API from zudojs create to a Docker image, generating each l
 BY THE END OF THIS LESSON YOU CAN
 
 - Take a project from zudojs create to a running Docker container using only commands the CLI really has
-- Turn generated stubs and in-memory resources into real business rules without breaking the generator's wiring
-- Spot and fix the five known problems of generated projects in your own code
-- Write the tests generated tests cannot: wiring, races, error logging and configuration
+- Turn generated resources and paginated in-memory stores into real business rules without breaking the generator's wiring
+- Know which schematic fits a given job, and when none of them do
+- Write the tests generated tests cannot: races, wiring and the double-booking rule
 - Say which delivery steps belong to the CLI, which to npm scripts and which to your deployment
 
 ## The problem: an API by Friday
@@ -35,9 +35,9 @@ An events company in Lagos rents out halls for weddings, conferences and birthda
 - A customer books a hall for one date. **A hall is never booked twice for the same date**, and never for more guests than it holds.
 - The website team needs API documentation, and the operations team wants a container image it can run.
 
-In [The ZudoJS CLI in depth](https://zudojs.oyinlola.site/learn/zudo-cli) you learned every command one at a time, and in [Anatomy of a ZudoJS project](https://zudojs.oyinlola.site/learn/zudo-project-anatomy) you traced the files `zudojs create` writes. This lesson puts both to work: one project, from an empty folder to a container, using the CLI for everything it can do and your own code for everything it cannot. On the way you will meet five problems that generated projects ship with, and for each one you will learn how to *notice* it in your own project, not only how to fix it.
+In [The ZudoJS CLI in depth](https://zudojs.oyinlola.site/learn/zudo-cli) you learned every command one at a time, and in [Anatomy of a ZudoJS project](https://zudojs.oyinlola.site/learn/zudo-project-anatomy) you traced the files `zudojs create` writes. This lesson puts both to work: one project, from an empty folder to a container, using the CLI for everything it can do and your own code for everything it cannot. A recent audit of the generator ([issues #7 to #19, #64, #135, #141](https://github.com/oyinlola-tech/zudo/issues/7)) fixed most of the sharp edges an earlier version of this lesson had to teach you to work around — unexpected errors are logged now, list endpoints paginate, `/docs` is off in production, tests are type-checked, and more. What is left is smaller and more honest: one schematic whose shape does not fit this job, a missing-markers mistake you can still make, and the delivery steps the CLI was never going to have.
 
-Every shell output below is from a real run of `zudojs-cli` 2.1.3 on Node.js 24, in a folder that is written as `~/code`. Every code output comes from running the code on this page.
+Every shell output below is from a real run of `zudojs-cli` 2.2.0 on Node.js 24, in a folder that is written as `~/code`. Every code output comes from running the code on this page.
 
 ### The plan
 
@@ -63,10 +63,10 @@ $ zudojs create bookings-api --architecture modular-monolith --package-manager n
 │
 ◇  Project structure created
 │
-◇  Backend project generated (40 files)
+◇  Backend project generated (41 files)
 Capabilities build on: http
 
-added 67 packages, and audited 68 packages in 38s
+added 65 packages, and audited 66 packages in 13s
 …
 ◆  Dependencies installed
 ◇  Project validated
@@ -84,7 +84,7 @@ Zudojs Doctor - Project Diagnostics
 ✔ Package manager: npm (lock file present)
 ✔ Dependencies installed: node_modules present
 ✔ TypeScript configuration: tsconfig.json found in every app
-✔ Zudojs dependencies: 16 Zudojs package(s) declared
+✔ Zudojs dependencies: 17 Zudojs package(s) declared
 ✔ Features: Every declared feature has its package
 ✔ Capabilities: The manifest and package.json record the same capabilities
 
@@ -103,7 +103,7 @@ Terminal on your computer
 ```bash
 $ zudojs generate module scheduling --dry-run
 Detected architecture: modular-monolith
-Dry run: 7 files would be generated (nothing written):
+Dry run: 8 files would be generated (nothing written):
   - src/modules/scheduling/scheduling.module.ts
   - src/modules/scheduling/index.ts
   - src/modules/index.ts
@@ -111,6 +111,7 @@ Dry run: 7 files would be generated (nothing written):
   - src/modules/scheduling/features/index.ts
   - src/modules/scheduling/routes/index.ts
   - src/routes/index.ts
+  - src/app.ts
 $ zudojs generate module scheduling
 Detected architecture: modular-monolith
 Generated 8 files:
@@ -129,7 +130,7 @@ $ git diff --stat
  3 files changed, 5 insertions(+)
 ```
 
-The dry run promised seven files and the real run wrote eight: it also added `new SchedulingModule()` to the runtime's list in `src/app.ts`. That is the difference the CLI lesson warned about, and the reason you read the diff rather than trusting the preview. The module's own `routes/index.ts` has an empty pair of `// zudojs:routes` markers, and the app's `src/routes/index.ts` now calls it.
+Dry run and real run now agree: both list eight files, including `src/app.ts`, which is where `generate module` adds `new SchedulingModule()` to the runtime's list. A dry run used to promise seven and the real run wrote eight, which meant reading the diff was the only way to find out what else changed; that gap is closed (issue #10). Reading the diff after every `generate` is still worth doing — several commands edit a shared file, and the diff is what tells you which lines are yours to keep. The module's own `routes/index.ts` has an empty pair of `// zudojs:routes` markers, and the app's `src/routes/index.ts` now calls it.
 
 Now the two resources, inside the module:
 
@@ -144,7 +145,7 @@ Generated 8 files:
   - src/modules/scheduling/services/halls.service.ts
   - src/modules/scheduling/controllers/halls.controller.ts
   - src/modules/scheduling/routes/halls.routes.ts
-  - tests/halls.test.ts
+  - tests/modules/scheduling/halls.test.ts
   - src/modules/scheduling/routes/index.ts
   - src/container.ts
 $ zudojs generate resource bookings --module scheduling
@@ -155,51 +156,53 @@ Generated 8 files:
   - src/modules/scheduling/services/bookings.service.ts
   - src/modules/scheduling/controllers/bookings.controller.ts
   - src/modules/scheduling/routes/bookings.routes.ts
-  - tests/bookings.test.ts
+  - tests/modules/scheduling/bookings.test.ts
   - src/modules/scheduling/routes/index.ts
   - src/container.ts
 $ npm run typecheck && npm test
 …
  Test Files  3 passed (3)
-      Tests  9 passed (9)
+      Tests  12 passed (12)
 ```
 
-Each resource is a working CRUD endpoint (create, read, update, delete) with a `name` field, an in-memory repository and a test. That is a skeleton, not a booking system: a "booking" with only a name knows nothing about halls, dates or guests. The rest of the lesson turns the skeleton into the product. The three test files are the two new ones plus the example resource's; you will delete the example resource in [Step 6](#wiring).
+Each resource is a working CRUD endpoint (create, read, update, delete) with a `name` field, a paginated in-memory repository and a test. "Paginated" is new: `GET /api/v1/halls` used to answer every record it held (up to 10,000) in one array; it now takes `?limit=` (1–200, default 50) and `?cursor=` and answers `{ items, nextCursor }`, `nextCursor` being `null` on the last page (issue #141). The repository's contract changed to match: `list(page)` instead of `findAll()`. None of that is a booking system yet: a "booking" with only a name knows nothing about halls, dates or guests. The rest of the lesson turns the skeleton into the product. The three test files are the two new ones (now filed under `tests/modules/scheduling/`, so two modules can each have a same-named resource without their tests colliding — issue #9) plus the example resource's `tests/examples.test.ts`; you will delete the example resource in [Step 6](#wiring).
 
-## Step 3: the service that became a module
+## Step 3: a schematic that doesn't fit the job
 
-Booking needs one piece of logic that belongs to neither resource: "is this hall free on this date, and what does it cost?" That is a **service**, a class holding a use case, and the CLI has a `service` schematic. Try it:
+Booking needs one piece of logic that belongs to neither resource: "is this hall free on this date, and what does it cost?" That is a **service**, a class holding a use case, and the CLI has a `service` schematic. In a modular monolith it used to ignore `--module` entirely and create a whole second top-level module named after the service, registered with the runtime and the router, exit code 0. That bug is fixed (issue #8): `--module <existing>` now means "a service layer inside that module". Try it:
 
 Terminal on your computer
 
 ```bash
+$ zudojs generate service availability --module scheduling --dry-run
+Detected architecture: modular-monolith
+Dry run: 3 files would be generated (nothing written):
+  - src/modules/scheduling/dtos/availability.dto.ts
+  - src/modules/scheduling/repositories/availability.repository.ts
+  - src/modules/scheduling/services/availability.service.ts
 $ zudojs generate service availability --module scheduling
 Detected architecture: modular-monolith
-Mapping "service" → "module" for modular-monolith architecture.
-Generated 8 files:
-  - src/modules/availability/availability.module.ts
-  - src/modules/availability/index.ts
-  - src/modules/index.ts
-  - src/modules/availability/features/availability.feature.ts
-  - src/modules/availability/features/index.ts
-  - src/modules/availability/routes/index.ts
-  - src/app.ts
-  - src/routes/index.ts
+Generated 3 files:
+  - src/modules/scheduling/dtos/availability.dto.ts
+  - src/modules/scheduling/repositories/availability.repository.ts
+  - src/modules/scheduling/services/availability.service.ts
 $ echo $?
 0
 ```
 
-This is **problem 1**. In a modular monolith the CLI treats `service` as another word for `module`, ignores `--module scheduling`, and creates a whole second module called `availability`, registered with the runtime and the router. The exit code is 0, so a script would never notice. How to spot it: the line `Mapping "service" → "module"`, and file paths under `src/modules/availability/` instead of `src/modules/scheduling/services/`. How to undo it, thanks to the commit:
+Everything landed inside `src/modules/scheduling/` this time, and nothing was registered with the router — `service` was never one of the schematics that wires itself in. But open the three files: they give `Availability` its own `id`, its own in-memory store, and a service with the same `list`/`get`/`create`/`update`/`remove` shape as halls and bookings. That is the right shape for a new entity you plan to persist. Availability is not an entity: it is a question answered by reading the hall and the booking repositories that already exist. Generating a fourth store here would be a working `create`/`list`/`delete` that nothing in the app would ever call — dead code that compiles and passes its own generated test. Undo it:
 
 Terminal on your computer
 
 ```bash
-$ git restore . && git clean -fd src/modules/availability
-Removing src/modules/availability/
+$ git restore . && git clean -fd src/modules/scheduling/dtos/availability.dto.ts src/modules/scheduling/repositories/availability.repository.ts src/modules/scheduling/services/availability.service.ts
+Removing src/modules/scheduling/dtos/availability.dto.ts
+Removing src/modules/scheduling/repositories/availability.repository.ts
+Removing src/modules/scheduling/services/availability.service.ts
 $ git status --short
 ```
 
-Nothing is left. The other schematics do respect `--module`; these dry runs all wrote inside `src/modules/scheduling/`:
+Nothing is left. Every resource-family schematic now respects `--module`; these dry runs all write inside `src/modules/scheduling/`:
 
 | Command (with `--module scheduling`) | Writes |
 | --- | --- |
@@ -209,7 +212,7 @@ Nothing is left. The other schematics do respect `--module`; these dry runs all 
 | `generate validator booking` | `validators/booking.validator.ts` |
 | `generate command confirm-booking` | `commands/confirm-booking/`: command, handler, index |
 
-So there are two honest ways to get a service inside a module: generate a `controller` (which cascades down to a service) and delete what you do not need, or write the file yourself in `src/modules/scheduling/services/`. The availability service needs two existing repositories rather than a new one, so you will write it by hand in [Step 5](#services).
+None of them scaffold "a class that composes two existing repositories", because there is no generic shape for that — it is exactly the kind of use case every schematic in this table leaves for you to design. So there are two honest ways to get a service that fits: generate the closest layer (`controller`, which cascades down to a service) and cut it down to what you need, or write the file yourself in `src/modules/scheduling/services/`. The availability service depends on two existing repositories rather than owning one, so you will write it by hand in [Step 6](#services).
 
 ## Step 4: decide the rules, then write the schemas
 
@@ -286,7 +289,7 @@ Lagos date: 2026-09-25
 
 The `en-CA` locale writes dates as `YYYY-MM-DD`, and dates in that form compare correctly as plain strings, which is why the last line needs no date parsing.
 
-### The validator stub
+### The validator
 
 For "is this a real calendar date" the CLI has a schematic:
 
@@ -298,16 +301,25 @@ Detected architecture: modular-monolith
 Generated 1 file:
   - src/modules/scheduling/validators/booking-date.validator.ts
 $ cat src/modules/scheduling/validators/booking-date.validator.ts
-/**
- * booking-date validator.
- */
+import { schema, type Infer, type SchemaResult } from "@zudojs/schema";
 
-export function validateBookingDate(input: unknown): boolean {
-  return true;
+/** Shape of a valid booking-date. Replace the fields with your own. */
+export const BookingDateSchema = schema.object({
+  id: schema.string().min(1),
+});
+
+export type BookingDate = Infer<typeof BookingDateSchema>;
+
+/**
+ * Validates `input` against {@link BookingDateSchema}. On failure the result
+ * carries the issues (path and message) instead of throwing.
+ */
+export function validateBookingDate(input: unknown): SchemaResult<BookingDate> {
+  return BookingDateSchema.safeParse(input);
 }
 ```
 
-This is **problem 2**: the stub compiles, has a convincing name, and accepts everything. How to spot stubs in your project: search for them before every release, for example `grep -rn "return true;" src/**/validators`, and keep a test that feeds each validator bad input. Here is the real one:
+It used to write `validate<Name>(input) { return true; }`, a stub that compiled, had a convincing name and accepted everything with no warning; that is fixed (issue #12) — what it writes now is a real, working validator. Just not for this job. The schematic assumes you are validating a whole record (an object with fields, the way a DTO looks), so it gives `BookingDate` an `id` and hands back a `SchemaResult`. What `.refine()` needs below is one boolean answer to "is this string a real calendar day", not an object schema. Replace the whole body:
 
 src/modules/scheduling/validators/booking-date.validator.ts
 
@@ -331,25 +343,25 @@ validator-check.ts
 ```ts
 import { validateBookingDate } from "./src/modules/scheduling/validators/booking-date.validator.js";
 
-const stub = (_input: unknown): boolean => true;
+const regexOnly = (input: unknown): boolean => typeof input === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input);
 
 for (const input of ["2026-12-24", "2026-02-30", "2028-02-29", "24/12/2026", "2026-12-24T10:00", 20261224]) {
-  console.log(String(input).padEnd(17), "stub:", stub(input), " real:", validateBookingDate(input));
+  console.log(String(input).padEnd(17), "regex only:", regexOnly(input), " real:", validateBookingDate(input));
 }
 ```
 
 Output of `npx tsx validator-check.ts` and of the browser terminal
 
 ```ts
-2026-12-24        stub: true  real: true
-2026-02-30        stub: true  real: false
-2028-02-29        stub: true  real: true
-24/12/2026        stub: true  real: false
-2026-12-24T10:00  stub: true  real: false
-20261224          stub: true  real: false
+2026-12-24        regex only: true  real: true
+2026-02-30        regex only: true  real: false
+2028-02-29        regex only: true  real: true
+24/12/2026        regex only: false  real: false
+2026-12-24T10:00  regex only: false  real: false
+20261224          regex only: false  real: false
 ```
 
-The trick is the round trip: JavaScript quietly turns 30 February into 2 March, so a date is real only if printing it back gives the same text. 2028 is a leap year, so 29 February passes.
+The regex alone gets the shape right and stops there: `2026-02-30` matches four digits, a dash, two digits, a dash, two digits, and regex has no idea February has 28 or 29 days. The trick is the round trip: JavaScript quietly turns 30 February into 2 March, so a date is real only if printing it back gives the same text. 2028 is a leap year, so 29 February passes.
 
 ### The schemas
 
@@ -385,10 +397,36 @@ export const HallParamsSchema = schema.object({
   id: schema.string().uuid(),
 });
 
+/** Page size when `limit` is not given, and the most a client may ask for. */
+export const DEFAULT_PAGE_SIZE = 50;
+export const MAX_PAGE_SIZE = 200;
+
+/** Query of `GET /api/v1/halls`: page size and the id to continue after. */
+export const ListHallsQuerySchema = schema.object({
+  limit: schema.coerce.number().int().min(1).max(MAX_PAGE_SIZE).optional(),
+  cursor: schema.string().uuid().optional(),
+});
+
+/** One page of hall records; `nextCursor` is null on the last page. */
+export const HallPageSchema = schema.object({
+  items: schema.array(HallSchema),
+  nextCursor: schema.nullable(schema.string().uuid()),
+});
+
+/** What a repository is asked for: a page size and where to continue. */
+export interface HallPageRequest {
+  readonly limit: number;
+  readonly cursor?: string;
+}
+
 export type Hall = Infer<typeof HallSchema>;
 export type CreateHallInput = Infer<typeof CreateHallSchema>;
 export type UpdateHallInput = Infer<typeof UpdateHallSchema>;
+export type ListHallsQuery = Infer<typeof ListHallsQuerySchema>;
+export type HallPage = Infer<typeof HallPageSchema>;
 ```
+
+The generated DTO already carried the pagination schemas above (`DEFAULT_PAGE_SIZE`, `ListHallsQuerySchema`, `HallPageSchema`, `HallPageRequest`); only `capacity` and `dailyRateKobo` are new.
 
 src/modules/scheduling/dtos/bookings.dto.ts
 
@@ -427,14 +465,38 @@ export const BookingParamsSchema = schema.object({
   id: schema.string().uuid(),
 });
 
+/** Page size when `limit` is not given, and the most a client may ask for. */
+export const DEFAULT_PAGE_SIZE = 50;
+export const MAX_PAGE_SIZE = 200;
+
+/** Query of `GET /api/v1/bookings`: page size and the id to continue after. */
+export const ListBookingsQuerySchema = schema.object({
+  limit: schema.coerce.number().int().min(1).max(MAX_PAGE_SIZE).optional(),
+  cursor: schema.string().uuid().optional(),
+});
+
+/** One page of booking records; `nextCursor` is null on the last page. */
+export const BookingPageSchema = schema.object({
+  items: schema.array(BookingSchema),
+  nextCursor: schema.nullable(schema.string().uuid()),
+});
+
+/** What a repository is asked for: a page size and where to continue. */
+export interface BookingPageRequest {
+  readonly limit: number;
+  readonly cursor?: string;
+}
+
 export type Booking = Infer<typeof BookingSchema>;
 export type CreateBookingInput = Infer<typeof CreateBookingSchema>;
 export type UpdateBookingInput = Infer<typeof UpdateBookingSchema>;
+export type ListBookingsQuery = Infer<typeof ListBookingsQuerySchema>;
+export type BookingPage = Infer<typeof BookingPageSchema>;
 /** What the repository stores: the input plus the price the service worked out. */
 export type NewBooking = CreateBookingInput & { readonly amountKobo: number };
 ```
 
-Notice what is *not* in `CreateBookingSchema`: no price, no status. The date has both a `regex` and the validator: the regex is visible in the API documentation as a `pattern` (you will see it in [Step 7](#docs)), while the `refine` is a check the documentation cannot describe. The halls repository needs two new lines in `create` and two in `update`, so it copies `capacity` and `dailyRateKobo`; here is the file after that edit:
+Notice what is *not* in `CreateBookingSchema`: no price, no status. The date has both a `regex` and the validator: the regex is visible in the API documentation as a `pattern` (you will see it in [Step 7](#docs)), while the `refine` is a check the documentation cannot describe. The halls repository keeps the generated `list`, which already pages by cursor, and needs two new lines in `create` and two in `update`, so it copies `capacity` and `dailyRateKobo`; here is the file after that edit:
 
 src/modules/scheduling/repositories/halls.repository.ts
 
@@ -443,11 +505,12 @@ import { randomUUID } from "node:crypto";
 
 import { ConflictError } from "@zudojs/errors";
 
-import type { CreateHallInput, Hall, UpdateHallInput } from "../dtos/halls.dto.js";
+import type { CreateHallInput, Hall, HallPage, HallPageRequest, UpdateHallInput } from "../dtos/halls.dto.js";
 
 /** Storage contract for hall records; the service depends on this only. */
 export interface HallsRepository {
-  findAll(): Promise<readonly Hall[]>;
+  /** One page in creation order, continuing after `cursor` when given. */
+  list(page: HallPageRequest): Promise<HallPage>;
   findById(id: string): Promise<Hall | undefined>;
   create(input: CreateHallInput): Promise<Hall>;
   update(id: string, input: UpdateHallInput): Promise<Hall | undefined>;
@@ -464,8 +527,19 @@ const MAX_RECORDS = 10_000;
 export class InMemoryHallsRepository implements HallsRepository {
   private readonly records = new Map<string, Hall>();
 
-  public async findAll(): Promise<readonly Hall[]> {
-    return [...this.records.values()];
+  public async list(page: HallPageRequest): Promise<HallPage> {
+    // A Map iterates in insertion order, which is creation order here.
+    const all = [...this.records.values()];
+    let start = 0;
+    if (page.cursor !== undefined) {
+      const at = all.findIndex((record) => record.id === page.cursor);
+      if (at === -1) return { items: [], nextCursor: null };
+      start = at + 1;
+    }
+    const items = all.slice(start, start + page.limit);
+    const last = items.at(-1);
+    const nextCursor = last !== undefined && start + page.limit < all.length ? last.id : null;
+    return { items, nextCursor };
   }
 
   public async findById(id: string): Promise<Hall | undefined> {
@@ -523,11 +597,12 @@ import { randomUUID } from "node:crypto";
 
 import { ConflictError } from "@zudojs/errors";
 
-import type { Booking, NewBooking, UpdateBookingInput } from "../dtos/bookings.dto.js";
+import type { Booking, BookingPage, BookingPageRequest, NewBooking, UpdateBookingInput } from "../dtos/bookings.dto.js";
 
 /** Storage contract for booking records; the service depends on this only. */
 export interface BookingsRepository {
-  findAll(): Promise<readonly Booking[]>;
+  /** One page in creation order, continuing after `cursor` when given. */
+  list(page: BookingPageRequest): Promise<BookingPage>;
   findById(id: string): Promise<Booking | undefined>;
   findByHallAndDate(hallId: string, date: string): Promise<Booking | undefined>;
   /** Throws ConflictError when the hall is already booked on that date. */
@@ -546,8 +621,19 @@ const MAX_RECORDS = 10_000;
 export class InMemoryBookingsRepository implements BookingsRepository {
   private readonly records = new Map<string, Booking>();
 
-  public async findAll(): Promise<readonly Booking[]> {
-    return [...this.records.values()];
+  public async list(page: BookingPageRequest): Promise<BookingPage> {
+    // A Map iterates in insertion order, which is creation order here.
+    const all = [...this.records.values()];
+    let start = 0;
+    if (page.cursor !== undefined) {
+      const at = all.findIndex((record) => record.id === page.cursor);
+      if (at === -1) return { items: [], nextCursor: null };
+      start = at + 1;
+    }
+    const items = all.slice(start, start + page.limit);
+    const last = items.at(-1);
+    const nextCursor = last !== undefined && start + page.limit < all.length ? last.id : null;
+    return { items, nextCursor };
   }
 
   public async findById(id: string): Promise<Booking | undefined> {
@@ -701,14 +787,15 @@ export class AvailabilityService {
 }
 ```
 
-The generated `BookingsService` passed input straight to the repository. It now asks for a quote, checks the guest count, and stores the hall's price:
+The generated `BookingsService.create` passed input straight to the repository, and its `list` just forwarded the query. `list` is unchanged — the generated paging already does what a list endpoint needs — but `create` now asks for a quote, checks the guest count, and stores the hall's price, and `update` re-checks the guest count against the hall's real capacity:
 
 src/modules/scheduling/services/bookings.service.ts
 
 ```ts
 import { NotFoundError, ValidationError } from "@zudojs/errors";
 
-import type { CreateBookingInput, Booking, UpdateBookingInput } from "../dtos/bookings.dto.js";
+import { DEFAULT_PAGE_SIZE } from "../dtos/bookings.dto.js";
+import type { Booking, BookingPage, CreateBookingInput, ListBookingsQuery, UpdateBookingInput } from "../dtos/bookings.dto.js";
 import type { BookingsRepository } from "../repositories/bookings.repository.js";
 import type { AvailabilityService } from "./availability.service.js";
 
@@ -719,8 +806,12 @@ export class BookingsService {
     private readonly availability: AvailabilityService,
   ) {}
 
-  public list(): Promise<readonly Booking[]> {
-    return this.repository.findAll();
+  /** One page of booking records (`limit` defaults to DEFAULT_PAGE_SIZE). */
+  public list(query: ListBookingsQuery): Promise<BookingPage> {
+    return this.repository.list({
+      limit: query.limit ?? DEFAULT_PAGE_SIZE,
+      ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+    });
   }
 
   public async get(id: string): Promise<Booking> {
@@ -837,7 +928,7 @@ export function createDependencies(options: DependencyOptions = {}) {
 }
 ```
 
-The availability route is yours too. It uses the small HTTP helpers every generated controller uses, from `src/utils/http.ts`. That file is unchanged from `zudojs create` (the [anatomy lesson](https://zudojs.oyinlola.site/learn/zudo-project-anatomy#request) explains each function); it is repeated here because the examples below run against it:
+The availability route is yours too. It uses the small HTTP helpers every generated controller uses, from `src/utils/http.ts`. That file is unchanged from `zudojs create` (the [anatomy lesson](https://zudojs.oyinlola.site/learn/zudo-project-anatomy#request) explains each function); it is repeated here because the examples below run against it. `errorResponse` and `errorDetails` are what `src/server.ts` uses to log and answer unexpected errors by default — Step 8 puts them to work directly:
 
 src/utils/http.ts
 
@@ -896,9 +987,10 @@ export function readJsonBody(ctx: HttpRouterContext): unknown {
 }
 
 /**
- * The response for an error that carries an exposed 4xx status
- * (NotFoundError, badRequest(), ...). Anything else is left to the server,
- * which answers a generic 500 and never leaks the message.
+ * The response for an error that carries an exposed HTTP status
+ * (NotFoundError, badRequest(), an exposed 503, ...): its status, message
+ * and code. `undefined` for anything else; server.ts then logs the error
+ * and answers a generic 500 that never leaks the message.
  */
 export function errorResponse(error: unknown): HttpResponseContext | undefined {
   if (typeof error !== "object" || error === null) return undefined;
@@ -909,12 +1001,24 @@ export function errorResponse(error: unknown): HttpResponseContext | undefined {
     readonly code?: unknown;
   };
   const status = candidate.statusCode;
-  if (typeof status !== "number" || status < 400 || status > 499) return undefined;
+  if (typeof status !== "number" || status < 400 || status > 599) return undefined;
   if (candidate.expose !== true || typeof candidate.message !== "string") return undefined;
   return json(status, {
     error: candidate.message,
     ...(typeof candidate.code === "string" ? { code: candidate.code } : {}),
   });
+}
+
+/** What the log records about an unexpected error: name, message, code, stack. */
+export function errorDetails(error: unknown): Record<string, string> {
+  if (!(error instanceof Error)) return { error: String(error) };
+  const { code } = error as { readonly code?: unknown };
+  return {
+    error: error.message,
+    name: error.name,
+    ...(typeof code === "string" ? { code } : {}),
+    ...(error.stack === undefined ? {} : { stack: error.stack }),
+  };
 }
 
 /**
@@ -1015,21 +1119,21 @@ Generated 7 files:
   - src/modules/scheduling/services/bookings.service.ts
   - src/modules/scheduling/controllers/bookings.controller.ts
   - src/modules/scheduling/routes/bookings.routes.ts
-  - tests/bookings.test.ts
+  - tests/modules/scheduling/bookings.test.ts
   - src/container.ts
 $ npm run typecheck
 …
-src/container.ts(39,88): error TS2554: Expected 1 arguments, but got 2.
-src/container.ts(42,5): error TS1117: An object literal cannot have multiple properties with the same name.
+src/container.ts(46,88): error TS2554: Expected 1 arguments, but got 2.
+src/container.ts(47,5): error TS1117: An object literal cannot have multiple properties with the same name.
 src/modules/scheduling/services/availability.service.ts(36,41): error TS2339: Property 'findByHallAndDate' does not exist on type 'BookingsRepository'.
 $ git restore .
 ```
 
-The DTO, repository and service went back to the plain `name` template, and the generator added a second `bookingsController` between the markers, because its line was no longer there. Here the type checker caught it; a change the types cannot see would have been lost silently. The rule: once you have written real code in a resource, never `--force` it, and if you must, commit first and read the whole diff.
+The DTO, repository and service went back to the plain `name` template, and the generator added a second `bookingsController` line between the markers, because the line it looks for is the one it would itself have written — `new BookingsController(new BookingsService(new InMemoryBookingsRepository()))` — and yours no longer matches that text once you gave it a second constructor argument. A registration merely moved out of the markers unchanged is now recognised and left alone (issue #135); one that was edited is not, because the tool cannot tell an edit from a rewrite it should not touch. Here the type checker caught it; a change the types cannot see would have been lost silently. The rule is unchanged: once you have written real code in a resource, never `--force` it, and if you must, commit first and read the whole diff.
 
 ## Step 7: test, run and read the docs
 
-### The generated tests break, and the type checker misses it
+### The generated tests break, and the type checker catches it
 
 Terminal on your computer
 
@@ -1037,43 +1141,29 @@ Terminal on your computer
 $ npm run typecheck
 
 > bookings-api@0.1.0 typecheck
-> tsc --noEmit
+> tsc --noEmit && tsc -p tsconfig.test.json
 
+tests/modules/scheduling/bookings.test.ts(14,26): error TS2554: Expected 2 arguments, but got 1.
+```
+
+`tests/modules/scheduling/bookings.test.ts` still calls `new BookingsService(new InMemoryBookingsRepository())` with one argument, where the class now needs two. Every generated backend ships a second config, `tsconfig.test.json` (the same options over `src/` and `tests/`, `noEmit`), and `typecheck` already runs `tsc --noEmit && tsc -p tsconfig.test.json`. Tests used to be excluded from the main config with no second config to catch them, so this exact wiring mistake passed `typecheck` silently and only showed up as a failing test, or not at all if the test still happened to compile; that gap is closed (issue #135), and there is no separate command to remember. Fix the constructor call, and the tests still fail, for a second and separate reason:
+
+Terminal on your computer
+
+```bash
 $ npm test
 …
- FAIL  tests/bookings.test.ts > /api/v1/bookings > creates, reads, updates and deletes a booking
+ FAIL  tests/modules/scheduling/bookings.test.ts > /api/v1/bookings > creates, reads, updates and deletes a booking
 AssertionError: Expected status 201, got 400.
   request:  POST /api/v1/bookings
   response: 400 Bad Request
   body:     {"error":"Validation failed","issues":[{"path":"hallId","message":"Required field missing: hallId"},{"path":"date","message":"Required field missing: date"},{"path":"customerEmail","message":"Required field missing: customerEmail"},{"path":"guests","message":"Required field missing: guests"}]}
 …
  Test Files  2 failed (2)
-      Tests  2 failed | 4 passed (6)
+      Tests  4 failed | 4 passed (8)
 ```
 
-The failures are expected: the tests still send `{ name: "Ada" }`. The surprise is the line above them. `tests/bookings.test.ts` calls `new BookingsService(new InMemoryBookingsRepository())` with one argument where the class now needs two, and `npm run typecheck` said nothing. The generated `tsconfig.json` has `"include": ["src/**/*"]` and excludes `**/*.test.ts`, so **tests are never type-checked**. Vitest strips types without checking them. Add a second config for tests:
-
-tsconfig.test.json
-
-```json
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": { "rootDir": ".", "noEmit": true },
-  "include": ["src/**/*", "tests/**/*"],
-  "exclude": ["node_modules", "dist"]
-}
-```
-
-Terminal on your computer
-
-```bash
-$ npm pkg set 'scripts.typecheck:tests=tsc -p tsconfig.test.json'
-$ npm run typecheck:tests
-…
-tests/bookings.test.ts(13,26): error TS2554: Expected 2 arguments, but got 1.
-```
-
-Then rewrite the two tests for the real fields. The full test suite is in [Step 9](#tests).
+This failure is expected, and the type checker cannot catch it: the tests still send `{ name: "Ada" }`, a shape that satisfies the compiler (both are objects) but not the schema, which now wants `hallId`, `date`, `customerEmail` and `guests`. Two tests fail in each file — the CRUD test and the new paging test, since both create records — while the two validation tests still pass by coincidence (an empty `name` and a bad id are still 400, just for a different reason). Rewrite both tests for the real fields; the full suite is in [Step 9](#tests).
 
 ### Run it
 
@@ -1118,11 +1208,11 @@ $ curl -s "localhost:4100/api/v1/halls/$HALL/availability?date=2026-12-24"
 {"hallId":"4609fe32-515a-41b9-b4c9-76efd7bf7b5c","date":"2026-12-24","available":false,"capacity":200,"amountKobo":50000000}
 ```
 
-The second availability answer is `available: false`: the two services really share one repository. Two things happen in the first terminal as you work. Every time you save a file, `tsx watch` restarts the server with `SIGTERM`, so the log shows `Received SIGTERM: shutting down.` and a full graceful shutdown. And after the restart, `curl localhost:4100/api/v1/halls` answers `[]`: the in-memory repositories forgot everything. That is fine for development and fatal in production.
+The second availability answer is `available: false`: the two services really share one repository. Two things happen in the first terminal as you work. Every time you save a file, `tsx watch` restarts the server with `SIGTERM`, so the log shows `Received SIGTERM: shutting down.` and a full graceful shutdown. And after the restart, `curl localhost:4100/api/v1/halls` answers `{"items":[],"nextCursor":null}`: the in-memory repositories forgot everything. That is fine for development and fatal in production.
 
 ### The API documentation
 
-Because you asked for `--capabilities openapi`, `src/server.ts` contains `mountOpenAPI(router, …)`, which serves `/openapi.json` and a documentation page at `/docs`, built from the routes and their schemas as in [the OpenAPI lesson](https://zudojs.oyinlola.site/learn/zudo-openapi). The generated routes, your hand-written route and the enquiries resource you will add later all appear:
+Because you asked for `--capabilities openapi`, `src/server.ts` contains `mountOpenAPI(router, …)`, which serves `/openapi.json` and a documentation page at `/docs`, built from the routes and their schemas as in [the OpenAPI lesson](https://zudojs.oyinlola.site/learn/zudo-openapi). The generated routes and your hand-written one all appear; the enquiries resource you will add in Step 8 will join them the moment it registers:
 
 Second terminal
 
@@ -1134,8 +1224,6 @@ $ curl -s localhost:4100/openapi.json | node -e 'let s="";process.stdin.on("data
 /api/v1/halls/{id}                 GET PATCH DELETE
 /api/v1/bookings                   GET POST
 /api/v1/bookings/{id}              GET PATCH DELETE
-/api/v1/enquiries                  GET POST
-/api/v1/enquiries/{id}             GET PATCH DELETE
 $ curl -s -o /dev/null -w '%{http_code} %{content_type}\n' localhost:4100/docs
 200 text/html; charset=utf-8
 ```
@@ -1184,11 +1272,11 @@ query date {"type":"string","maxLength":255,"pattern":"^\\d{4}-\\d{2}-\\d{2}$"}
 
 The `regex` became a `pattern` the website team can read. Before you added the regex, the `date` was documented as just `"type":"string"`: the validator's `refine` runs, but no document can describe a JavaScript function. When a rule matters to your callers, express as much of it as you can in a form the schema can publish, and write the rest in the route's `summary` or `description`.
 
-## Step 8: three more problems the generator ships
+## Step 8: what still needs watching, and what is fixed
 
-You have met problem 1 (`service` became a module) and problem 2 (the validator stub). Three more hide in every generated project. None of them fails a build or a generated test, so you find them only if you know to look.
+You have already met the one schematic that does not fit this job (Step 3) and replaced a generated validator built for a different shape (Step 4). One more mistake is still yours to make, and it is now loud instead of silent. Two others used to live in this step — unlogged 500s, and a NODE_ENV read twice — and a recent audit of the generator fixed both at the source (issues #13, #14), so a fresh project never has them. The rest of this step shows what the fix looks like, so you recognise the difference if you ever touch an older project without it.
 
-### Problem 3: missing markers only warn
+### Missing markers now refuse, instead of warning
 
 While writing the availability route, suppose you had "tidied" the module's `routes/index.ts` and deleted the marker comments. A week later the company wants customers to send enquiries:
 
@@ -1197,85 +1285,28 @@ Terminal on your computer
 ```bash
 $ zudojs generate resource enquiries --module scheduling
 Detected architecture: modular-monolith
-Generated 7 files:
-  - src/modules/scheduling/dtos/enquiries.dto.ts
-  - src/modules/scheduling/repositories/enquiries.repository.ts
-  - src/modules/scheduling/services/enquiries.service.ts
-  - src/modules/scheduling/controllers/enquiries.controller.ts
-  - src/modules/scheduling/routes/enquiries.routes.ts
-  - tests/enquiries.test.ts
-  - src/container.ts
-Warning: Finish by hand:
+Cannot register resource "enquiries": the files it registers into are missing their markers, so nothing was written.
   - src/modules/scheduling/routes/index.ts: add "import { registerEnquiriesRoutes } from "./enquiries.routes.js";" between "// zudojs:route-imports:start" and "// zudojs:route-imports:end" (the markers are missing, so the file was left unchanged)
   - src/modules/scheduling/routes/index.ts: add "registerEnquiriesRoutes(router, deps.enquiriesController);" between "// zudojs:routes:start" and "// zudojs:routes:end" (the markers are missing, so the file was left unchanged)
+Restore the marker comments (or add the lines by hand and re-run with --force once the files exist).
 $ echo $?
-0
+1
 ```
 
-Exit code 0, `npm run typecheck` passes, and `tests/enquiries.test.ts` passes because it builds its own router. The running server answers 404 on `/api/v1/enquiries`. How to spot it: the word `Warning` at the end of the run, and a **smoke test** that builds the router the way `server.ts` does, from [the anatomy lesson](https://zudojs.oyinlola.site/learn/zudo-project-anatomy#tests). With `/api/v1/enquiries` added to it:
+It used to write all seven files anyway, print `Warning: Finish by hand`, and exit 0 — a script would never notice, `npm run typecheck` would pass, the resource's own test would pass because it builds its own router, and the running server would answer 404 on `/api/v1/enquiries` with nothing written down to explain why. Every check now runs before the first file is written (issue #11): with a marker pair missing, the command fails, names the exact lines, and leaves the project untouched — `ls src/modules/scheduling/dtos/` shows no `enquiries.dto.ts`. Restore the marker comments and re-run; a **smoke test** that builds the router the way `server.ts` does (from [the anatomy lesson](https://zudojs.oyinlola.site/learn/zudo-project-anatomy#tests)) is still worth keeping, for the day a route goes missing some other way — a hand edit that misses a line, say, rather than a schematic run.
 
-Terminal on your computer
+### Fixed by default: unexpected errors are logged, and NODE_ENV is read once
 
-```bash
-$ npm test
-…
- FAIL  tests/smoke.test.ts > wiring > serves every route the app should have
-AssertionError: Expected status 200, got 404.
-  request:  GET /api/v1/enquiries
-  response: 404 Not Found
-  body:     {"error":"Not Found","method":"GET","path":"/api/v1/enquiries"}
-```
-
-The fix: put the four marker lines back, and add the two lines the warning printed between them. A later `generate resource enquiries --force` then finds them already present and changes nothing in that file.
-
-### Problem 4: unexpected errors vanish
-
-The generated `dispatch` in `src/server.ts` turns exposed 4xx errors into responses and rethrows everything else, so the client gets a bare 500. Nothing logs the error. In production that is a failure nobody can see: the database is down, every booking fails, and the logs are clean. How to spot it in your project: open `src/server.ts` and look for any logging inside `dispatch`'s `catch`; there is none. The fix is to move `dispatch` into its own file, where it can be tested, and give it a logger.
-
-`errorResponse` in the generated `src/utils/http.ts` (shown in Step 6) decides which errors become responses. The new file:
-
-src/utils/dispatch.ts
-
-```ts
-import type { HttpMiddleware, HttpRouter } from "@zudojs/http";
-import type { Logger } from "@zudojs/logger";
-
-import { errorResponse } from "./http.js";
-
-/**
- * The last middleware: runs the router and turns exposed 4xx errors into
- * responses. Anything else is logged, then rethrown so the server answers a
- * generic 500 that reveals nothing to the client.
- */
-export function createDispatch(router: HttpRouter, logger: Logger): HttpMiddleware {
-  return async (context) => {
-    try {
-      return (await router.dispatch(context.request, { signal: context.signal })).response;
-    } catch (error) {
-      const response = errorResponse(error);
-      if (response !== undefined) return response;
-      logger.error("Unhandled error while serving a request", {
-        method: context.request.method,
-        path: context.request.path,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
-  };
-}
-```
-
-In `src/server.ts`, the eight-line `dispatch` becomes `const dispatch = createDispatch(router, createLogger({ name: "bookings-api" }));`. Here it is with a repository whose database connection fails, and a hall that does not exist:
+`src/server.ts` used to rethrow anything that was not an exposed 4xx error, so the client got a bare 500 and nothing logged it — a database outage would fail every booking with a clean log and no trace of why. The generated `dispatch` (Step 6's `src/utils/http.ts` supplies `errorResponse` and `errorDetails`) now logs the error itself and answers the 500 from inside the middleware pipeline, so it is fixed for every project the CLI creates from here on — there is nothing left for you to write. Reproducing its exact logic with a spy logger shows what a fresh project already does, with a repository whose database connection fails and a hall that does not exist:
 
 dispatch-check.tsNode.js only
 
 ```ts
 import { NotFoundError } from "@zudojs/errors";
-import { HttpMiddlewarePipeline, createRouter } from "@zudojs/http";
-import { createLogger } from "@zudojs/logger";
-import { createHttpTestClient } from "@zudojs/testing";
+import { HttpMiddlewarePipeline, createRouter, type HttpMiddleware } from "@zudojs/http";
+import { createHttpTestClient, createSpyLogger } from "@zudojs/testing";
 
-import { createDispatch } from "./src/utils/dispatch.js";
+import { errorDetails, errorResponse, json } from "./src/utils/http.js";
 
 const router = createRouter();
 router.get("/api/v1/bookings", async () => {
@@ -1285,12 +1316,26 @@ router.get("/api/v1/halls/:id", async () => {
   throw new NotFoundError("No such hall.");
 });
 
-const dispatch = createDispatch(router, createLogger({ name: "bookings-api" }));
+const logger = createSpyLogger("bookings-api");
+// The same shape src/server.ts wires by default: nothing here is hand-written.
+const dispatch: HttpMiddleware = async (context) => {
+  try {
+    return (await router.dispatch(context.request, { signal: context.signal })).response;
+  } catch (error) {
+    const response = errorResponse(error);
+    if (response !== undefined && response.status < 500) return response;
+    logger.error(`Unhandled error: ${context.request.method} ${context.request.path}`, errorDetails(error));
+    return response ?? json(500, { error: "Internal Server Error" });
+  }
+};
+
 const client = createHttpTestClient(new HttpMiddlewarePipeline({ middlewares: [dispatch] }));
 for (const path of ["/api/v1/halls/abc", "/api/v1/bookings"]) {
   const response = await client.get(path);
   console.log(response.status, response.text);
 }
+const [call] = logger.findByMethod("error");
+console.log("logged:", call?.message, { name: (call?.metadata as { name?: string }).name, error: (call?.metadata as { error?: string }).error });
 await client.close();
 ```
 
@@ -1298,79 +1343,53 @@ Output of `npx tsx dispatch-check.ts`
 
 ```ts
 404 {"error":"No such hall.","code":"ERR_RESOURCE_NOT_FOUND"}
-2026-09-25T00:02:54.438Z [ERROR] [bookings-api] Unhandled error while serving a request method=GET path=/api/v1/bookings error="connection refused: 10.0.0.5:5432"
 500 {"error":"Internal Server Error"}
+logged: Unhandled error: GET /api/v1/bookings { name: 'Error', error: 'connection refused: 10.0.0.5:5432' }
 ```
 
-The client learns nothing about the internal address; the operator gets the method, the path and the real message. The expected 404 stays quiet, because logging every normal "not found" buries the real problems.
+The client learns nothing about the internal address; the log has the method, the path, the error's name and message (and its stack and cause, not printed above). The expected 404 stays quiet, because logging every normal "not found" would bury the real problems.
 
-### Problem 5: two readings of NODE_ENV
-
-`loadConfig` stores `NODE_ENV` in `config.nodeEnv`, but the generated `src/app.ts` ignores it and calls `resolveEnvironment()`, which reads `process.env` directly. In the running server both usually see the same variable. In a test, or anywhere you pass `loadConfig` an explicit environment, they disagree. How to spot it: search `src/app.ts` for `resolveEnvironment()` with empty parentheses. `resolveEnvironment` from `@zudojs/constants` accepts the environment to read:
+Similarly, `loadConfig` used to store `NODE_ENV` in `config.nodeEnv` while the generated `src/app.ts` called `resolveEnvironment()` a second time with no argument, reading `process.env` directly — the same variable in the running server, a different one the moment a test passed `loadConfig` an explicit environment. `resolveEnvironment` from `@zudojs/constants` accepts the environment to read, and `config.nodeEnv` is now built by calling it once, inside `loadConfig` itself:
 
 environment-check.tsNode.js only
 
 ```ts
 import { resolveEnvironment } from "@zudojs/constants";
 
-// What loadConfig({ NODE_ENV: "production" }) stores:
+// What loadConfig({ NODE_ENV: "production" }) used to leave in config.nodeEnv,
+// before app.ts read the environment a second time:
 const config = { nodeEnv: "production" };
 
-console.log("generated app.ts:", resolveEnvironment());
-console.log("fixed app.ts:    ", resolveEnvironment({ NODE_ENV: config.nodeEnv }));
-console.log("short form:      ", resolveEnvironment({ NODE_ENV: "prod" }));
-try {
-  resolveEnvironment({ NODE_ENV: "prodution" }, { strict: true });
-} catch (error) {
-  console.log("typo, strict:    ", (error as Error).name);
-}
+console.log("old app.ts (resolveEnvironment(), no argument):", resolveEnvironment());
+console.log("current app.ts (passes config.nodeEnv through):", resolveEnvironment({ NODE_ENV: config.nodeEnv }));
 ```
 
 Output of `npx tsx environment-check.ts`
 
 ```ts
-generated app.ts: development
-fixed app.ts:     production
-short form:       production
-typo, strict:     InvalidConstantError
+old app.ts (resolveEnvironment(), no argument): development
+current app.ts (passes config.nodeEnv through): production
 ```
 
-The fix is one line in `src/app.ts`: `environment: resolveEnvironment({ NODE_ENV: options.config.nodeEnv })`. A test pins it down, and without the fix it fails in a revealing way, because Vitest sets `NODE_ENV=test` itself:
-
-Terminal on your computer
-
-```bash
-$ npx vitest run tests/config.test.ts
-…
- FAIL  tests/config.test.ts > configuration > gives the runtime the NODE_ENV that loadConfig read
-AssertionError: expected 'test' to be 'production' // Object.is equality
-```
-
-| # | Problem | How to spot it | Fix |
-| --- | --- | --- | --- |
-| 1 | `generate service --module m` creates a new module | `Mapping "service" → "module"`; paths outside `src/modules/m/` | Undo; write the service in `src/modules/m/services/` or generate a controller |
-| 2 | The validator stub returns `true` | `return true;` in `validators/`; a test with bad input | Write the real check; use it in the DTO |
-| 3 | Missing markers only warn, exit 0 | `Warning: Finish by hand`; a smoke test through `registerRoutes` | Restore the markers, add the printed lines |
-| 4 | `dispatch` hides 500s | No logging in `dispatch`'s `catch` | `createDispatch(router, logger)` with a test |
-| 5 | `createApp` ignores `config.nodeEnv` | `resolveEnvironment()` with no argument | Pass `{ NODE_ENV: options.config.nodeEnv }` |
+The first line is what the old code computed inside a test where nothing had set `process.env.NODE_ENV`: `development`, the fallback, whatever `loadConfig` had been told. The second is what `config.nodeEnv` already holds after `loadConfig` resolves it once; `app.ts` now writes `environment: options.config.nodeEnv` and calls `resolveEnvironment` nowhere else. A test that starts the runtime with an explicit environment and asserts `runtime.context.environment` is still worth keeping as a regression guard — Vitest sets `NODE_ENV=test` itself, so a reintroduced second reading would show up as `test` where the test expects `production` — but there is no line left in `src/app.ts` for you to fix.
 
 ## Step 9: the tests that matter
 
-There is no `zudojs generate test`. The generated test for each resource is a good CRUD check on its own router; everything that makes this product correct is yours to test. Here is the bookings test, rewritten for the real rules, with a fixed "today" so it passes on every day of the year:
+There is no `zudojs generate test`. The generated test for each resource is a good CRUD-and-paging check on its own router (it walks the pages the way the generated `halls.test.ts` and `bookings.test.ts` already do); everything that makes this product correct is yours to test. Here is the bookings test, rewritten for the real rules, with a fixed "today" so it passes on every day of the year:
 
-tests/bookings.test.ts
+tests/modules/scheduling/bookings.test.ts
 
 ```ts
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRouter } from "@zudojs/http";
 import { createHttpTestClient } from "@zudojs/testing";
 
-import { BookingsController } from "../src/modules/scheduling/controllers/bookings.controller.js";
-import { InMemoryBookingsRepository } from "../src/modules/scheduling/repositories/bookings.repository.js";
-import { InMemoryHallsRepository } from "../src/modules/scheduling/repositories/halls.repository.js";
-import { registerBookingsRoutes } from "../src/modules/scheduling/routes/bookings.routes.js";
-import { AvailabilityService } from "../src/modules/scheduling/services/availability.service.js";
-import { BookingsService } from "../src/modules/scheduling/services/bookings.service.js";
+import { BookingsController } from "../../../src/modules/scheduling/controllers/bookings.controller.js";
+import { InMemoryBookingsRepository } from "../../../src/modules/scheduling/repositories/bookings.repository.js";
+import { InMemoryHallsRepository } from "../../../src/modules/scheduling/repositories/halls.repository.js";
+import { registerBookingsRoutes } from "../../../src/modules/scheduling/routes/bookings.routes.js";
+import { AvailabilityService } from "../../../src/modules/scheduling/services/availability.service.js";
+import { BookingsService } from "../../../src/modules/scheduling/services/bookings.service.js";
 
 const halls = new InMemoryHallsRepository();
 const bookings = new InMemoryBookingsRepository();
@@ -1428,13 +1447,13 @@ The race test calls the service directly with `Promise.allSettled`, because two 
 Terminal on your computer
 
 ```bash
-$ npx vitest run tests/bookings.test.ts
+$ npx vitest run tests/modules/scheduling/bookings.test.ts
 …
- FAIL  tests/bookings.test.ts > /api/v1/bookings > lets only one of two simultaneous bookings win
+ FAIL  tests/modules/scheduling/bookings.test.ts > /api/v1/bookings > lets only one of two simultaneous bookings win
 AssertionError: expected [ 'fulfilled', 'fulfilled' ] to deeply equal [ 'fulfilled', 'rejected' ]
 ```
 
-The smoke test and the dispatch test are short:
+The one test this project still needs that nothing generates is a smoke test — proof that the real, wired-up app serves every route, not just the router each resource test builds for itself:
 
 tests/smoke.test.ts
 
@@ -1467,67 +1486,29 @@ describe("wiring", () => {
 });
 ```
 
-tests/dispatch.test.ts
-
-```ts
-import { afterAll, describe, expect, it } from "vitest";
-import { HttpMiddlewarePipeline, createRouter } from "@zudojs/http";
-import { createHttpTestClient, createSpyLogger } from "@zudojs/testing";
-import { NotFoundError } from "@zudojs/errors";
-
-import { createDispatch } from "../src/utils/dispatch.js";
-
-const logger = createSpyLogger("bookings-api");
-const router = createRouter();
-router.get("/broken", async () => {
-  throw new Error("connection refused: 10.0.0.5:5432");
-});
-router.get("/missing", async () => {
-  throw new NotFoundError("No such booking.");
-});
-const client = createHttpTestClient(new HttpMiddlewarePipeline({ middlewares: [createDispatch(router, logger)] }));
-afterAll(() => client.close());
-
-describe("dispatch", () => {
-  it("answers 500 without details, and logs the real error", async () => {
-    const response = await client.get("/broken").expect(500);
-    expect(response.text).not.toContain("10.0.0.5");
-    expect(logger.findByMethod("error")).toHaveLength(1);
-    expect(logger.calls[0]?.metadata).toMatchObject({ path: "/broken", error: "connection refused: 10.0.0.5:5432" });
-  });
-
-  it("does not log expected 4xx answers", async () => {
-    logger.clear();
-    await client.get("/missing").expect(404);
-    expect(logger.calls).toHaveLength(0);
-  });
-});
-```
-
-`createSpyLogger` from `@zudojs/testing` is a `Logger` that records its calls instead of printing them, so the test can assert on what was logged. With `tests/config.test.ts` from Step 8 and the two updated generated tests, the whole suite:
+Unlogged 500s and a double reading of `NODE_ENV` no longer need a project-specific test to guard against, because the behaviour they used to threaten now lives in the framework and the generator, not in code this project owns — Step 8's two demonstrations are the closest thing to a test for them, and re-running those after an upgrade is enough. With the smoke test and the two updated generated tests, the whole suite:
 
 Terminal on your computer
 
 ```bash
-$ npm run typecheck && npm run typecheck:tests && npx vitest run --reporter=verbose
+$ npm run typecheck && npx vitest run --reporter=verbose
 …
- ✓ tests/config.test.ts > configuration > gives the runtime the NODE_ENV that loadConfig read 181ms
- ✓ tests/dispatch.test.ts > dispatch > answers 500 without details, and logs the real error 572ms
- ✓ tests/dispatch.test.ts > dispatch > does not log expected 4xx answers 27ms
- ✓ tests/halls.test.ts > /api/v1/halls > creates, reads, updates and deletes a hall 399ms
- ✓ tests/halls.test.ts > /api/v1/halls > rejects an invalid body with 400 14ms
- ✓ tests/halls.test.ts > /api/v1/halls > rejects an id that is not a UUID with 400 5ms
- ✓ tests/enquiries.test.ts > /api/v1/enquiries > creates, reads, updates and deletes an enquiry 239ms
- ✓ tests/enquiries.test.ts > /api/v1/enquiries > rejects an invalid body with 400 16ms
- ✓ tests/enquiries.test.ts > /api/v1/enquiries > rejects an id that is not a UUID with 400 11ms
  ✓ tests/smoke.test.ts > wiring > serves every route the app should have 573ms
- ✓ tests/bookings.test.ts > /api/v1/bookings > books a free hall at the hall's price 140ms
- ✓ tests/bookings.test.ts > /api/v1/bookings > refuses a second booking of the same hall and date 30ms
- ✓ tests/bookings.test.ts > /api/v1/bookings > lets only one of two simultaneous bookings win 5ms
- ✓ tests/bookings.test.ts > /api/v1/bookings > refuses bad input with 400 and an unknown hall with 404 73ms
+ ✓ tests/modules/scheduling/halls.test.ts > /api/v1/halls > creates, reads, updates and deletes a hall 399ms
+ ✓ tests/modules/scheduling/halls.test.ts > /api/v1/halls > lists hall records a page at a time 46ms
+ ✓ tests/modules/scheduling/halls.test.ts > /api/v1/halls > rejects an invalid body with 400 14ms
+ ✓ tests/modules/scheduling/halls.test.ts > /api/v1/halls > rejects an id that is not a UUID with 400 5ms
+ ✓ tests/modules/scheduling/enquiries.test.ts > /api/v1/enquiries > creates, reads, updates and deletes an enquiry 239ms
+ ✓ tests/modules/scheduling/enquiries.test.ts > /api/v1/enquiries > lists enquiry records a page at a time 51ms
+ ✓ tests/modules/scheduling/enquiries.test.ts > /api/v1/enquiries > rejects an invalid body with 400 16ms
+ ✓ tests/modules/scheduling/enquiries.test.ts > /api/v1/enquiries > rejects an id that is not a UUID with 400 11ms
+ ✓ tests/modules/scheduling/bookings.test.ts > /api/v1/bookings > books a free hall at the hall's price 140ms
+ ✓ tests/modules/scheduling/bookings.test.ts > /api/v1/bookings > refuses a second booking of the same hall and date 30ms
+ ✓ tests/modules/scheduling/bookings.test.ts > /api/v1/bookings > lets only one of two simultaneous bookings win 5ms
+ ✓ tests/modules/scheduling/bookings.test.ts > /api/v1/bookings > refuses bad input with 400 and an unknown hall with 404 73ms
 
- Test Files  6 passed (6)
-      Tests  14 passed (14)
+ Test Files  4 passed (4)
+      Tests  13 passed (13)
 ```
 
 Each of the new tests was checked the honest way: break the code it protects, watch it fail, restore the code. A test you have never seen fail may not be testing anything.
@@ -1558,7 +1539,7 @@ $ NODE_ENV=production PORT=4200 CORS_ORIGINS=https://bookings.example.ng npm sta
 Listening on http://0.0.0.0:4200
 ```
 
-`zudojs build` is `npm run build`, which is `tsc`: 53 JavaScript files in `dist/`, tests excluded. `npm start` runs them with plain Node.js, no `tsx`. The log says `environment=production`, which is now true in both readings of `NODE_ENV`.
+`zudojs build` is `npm run build`, which is `tsc`: 52 JavaScript files in `dist/`, tests excluded — `tsconfig.json` still excludes `**/*.test.ts`; only `typecheck` reads the test files too, and only to check them, never to emit them. `npm start` runs them with plain Node.js, no `tsx`. The log says `environment=production`, which was already true in the one reading of `NODE_ENV` that `config.nodeEnv` gives you.
 
 ### What the CLI does not do
 
@@ -1645,11 +1626,11 @@ bookings-api:0.1.0 182MB
 
 ### Before the first real customer
 
-- **Storage.** Every repository is still in memory: a restart empties it and two containers disagree. Run `zudojs add database`, write a Prisma or SQL repository that implements the same interface with `UNIQUE (hall_id, date)`, swap it in `src/container.ts`, and run `db:deploy` in your release step. Services, controllers and tests keep working.
-- **The docs page.** `/docs` answered 200 in production. If the API is not public, change the mount in `src/server.ts` to `mountOpenAPI(router, { info: { … }, docsPath: config.nodeEnv === "production" ? false : "/docs" })`: in the rebuilt app `/docs` answered 404 and `/openapi.json` still 200. Exercise 2 protects it with a key instead.
-- **Configuration.** Set `NODE_ENV=production` and `CORS_ORIGINS` to the website's origin; the generated default is no browser origin at all. Never bake `.env` into the image (the generated `.dockerignore` excludes it).
+- **Storage.** Every repository is still in memory: a restart empties it and two containers disagree. Run `zudojs add database`, write a Prisma repository that implements the same interface with `UNIQUE (hall_id, date)`, swap it in `src/container.ts`, and run `db:deploy` in your release step. Prisma now installs as a real dependency and rides in the runtime image with its own migrate-deploy line the CLI writes into the Dockerfile, and `generate resource` reruns `prisma generate` for you the moment it adds a model — the client used to fall out of sync with the schema until you remembered to regenerate it by hand (issue #141). Services, controllers and tests keep working.
+- **The docs page** is already off by default in production (`docsPath: config.nodeEnv === "production" ? false : "/docs"`, issue #141): `/docs` answers 404 outside development, `/openapi.json` still 200. If you want it reachable in production behind a key instead of hidden entirely, Exercise 2 shows how.
+- **Configuration.** Set `NODE_ENV=production` and `CORS_ORIGINS` to the website's origin; the generated default is no browser origin at all. `RATE_LIMIT_MAX` defaults to 1000 requests per window now (was 300), relaxed on purpose so a load test or a burst of legitimate traffic does not trip it; `RATE_LIMIT_MAX=0` turns the limiter off entirely for a controlled load test. Never bake `.env` into the image (the generated `.dockerignore` excludes it).
 - **Rate limiting** counts per process, as the anatomy lesson noted; behind several containers use a shared store.
-- **A pipeline** that runs, in order and stopping at the first failure: `npm ci`, `npm run typecheck`, `npm run typecheck:tests`, `npm test`, `zudojs build`, `docker build`. The [CI/CD lesson](https://zudojs.oyinlola.site/learn/zudo-ci-cd) turns that list into GitHub Actions.
+- **A pipeline** that runs, in order and stopping at the first failure: `npm ci`, `npm run typecheck`, `npm test`, `zudojs build`, `docker build`. The [CI/CD lesson](https://zudojs.oyinlola.site/learn/zudo-ci-cd) turns that list into GitHub Actions.
 
 ## Practice
 
@@ -1659,7 +1640,17 @@ TRY IT YOURSELF
 
 The company keeps the deposit when a customer cancels less than 7 days before the date. Write `checkCancellation(date, today)` that throws a 409 `ConflictError` when the booking is fewer than 7 days away, and say where in the project it belongs.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Parse both dates the same way: `Date.parse(\`${date}T00:00:00Z\`)`. Subtracting two parsed dates gives milliseconds; divide by `DAY_MS` to get days.
+
+HINT 2
+
+`if (daysAway < 7) throw new ConflictError(\`Bookings on ${date} can no longer be cancelled (${daysAway} days away).\`);` — a template literal builds the exact message, with `daysAway` as computed, not rounded.
+
+SOLUTION
 
 cancellation.tsNode.js only
 
@@ -1699,9 +1690,19 @@ TRY IT YOURSELF
 
 ### Protect the docs page with a key
 
-Instead of hiding `/docs` in production, require a header `x-docs-key` that matches a secret from the configuration. `mountOpenAPI` has a `middleware` option. Compare the key in constant time.
+`/docs` is off by default in production now. Instead of leaving it off, require a header `x-docs-key` that matches a secret from the configuration, so support staff can still open it. `mountOpenAPI` has a `middleware` option. Compare the key in constant time.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+A middleware has the shape `async (context, next) => { ... }`. Read the header with `context.request.getHeader("x-docs-key")`, and call `next()` to let the request through.
+
+HINT 2
+
+`timingSafeEqualString(given, expected)` returns `false` for a wrong key; combine that with `expected === ""` in one `if`, and return `createResponseContext({ status: 401 }).json({ error: "A valid x-docs-key header is required." })` when either is true.
+
+SOLUTION
 
 docs-key.tsNode.js only
 
@@ -1750,7 +1751,17 @@ TRY IT YOURSELF
 
 The owners want an explicit "confirm booking" step later. Predict what `zudojs generate command confirm-booking --module scheduling` writes, and what it leaves for you. Then run the generated handler through a command bus.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`registerConfirmBookingCommand` takes a bus and returns it: `registerConfirmBookingCommand(createCommandBus())`.
+
+HINT 2
+
+`createConfirmBookingCommand({ data: { ... } })` builds the command; `bus.execute<ConfirmBookingCommand, ConfirmBookingCommandResult>(command)` runs it and returns the handler's result.
+
+SOLUTION
 
 Terminal on your computer
 
@@ -1856,8 +1867,8 @@ It runs, and it is another stub: the payload is "any record", so a nonsense book
 
 - The CLI created the project, the module, the resources, the validator and the Dockerfile; it ran your dev server and your build. Commit before every `generate` and read the diff after it.
 - Generated resources are skeletons. You wrote the rules: schemas with real fields, a validator that validates, a repository that refuses double bookings without a race, and a hand-written service shared at the composition root, outside the markers.
-- Five known problems, each with a way to spot it: `service` becomes a module in a modular monolith; the validator stub returns `true`; missing markers only warn; `dispatch` hides 500s; `createApp` ignores `config.nodeEnv`.
-- Tests are not type-checked by the generated config, and the generated tests cannot see wiring, races, logging or configuration. `tsconfig.test.json`, a smoke test, a race test, a dispatch test and a config test close those gaps.
+- A recent audit fixed what used to be five known problems: `generate service --module m` now writes inside that module; `generate validator` writes a real, working schema instead of a stub; missing markers now refuse instead of warning; unexpected errors are logged and answered by the generated server itself; and `config.nodeEnv` is read once and passed straight through. What is left to notice is smaller: a schematic whose generic shape does not fit composing two repositories, and list endpoints that now paginate by default.
+- Tests are type-checked by default now (`typecheck` runs both configs), but the generated tests still cannot see wiring or races. A smoke test and a race test close those two gaps; nothing project-specific is needed for logging or configuration any more.
 - There is no `deploy`, `migrate` or `test` command. `zudojs add docker` writes a multi-stage Dockerfile; migrations come with `zudojs add database` as npm scripts; the pipeline and the release are yours.
 
 Next, [Capstone: ShopFlow](https://zudojs.oyinlola.site/learn/capstone-shopflow) builds a larger application from ZudoJS packages directly, with a transactional checkout on PostgreSQL.

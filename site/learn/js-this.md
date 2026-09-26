@@ -880,7 +880,17 @@ Output of `node timer-bug.js` and of the browser terminal
 Reminder for undefined
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`this` depends on how a function is *called*, not where it is defined. `setTimeout(notifier.remind, 0)` passes the bare function, detached from `notifier`, so the call site has no dot.
+
+HINT 2
+
+Wrap it so the dot survives: `setTimeout(() => notifier.remind(), 0)`. Or fix `this` permanently with `setTimeout(notifier.remind.bind(notifier), 0)`.
+
+SOLUTION
 
 `setTimeout` receives only the function and calls it itself, so `this` is not `notifier`. (In Node.js it is the timer object, which has no `customer`; in a browser it is `window`.) Give the call its dot back with a wrapper, or bind:
 
@@ -914,7 +924,17 @@ TRY IT YOURSELF
 
 A `receipt` object has a `total()` method that adds up `this.lines`. A plain object `{ lines: [500, 1500] }` from an old API has no methods. Without copying the method onto it, use `call` to compute its total, then use `bind` to make a reusable `oldApiTotal` function.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`someFn.call(thisValue)` runs `someFn` once with `this` set to `thisValue`, without moving or copying the function anywhere.
+
+HINT 2
+
+`receipt.total.call(fromOldApi)` for the one-off call. `const oldApiTotal = receipt.total.bind(fromOldApi);` for the reusable one — it keeps using `fromOldApi`, even the line pushed onto it afterwards.
+
+SOLUTION
 
 borrow.js
 
@@ -949,7 +969,17 @@ TRY IT YOURSELF
 
 Finish `priceList()` so it returns lines like `"Rice 5kg: ₦8500.00"` using `this.format` for each product. Write it once with an arrow callback and once with a `function` callback plus `map`'s `thisArg`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+An arrow callback does not have its own `this`, so inside `this.products.map((p) => ...)`, `this` is still `shop`.
+
+HINT 2
+
+`this.products.map((p) => \`${p.name}: ${this.format(p.kobo)}\`)`. For the `function` version, `map(function (p) { return ...this.format(p.kobo)... }, this)` — the second argument to `map` becomes the callback's `this`.
+
+SOLUTION
 
 price-list.js
 

@@ -489,7 +489,17 @@ Output of `node config-old.js` and of the browser terminal
 http://localhost:3000
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Destructure the parameter itself: `function readConfig({ port = 3000, host = "localhost" } = {})`. A default parameter is skipped only for `undefined`, never for a real `0`.
+
+HINT 2
+
+`return \`http://${host}:${port}\`;` — no `||` needed once the defaults live in the parameter list.
+
+SOLUTION
 
 config-new.js
 
@@ -519,7 +529,17 @@ TRY IT YOURSELF
 
 Write `total(label, ...amounts)` that returns a string like `Groceries: 12`, adding up all the amounts. Then call it with an existing array of amounts using spread.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`amounts` is always an array, even when nothing was passed after `label`. Give `reduce` a starting value of `0` so an empty array sums to 0.
+
+HINT 2
+
+`const sum = amounts.reduce((acc, n) => acc + n, 0); return \`${label}: ${sum}\`;`
+
+SOLUTION
 
 total.js
 
@@ -550,7 +570,17 @@ TRY IT YOURSELF
 
 A request may or may not have `request.user.settings.language`. Write `languageOf(request)` that returns it, or `"en"` when any part is missing. It must not crash on `{}`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Chain `?.` through every level that might be missing, then fall back with `??` at the end.
+
+HINT 2
+
+`return request.user?.settings?.language ?? "en";`
+
+SOLUTION
 
 language.js
 

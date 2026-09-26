@@ -4,13 +4,13 @@ description: "A free academy that takes you from programming logic to JavaScript
 source: https://zudojs.oyinlola.site/learn
 ---
 
-FREE · 20 COURSES · 261 LESSONS
+FREE · 20 COURSES · 262 LESSONS
 
 # ZudoJS Academy
 
 A free, complete path from your first line of code to production backends. Learn to think like a programmer, master JavaScript and TypeScript, study algorithms, databases, security and architecture, then build real systems with ZudoJS. Every example shows the real output of the code, in the terminal on the page or on your own computer.
 
-0 of 261 lessons done
+0 of 262 lessons done
 
 [Start lesson 1 →](https://zudojs.oyinlola.site/learn/welcome)
 
@@ -36,7 +36,9 @@ Each lesson gives you two ways to run the code:
 
 Every example also has an **Edit** button. It opens the **editor**, a workspace that looks and works like Visual Studio Code: files on the left, tabs, and a terminal underneath. Change the code, run it with Ctrl + Enter, create your own files, and everything you write is saved in your browser.
 
-Lessons don't only show code. **Reason it out** boxes ask you to think a problem through first: what you know, what can go wrong, what happens at the edges. Try to answer before you open the reasoning. **Try it yourself** boxes are exercises with a worked solution.
+Lessons don't only show code. **Reason it out** boxes ask you to think a problem through first: what you know, what can go wrong, what happens at the edges. Try to answer before you open the reasoning.
+
+**Try it yourself** boxes are exercises you solve in the editor. **Try it in the editor** opens a starter file with the test code already written and a commented example of the technique to learn from. Write your answer and press **Check**: it runs your code and compares what it prints with the real output, line by line. Exercises that need your own computer (a server, files, a database) ask you to run them there and paste what they printed. Each check that does not pass opens a hint, and the solution opens when you pass, or after three checks, so you always try first.
 
 Every lesson ends with a **test**: five questions picked at random from a bank of 30 to 50. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it. Get 4 of 5 right to pass and the lesson is marked as done. If you don't pass, you try again with five different questions.
 
@@ -87,9 +89,9 @@ The language, computer science fundamentals, the browser and Node.js.
 
 0 of 21 done](https://zudojs.oyinlola.site/learn/algorithms) [Level 4 **Advanced JavaScript** How JavaScript really works: this and prototypes, the built-in objects, iterators, generators and symbols, functional techniques, the event loop and asynchronous code in depth, memory, error design and module systems. Core20 lessons · 18 h
 
-0 of 20 done](https://zudojs.oyinlola.site/learn/javascript-advanced) [Level 4 **JavaScript in the browser and on the server** Use JavaScript where it runs: the DOM, events and browser APIs, networking from the browser, Node.js and its core modules, npm and the tooling around it, professional debugging, and Git. Core20 lessons · 17 h
+0 of 20 done](https://zudojs.oyinlola.site/learn/javascript-advanced) [Level 4 **JavaScript in the browser and on the server** Use JavaScript where it runs: the DOM, events and browser APIs, networking from the browser, Node.js and its core modules, npm and the tooling around it, professional debugging, and Git. Core21 lessons · 17 h
 
-0 of 20 done](https://zudojs.oyinlola.site/learn/javascript-platforms)
+0 of 21 done](https://zudojs.oyinlola.site/learn/javascript-platforms)
 
 TRACK
 

@@ -1352,7 +1352,7 @@ await client.close();
 Output of `npx tsx errors-trace.ts`
 
 ```ts
-500 {"error":"Internal Server Error"}
+500 {"error":"Internal Server Error","code":"INTERNAL_SERVER_ERROR"}
 400 {"error":"The request body is not valid JSON.","code":"BAD_REQUEST"}
 400 {"error":"Validation failed","issues":[{"path":"","message":"Expected object, received undefined"}]}
 ```
@@ -1484,7 +1484,17 @@ TRY IT YOURSELF
 
 Change `dispatch` so an unexpected error is logged with its message before it is rethrown, but a 4xx error is not logged. Try it with the broken repository.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`logger.error` takes one message string. Build it with a template literal: `\`unhandled error on ${context.request.method} ${context.request.path}: ${(error as Error).message}\``.
+
+HINT 2
+
+`logger.error(...)` goes right before `throw error;`, inside the same `if (response !== undefined) return response;` branch's `else` path (i.e. after that `if`, since it already returned when `response` exists).
+
+SOLUTION
 
 log-500.tsNode.js only
 
@@ -1544,7 +1554,17 @@ TRY IT YOURSELF
 
 Write a repository that refuses to store more than two examples (throwing `ConflictError` from `@zudojs/errors`) and plug it in with the generated controller and service. What does the third `POST` answer, and why did no other layer need to change?
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`(await this.findAll()).length >= 2` tells you the store is already full.
+
+HINT 2
+
+`if ((await this.findAll()).length >= 2) throw new ConflictError("Only two examples fit in this store."); return super.create(input);`.
+
+SOLUTION
 
 small-store.tsNode.js only
 
@@ -1606,7 +1626,17 @@ TRY IT YOURSELF
 
 For each report, name the first file you would open: (a) the app does not start and says `PORT must be an integer between 0 and 65535`; (b) every response lacks the `x-frame-options` header; (c) `POST /api/v1/examples` accepts a 300-character name; (d) after a restart, all examples are gone.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Match each report to a layer: parsing a setting, a middleware in the pipeline, a schema's rule, or where a repository keeps its rows.
+
+HINT 2
+
+(a) and (c) both point at a place a value is checked; (b) and (d) both point at a place something is set up once, in `src/server.ts` or `src/container.ts`.
+
+SOLUTION
 
 - (a) `src/configs/index.ts`, the `port` function, then your `.env` or environment.
 - (b) `src/server.ts`: is `securityHeaders()` still first in the pipeline? Then `src/utils/http.ts`.

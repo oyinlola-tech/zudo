@@ -194,7 +194,7 @@ email active: false handlers left: 0
 
 `bus.publish(event)` publishes an event you built with `create`. After the unsubscribe, no handler is left, so the third event reaches nobody. That is not an error: the publisher does not care who listens.
 
-The `<Event<TaskCompleted>>` type argument on `bus.on` is unchecked: nothing connects it to the string `"task.completed"`, so it compiles just as happily if you get the name or the payload type wrong, and the mismatch only shows up at runtime. [A type-safe event system](https://zudojs.oyinlola.site/learn/ts-typed-events#zudo) shows the same gap in the package's types and a small wrapper that closes it.
+The `<Event<TaskCompleted>>` type argument on `bus.on` is unchecked: nothing connects it to the string `"task.completed"`, so it compiles just as happily if you get the name or the payload type wrong, and the mismatch only shows up at runtime. `@zudojs/events` now ships `createTypedEventBus<TMap>(bus)` for exactly this: wrap the raw bus once with a payload map (`{ "task.completed": TaskCompleted; … }`), and its `on`, `once` and `publish` take the event type from that map, so a wrong name or payload is a compile error instead of a silent runtime mismatch. It adds no runtime behaviour of its own, and `typed.bus` still reaches the raw bus for anything the typed view does not cover. [A type-safe event system](https://zudojs.oyinlola.site/learn/ts-typed-events#zudo) builds the same idea by hand, which is still worth reading to see why the gap exists.
 
 > COMMON MISTAKE: SUBSCRIBING PER REQUEST
 >
@@ -560,7 +560,17 @@ TRY IT YOURSELF
 
 Subscribe one handler to `task.*` that counts events per type in a `Map`. Publish `task.created` twice and `task.completed` once, then print the map. Unsubscribe the handler and publish once more to show that the count stops.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Inside the handler, read the current count with `counts.get(event.type) ?? 0` before writing a new one back with `counts.set`.
+
+HINT 2
+
+`counts.set(event.type, (counts.get(event.type) ?? 0) + 1);`. Because `counter.unsubscribe()` runs before the fourth publish, that last event never reaches the handler, so the map is unchanged from before.
+
+SOLUTION
 
 count.ts
 
@@ -597,7 +607,17 @@ TRY IT YOURSELF
 
 Write a middleware with `bus.use` that prints how many handlers ran for each event, using the result that `next()` returns. Hint: the result has a `results` array.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`const result = await next();` gives you the publish result. Cast it, `(result as { results: readonly unknown[] }).results.length`, to count how many handlers ran, then log it before returning `result`.
+
+HINT 2
+
+`const result = await next(); const ran = (result as { results: readonly unknown[] }).results.length; console.log(\`${context.event.type}: ${ran} handler(s)\`); return result;`.
+
+SOLUTION
 
 timing.ts
 
@@ -635,7 +655,17 @@ TRY IT YOURSELF
 
 For each case, choose sequential or parallel: (a) three handlers that each call a different outside API and take 300 ms; (b) a handler that writes a row and another that reads that row to build a report.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read [sequential or parallel](#dispatch): one mode is for handlers that do not depend on each other's result; the other is for handlers where one needs to see what an earlier one produced.
+
+HINT 2
+
+For (a), ask whether the three API calls need each other's results. For (b), ask what the reader would see if it ran *before* the writer.
+
+SOLUTION
 
 (a) Parallel: they are independent, so the publish takes about 300 ms instead of 900 ms. (b) Sequential, with the writer at a higher priority: the reader depends on the writer having finished. Better still, make it one handler, because two handlers that depend on each other's order are really one job.
 

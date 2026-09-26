@@ -836,7 +836,17 @@ TRY IT YOURSELF
 
 Write `unreachable(rows)` that returns the ids of rows that `renderThread` would never show: rows that are neither roots nor under a root (as in the cycle test). Use `buildThread`'s idea: build the tree, walk it from the roots with an explicit stack, collect the ids you reach, and return the others.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Build a `Map` of id to node first (each with an empty `replies` array), then decide roots: `parentId === null`, or the parent id is not in the map.
+
+HINT 2
+
+Walk with a stack: `const stack = [...roots]; while (stack.length > 0) { const node = stack.pop(); reached.add(node.id); stack.push(...node.replies); }` Then `rows.map((r) => r.id).filter((id) => !reached.has(id))`.
+
+SOLUTION
 
 unreachable.js
 
@@ -883,7 +893,17 @@ TRY IT YOURSELF
 
 A shop sells bundles, and a bundle can contain products and other bundles. Write a recursive `priceKobo(item)`: a product has a `priceKobo`; a bundle has `items` and a `discountPercent`, and costs the sum of its items minus the discount, rounded.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The base case is an item with no `items` property: it is a plain product, so just return its `priceKobo`.
+
+HINT 2
+
+`if (!item.items) return item.priceKobo; const sum = item.items.reduce((total, inner) => total + priceKobo(inner), 0); return Math.round(sum * (1 - item.discountPercent / 100));`
+
+SOLUTION
 
 bundle.js
 
@@ -917,7 +937,17 @@ TRY IT YOURSELF
 
 A category tree looks like `{ name: "Food", children: [...] }`. Write a recursive `breadcrumbs(category, trail = [])` that returns one string per category, such as `"Food > Grains > Rice"`, in pre-order.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Build a new path array for this call, `[...trail, category.name]`, then put its joined text first, followed by every child's breadcrumbs (use `flatMap` so the nested arrays flatten into one list).
+
+HINT 2
+
+`const path = [...trail, category.name]; return [path.join(" > "), ...category.children.flatMap((child) => breadcrumbs(child, path))];`
+
+SOLUTION
 
 breadcrumbs.js
 

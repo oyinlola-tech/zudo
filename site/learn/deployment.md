@@ -759,7 +759,17 @@ TRY IT YOURSELF
 
 Docker's default log files grow without limit and can fill the server's disk. Add a `logging` section to the `app` service in `compose.yaml` that keeps at most 3 files of 10 MB.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Docker's built-in `json-file` log driver takes `options`: a maximum size per file and a maximum number of files to keep.
+
+HINT 2
+
+`logging: driver: json-file options: max-size: "10m" max-file: "3"`, indented under the `app` service, next to its other settings.
+
+SOLUTION
 
 ```ts
   app:
@@ -779,7 +789,17 @@ TRY IT YOURSELF
 
 Write the line for a `crontab` that makes a backup every night at 02:30, with the date in the file name, and deletes backups older than 14 days. Remember that `%` has a special meaning in crontab.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+A crontab line is five time fields, then the command. `30 2 * * *` means "minute 30, hour 2, every day, every month, every weekday". Chain the backup and the clean-up with `&&`.
+
+HINT 2
+
+`find backups -name '*.dump' -mtime +14 -delete` removes files older than 14 days. In the date, escape the percent sign as `\%`, or crontab reads it as a newline.
+
+SOLUTION
 
 ```ts
 30 2 * * * cd /srv/task-api && docker compose exec -T db pg_dump -U taskapi -d taskapi --format=custom > backups/taskapi-$(date +\%F).dump && find backups -name '*.dump' -mtime +14 -delete
@@ -803,7 +823,17 @@ Find four production problems in this Compose service:
       TRUST_PROXY: all
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look at each line on its own: the image tag, the published port, the two parts of the database URL, and the trust setting. Which of them would you be uncomfortable seeing in a real production file?
+
+HINT 2
+
+Compare this service against the working `compose.yaml` earlier in the lesson: what does it do differently for the image tag, the ports, the password and `trustProxy`?
+
+SOLUTION
 
 - `task-api:latest`: you cannot tell which version runs or go back to the previous one. Use version tags.
 - `ports: "3000:3000"` publishes the app directly to the internet, around the proxy and its HTTPS.

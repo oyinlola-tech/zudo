@@ -111,29 +111,29 @@ All the lifecycle methods are optional: a fake has nothing to connect to. The tw
 
 ### Capabilities are about the platform
 
-Not every provider can refund through its API. It is tempting to write that into `capabilities`, but the capability list is fixed, and TypeScript refuses a name it does not know:
+Not every provider can refund through its API. It is tempting to write that into `capabilities`: since `AdapterCapabilities` keeps a fixed list of well-known platform keys (`KnownAdapterCapabilities`: `http`, `streaming`, `gracefulShutdown`, `abortSignal` and a few more) but also accepts any other name, a business capability such as `refunds` type-checks fine:
 
-capabilities.ts
+capabilities.tsNode.js only
 
 ```ts
+import { AdapterRegistry, createMockAdapter } from "@zudojs/adapters";
 import type { AdapterCapabilities } from "@zudojs/adapters";
 
 export const kobopayCapabilities: AdapterCapabilities = { http: true, abortSignal: true, refunds: false };
+
+const adapters = new AdapterRegistry();
+adapters.register(createMockAdapter({ name: "kobopay", capabilities: kobopayCapabilities }));
+adapters.register(createMockAdapter({ name: "some-other-adapter", capabilities: { refunds: true } }));
+console.log(adapters.findByCapability("refunds").map((adapter) => adapter.name));
 ```
 
-What `npx tsc --noEmit` prints
+Output of `npx tsx capabilities.ts`
 
-```ts
-capabilities.ts:3:90 - error TS2353: Object literal may only specify known properties, and 'refunds' does not exist in type 'AdapterCapabilities'.
-
-3 export const kobopayCapabilities: AdapterCapabilities = { http: true, abortSignal: true, refunds: false };
-                                                                                           ~~~~~~~
-
-
-Found 1 error in capabilities.ts:3
+```json
+[ 'some-other-adapter' ]
 ```
 
-Capabilities describe what the adapter's runtime supports: can it be cancelled with an `AbortSignal`, does it shut down gracefully, does it run on an edge runtime. What the *provider's business API* supports goes into your own contract. That is the `features` field in `PaymentAdapter`, and checkout can read it.
+That is the trap: `refunds` is just a string key, so `findByCapability("refunds")` returns every adapter that happens to declare it true, whatever they meant by it. Here that is `some-other-adapter`, which has nothing to do with payments. Capabilities describe what the adapter's *runtime* supports: can it be cancelled with an `AbortSignal`, does it shut down gracefully, does it run on an edge runtime — questions any code in the registry can ask of any adapter. What the *provider's business API* supports is a different, narrower question that only makes sense for payment providers, so it goes into your own contract instead: the `features` field in `PaymentAdapter`, which only a caller holding a `PaymentAdapter` can read, with the compiler checking the field name.
 
 ## A fake provider and the business logic
 
@@ -787,17 +787,17 @@ sms: initialize
 database: start
 payments: start
 sms: start
-database: stop
-database: dispose
-payments: stop
-payments: dispose
 sms: stop
 sms: dispose
+payments: stop
+payments: dispose
+database: stop
+database: dispose
 One or more adapters failed to dispose. connection pool is busy
 left in the registry: 0
 ```
 
-Two things to notice. `payments` failed to stop and was still disposed, because leaving its connections open would be worse; the failure is reported in the `AggregateError` at the end. And the order: the registry initializes, starts, stops and disposes in **registration order**. It does not reverse on the way down, as a cleanup manager or [@zudojs/lifecycle](https://zudojs.oyinlola.site/learn/zudo-lifecycle) does. If one adapter uses another (a payments adapter on top of an HTTP client adapter), do not rely on the registry for the order: manage those two with the lifecycle package, which understands dependencies.
+Two things to notice. `payments` failed to stop and was still disposed, because leaving its connections open would be worse; the failure is reported in the `AggregateError` at the end. And the order: the registry initializes and starts in registration order, then **stops and disposes in reverse**, the mirror image, the same rule a cleanup manager or [@zudojs/lifecycle](https://zudojs.oyinlola.site/learn/zudo-lifecycle) uses — the last adapter up is the first one down, so an adapter never gets asked to stop while something that started after it, and may depend on it, is still running. If one adapter uses another (a payments adapter on top of an HTTP client adapter), register the one it depends on first, so it starts first and stops last; for anything more than that, manage the two with the lifecycle package, which understands dependencies explicitly.
 
 Now a graceful shutdown with a charge in flight. KoboPay takes a second to answer, and the app is told to stop 100 ms after the charge started:
 
@@ -989,7 +989,17 @@ TRY IT YOURSELF
 
 Write `withLogging(inner, log)`: it returns a `PaymentAdapter` that forwards every member to `inner` and logs each charge's reference, amount and outcome. Register the wrapped adapter and run two payments through the unchanged checkout. This is the *decorator* pattern: it only works because checkout depends on the contract.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Inside `charge`, wrap the call in `try`/`catch`: `const result = await inner.charge(request, options);` then `log(...)` with `request.reference`, `request.amountKobo` and `result.status`, then `return result;`.
+
+HINT 2
+
+In `catch`, log the failure with the error's name — `log(\`charge ${request.reference} failed: ${(error as Error).name}\`)` — and re-throw with `throw error;`. A decorator that swallows the error would hide it from checkout.
+
+SOLUTION
 
 decorator.tsNode.js only
 
@@ -1046,7 +1056,17 @@ TRY IT YOURSELF
 
 Write `cancelOrder(payments, chargeId)`. When the adapter supports refunds, refund and return `refunded <id>`. When it does not, return a note that a person must refund it in the provider's dashboard, without calling `refund` at all. Try it with the fake and with KoboPay.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Guard at the top: `if (!payments.features.refunds) return \`refund ${chargeId} by hand in the ${payments.name} dashboard\`;` — return early, before anything calls `refund`.
+
+HINT 2
+
+After the guard, the rest is the two lines you started with: `await payments.refund(chargeId); return \`refunded ${chargeId}\`;`. Calling `KoboPayAdapter.refund` would throw `AdapterNotSupportedError`, which is exactly why the guard must run first.
+
+SOLUTION
 
 cancel.tsNode.js only
 
@@ -1081,7 +1101,17 @@ TRY IT YOURSELF
 
 Name the error class for each situation: (1) `KOBOPAY_SECRET` is missing at startup; (2) the provider's DNS name does not resolve; (3) the provider answered `500`; (4) no answer within the timeout; (5) someone asks the KoboPay adapter for a refund; (6) the app asks the registry for an adapter called `paypal`; (7) a route needs the `streaming` capability and the adapter lacks it.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read `KoboPayAdapter.call` and `initialize`: each branch there throws one specific class for one specific cause, in the order it checks them (a caller-supplied signal, then the timeout, then the private controller, then anything else).
+
+HINT 2
+
+(1), (6) and (7) never touch the network at all — they are refused before any request is made, by `initialize` or by the registry itself. The other four all come from inside `call`, once a request was actually attempted.
+
+SOLUTION
 
 1. `AdapterConfigurationError`, thrown by `initialize` (and reported inside the `AggregateError` from `initializeAll`).
 2. `AdapterConnectionError`: the request never reached the provider. (During `initialize` it is wrapped in `AdapterInitializationError`.)
@@ -1097,7 +1127,7 @@ Every one of them is an `AdapterError`, so `isAdapterError(error)` catches them 
 
 - Business logic depends on a contract in its own words (`PaymentAdapter`); each provider gets an adapter that translates. Swapping providers is one new class and one configuration value.
 - `LifecycleAdapter` gives every adapter a name, capabilities, `initialize`/`start`/`stop`/`dispose` and `health`. Capabilities describe the platform; business features belong in your contract.
-- `AdapterRegistry` finds adapters by case-insensitive name or capability, and runs the lifecycle for all of them, collecting failures in an `AggregateError`. It runs in registration order, even when stopping.
+- `AdapterRegistry` finds adapters by case-insensitive name or capability, and runs the lifecycle for all of them, collecting failures in an `AggregateError`. It initializes and starts in registration order, then stops and disposes in reverse.
 - Adapters turn failures into `AdapterConfigurationError`, `AdapterInitializationError`, `AdapterConnectionError`, `AdapterOperationError`, `AdapterTimeoutError` and `AdapterNotSupportedError`. A timed-out charge is an unknown outcome; retry it only with the same idempotency key.
 - `healthAll` combines health with a time limit and retries. One contract test suite keeps the fake and the real adapter interchangeable.
 

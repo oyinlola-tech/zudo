@@ -915,7 +915,17 @@ TRY IT YOURSELF
 
 The marketing team wants the customers who ordered in both January and February. Write `returningCustomers(january, february)` twice: once with nested loops, once with a `Set`. Count steps in both and state the complexity of each with `n` and `m` for the two list sizes.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+For `returningNested`: a loop over `january` containing a loop over `february`, comparing values and counting a step per comparison. For `returningSet`: first turn `february` into a `Set`.
+
+HINT 2
+
+`for (const customer of february) { counter.steps++; februarySet.add(customer); }`, then `for (const customer of january) { counter.steps++; if (februarySet.has(customer)) result.push(customer); }`. In the nested version, `break` out of the inner loop on a match so you don't push twice.
+
+SOLUTION
 
 returning-customers.js
 
@@ -973,7 +983,17 @@ TRY IT YOURSELF
 
 Some engines grow arrays by 1.5 times instead of doubling, to waste less memory. Add a `grow` function `(capacity) => Math.ceil(capacity * 1.5)` and one that adds 10 slots each time to the `GrowableList`, push 10,000 items and compare copies per push. Which one is still amortized O(1)?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Each strategy is a pair `[name, growFn]`, where `growFn` takes the current capacity and returns the new one, same shape as `doubling` and `plusOne` earlier in the lesson.
+
+HINT 2
+
+`["x1.5", (c) => Math.ceil(c * 1.5)]` and `["+10", (c) => c + 10]`. Keep `["x2", (c) => c * 2]` too, so all three get compared.
+
+SOLUTION
 
 grow-by-half.js
 
@@ -1047,7 +1067,17 @@ function discountTiers(prices) {
 }
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The inner loop already runs the right number of times; you just need to count each pass and grow `tier` at the same time, inside the `for (let limit = …)` loop.
+
+HINT 2
+
+`counter.steps++; tier++;` as the body of the inner loop. Compare the printed steps with `n * Math.log2(n)` for each `n`.
+
+SOLUTION
 
 The outer loop runs `n` times. The inner loop halves `limit` from `n` down to 1, so it runs about `log₂ n` times. Nested blocks multiply: O(n log n).
 

@@ -1009,7 +1009,17 @@ TRY IT YOURSELF
 
 Write `pick(obj, ...keys)`, the allow-list opposite of `omit`: it returns a new object with only the listed keys that the object really has (own properties). Keys the object does not have must not appear in the result, not even as `undefined`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Filter `keys` down to the ones the object owns with `Object.hasOwn(obj, key)`, then turn each surviving key into a `[key, value]` pair for `Object.fromEntries`.
+
+HINT 2
+
+`Object.fromEntries(keys.filter((key) => Object.hasOwn(obj, key)).map((key) => [key, obj[key]]))`
+
+SOLUTION
 
 pick.js
 
@@ -1040,7 +1050,17 @@ TRY IT YOURSELF
 
 Given a plain product object `{ name: "Rice 5kg" }`, use `Object.defineProperty` to add a `priceKobo` accessor. The setter accepts only whole numbers from 1 upwards and stores the value in a closure variable; the getter returns it. The property must show up in `JSON.stringify`. Then show that `"850000"` is rejected.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep the real value in a closure variable, not in a property. The getter returns it; the setter checks the new value with `Number.isInteger` before storing it.
+
+HINT 2
+
+Do not forget `enumerable: true`: everything `defineProperty` leaves out defaults to `false`, which would hide the property from `JSON.stringify`.
+
+SOLUTION
 
 price.js
 
@@ -1107,7 +1127,17 @@ Output of `node snapshot-bug.js` and of the browser terminal
 0
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`Object.assign({}, order)` is a shallow copy: `copy.items` is the very same array as `order.items`.
+
+HINT 2
+
+Replace `Object.assign({}, order)` with `structuredClone(order)`, which copies every level and keeps `Date` objects intact.
+
+SOLUTION
 
 `Object.assign({}, order)` is a shallow copy: `copy.items` is the same array as `order.items`. `structuredClone` copies every level and keeps the `Date` as a `Date`, which a JSON round trip would not:
 

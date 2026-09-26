@@ -688,7 +688,17 @@ TRY IT YOURSELF
 
 Write `tests/password.test.ts` with two tests: the right password is accepted and a wrong one refused; and a stored value that is not in the `scrypt$salt$key` format is refused without throwing.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`const stored = await hashPassword("a long passphrase");`, then `assert.equal(await verifyPassword(...), true)` and `false` for a changed password.
+
+HINT 2
+
+`assert.equal(await verifyPassword("a long passphrase", "plain-text-password"), false);`. `verifyPassword` is written to return `false` for a bad shape, never to throw.
+
+SOLUTION
 
 tests/password.test.tsNode.js only
 
@@ -732,7 +742,17 @@ TRY IT YOURSELF
 
 A bank would not accept a one-hour token. Using `createToken`'s `ttlSeconds` parameter, make a token that lives 5 minutes, and show that it is valid after 4 minutes and refused after 6.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`ttlSeconds` is `createToken`'s fourth argument, and it counts seconds: 5 minutes is `5 * 60`.
+
+HINT 2
+
+`createToken(7, secret, now, 5 * 60)`. Everything else stays the same; `readToken` already returns `undefined` once `now` passes the token's `exp`.
+
+SOLUTION
 
 try-short-token.tsNode.js only
 

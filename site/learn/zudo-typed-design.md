@@ -414,7 +414,7 @@ Four decisions to look at:
 
 - **DTO types come from schemas.** `Infer<typeof PlaceOrderBody>` is the type of whatever `parse` returns, so the schema (runtime) and the type (compile time) cannot drift apart. The name is used twice on purpose: `PlaceOrderBody` the value is the schema, `PlaceOrderBody` the type is its output.
 - **The request carries branded types, the DTO carries strings.** Between them sits the parse step in the route. A command handler never sees an unchecked id.
-- **Maps are `type` aliases, not interfaces.** `@zudojs/cqrs`'s `CommandOf` and `@zudojs/events`' `EventUnion` require `Record<string, unknown>`, which an interface does not satisfy (it has no index signature), as the next example shows.
+- **Payload types may be interfaces or `type` aliases.** `@zudojs/cqrs`'s `CommandOf` and `@zudojs/events`' `EventUnion` accept any object type as the payload, an interface included, as the next example shows. (Before `@zudojs/cqrs` and `@zudojs/events` 1.3.0, both required a `Record<string, unknown>` bound, which an interface never satisfies because it has no index signature; a module built on an older version still needs the payload written as an inline object type or a `type` alias.)
 - **`as const satisfies Record<BillingErrorCode, number>`** checks that every code has a status (a missing one is an error) while keeping the exact literal types, so `BILLING_STATUS.AMOUNT_MISMATCH` is `422`, not just `number`.
 
 interface-payload.ts
@@ -428,23 +428,17 @@ interface RefundData {
 }
 
 type RefundOrder = CommandOf<"RefundOrder", RefundData>;
-type RefundOrderFixed = CommandOf<"RefundOrder", { readonly orderId: string; readonly reason: string }>;
+const refund: RefundOrder = { type: "RefundOrder", orderId: "ord_1", reason: "duplicate charge" };
+console.log(refund);
 ```
 
-What `npx tsc --noEmit` prints
+Output of `npx tsx interface-payload.ts` and of the browser terminal
 
-```ts
-interface-payload.ts:8:45 - error TS2344: Type 'RefundData' does not satisfy the constraint 'Record<string, unknown>'.
-  Index signature for type 'string' is missing in type 'RefundData'.
-
-8 type RefundOrder = CommandOf<"RefundOrder", RefundData>;
-                                              ~~~~~~~~~~
-
-
-Found 1 error in interface-payload.ts:8
+```json
+{ type: 'RefundOrder', orderId: 'ord_1', reason: 'duplicate charge' }
 ```
 
-An inline object type (or a `type` alias) is accepted, the interface is not. Keep payload and map types as aliases in contract files.
+The `type` key from `CommandOf`'s first argument and the fields of `RefundData` merge into one plain object, whether `RefundData` was declared as an interface or a type alias. Keeping contract payloads as `interface`s is fine; this module's maps use `type` aliases mainly so a whole map (`BillingCommands`, not one payload) can satisfy `Spec` below, which does still need an index signature.
 
 ## Typed buses: the name decides the type
 
@@ -1070,7 +1064,17 @@ TRY IT YOURSELF
 
 Add a `CancelOrder` command: it takes a `userId`, an `orderId` and a `reason`, and returns a `CancelledOrder`. Only the owner may cancel, and only a pending order. Write a `cancel(order: PendingOrder, reason)` transition, extend a copy of the command map, and implement the handler with the same errors as the other handlers.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Mirror `markPaid`: `cancel` just spreads the order and overrides two fields, `return { ...order, status: "cancelled", reason };`. In the handler, check `order.userId !== userId` next to the missing-order check, since both are "not found" from the caller's point of view.
+
+HINT 2
+
+`const order = await orders.findById(orderId); if (!order || order.userId !== userId) throw new BillingError("ORDER_NOT_FOUND", ...); if (order.status !== "pending") throw new BillingError("ORDER_NOT_PENDING", ...); const done = cancel(order, reason); await orders.save(done); return done;`.
+
+SOLUTION
 
 cancel-order.ts
 
@@ -1135,7 +1139,17 @@ TRY IT YOURSELF
 
 Add a `ListMyOrders` query that returns a user's orders as `OrderResponse`s, newest first. The in-memory store has no "find by user" method yet: add one to a port of your own (`OrderLister`), and implement it over a small array for the exercise.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Copy the array first so `sort` does not mutate `rows`: `[...(await lister.listByUser(userId))].sort(...)`. ISO timestamps sort correctly as plain text, so `localeCompare` works directly on `placedAt`.
+
+HINT 2
+
+`const mine = [...(await lister.listByUser(userId))].sort((a, b) => b.placedAt.localeCompare(a.placedAt)); return mine.map((order) => toOrderResponse(order, pro));`.
+
+SOLUTION
 
 list-orders.ts
 
@@ -1190,7 +1204,17 @@ TRY IT YOURSELF
 
 Add an `"sms"` channel to `Notification` with a `phone` and a `text`, and write a `describe(notification)` function with an exhaustive `switch`. Show the three channels.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The union member reads `{ readonly channel: "sms"; readonly phone: string; readonly text: string }`. Add it with a `|` next to the other two, then add a matching `case "sms":` that reads `notification.phone` and `notification.text`.
+
+HINT 2
+
+`case "sms": return \`SMS to ${notification.phone}: ${notification.text.slice(0, 160)}\`;`, and a third object in `all`: `{ channel: "sms", phone: "+2348012345678", text: "Your Task API Pro plan is active." }`.
+
+SOLUTION
 
 sms-channel.ts
 

@@ -44,7 +44,7 @@ MODULE 2
 
 ## Capstone
 
-1. [7**A whole project through the CLI**Build a hall-booking API from zudojs create to a Docker image, generating each layer with the CLI and fixing the five things the generator gets wrong.70 min](https://zudojs.oyinlola.site/learn/zudo-cli-project)
+1. [7**A whole project through the CLI**Build a hall-booking API from zudojs create to a Docker image, generating each layer with the CLI and writing the business rules and tests the generator can't.70 min](https://zudojs.oyinlola.site/learn/zudo-cli-project)
 2. [8**Capstone: ShopFlow**Plan and build ShopFlow with ZudoJS: a runnable core for accounts, products and a checkout that never oversells, then milestones toward services.120 min](https://zudojs.oyinlola.site/learn/capstone-shopflow)
 3. [9**Capstone: a production SaaS**Build FeesDesk, a multi-school fees platform in naira: a tested payment slice that uses most of ZudoJS, then milestones and the graduation checklist.150 min](https://zudojs.oyinlola.site/learn/capstone-saas)
 4. [10**Final production challenge**Someone else's gift-card feature works in the demo and fails everything else. Find its problems, fix them step by step, and prove each fix with a test.120 min](https://zudojs.oyinlola.site/learn/final-challenge)

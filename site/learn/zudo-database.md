@@ -989,7 +989,17 @@ TRY IT YOURSELF
 
 Write migration 3, `add-task-due-date`, that adds a nullable `due_date date` column to `tasks`, with a `down` that removes it. Run all migrations and print the column names of `tasks` from `information_schema.columns`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+A migration is an object with `version`, `name`, `up` and `down`. Inside each, `tx.$executeRawUnsafe(sql)` runs one statement, the same way `migrations.ts` does for the `tasks` table itself.
+
+HINT 2
+
+`up`: `ALTER TABLE tasks ADD COLUMN due_date date`. `down`: `ALTER TABLE tasks DROP COLUMN due_date`. Add `addDueDate` after the existing migrations, as `[...migrations, addDueDate]` already does.
+
+SOLUTION
 
 due-date.tsNode.js only
 
@@ -1045,7 +1055,17 @@ TRY IT YOURSELF
 
 Add a method `openByPriority(priority)` to `TaskRepository` that returns the tasks that are not done and have that priority, newest first, using the query builder. Mark task 4 done and try it.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Chain `createQueryBuilder<keyof Task>().where("done", false).where("priority", priority)`, then hand the query to `this.findByQuery(query)`, as `query.ts` did earlier in this lesson.
+
+HINT 2
+
+Add `.orderByDesc("createdAt").orderByDesc("id")` before `this.findByQuery(query)`. The second sort key matters: the seed created every task in one transaction, so several share a `createdAt`.
+
+SOLUTION
 
 open-by-priority.tsNode.js only
 
@@ -1091,7 +1111,17 @@ TRY IT YOURSELF
 
 Clients send `page` and `limit` as strings in the query string. Write `listTasks(query)` that validates them with `@zudojs/schema` (whole numbers, page at least 1, limit 1 to 50, both optional) and returns a page of tasks sorted by id. Try it with `{ page: "2", limit: "2" }` and with `{ limit: "5000" }`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`schema.coerce.number()` turns the incoming string into a number before the other checks run. Chain `.int()`, then `.min(1)` for `page`.
+
+HINT 2
+
+`page: schema.coerce.number().int().min(1).default(1)` and `limit: schema.coerce.number().int().min(1).max(50).default(10)`. Both fields are only checked, never required, because `.default(...)` fills in a value when one is missing.
+
+SOLUTION
 
 list-tasks.tsNode.js only
 

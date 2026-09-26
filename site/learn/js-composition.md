@@ -1224,7 +1224,17 @@ TRY IT YOURSELF
 
 The shop limits some promotions to 5 items per customer. Write `LimitedCart`, a forwarding wrapper around any object with `add(sku, priceKobo, qty)` and a `lines()` method, that throws when the total quantity would go above the limit. Do not use `extends`. It should offer `add`, `lines` and a `quantity` getter.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`this.#cart.lines()` gives you every line with its `qty`. Sum them with `reduce` for the `quantity` getter.
+
+HINT 2
+
+In `add`: `if (this.quantity + qty > this.#limit) throw new Error(...)`, else `this.#cart.add(sku, priceKobo, qty); return this;`. Check the limit before forwarding, so a refused item never reaches the real cart.
+
+SOLUTION
 
 limited-cart.js
 
@@ -1334,7 +1344,17 @@ Output of `node audited-stock.js` and of the browser terminal
 [ 'set RICE=10', 'restock RICE+5', 'set RICE=15' ]
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Each wrapper method should log, then call the *same-named* method on `this.#stock` — never on `this`. That is what stops an inner call like `restock` calling `set` from reaching the wrapper again.
+
+HINT 2
+
+`set(sku, qty) { this.#log.push(\`set ${sku}=${qty}\`); this.#stock.set(sku, qty); }` and the same shape for `restock`.
+
+SOLUTION
 
 `Stock.restock` calls `this.set`. Because `this` is the audited stock, the call reaches `AuditedStock.set`, which logs a second entry for the same restock. The wrapper calls methods on the stock it holds, so the inner self-call stays inside that object:
 
@@ -1397,7 +1417,17 @@ TRY IT YOURSELF
 
 Using the `Checkout` idea from the delegation section, add a "pickup" strategy (always free) and a pricing rule `freeDeliveryWeekend` that removes a ₦2,500 fee when `order.day` is `"Sat"` or `"Sun"`. Write both without changing any existing function, and print the totals for a ₦30,000 order on a Tuesday and on a Saturday, with flat-rate delivery and with pickup.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`pickup` needs the same shape as `flatRate`: a `feeKobo` function, just one that always returns `0`.
+
+HINT 2
+
+`freeDeliveryWeekend` receives the fee as its third argument: `(order.day === "Sat" || order.day === "Sun") ? amount - feeKobo : amount`.
+
+SOLUTION
 
 weekend.js
 

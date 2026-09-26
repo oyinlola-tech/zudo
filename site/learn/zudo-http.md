@@ -138,8 +138,8 @@ Output of `npx tsx routes.ts`
 GET /tasks -> 200 [{"id":1,"title":"Buy milk","done":false},{"id":2,"title":"Walk the dog","done":true}]
 GET /tasks/2 -> 200 {"id":2,"title":"Walk the dog","done":true}
 GET /tasks/9 -> 404 {"error":"Task 9 not found","code":"ERR_RESOURCE_NOT_FOUND"}
-GET /users -> 404 {"error":"Not Found","method":"GET","path":"/users"}
-DELETE /tasks/1 -> 405 {"error":"Method Not Allowed","method":"DELETE","path":"/tasks/1","allowed":["GET"]}
+GET /users -> 404 {"error":"Not Found","code":"NOT_FOUND","method":"GET","path":"/users"}
+DELETE /tasks/1 -> 405 {"error":"Method Not Allowed","code":"METHOD_NOT_ALLOWED","method":"DELETE","path":"/tasks/1","allowed":["GET","HEAD","OPTIONS"]}
 ```
 
 You wrote two routes, and five different requests got sensible answers:
@@ -342,11 +342,11 @@ Output of `npx tsx create.ts`
 ```ts
 good -> 201 /tasks/1 {"id":1,"title":"Buy milk","done":false}
 broken JSON -> 400 null {"error":"The request body is not valid JSON","code":"BAD_REQUEST"}
-too short -> 400 null {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+too short -> 400 null {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["title"],"code":"too_small","message":"String must be at least 3 characters"}]}
 not JSON -> 415 null {"error":"Send JSON with Content-Type: application/json","code":"UNSUPPORTED_MEDIA_TYPE"}
 ```
 
-Every bad request got a 4xx status, and none of them reached the task list. The schema failure became a 400 by itself, because `SchemaError` carries status 400. Its body only says "Validation failed" for now; [The ZudoJS error system](https://zudojs.oyinlola.site/learn/zudo-errors) adds the list of problems.
+Every bad request got a 4xx status, and none of them reached the task list. The schema failure became a 400 by itself, because `SchemaError` carries status 400, and its body already lists exactly which field failed and why in `issues`, sanitised so a submitted value never leaks back into the response. [The ZudoJS error system](https://zudojs.oyinlola.site/learn/zudo-errors) covers how any thrown error becomes a body like this.
 
 ## Headers and cookies
 
@@ -447,7 +447,7 @@ Output of `npx tsx delete.ts`
 ```ts
 first DELETE -> 204
 second DELETE -> 404 {"error":"Task 1 not found","code":"ERR_RESOURCE_NOT_FOUND"}
-GET /crash -> 500 {"error":"Internal Server Error"}
+GET /crash -> 500 {"error":"Internal Server Error","code":"INTERNAL_SERVER_ERROR"}
 ```
 
 The last request hit a bug. The error message contained a file path, which would tell an attacker about your server, and it was **not** sent. The client got a generic 500. You will decide exactly what clients see, and log the details for yourself, in [The ZudoJS error system](https://zudojs.oyinlola.site/learn/zudo-errors).
@@ -874,7 +874,17 @@ TRY IT YOURSELF
 
 Add a `PATCH /tasks/:id/done` route to the small in-memory router from the [routes section](#router). It sets `done` to `true` and answers 200 with the task, or 404 if there is no such task.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`const task = tasks.find((t) => String(t.id) === ctx.params.id); if (!task) throw new NotFoundError(\`Task ${ctx.params.id} not found\`);`.
+
+HINT 2
+
+Once found: `task.done = true; return createResponseContext().json(task);`.
+
+SOLUTION
 
 patch.tsNode.js only
 
@@ -914,7 +924,17 @@ TRY IT YOURSELF
 
 Change the `GET /tasks` route of [the filter example](#query) so it also accepts `?limit=N`. It must be a whole number from 1 to 50; anything else is a 400. Remember: the value arrives as a string, maybe as an array.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`const raw = ctx.query.limit ?? "50"; const limit = typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) : NaN;` — a non-string (array) value fails the `typeof` check and falls through to `NaN`.
+
+HINT 2
+
+`if (!(limit >= 1 && limit <= 50)) throw badRequest("limit must be a whole number from 1 to 50"); return createResponseContext().json(tasks.slice(0, limit));`.
+
+SOLUTION
 
 limit.tsNode.js only
 

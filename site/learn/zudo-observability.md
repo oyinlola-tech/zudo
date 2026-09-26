@@ -279,6 +279,8 @@ Both requests ran at the same time and finished in the opposite order, yet each 
 
 A trace id that you put on every log line, every span and every error report is a **correlation id**: with one id you can find everything that belongs to one request. Put it in your error responses too, for example as a `traceId` field. When a user reports a problem, they can send you that id.
 
+Since `@zudojs/observability` 1.3.0, a log record carries the propagation context's `requestId` and `correlationId` the same way it already carried `traceId`: a custom exporter like `printLogs` above can read `r.requestId` and `r.correlationId` straight off the record, with no extra plumbing, and the console exporter writes them too. A logger's `correlate` option (default `true`) is what stamps these fields on; a logger built with `correlate: false` never adds them, which matters for a line written well before any request context exists.
+
 ## Across services: the traceparent header
 
 In [the RPC lesson](https://zudojs.oyinlola.site/learn/zudo-rpc) the Task API called other services. A trace should follow the request there too. The W3C standard for this is the `traceparent` header: `00-<trace id>-<span id>-<flags>`. The caller sends its current span in it, and the receiver starts its spans as children:
@@ -502,7 +504,17 @@ TRY IT YOURSELF
 
 Add a counter `tasks.created` with a `priority` label. Create two `high` tasks and one `low` task, then print every series with `obs.metrics.getSeries("tasks.created")`. Would a `title` label be a good idea?
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`obs.metrics.counter(name, labels)` returns the same counter for the same name and labels, so calling it once per loop turn and incrementing it is enough: `obs.metrics.counter("tasks.created", { priority }).increment();`.
+
+HINT 2
+
+`obs.metrics.counter("tasks.created", { priority }).increment();` inside the loop. Two calls with `priority: "high"` add up to the same series.
+
+SOLUTION
 
 priority.tsNode.js only
 
@@ -535,7 +547,17 @@ TRY IT YOURSELF
 
 Using `spanTree` from `print.ts`, trace a `POST /tasks` request with three steps: `validate` (1 ms), `db.insert` (40 ms) and `events.publish` (5 ms). Which step would you optimize first?
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Nest the calls the way the worked example nests `"load data"` and `"render pdf"` inside `"GET /report"`: each inner `withSpan` call is `await`ed inside the outer one's callback.
+
+HINT 2
+
+`await withSpan(obs.tracer, "POST /tasks", async () => { await withSpan(obs.tracer, "validate", () => wait(1)); await withSpan(obs.tracer, "db.insert", () => wait(40)); await withSpan(obs.tracer, "events.publish", () => wait(5)); });`.
+
+SOLUTION
 
 slow-step.tsNode.js only
 
@@ -571,7 +593,17 @@ TRY IT YOURSELF
 
 A client sends `traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01` and `x-user-role: admin`. The Task API joins the trace. Should it also trust the role?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read what joining a trace actually does to a request's *power*, versus what a role decides. Do the two headers carry the same kind of claim?
+
+HINT 2
+
+Ask where each value would need to come from if it were trustworthy: is there a place in this lesson, or an earlier one, that already answers "where does a verified identity or role come from"?
+
+SOLUTION
 
 No. Joining a trace only links spans together: at worst, a client makes its request appear inside someone else's trace. A role decides what the caller may do, so it must come from your own authentication (a verified session or token, as in [the auth lesson](https://zudojs.oyinlola.site/learn/zudo-auth)), never from a header the client can type. Treat every incoming header as untrusted, and give each one only as much power as it can safely have.
 

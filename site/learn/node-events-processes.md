@@ -4,7 +4,7 @@ description: "Coordinate a Node.js program with EventEmitter, run other programs
 source: https://zudojs.oyinlola.site/learn/node-events-processes
 ---
 
-LEVEL 4 · LESSON 4 OF 20
+LEVEL 4 · LESSON 4 OF 21
 
 Node.js Core
 
@@ -1101,7 +1101,17 @@ TRY IT YOURSELF
 
 Write a function `watchStock(stock, sku)` that listens for `"low"` events on an emitter, logs only the ones for its `sku`, and returns a function that removes the listener. Show that after calling it, `listenerCount("low")` is 0 again.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Keep a reference to the listener function in a variable, so you can pass that same reference to both `on` and, later, `off`.
+
+HINT 2
+
+`const listener = (item) => { if (item.sku === sku) console.log(...); }; stock.on("low", listener); return () => stock.off("low", listener);`
+
+SOLUTION
 
 watch-stock.jsNode.js only
 
@@ -1141,7 +1151,17 @@ TRY IT YOURSELF
 
 A server needs Node.js 24 or newer in its child processes. Write `checkNode()` that runs `node --version` with `execFile`, parses the major version and throws a clear error if it is too old. Also show what happens when the program is missing, by running a program name that does not exist.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`stdout.trim().replace(/^v/, "").split(".")[0]` gets you the major version as text; wrap it in `Number(...)`.
+
+HINT 2
+
+`if (major < minMajor) throw new Error(\`${file} ${major} is too old, need ${minMajor}+\`);` then, in the `catch`, check `error.code === "ENOENT"` before rethrowing.
+
+SOLUTION
 
 check-node.jsNode.js only
 
@@ -1182,7 +1202,17 @@ TRY IT YOURSELF
 
 Change the sales report so the main program starts 4 workers, each adding up a quarter of the orders (pass `start` and `end` in `workerData`), and combines the results. To keep it self-contained, use an `eval` worker that sums the numbers from `start` to `end - 1`, and check the combined total against the formula `n * (n - 1) / 2`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Build `ranges` the same way the worked example built its chunks, with `size` and `parts` in place of `chunk` and `workers`. Inside `runPart`, create the worker with `new Worker(code, { eval: true, workerData: { start, end } })`.
+
+HINT 2
+
+`Array.from({ length: parts }, (_, i) => [i * size, Math.min(n, (i + 1) * size)])`, and `return once(worker, "message").then(([sum]) => sum);`.
+
+SOLUTION
 
 report-pool.jsNode.js only
 

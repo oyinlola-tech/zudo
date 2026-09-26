@@ -858,7 +858,17 @@ TRY IT YOURSELF
 
 Support opens a customer's *pending* orders, oldest first: `select id, placed_at from orders where customer_id = $1 and status = 'pending' order by placed_at`. Design one index for it, create it, and show that the plan has no Sort and no Seq Scan.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Put the equality column first, so the index narrows to one customer immediately; put the sort column right after it, so the matching rows come out already in `placed_at` order. The rare status becomes a `where` clause on the index itself, not a third indexed column.
+
+HINT 2
+
+`create index orders_customer_pending_idx on orders (customer_id, placed_at) where status = 'pending';`
+
+SOLUTION
 
 exercise-pending.jsNode.js only
 
@@ -887,7 +897,17 @@ TRY IT YOURSELF
 
 These conditions cannot use a B-tree index on the column. Rewrite each so it can: (a) `where total_kobo / 100 > 40000`; (b) `where extract(year from placed_at) = 2026`; (c) `where coalesce(status, 'pending') = 'pending'` on a nullable `status`; (d) `where customer_id::text = $1`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+A B-tree index can only help when the *indexed column itself* appears bare on one side of the comparison. Whenever the column is wrapped in a function or an operator, move that computation to the other side, onto the constant, instead.
+
+HINT 2
+
+(a) divide the constant, not the column. (b) turn "which year" into a range with `>=` and `<` on the bare timestamp. (c) split the `coalesce` into an `or` of two sargable conditions, one of them `is null`. (d) cast the parameter to match the column's type, never the column to match the parameter's.
+
+SOLUTION
 
 (a) `where total_kobo > 4000000`: move the arithmetic to the constant side. (b) `where placed_at >= '2026-01-01' and placed_at < '2027-01-01'`: a half-open range on the bare column. (c) `where status = 'pending' or status is null`: both parts can use an index (a B-tree indexes nulls too), and PostgreSQL can combine them with a BitmapOr. (d) `where customer_id = $1::integer`, or better, send a number from the application: cast the parameter, never the column. When a rewrite is impossible, an expression index on exactly the expression used is the fallback.
 
@@ -897,7 +917,17 @@ TRY IT YOURSELF
 
 A table has these indexes and a week of counters: `orders_pkey` (idx_scan 9,120,044), `orders_customer_idx (customer_id)` (0), `orders_customer_placed_idx (customer_id, placed_at desc)` (2,300,511), `orders_ref_key unique (provider_ref)` (0), `orders_status_idx (status)` (12). Which would you drop, and what would you check first?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+A scan count of 0 does not automatically mean "unused": check first whether another index already starts with the same leading column and would serve the same queries just as well.
+
+HINT 2
+
+`orders_customer_idx` is redundant: `orders_customer_placed_idx` already starts with `customer_id`, so anything the narrower index could do, the wider one can too. A unique index earns its keep by enforcing the constraint alone, even at 0 scans — check `pg_stat_statements` and every replica's counters before dropping anything, and drop `concurrently`.
+
+SOLUTION
 
 Drop `orders_customer_idx`: it is unused and fully covered by the composite index, which starts with the same column. `orders_status_idx` is a candidate too: 12 scans a week do not pay for maintaining an index on every order write, but first find those 12 queries in `pg_stat_statements`, because they may be an important monthly report that a partial index would serve better. Keep `orders_ref_key` although no query reads it: it enforces uniqueness on every insert. Before dropping anything, check the counters on every replica, and drop with `drop index concurrently` so writers are not blocked.
 

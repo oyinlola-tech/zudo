@@ -579,7 +579,17 @@ TRY IT YOURSELF
 
 Write an interceptor that refuses every operation tagged `"Admin"` unless the **verified** role in the context is `"admin"`. Store the role with your own context key. The input must never decide the role: test it with an input that claims `role: "admin"`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Read the tags off `call.operation.metadata?.tags`, and the verified role off `call.context.get(RoleKey)`, never off `call.input`. Combine both with `&&` before refusing.
+
+HINT 2
+
+`if (call.operation.metadata?.tags?.includes("Admin") && call.context.get(RoleKey) !== "admin") return apiFailure(new APIAuthorizationError("Admins only.")); return next();`.
+
+SOLUTION
 
 admin.tsNode.js only
 
@@ -627,7 +637,17 @@ TRY IT YOURSELF
 
 `runApiCli` turns results into exit codes for you. To see how, write your own `exitCode(result)`: 0 for success, 77 for status 401 or 403, 65 for 422, and 1 for anything else. Test it with results made by `apiSuccess` and `apiFailure`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Check `result.ok` first and return early. Otherwise read `result.error.statusCode` and compare it against 401, 403 and 422 in turn.
+
+HINT 2
+
+`if (result.ok) return 0; const status = result.error.statusCode; if (status === 401 || status === 403) return 77; if (status === 422) return 65; return 1;`.
+
+SOLUTION
 
 exit-code.tsNode.js only
 

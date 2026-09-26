@@ -1139,7 +1139,7 @@ Output of `npx tsx src/check-import.ts`
 ```ts
 no token   401 - {"error":"A valid import token is required","code":"ERR_AUTHENTICATION_FAILED"}
 intern     403 - {"error":"This token may not import tasks","code":"ERR_FORBIDDEN"}
-bad body   400 - {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+bad body   400 - {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["tasks"],"code":"too_small","message":"Array must have at least 1 item"}]}
 import     201 - {"created":1,"skipped":["Buy milk"]}
 again      201 - {"created":1,"skipped":[]}
 too often  429 60 {"error":"Too many imports, try again later"}
@@ -1203,7 +1203,17 @@ TRY IT YOURSELF
 
 Tellers may move at most ₦100,000 per day in total. Write a middleware `dailyCap` for the transfer pipeline that keeps a running total per user id and refuses a transfer that would go over the cap, with an `AuthorizationError`. Where in the list does it go, and why? Show three transfers of ₦45,000 by Ada.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Read the amount and user the same way the checks before it already resolved them: `context.user!.id` and `context.transfer!.amountKobo`.
+
+HINT 2
+
+Guard first: `if (already + amount > CAP_KOBO) throw new AuthorizationError(...)`. Only after `await next()` succeeds do you update the map, so a failed transfer never counts against the cap.
+
+SOLUTION
 
 daily-cap.tsNode.js only
 
@@ -1256,7 +1266,17 @@ TRY IT YOURSELF
 
 Reuse the transfer checks for a nightly batch job: build a pipeline for the context `request("tok-ada", …)` with `errorMode: "throw"`, an `errorMiddleware` that prints the failing request id, and the handler `moveMoney`. Run two jobs, one valid and one with an amount of ₦0.50, and let the job runner's own `try`/`catch` decide what to do.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The middleware list's first entry: `errorMiddleware<string>((_error, context) => console.log("job failed:", (context as TransferContext).requestId))`, before `authenticate`.
+
+HINT 2
+
+`createPipeline` takes the options object as its third argument, after the handler: `moveMoney, { errorMode: "throw" }`.
+
+SOLUTION
 
 batch.tsNode.js only
 

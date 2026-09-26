@@ -547,7 +547,17 @@ TRY IT YOURSELF
 
 A new shop wants to know the fewest consecutive days it ever needed to take ₦1,000,000. Daily revenues are never negative. Write `shortestRun(daily, target)` that returns the length of the shortest run whose total is at least the target, or 0 if no run reaches it. Use a variable window.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+While `total >= target`, the window is valid: record its length as a candidate for `best`, then shrink it from the left (subtract `daily[left]`, then `left++`) and check again.
+
+HINT 2
+
+`while (total >= target) { best = Math.min(best, right - left + 1); total -= daily[left]; left++; }`
+
+SOLUTION
 
 shortest-run.js
 
@@ -585,7 +595,17 @@ TRY IT YOURSELF
 
 Charts smooth daily revenue with a 7-day moving average: for each day from the 7th on, the average of that day and the six before it. Write `movingAverage(daily, k)` in O(n), returning whole naira (rounded).
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Add `daily[i]` to `total` every iteration. Once `i >= k`, subtract `daily[i - k]`. Once `i >= k - 1`, push `Math.round(total / k)`.
+
+HINT 2
+
+`total += daily[i]; if (i >= k) total -= daily[i - k]; if (i >= k - 1) out.push(Math.round(total / k));`
+
+SOLUTION
 
 moving-average.js
 
@@ -620,7 +640,17 @@ TRY IT YOURSELF
 
 Using prefix sums, count how many 7-day periods had total revenue of at least ₦500,000, where daily revenue is given in naira. Build the prefix array once and use one subtraction per period.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop `start` from 0 while `start + k <= daily.length`. Each period's total is `prefix[start + k] - prefix[start]`; count it when that is at least `target`.
+
+HINT 2
+
+`for (let start = 0; start + k <= daily.length; start++) { if (prefix[start + k] - prefix[start] >= target) count++; }`
+
+SOLUTION
 
 weeks-over-target.js
 

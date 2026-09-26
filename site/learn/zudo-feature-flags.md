@@ -174,7 +174,7 @@ still inside at 50%: true
 
 A 20% rollout reaches about 20% of users, and when you raise it to 50%, everybody who already had the feature keeps it. The flag key is part of the hash, so the same 20% of users do not end up as the guinea pigs of every experiment.
 
-The rule uses `userId`, then `tenantId`, then `sessionId`. A context with none of them counts as the single user `"anonymous"`, so all anonymous visitors get the same answer. Give logged-out visitors a session id if they should be spread out too.
+The rule uses `userId`, then `tenantId`, then `sessionId`. A context with none of them counts as the single user `"anonymous"`, so all anonymous visitors get the same answer. Give logged-out visitors a session id if they should be spread out too. That order also means that if a context happens to carry both a `userId` and a `tenantId`, members of the same company land in different buckets — fine for a per-user feature, wrong for one you want a whole tenant to see together. Set `bucketBy: "tenantId"` on a `percentage` or `variant` rule to pin the subject: every user of that tenant then gets the same answer, and a context missing `tenantId` simply does not match the rule.
 
 ## Variants: an A/B test
 
@@ -452,7 +452,17 @@ TRY IT YOURSELF
 
 Write a flag `new-editor` that is on for users whose `email` attribute ends with `@taskapi.dev`, and for 10% of everyone else. Print the value and reason for `ada` (with a staff email) and for `user-1` to `user-3` (no email).
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+A rule is one object in the `rules` array. The attribute rule looks like `{ type: "attribute", attribute: "email", operator: "ends_with", value: "@taskapi.dev" }` — order matters, so put it first.
+
+HINT 2
+
+The second rule is `{ type: "percentage", percentage: 10, value: true }`. Rules are checked in order and the first match wins, so users without a staff email only ever reach this one.
+
+SOLUTION
 
 new-editor.ts
 
@@ -496,7 +506,17 @@ TRY IT YOURSELF
 
 Which of these definitions are unsafe, and why? (a) `{ key: "max-upload-mb", enabled: false, defaultValue: 100 }`, switched off because the file storage is failing (b) `{ key: "admin-panel", enabled: true, defaultValue: false, rules: [{ type: "attribute", attribute: "role", operator: "equals", value: "admin" }] }` with `role` read from a request header (c) `{ key: "beta-banner", enabled: true, defaultValue: false, visibility: "client" }`
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For (a), work out what a number flag actually serves once `enabled` is `false` and no `offValue` is declared. Is it 0?
+
+HINT 2
+
+For (b), ask where `attributes.role` came from before it reached `evaluate`, and who controls that value. For (c), ask whether anything sensitive would leak if a user opened their browser's network tab and read the flag's value.
+
+SOLUTION
 
 (a) is unsafe: a number flag that is off serves its `defaultValue`, so uploads of 100 MB are still allowed while everyone believes they are stopped. Add `offValue: 0`. (b) is unsafe twice: the client controls the header, so anyone can become "admin", and a flag must not replace the permission check anyway. (c) is fine: it is off by default, and a banner is safe to show in the browser.
 

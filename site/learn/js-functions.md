@@ -515,7 +515,17 @@ TRY IT YOURSELF
 
 Add `power(base, exponent)` and `remainder(a, b)` functions, as arrow functions, and check them with `2 ** 10` and `17 % 5`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+An arrow function whose body is a single expression needs no braces or `return`: the expression's value comes back automatically.
+
+HINT 2
+
+`const power = (base, exponent) => base ** exponent;` and `const remainder = (a, b) => a % b;`
+
+SOLUTION
 
 calc-more.js
 
@@ -542,7 +552,17 @@ TRY IT YOURSELF
 
 The float test failed because `0.1 + 0.2` is not exactly `0.3`. Write `closeTo(a, b)` that returns `true` when two numbers differ by less than `0.000001`, and use it.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`Math.abs(a - b)` gives the size of the difference, whichever number is bigger. Compare that to the tolerance.
+
+HINT 2
+
+`const closeTo = (a, b) => Math.abs(a - b) < 0.000001;`
+
+SOLUTION
 
 close-to.js
 
@@ -570,7 +590,17 @@ TRY IT YOURSELF
 
 Write a recursive function `countdown(n)` that returns a string like `"3 2 1 go"`. What is the base case?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+What should `countdown(0)` return directly, without calling itself? That is the base case.
+
+HINT 2
+
+`if (n <= 0) return "go"; return \`${n} ${countdown(n - 1)}\`;`
+
+SOLUTION
 
 countdown.js
 

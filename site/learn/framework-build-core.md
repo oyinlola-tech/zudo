@@ -1248,7 +1248,9 @@ import { createLogger } from "@zudojs/logger";
 const logger = createLogger({
   name: "bookstore",
   level: "info",
-  transports: [(entry) => console.log(entry.levelName, entry.message, JSON.stringify(entry.metadata))],
+  transports: [
+    (entry) => console.log(entry.levelName, entry.message, JSON.stringify(entry.metadata, (key, value) => (key === "stack" ? undefined : value))),
+  ],
 });
 
 logger.debug("cache miss", { key: "book:b1" });
@@ -1261,10 +1263,10 @@ Output of `npx tsx zudo-logger.ts` and of the browser terminal
 
 ```ts
 info login {"requestId":"req-7","user":"ada","password":"[REDACTED]"}
-error payment failed {"requestId":"req-7","orderId":"ord-1","cause":{}}
+error payment failed {"requestId":"req-7","orderId":"ord-1","cause":{"name":"Error","message":"card declined"}}
 ```
 
-Levels, child loggers and redaction work like yours. Two differences are worth knowing. Transports receive a rich entry (numeric `level`, `levelName`, `metadata`, an id and a timestamp), so formatting is a separate, pluggable step. And an `Error` nested inside the metadata arrives as `{}`, the `JSON.stringify` problem your logger solved: log `error.message` explicitly, or read [Structured logging](https://zudojs.oyinlola.site/learn/zudo-logging) for its error handling.
+Levels, child loggers and redaction work like yours. Two differences are worth knowing. Transports receive a rich entry (numeric `level`, `levelName`, `metadata`, an id and a timestamp), so formatting is a separate, pluggable step. And an `Error` nested inside the metadata is normalised into plain data before a transport ever sees it — `name`, `message` and `stack` first, since those are non-enumerable on the error itself, which is why a bare `JSON.stringify(error)` is `{}`. A custom transport that prints the raw `stack` would print a different, multi-line value on every machine, which is why the `JSON.stringify` replacer above drops it; the built-in formatters have an `includeStackTrace` option for the same reason. Read [Structured logging](https://zudojs.oyinlola.site/learn/zudo-logging) for the rest of its error handling.
 
 ### Lifecycle: @zudojs/lifecycle
 
@@ -1306,7 +1308,6 @@ Output of `npx tsx zudo-lifecycle.ts`
 ```ts
 start database
 start queue
-stop  http
 stop  queue
 stop  database
 LifecycleStartError: Failed to start component "http".
@@ -1316,7 +1317,7 @@ state: disposed
   database: disposed
 ```
 
-The same rollback, with one deliberate difference: ZudoJS also calls `stop` on `http`, the component whose start failed, in case it half-started (bound a port, opened a file) before throwing. That is safer for resources and asks more of you: every `stop` must work even if its `start` did not finish. The manager also has `initialize`, `ready` and `dispose` phases, priorities, retries with backoff and per-component timeouts; [The lifecycle in ZudoJS](https://zudojs.oyinlola.site/learn/zudo-lifecycle) covers them.
+The same rollback as yours: `stop` runs only for components whose `start` actually completed, in reverse. `http` itself is never asked to stop, because its `start` never finished — an earlier version of this package called `stop` on the failing component too, defensively, but that meant every `stop` had to work even when its matching `start` had not, for a benefit (cleaning up whatever a half-finished `start` left behind) that a component-level timeout and its own internal cleanup handle more reliably. The manager also has `initialize`, `ready` and `dispose` phases, priorities, retries with backoff and per-component timeouts; [The lifecycle in ZudoJS](https://zudojs.oyinlola.site/learn/zudo-lifecycle) covers them.
 
 ### Application: @zudojs/core
 
@@ -1379,18 +1380,17 @@ after stop: stopped
   initialize database
   destroy    catalog
   destroy    database
-  destroy    http
 RuntimeInitializationError: Runtime module initializing failed. -> state failed
 ```
 
-`createApplication` plays the part of your `createApp`: modules with dependencies, initialized in order and shut down in reverse. On a failed start it calls the `onDestroy` hooks as its rollback. Notice that `http`'s `onDestroy` ran although its `onInitialize` never did: write destroy hooks that are safe to call on a module that never started. [@zudojs/core](https://zudojs.oyinlola.site/learn/zudo-core) covers modules in full.
+`createApplication` plays the part of your `createApp`: modules with dependencies, initialized in order and shut down in reverse. On a failed start it calls `onDestroy` only for modules whose `onInitialize` actually ran: `catalog` and `database`, in reverse, but not `http`, whose `onInitialize` threw before it did anything to undo. [@zudojs/core](https://zudojs.oyinlola.site/learn/zudo-core) covers modules in full.
 
 | Job | Your mini framework | ZudoJS |
 | --- | --- | --- |
 | Container | `Token`, three lifetimes, captive check, disposal; about 80 lines | `@zudojs/container`: the same, plus class and alias providers, optional resolution, snapshots for tests, typed errors; default lifetime transient |
 | Configuration | One schema gives parsing, checking, types and secrets; environment-variable layers | `@zudojs/config`: prioritised sources (defaults, memory, environment with prefixes, custom), on-demand typed getters, key- and value-based redaction; validate with `@zudojs/schema` |
 | Logger | JSON lines, levels, child fields, redaction by name, error serialisation | `@zudojs/logger`: entries with ids and timestamps, formatters and transports, child loggers, redaction; errors passed on their own, not nested |
-| Lifecycle | Order, timeouts, rollback without the failed component, idempotent stop | `@zudojs/lifecycle`: five phases, priorities, retries, concurrency, events, signal handling; rollback includes the failed component |
+| Lifecycle | Order, timeouts, rollback without the failed component, idempotent stop | `@zudojs/lifecycle`: five phases, priorities, retries, concurrency, events, signal handling; rollback also skips a component whose `start` never completed, the same rule |
 | Application | `createApp` with modules and `stopOnSignals` | `@zudojs/core` with `@zudojs/runtime`: modules, readiness and health, runtime events, signal handling |
 
 ## What a production framework adds
@@ -1412,7 +1412,17 @@ TRY IT YOURSELF
 
 Write `startLevels(components)`: it returns groups of component names such that each group depends only on earlier groups. Every group could then start with `Promise.all`. Reuse `startOrder`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Map each dependency's name to its already-known level: `const deps = (component.dependsOn ?? []).map((name) => level.get(name)!);`.
+
+HINT 2
+
+Then `level.set(component.name, deps.length === 0 ? 0 : Math.max(...deps) + 1);`, the same shape as `waveOf` above.
+
+SOLUTION
 
 levels.ts
 
@@ -1464,7 +1474,17 @@ TRY IT YOURSELF
 
 Write `parseEnvFile(text)` that turns a `.env` file into an `Env` layer: skip blank lines and `#` comments, allow an `export` prefix, strip matching quotes, drop a trailing comment on unquoted values, and throw with the line number on a line without `=`. Use it as the middle layer of `loadConfig`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Strip the prefix and skip early: `const line = rawLine.trim().replace(/^export\s+/, ""); if (line === "" || line.startsWith("#")) continue;`. Find `=` with `line.indexOf("=")`, and throw when it is `<= 0`.
+
+HINT 2
+
+Quotes: `const quoted = /^(["'])(.*)\1$/.exec(value); if (quoted) value = quoted[2]!; else value = value.replace(/\s+#.*$/, "");`, then `env[key] = value;`.
+
+SOLUTION
 
 env-file.ts
 
@@ -1535,7 +1555,17 @@ TRY IT YOURSELF
 
 For each BookStore service, choose singleton, scoped or transient, and say who disposes it: the PostgreSQL connection pool; the current user of a request; a password hasher with no state; the database transaction of a request; the typed config; a logger with the request's id bound to it.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask two questions of each service: does its state belong to the whole app, to one request, or to nobody? And who created it is usually who must dispose of it.
+
+HINT 2
+
+A service with no state at all does not need a lifetime that recreates it; the interesting decisions are the two that are scoped to one request, and why sharing them more widely would leak data between customers.
+
+SOLUTION
 
 - **Connection pool:** singleton. Expensive to create, safe to share; the container closes it at shutdown.
 - **Current user:** scoped. It belongs to one request; sharing it would show one customer's orders to another.

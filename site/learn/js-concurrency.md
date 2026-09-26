@@ -887,7 +887,17 @@ TRY IT YOURSELF
 
 Write `settleWithLimit(items, limit, fn)` on top of `mapWithLimit`: it never rejects, and returns an `allSettled`-style report for each item. Test it with invoices where two fail.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`Promise.try(fn, item, i)` calls `fn` and gives you back a promise either way, even if `fn` throws synchronously. Attach `.then` with *two* handlers to turn that promise into a report that never rejects.
+
+HINT 2
+
+`mapWithLimit(items, limit, (item, i) => Promise.try(fn, item, i).then((value) => ({ status: "fulfilled", value }), (reason) => ({ status: "rejected", reason })))`
+
+SOLUTION
 
 settle-limit.js
 
@@ -929,7 +939,17 @@ TRY IT YOURSELF
 
 Write `retry(fn, { attempts, delayMs, signal })` that calls `fn(signal)`, waits `delayMs` between failed attempts using the cancellable `sleep`, and stops immediately when the signal aborts, even in the middle of a wait. Show a success on the third attempt and a cancellation during a wait.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check `signal?.throwIfAborted()` before each attempt, and again after a failure — that is what makes cancellation win even in the middle of a wait, instead of only between whole attempts.
+
+HINT 2
+
+`for (let attempt = 1; attempt <= attempts; attempt++) { signal?.throwIfAborted(); try { return await fn(signal, attempt); } catch (error) { if (signal?.aborted) throw signal.reason; lastError = error; if (attempt < attempts) await sleep(delayMs, { signal }); } } throw lastError;`
+
+SOLUTION
 
 retry-cancel.js
 
@@ -982,7 +1002,17 @@ TRY IT YOURSELF
 
 Using `createMutex`, write `createAccountLocks()` that returns `withLock(accountId, job)`: jobs for the same account run one at a time, jobs for different accounts do not wait for each other. Show it with the order in which the jobs finish.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Each distinct `accountId` needs its own mutex, created the first time that id is seen and reused after: `if (!locks.has(accountId)) locks.set(accountId, createMutex());`.
+
+HINT 2
+
+`function createAccountLocks() { const locks = new Map(); return function withLock(accountId, job) { if (!locks.has(accountId)) locks.set(accountId, createMutex()); return locks.get(accountId)(job); }; }`
+
+SOLUTION
 
 account-locks.js
 

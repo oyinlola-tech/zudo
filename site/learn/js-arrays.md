@@ -442,7 +442,17 @@ TRY IT YOURSELF
 
 Using the same kind of student list, print the names of the students with a grade of 80 or more, as one comma-separated string.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Chain three array methods: `filter` to keep the high grades, `map` to take just the name, `join` to make one string.
+
+HINT 2
+
+`students.filter((s) => s.grade >= 80).map((s) => s.name).join(", ")`
+
+SOLUTION
 
 passed.js
 
@@ -473,7 +483,17 @@ TRY IT YOURSELF
 
 Write `removeStudent(name)` that removes the student with that name from the array and returns `true`, or returns `false` when there is no such student.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`findIndex` takes a callback and gives you a position, or `-1` when nothing matches. Check for `-1` before calling `splice`.
+
+HINT 2
+
+`const index = students.findIndex((s) => s.name === name); if (index === -1) return false; students.splice(index, 1); return true;`
+
+SOLUTION
 
 remove.js
 
@@ -509,7 +529,17 @@ TRY IT YOURSELF
 
 With `reduce`, count how many grades in `[91, 78, 85, 95, 62, 70]` are 80 or more, and how many are below 80. Print both numbers.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`reduce` adds 1 to the running count only when the grade qualifies, and keeps it the same otherwise.
+
+HINT 2
+
+`const high = grades.reduce((count, g) => (g >= 80 ? count + 1 : count), 0); const low = grades.length - high;`
+
+SOLUTION
 
 bands.js
 

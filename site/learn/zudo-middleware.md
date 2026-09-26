@@ -214,8 +214,8 @@ Output of `npx tsx headers.ts`
 x-content-type-options: nosniff
 x-frame-options: DENY
 referrer-policy: strict-origin-when-cross-origin
-content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
-strict-transport-security: max-age=31536000; includeSubDomains; preload
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+strict-transport-security: max-age=63072000; includeSubDomains; preload
 ```
 
 What they do, in short:
@@ -223,8 +223,8 @@ What they do, in short:
 - `X-Content-Type-Options: nosniff`: the browser must trust the `Content-Type` you send and not guess, so a JSON answer can never be run as a script.
 - `X-Frame-Options: DENY` and CSP's `frame-ancestors 'none'`: no other site may show your pages inside a frame. This stops **clickjacking**, where an invisible frame tricks the user into clicking your buttons.
 - `Referrer-Policy`: other sites do not see your full URLs, which may contain ids.
-- `Content-Security-Policy` (CSP): the list of places a page may load scripts, styles and images from.
-- `Strict-Transport-Security` (HSTS): "only ever talk to me over HTTPS" for a year.
+- `Content-Security-Policy` (CSP): the list of places a page may load scripts, styles and images from. Neither scripts nor styles may run inline (no `'unsafe-inline'`), and `object-src 'none'` blocks `<object>`/`<embed>`, a route around the other rules browsers have closed one at a time.
+- `Strict-Transport-Security` (HSTS): "only ever talk to me over HTTPS" for two years (`max-age=63072000`), the value browsers' preload lists expect.
 
 The middleware also sends a few more (`Permissions-Policy` and the cross-origin headers). You get all of them with one line, and you never have to remember them.
 
@@ -364,11 +364,11 @@ Output of `npx tsx rate-limit.ts`
 ```ts
 POST 201 retry-after: null {"ok":true}
 POST 201 retry-after: null {"ok":true}
-POST 429 retry-after: 60 {"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}}
+POST 429 retry-after: 60 {"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"},"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}
 GET 200 retry-after: null {"ok":true}
 ```
 
-The third `POST` got 429, with a JSON body (sent as `application/json`) and a `Retry-After` header: the number of seconds to wait. Reading still works, because `GET` requests only count against the gentle limit.
+The third `POST` got 429, with a JSON body (sent as `application/json`) and a `Retry-After` header: the number of seconds to wait. The `code` and `message` are repeated at the top level of the body, not only nested under `error`, so client code that reads either shape finds them. Reading still works, because `GET` requests only count against the gentle limit.
 
 - The client is identified by `request.remoteAddress`. Behind a **proxy** or load balancer, every request seems to come from the proxy, so all users would share one allowance. Tell the adapter how many proxies you run, for example `createNodeHttpAdapter({ trustProxy: 1 })`; only then does it believe the `X-Forwarded-For` header. Never trust that header without it: any client can send it and pick its own address.
 - These counts live in the memory of one process. With several copies of the app, each counts separately; [Security for every public API](https://zudojs.oyinlola.site/learn/zudo-security#rate-limit) covers that case and login limits.
@@ -760,7 +760,7 @@ x-content-type-options: nosniff
 x-frame-options: DENY
 …
 
-{"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}}
+{"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"},"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}
 ```
 
 Your own app's origin got the CORS headers, the 21st write got 429 with `Retry-After`, and `curl http://localhost:3000/tasks` still answers 200. `x-ratelimit-reset` is the time the window ends, in seconds since 1970. The loop is for macOS, Linux and Git Bash; on Windows PowerShell, run the `curl.exe` command 21 times with the arrow keys instead. Now press Ctrl + C in the server's terminal:
@@ -787,7 +787,17 @@ TRY IT YOURSELF
 
 Write a middleware that puts an `x-request-id` header on every response, using `context.request.id`: the unique id `@zudojs/http` gives every request. Test it with two requests made by `createRequestContext`, and check that they get different ids.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`const response = await next(); return response.setHeader("x-request-id", context.request.id);`, the same shape as `served` above.
+
+HINT 2
+
+`setHeader` returns the response, so you can return its result directly; no need for a separate variable if you prefer `return (await next()).setHeader(...)`.
+
+SOLUTION
 
 request-id.tsNode.js only
 
@@ -834,7 +844,17 @@ TRY IT YOURSELF
 
 The Task API also gets a mobile web app at `https://m.tasks.example.com`. Change the CORS example so it is allowed too, and show that `https://tasks.example.com.evil.example`, which merely *starts* with an allowed origin, is still refused.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Add a second string to the array: `allowOrigin: ["https://tasks.example.com", "https://m.tasks.example.com"]`.
+
+HINT 2
+
+The evil origin stays refused either way: the list is compared exactly, and merely starting with an allowed origin is not the same string.
+
+SOLUTION
 
 cors-two.tsNode.js only
 

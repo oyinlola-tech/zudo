@@ -575,7 +575,17 @@ TRY IT YOURSELF
 
 Write a middleware that lets a call through only when the **verified** identity has `role: "admin"`, and answers `RPC_FORBIDDEN` otherwise. Test it with a frame whose metadata claims `role: "admin"` but whose verified identity is a normal user.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Read the role off `context.auth`, never off `context.metadata`: `if (context.auth?.role !== "admin") throw new RPCForbiddenError("Admins only.");`, then `return next();`.
+
+HINT 2
+
+`if (context.auth?.role !== "admin") throw new RPCForbiddenError("Admins only."); return next();`.
+
+SOLUTION
 
 admin.tsNode.js only
 
@@ -611,7 +621,17 @@ TRY IT YOURSELF
 
 Write a `shouldRetry(error)` function for `retryIf`. It returns `true` for `RPCUnavailableError` and `RPCTimeoutError`, and `false` for everything else. Test it with three errors.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Combine two `instanceof` checks with `||`: `error instanceof RPCUnavailableError || error instanceof RPCTimeoutError`.
+
+HINT 2
+
+`return error instanceof RPCUnavailableError || error instanceof RPCTimeoutError;`.
+
+SOLUTION
 
 should-retry.tsNode.js only
 

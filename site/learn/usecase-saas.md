@@ -1138,7 +1138,17 @@ TRY IT YOURSELF
 
 Write a `CustomerRepository` with a `list()` method that follows the invoice repository's rules: no organization parameter, the `org_id` filter, and `inTenant`. Print the customers of both organizations. Then say which line of `tests/isolation.test.ts` you would add for a new `GET /customers` route.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`currentOrg().id` is the organization of the request in progress; never add a parameter for it, or a caller could pass someone else's.
+
+HINT 2
+
+`inTenant(this.db, orgId, async (tx) => (await tx.query(...)).rows)` runs the query under the row-level security policy for that organization, exactly like `ProductRepository.list` above.
+
+SOLUTION
 
 ex-customers.tsNode.js only
 
@@ -1188,7 +1198,17 @@ TRY IT YOURSELF
 
 Kola Motors asked to join the bulk-reminders beta. Change the flag so that Kola Motors always has it, and about 10% of the other organizations too. Evaluate it for Kola Motors, the bakery and Chidi Pharmacy, and print the reason for each.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+A rule has a `type`, and `value` is what it resolves to on a match: `{ type: "tenant", tenants: ["kola-motors"], value: true }`.
+
+HINT 2
+
+Order matters: the named-tenant rule must come *before* the percentage rule, or the percentage rule could match first and give the wrong reason for Kola Motors specifically (though not the wrong value, here). `{ type: "percentage", percentage: 10, value: true }` is the second rule.
+
+SOLUTION
 
 ex-pilot.tsNode.js only
 
@@ -1229,7 +1249,21 @@ TRY IT YOURSELF
 
 For each change, say whether it can leak data between organizations, and why. (a) A new route caches search results with `cache.getOrSet(\`search.${query}\`, …, { namespace: currentOrg().id })`. (b) A nightly "overdue invoices" job loops over all organizations and calls `db.query("select * from invoices where status = 'sent'")` directly, "because the job has no tenant context". (c) A "switch organization" endpoint takes `{ org }` from the body and stores it in `activeOrg` for the current session.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For (a), where does the namespace's value actually come from — is it something the client sent, or something the server already trusts?
+
+HINT 2
+
+For (b), which role is running this query, and which of the two walls from earlier in the lesson is missing when nobody calls `inTenant`?
+
+HINT 3
+
+For (c), re-read "Which organization is this request for?": a value the client sends in a body is a *want*, never a *have*. What must happen before `{ org }` is trusted with anything?
+
+SOLUTION
 
 (a) Safe from leaks: the namespace comes from the tenant context. (The key is another problem: a search query can contain characters that are not allowed in a cache key, so hash it first.) (b) Leaks by design: running as the table owner bypasses row-level security, and the query has no filter, so every organization's invoices end up in one loop, one log line or one e-mail away from the wrong customer. Loop over the organizations, and for each one call `tenantContext.run(org, …)` and use the repository. (c) Leaks unless it checks the membership: it must look up `memberships` for (current user, `org`) and answer like the login does, the same 403 for "no such organization" and "not a member", before it changes `activeOrg`. The organization in the body is only what the user *wants*.
 

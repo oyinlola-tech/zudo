@@ -385,7 +385,17 @@ TRY IT YOURSELF
 
 Write a function `grade(score)` that returns `"A"` for 90 and above, `"B"` for 80 to 89, `"C"` for 70 to 79 and `"F"` below 70. Test it with 95, 90, 89, 70 and 12.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Order the checks from the highest band to the lowest, each with an early `return`. By the time a later check runs, you already know the score missed every check above it.
+
+HINT 2
+
+`if (score >= 90) return "A"; if (score >= 80) return "B"; if (score >= 70) return "C"; return "F";`
+
+SOLUTION
 
 grade.js
 
@@ -414,7 +424,17 @@ TRY IT YOURSELF
 
 Write `statusText(code)` with a `switch` that returns `"OK"` for 200, `"Created"` for 201, `"Not Found"` for 404 and `"Unknown"` for anything else.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Inside a function, `return` leaves the `switch` too, so you do not need `break`. Add one `case` per status code, and a `default` for the rest.
+
+HINT 2
+
+`switch (code) { case 200: return "OK"; case 201: return "Created"; case 404: return "Not Found"; default: return "Unknown"; }`
+
+SOLUTION
 
 status-text.js
 
@@ -449,7 +469,17 @@ TRY IT YOURSELF
 
 Write `shipping(total, country)`: orders of 50 or more ship free; otherwise shipping is 5 inside `"NG"` and 15 elsewhere. Reject a total that is not a positive number with `"invalid total"`. Use guard clauses.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Guard first: `typeof total !== "number" || !(total > 0)` catches strings, negatives, zero and `NaN` in one check.
+
+HINT 2
+
+After the guard, `if (total >= 50) return 0;` then `return country === "NG" ? 5 : 15;`.
+
+SOLUTION
 
 shipping.js
 

@@ -478,7 +478,7 @@ The core's `ConsoleLogger` reads the context by itself, so every line written du
 logger.tsNode.js only
 
 ```ts
-import { ConsoleLogger, createContextStorage, createExecutionContext, createLogRedactor } from "@zudojs/core";
+import { ConsoleLogger, createContextStorage, createExecutionContext } from "@zudojs/core";
 
 const storage = createContextStorage();
 const logger = new ConsoleLogger({ service: "shop-api", timestamps: false, contextStorage: storage });
@@ -490,9 +490,9 @@ storage.run(createExecutionContext({ executionId: "exec-1", correlationId: "req-
   readable.warn("low balance", { balanceKobo: 12_000 });
 });
 
-const safe = new ConsoleLogger({ timestamps: false, contextStorage: storage, redact: createLogRedactor() });
+const raw = new ConsoleLogger({ timestamps: false, contextStorage: storage, redact: false });
 storage.run(createExecutionContext({ executionId: "exec-2", correlationId: "req-8" }), () => {
-  safe.info("login attempt", { email: "ada@shop.ng", password: "hunter2", apiToken: "tok_123" });
+  raw.info("login attempt", { email: "ada@shop.ng", password: "hunter2", apiToken: "tok_123" });
 });
 ```
 
@@ -500,14 +500,14 @@ Output of `npx tsx logger.ts`
 
 ```json
 {"level":"info","message":"server listening","service":"shop-api"}
-{"level":"info","message":"transfer accepted","service":"shop-api","context":{"executionId":"exec-1","correlationId":"req-7","amountKobo":1500000,"password":"hunter2"}}
+{"level":"info","message":"transfer accepted","service":"shop-api","context":{"executionId":"exec-1","correlationId":"req-7","amountKobo":1500000,"password":"[REDACTED]"}}
 WARN: low balance executionId=exec-1 correlationId=req-7 balanceKobo=12000
-{"level":"info","message":"login attempt","context":{"executionId":"exec-2","correlationId":"req-8","email":"ada@shop.ng","password":"[REDACTED]","apiToken":"[REDACTED]"}}
+{"level":"info","message":"login attempt","context":{"executionId":"exec-2","correlationId":"req-8","email":"ada@shop.ng","password":"hunter2","apiToken":"tok_123"}}
 ```
 
 The first line was written outside a request and has no context. The second has the execution and correlation ids merged with the fields you logged. The third is the human-readable form (`structured: false`).
 
-Look at the second line again: `"password":"hunter2"`. The core logger does **not** hide sensitive fields unless you ask. The last logger passes `redact: createLogRedactor()`, which replaces values under names such as `password`, `secret` and `token` (including `apiToken`) with `[REDACTED]`. Turn it on for every logger that might see user input.
+Look at the second line: `"password":"[REDACTED]"`, even though neither `logger` nor `readable` asked for it. A `ConsoleLogger` redacts by default, replacing values under names such as `password`, `secret` and `token` (including `apiToken`) with `[REDACTED]`, in both context and error details. The last logger passes `redact: false` to opt out and see the raw values, which is why `login attempt` shows `hunter2` and `tok_123` in the clear: only do that for a destination you trust completely, such as a local file only you can read.
 
 ## Typed values in the context
 
@@ -557,14 +557,14 @@ Output of `npx tsx values.ts`
 0 2 current-user symbol
 user_42 may not cancel ord_19
 new execution sees: undefined
-Error: Required context value "current-user" is not available.
+ContextValueNotFoundError: Required context value "current-user" is not available.
 ```
 
 - `set` returns a **new** collection and leaves the old one alone: `empty` still has 0 values. You can hand a collection to other code without fearing it changes under you.
 - The key is a `symbol` inside, so two keys with the same name never collide, and `require(CURRENT_USER)` is typed as `CurrentUser` with no cast.
 - A new execution started *inside* a request (a listener, a consumer) does not inherit the request's values: the nested `run` saw `undefined`. Otherwise one customer's user or transaction could leak into unrelated work. Carry values on purpose with `runDerived` or `runWithValues`.
 
-The missing-value error is a plain `Error`, not one of the framework's typed errors, so catch it by message or check with `has` first.
+The missing-value error is `ContextValueNotFoundError`, with the missing key's name at `error.details.key`, so you can catch it with `instanceof` instead of matching on message text; check with `has` first when a missing value is expected rather than a bug.
 
 ### Crossing a queue: snapshots
 
@@ -718,7 +718,6 @@ Output of `npx tsx failure.ts`
   metrics: start
   initialize database
   destroy    database
-  destroy    orders
 RuntimeInitializationError: Runtime module initializing failed.
 cause: Module "database" failed during initializing: connect ECONNREFUSED 127.0.0.1:5432
 state: failed
@@ -749,9 +748,9 @@ Step by step:
 5. From `stopped`, `start()` works again. The application builds a **fresh runtime** and fresh module instances from the definitions; this time the database is up.
 6. `shutdown()` stops everything and finally disposes the participant.
 
-> A MODULE THAT NEVER STARTED IS DESTROYED
+> ROLLBACK ONLY TOUCHES WHAT ACTUALLY RAN
 >
-> Look at the rollback: `destroy orders` ran, although `orders` was never initialized (its dependency failed first). With the published `@zudojs/core`, write every `onDestroy` so it is safe to call on a module that never initialized: check that a connection exists before closing it. `@zudojs/runtime` only destroys modules that initialized.
+> Look at the rollback: `destroy database` ran, because `database`'s `onInitialize` was invoked (it ran and threw); `orders` was never reached, since its dependency failed first, so its `onDestroy` did not run either. Write every `onDestroy` so it is still safe to call on a module whose `onInitialize` only partially finished, but you no longer have to guard against a destroy for a module that never started at all: rollback and shutdown skip it, the same rule `@zudojs/runtime` already followed.
 
 The recovery recipe for a server: if `start()` rejects, log the error with its cause, call `stop()`, and exit with code 1 so your process manager restarts the app or alerts someone.
 
@@ -803,13 +802,10 @@ Output of `npx tsx signals-test.ts`
 listening for SIGTERM: 1 | SIGINT: 1 | SIGHUP: 0
   shutdown   http
   destroy    http
-runtime: stopped | application: running | listeners left: 0
+runtime: stopped | application: stopped | listeners left: 0
 ```
 
-The runtime listened for `SIGTERM` and `SIGINT` (not `SIGHUP`, which is off by default), stopped gracefully on the fake signal, and removed its listeners. Two rough edges showed up while writing this test:
-
-- The real `process` object and a Node.js `EventEmitter` do not type-check as a `RuntimeSignalTarget` with current Node.js types, which is why the test builds its own small target object.
-- After the signal, the **runtime** is `stopped` but `app.state` still says `running`. If you check health through the application, check `app.applicationRuntime?.state` as well.
+The runtime listened for `SIGTERM` and `SIGINT` (not `SIGHUP`, which is off by default), stopped gracefully on the fake signal, and removed its listeners. The application follows a stop its runtime started on its own: after the signal, both `app.applicationRuntime?.state` and `app.state` read `stopped`, so checking either one gives you the truth. `fakeProcess` here is still a small stand-in built for the test, not because the real `process` or an `EventEmitter` fails to type-check as a `RuntimeSignalTarget` — both do, without a cast — but because a test should not touch the real process's signal handlers.
 
 Without the options, `createApplication` logs every step. With `timestamps: false` and `structured: false` the lines are readable, and each one inside the runtime carries the runtime's execution id:
 
@@ -832,25 +828,25 @@ Output of `npx tsx default-logs.ts`
 
 ```ts
 INFO: Application initialization completed
-INFO: Application startup completed executionId=shop-api-5018bd27-b264-408b-9786-67726811c1a8 runtimeId=shop-api-5018bd27-b264-408b-9786-67726811c1a8
-INFO: Runtime bootstrap started. executionId=shop-api-5018bd27-b264-408b-9786-67726811c1a8 runtimeId=shop-api-5018bd27-b264-408b-9786-67726811c1a8 runtimeName=shop-api environment=node phase=created
+INFO: Application startup completed executionId=shop-api-e5b70b81-7db1-43f5-8510-f1b00dd363f9 runtimeId=shop-api-e5b70b81-7db1-43f5-8510-f1b00dd363f9
+INFO: Runtime bootstrap started. executionId=shop-api-e5b70b81-7db1-43f5-8510-f1b00dd363f9 runtimeId=shop-api-e5b70b81-7db1-43f5-8510-f1b00dd363f9 runtimeName=shop-api environment=production engine=node phase=loading
   initialize orders
   ready      orders
-INFO: Runtime bootstrap completed. executionId=shop-api-5018bd27-b264-408b-9786-67726811c1a8 runtimeId=shop-api-5018bd27-b264-408b-9786-67726811c1a8 runtimeName=shop-api environment=node durationMs=4 loadedModules=1 initializedModules=1 startedModules=1 errors=0 phase=completed modules=["orders"]
-INFO: Runtime shutdown started. executionId=shop-api-5018bd27-b264-408b-9786-67726811c1a8 runtimeId=shop-api-5018bd27-b264-408b-9786-67726811c1a8 runtimeName=shop-api environment=node phase=created modules=["orders"]
+INFO: Runtime bootstrap completed. executionId=shop-api-e5b70b81-7db1-43f5-8510-f1b00dd363f9 runtimeId=shop-api-e5b70b81-7db1-43f5-8510-f1b00dd363f9 runtimeName=shop-api environment=production engine=node durationMs=9 loadedModules=1 initializedModules=1 startedModules=1 errors=0 phase=completed modules=["orders"]
+INFO: Runtime shutdown started. executionId=shop-api-e5b70b81-7db1-43f5-8510-f1b00dd363f9 runtimeId=shop-api-e5b70b81-7db1-43f5-8510-f1b00dd363f9 runtimeName=shop-api environment=production engine=node phase=stopping modules=["orders"]
   shutdown   orders
   destroy    orders
-INFO: Runtime shutdown completed. executionId=shop-api-5018bd27-b264-408b-9786-67726811c1a8 runtimeId=shop-api-5018bd27-b264-408b-9786-67726811c1a8 runtimeName=shop-api environment=node durationMs=1 stoppedModules=1 destroyedModules=1 errors=0 phase=completed
-INFO: Application shutdown completed executionId=shop-api-5018bd27-b264-408b-9786-67726811c1a8 runtimeId=shop-api-5018bd27-b264-408b-9786-67726811c1a8
+INFO: Runtime shutdown completed. executionId=shop-api-e5b70b81-7db1-43f5-8510-f1b00dd363f9 runtimeId=shop-api-e5b70b81-7db1-43f5-8510-f1b00dd363f9 runtimeName=shop-api environment=production engine=node durationMs=4 stoppedModules=1 destroyedModules=1 errors=0 phase=completed
+INFO: Application shutdown completed executionId=shop-api-e5b70b81-7db1-43f5-8510-f1b00dd363f9 runtimeId=shop-api-e5b70b81-7db1-43f5-8510-f1b00dd363f9
 ```
 
-Your ids and durations will differ. `environment=node` is the JavaScript engine the runtime detected, not `NODE_ENV`; the mode (development, test or production) comes from the `mode` option, or from `NODE_ENV` when you leave it out.
+Your ids and durations will differ. `environment=production` is the runtime **mode** (development, test or production), set here by the `mode` option or, when you leave it out, read from `NODE_ENV`; `engine=node` is the JavaScript engine the runtime detected, a separate field. `phase` also names the step under way more precisely than before: bootstrap starts at `loading` and shutdown starts at `stopping`, not both at a resting `created`.
 
 ## Production concerns
 
 - **Signals are on by default.** The core's runtime handles `SIGINT` and `SIGTERM`, stops gracefully, and exits with code 1 on a second signal. It also catches uncaught exceptions and unhandled rejections, stops, and exits with code 1 (`exitOnFatalError`). If something else in your process handles signals (like the generated `server.ts`), turn these off so there is one owner.
 - **No startup deadline by default.** `runtime.startup.timeoutMs` is 0, which means "wait forever". A hook that hangs on an unreachable database hangs the whole start. Set it: `runtime: { startup: { timeoutMs: 30_000 } }`. When it fires, `start()` rejects with `RuntimeTimeoutError`. In the published version, a following `stop()` then waits the full shutdown limit (30 seconds) for the hung hook, so after a startup timeout, log and exit with code 1 rather than waiting.
-- **Redact logs.** Pass `redact: createLogRedactor()` (with extra `patterns` for your own sensitive field names).
+- **Logs redact by default.** A `ConsoleLogger` replaces `password`, `secret`, `token` and similar keys with `[REDACTED]` unless you pass `redact: false`. Add your own field names with `redact: createLogRedactor({ patterns: [...] })`; only pass `redact: false` for a destination you trust completely.
 - **Snapshot at every queue.** Any code that stores a function to run later must capture a snapshot, or its logs lose the request id exactly when you need it: in a failing background job.
 - **Keep values small.** Context values live as long as the request's async work. A large object stored there, or a timer that never ends, keeps it in memory.
 
@@ -862,7 +858,17 @@ TRY IT YOURSELF
 
 In `with-context.ts`, make `debit` and `credit` run inside `storage.runDerived({ operation: "debit" }, …)` and `…({ operation: "credit" }, …)`, and make `log` print the operation too. Predict the first three lines before running it.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`log`: add `context?.operation ?? "-"` as its own bracketed part: `[${context?.correlationId ?? "-"} ${context?.operation ?? "-"}]`.
+
+HINT 2
+
+Wrap the body of each stage: `await storage.runDerived({ operation: "debit" }, async () => { await sleep(...); log(...); });`, and the same shape for `"credit"`.
+
+SOLUTION
 
 stages.tsNode.js only
 
@@ -914,7 +920,17 @@ TRY IT YOURSELF
 
 Add a `TENANT` key next to `CURRENT_USER` in `snapshot.ts`, set it to `"shop-ng"` for the request, and print it in `sendReceipt`. Which receipt shows the tenant, and why?
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`const TENANT = createContextKey<string>("tenant");`, and `.set(TENANT, "shop-ng")` chained onto the existing `.set(CURRENT_USER, "user_42")`.
+
+HINT 2
+
+In `sendReceipt`: `values?.get(TENANT) ?? "?"`, added to the template literal the same way `CURRENT_USER` already is.
+
+SOLUTION
 
 tenant-snapshot.tsNode.js only
 
@@ -955,7 +971,17 @@ TRY IT YOURSELF
 
 Write a `database` module with `createModule` whose `onInitialize` sets a `connection` variable and whose `onDestroy` closes it, and make `onDestroy` safe when `onInitialize` never ran. Call `onDestroy` directly to test both cases.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Guard first: `if (connection === undefined) { console.log("nothing to close"); return; }`.
+
+HINT 2
+
+Then `connection.close(); connection = undefined;`, so a second call sees `undefined` again and takes the guarded path.
+
+SOLUTION
 
 safe-destroy.tsNode.js only
 
@@ -998,7 +1024,7 @@ connection closed
 nothing to close
 ```
 
-Checking before closing makes `onDestroy` safe to call on a module that never initialized (the core's rollback does that) and safe to call twice. The `{} as never` stands in for the module context, which these hooks do not use; in real code the application passes it.
+Checking before closing makes `onDestroy` safe to call twice, and safe on a module whose `onInitialize` ran but threw partway through, before `connection` was set — the case rollback still destroys, because that hook *was* invoked. Rollback itself now skips a module whose `onInitialize` was never invoked at all, but writing a defensive `onDestroy` costs one `if` and removes the difference between "never started" and "started, half-finished" as places a crash can hide. The `{} as never` stands in for the module context, which these hooks do not use; in real code the application passes it.
 
 ## Recap
 

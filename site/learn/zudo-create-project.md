@@ -38,12 +38,12 @@ Terminal on your computer
 $ npm install -g zudojs
 added 13 packages in 2s
 $ zudojs --version
-2.1.3
+2.2.0
 $ zudo --version
-2.1.3
+2.2.0
 ```
 
-The install time depends on your connection. Your version can be higher than 2.1.3. This course writes `zudojs`, but you can type `zudo` everywhere instead.
+The install time depends on your connection. Your version can be higher than 2.2.0. This course writes `zudojs`, but you can type `zudo` everywhere instead.
 
 > IF THE INSTALL FAILS WITH EACCES
 >
@@ -64,9 +64,9 @@ $ zudojs create task-api --package-manager npm --capabilities ""
 │
 ◇  Project structure created
 │
-◇  Backend project generated (42 files)
+◇  Backend project generated (43 files)
 
-added 66 packages, and audited 67 packages in 47s
+added 64 packages, and audited 65 packages in 47s
 
 13 packages are looking for funding
   run `npm fund` for details
@@ -115,7 +115,7 @@ Terminal on your computer
 
 ```bash
 $ zudojs
-┌  zudojs v2.1.3
+┌  zudojs v2.2.0
 │
 ◆  What would you like to do?
 │  ● 1. Create a new project
@@ -249,16 +249,16 @@ Keep-Alive: timeout=5
 
 {"status":"ok","checks":{},"timestamp":"2026-09-23T22:38:28.987Z"}
 $ curl http://localhost:3000/tasks
-{"error":"Not Found","method":"GET","path":"/tasks"}
+{"error":"Not Found","code":"NOT_FOUND","method":"GET","path":"/tasks"}
 $ curl http://localhost:3000/api/v1/examples
-[]
+{"items":[],"nextCursor":null}
 ```
 
 This is the pattern from [Your first Zudo code](https://zudojs.oyinlola.site/learn/zudo-first-code), now real: a **status code** (200, 404) and a JSON **body**. The body of `/health` says the app is up; `checks` is empty because nothing like a database is connected yet.
 
 The long list of headers in the middle are **security headers**. Every response gets them, with no work from you. For example, `x-frame-options: DENY` stops other websites from showing your pages inside theirs, and `x-content-type-options: nosniff` stops browsers from guessing a file's type. The [security lesson](https://zudojs.oyinlola.site/learn/zudo-security) explains each one.
 
-`/tasks` does not exist yet, so the server answers 404. You build it yourself in [Routes, requests and responses](https://zudojs.oyinlola.site/learn/zudo-http). `/api/v1/examples` is an **example resource** the CLI wrote so you can see a complete endpoint: it answers `[]`, an empty list of examples.
+`/tasks` does not exist yet, so the server answers 404, with a `code` alongside the message that your own code can check without parsing English text. You build `/tasks` yourself in [Routes, requests and responses](https://zudojs.oyinlola.site/learn/zudo-http). `/api/v1/examples` is an **example resource** the CLI wrote so you can see a complete endpoint: it answers a **page**, `items` (empty, so far) and a `nextCursor` for fetching the next page, rather than a bare array, so a list endpoint is never one `SELECT *` away from returning a million rows.
 
 > TIP
 >
@@ -355,9 +355,10 @@ $ tree -a --dirsfirst -I "node_modules|.git"
 ├── package.json
 ├── package-lock.json
 ├── README.md
-└── tsconfig.json
+├── tsconfig.json
+└── tsconfig.test.json
 
-26 directories, 44 files
+26 directories, 45 files
 ```
 
 It looks like a lot, but most folders hold only an empty `index.ts`: a place ready for one kind of code. The files that do something are these.
@@ -366,9 +367,10 @@ It looks like a lot, but most folders hold only an empty `index.ts`: a place rea
 
 | Path | What it is |
 | --- | --- |
-| `package.json` | The project's name, its 13 `@zudojs` dependencies, and its scripts: `dev`, `build`, `start`, `typecheck`, `test` and `lint`. Its `zudojs` block records the project type, the architecture and the features you add. |
+| `package.json` | The project's name, its 14 `@zudojs` dependencies, and its scripts: `dev`, `start`, `build`, `typecheck` and `test`. Its `zudojs` block records the project type, the architecture and the features you add. |
 | `package-lock.json` | Written by npm: the exact version of every installed package, so the next install gets the same ones. Commit it; never edit it by hand. |
 | `tsconfig.json` | TypeScript settings, like the one you wrote in [Why TypeScript exists](https://zudojs.oyinlola.site/learn/ts-setup), with `strict` on. It compiles `src/` into `dist/`. |
+| `tsconfig.test.json` | Extends `tsconfig.json` to also type-check `tests/`, without emitting anything: `npm run typecheck` uses it so a type error in a test fails the same way one in `src/` does. |
 | `.env.example` | Every setting the app reads: `NODE_ENV`, `HOST`, `PORT`, `CORS_ORIGINS`, `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX` and `DATABASE_URL`. Copy it to `.env` to change them. `.env` is in `.gitignore`, so real passwords you put there never reach git. |
 | `.gitignore` | Keeps `node_modules/`, `dist/`, `.env` and log files out of git. |
 | `.zudojs/manifest.json` | What the CLI knows about the project (monolith, REST, npm, capabilities), so later commands like `zudojs generate` put files in the right place. Don't edit it by hand. |
@@ -493,7 +495,7 @@ A request passes through each **middleware** in the list, in order, before `disp
 
 - `securityHeaders()` adds the security headers you saw in the `curl` output.
 - `createCorsMiddleware` decides which other websites may call your API from a browser. The list comes from `CORS_ORIGINS`, which is empty, so the answer is "none". That is the safe default: you open the door on purpose, one website at a time.
-- `createRateLimitMiddleware` allows each client 300 requests per minute (`RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW_MS`). One more gets **429 Too Many Requests**, so a single client cannot flood your server.
+- `createRateLimitMiddleware` allows each client 1000 requests per minute (`RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW_MS`). One more gets **429 Too Many Requests** with a `retry-after` header, so a single client cannot flood your server.
 
 The [middleware lesson](https://zudojs.oyinlola.site/learn/zudo-middleware) shows how to write your own.
 
@@ -519,7 +521,7 @@ $ npm test
 
 
  Test Files  1 passed (1)
-      Tests  3 passed (3)
+      Tests  4 passed (4)
    Start at  23:38:38
    Duration  1.97s (import 81%, transform 13%, tests 6%, worker 1%)
 
@@ -533,7 +535,7 @@ Zudojs Doctor - Project Diagnostics
 ✔ Package manager: npm (lock file present)
 ✔ Dependencies installed: node_modules present
 ✔ TypeScript configuration: tsconfig.json found in every app
-✔ Zudojs dependencies: 13 Zudojs package(s) declared
+✔ Zudojs dependencies: 14 Zudojs package(s) declared
 ✔ Features: Every declared feature has its package
 ✔ Capabilities: The manifest and package.json record the same capabilities
 
@@ -541,7 +543,7 @@ All checks passed!
 ```
 
 - `npm run typecheck` is `tsc --noEmit`. No output means no type errors.
-- `npm test` runs the tests with Vitest. The three tests create, read, update and delete an example, and check that bad input gets a 400. You will write your own tests later in the course.
+- `npm test` runs the tests with Vitest. The four tests create, read, update and delete an example, list a page of them, and check that an invalid body and an id that is not a UUID each get a 400. You will write your own tests later in the course.
 - `zudojs doctor` checks your whole setup: Node.js version, dependencies, configuration. Run it first whenever something seems wrong.
 
 ## Every CLI command
@@ -552,7 +554,7 @@ Terminal on your computer
 
 ```bash
 $ zudojs --help
-zudojs v2.1.3
+zudojs v2.2.0
 Command-line interface for the Zudojs framework.
 
 Usage:
@@ -593,7 +595,7 @@ Terminal on your computer
 ```bash
 $ zudojs info
 Zudojs CLI
-  Version: 2.1.3
+  Version: 2.2.0
   Node.js: v24.19.0
 
 Project
@@ -679,7 +681,7 @@ $ npm test
 
 
  Test Files  2 passed (2)
-      Tests  6 passed (6)
+      Tests  8 passed (8)
    Start at  23:39:26
    Duration  2.12s (import 85%, transform 8%, tests 6%)
 ```
@@ -695,14 +697,14 @@ content-type: application/json
 …
 {"id":"e4f62fa7-5b17-4064-b267-9febf15dae0c","name":"Buy milk","createdAt":"2026-09-23T22:39:40.302Z","updatedAt":"2026-09-23T22:39:40.302Z"}
 $ curl http://localhost:3001/api/v1/notes
-[{"id":"e4f62fa7-5b17-4064-b267-9febf15dae0c","name":"Buy milk","createdAt":"2026-09-23T22:39:40.302Z","updatedAt":"2026-09-23T22:39:40.302Z"}]
+{"items":[{"id":"e4f62fa7-5b17-4064-b267-9febf15dae0c","name":"Buy milk","createdAt":"2026-09-23T22:39:40.302Z","updatedAt":"2026-09-23T22:39:40.302Z"}],"nextCursor":null}
 $ curl -X POST http://localhost:3001/api/v1/notes -H "content-type: application/json" -d '{"name":""}'
 {"error":"Validation failed","issues":[{"path":"name","message":"String must be at least 1 character"}]}
 $ curl http://localhost:3001/api/v1/notes/123
 {"error":"Validation failed","issues":[{"path":"id","message":"Invalid uuid format"}]}
 ```
 
-One command gave you a working endpoint that checks its input: an empty name and an id that is not a **UUID** (the long random id format) are both refused with a 400. The notes live in memory, so they are gone when the server restarts. On Windows PowerShell, set the port with `$env:PORT = "3001"` first, and put the JSON in a file with `-d "@note.json"`, because PowerShell handles the quotes differently.
+One command gave you a working endpoint that checks its input: an empty name and an id that is not a **UUID** (the long random id format) are both refused with a 400. The list came back as `items` plus a `nextCursor`, the same paginated shape as `/api/v1/examples`, rather than a bare array. The notes live in memory, so they are gone when the server restarts. On Windows PowerShell, set the port with `$env:PORT = "3001"` first, and put the JSON in a file with `-d "@note.json"`, because PowerShell handles the quotes differently.
 
 Every schematic writes code that compiles as it is. `generate command` and `generate query` are for the [CQRS lesson](https://zudojs.oyinlola.site/learn/zudo-cqrs): they need `@zudojs/cqrs`, which a new project does not have yet. The CLI adds it to `package.json` and tells you to install it:
 
@@ -719,7 +721,7 @@ Warning: Added @zudojs/cqrs to package.json.
 Warning: Run your package manager's install command to fetch them.
 $ npm install
 
-added 1 package, and audited 68 packages in 2s
+added 1 package, and audited 66 packages in 2s
 …
 $ npm run typecheck
 
@@ -743,7 +745,7 @@ Updated:
   - package.json
 Installing dependencies with npm...
 
-up to date, audited 67 packages in 2s
+up to date, audited 65 packages in 2s
 
 13 packages are looking for funding
   run `npm fund` for details
@@ -820,7 +822,7 @@ $ NODE_ENV=production npm start
 Listening on http://0.0.0.0:3000
 ```
 
-The runtime noticed `environment=production`. `curl http://localhost:3000/health` answers exactly as before. Now press Ctrl + C and read what the app prints on its way out:
+The runtime noticed `environment=production`. `curl http://localhost:3000/health` answers exactly as before, and so does `/openapi.json`, which you added above — but `/docs` now answers 404: the interactive page is a development convenience, off by default once `NODE_ENV=production`, so an internal API description is not one URL away from anyone who finds your server. Pass `docsPath` to `mountOpenAPI` to serve it in production anyway, behind auth if it is not meant to be public. Now press Ctrl + C and read what the app prints on its way out:
 
 Terminal on your computer
 
@@ -850,7 +852,17 @@ TRY IT YOURSELF
 
 With `npm run dev` running, open `src/routes/health.routes.ts` and add a `service: "task-api"` property to the object it sends. Save the file. Watch the terminal restart the server, then reload [http://localhost:3000/health](http://localhost:3000/health).
 
-**Show a solution**
+Write it in the editor and run it. Hints and the solution open up once you have tried.
+
+HINT 1
+
+Add one property to the object literal, right alongside `status`: `service: "task-api",`.
+
+HINT 2
+
+The keys can be in any order; only the presence of `service: "task-api"` in the JSON body matters.
+
+SOLUTION
 
 src/routes/health.routes.ts (part)Node.js only
 
@@ -878,7 +890,17 @@ TRY IT YOURSELF
 
 Without writing anything, find out where `zudojs generate` would put a repository called `tasks`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Every schematic command in this lesson has a flag that shows what would be written without writing it.
+
+HINT 2
+
+Run `zudojs generate repository tasks` with that flag.
+
+SOLUTION
 
 Terminal on your computer
 
@@ -898,7 +920,17 @@ TRY IT YOURSELF
 
 You changed `src/routes/health.routes.ts`, then ran `npm start`. The old answer comes back. Why, and what is the fix?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+`npm start` does not read `src/` at all; re-read what `build` does to `src/` and what `start` actually runs.
+
+HINT 2
+
+One command turns your edited `.ts` file into the `.js` file `npm start` runs.
+
+SOLUTION
 
 `npm start` runs the compiled `dist/server.js`, which was built before your change. Run `npm run build` again, then `npm start`. While you are developing, use `npm run dev` instead: it runs the TypeScript in `src/` directly and restarts on every save.
 
@@ -908,7 +940,17 @@ TRY IT YOURSELF
 
 Your API gets a web front end at `https://tasks.example.com`. Right now the browser blocks it, because `CORS_ORIGINS` is empty. How do you allow that one website, without allowing every website?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read the settings table: one of the files there is where you change what `.env.example` only documents, and one setting there is a list.
+
+HINT 2
+
+Never set that setting to `*` for an API that uses logins; think about why a wildcard origin is dangerous once requests can carry credentials.
+
+SOLUTION
 
 Copy `.env.example` to `.env` and set `CORS_ORIGINS=https://tasks.example.com`, then restart the server. Several websites are separated with commas. Never use `*` (every website) for an API that uses logins: any page on the internet could then call it from a visitor's browser.
 

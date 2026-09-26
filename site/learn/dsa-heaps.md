@@ -732,7 +732,17 @@ TRY IT YOURSELF
 
 The fraud team reviews the largest orders first. Use the `Heap` class as a max-heap of orders by amount, and print them in review order. What is the only thing you change?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Everything in `Heap` is written in terms of "comes before". Pass a comparator that says the order with the bigger `naira` comes first.
+
+HINT 2
+
+`new Heap((a, b) => a.naira > b.naira)`
+
+SOLUTION
 
 fraud-review.js
 
@@ -771,7 +781,17 @@ TRY IT YOURSELF
 
 The search log below has one line per search. Print the three most searched terms, most searched first, using a `Map` to count and a size-3 min-heap to select. When two terms have the same count, prefer the one that comes first alphabetically.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Fill the heap first (while it has fewer than 3 entries, just push). Once it is full, compare the newcomer against `heap.peek()` (the current weakest of the top 3) using `worse`.
+
+HINT 2
+
+`if (heap.size < 3) heap.push(entry); else if (worse(heap.peek(), entry)) { heap.pop(); heap.push(entry); }`
+
+SOLUTION
 
 top-searches.js
 
@@ -815,7 +835,17 @@ TRY IT YOURSELF
 
 Delivery times (in minutes) arrive one at a time. After each one, print the median so far (the middle value, or the average of the two middle values). Keep two heaps: a max-heap for the lower half and a min-heap for the upper half, with sizes differing by at most one. Each new time should cost O(log n).
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Push into `lower` when it is empty or `minutes` is not bigger than its top; otherwise push into `upper`. Then fix the sizes: `lower` may hold at most one more than `upper`, and `upper` may never hold more than `lower`.
+
+HINT 2
+
+`if (lower.size === 0 || minutes <= lower.peek()) lower.push(minutes); else upper.push(minutes); if (lower.size > upper.size + 1) upper.push(lower.pop()); if (upper.size > lower.size) lower.push(upper.pop());`
+
+SOLUTION
 
 running-median.js
 

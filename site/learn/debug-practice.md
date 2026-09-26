@@ -4,7 +4,7 @@ description: "Find a regression with binary search and git bisect run, dig to ro
 source: https://zudojs.oyinlola.site/learn/debug-practice
 ---
 
-LEVEL 4 · LESSON 20 OF 20
+LEVEL 4 · LESSON 21 OF 21
 
 Tooling and debugging Core
 
@@ -909,7 +909,17 @@ TRY IT YOURSELF
 
 You have 200 commits since the last release, which was good. The test `node check-discount.js` exits 1 when discounts are wrong. (a) Write the commands to find the first bad commit automatically, given the release commit `v1.4.0`. (b) About how many times will the test run? (c) Some commits in the middle fail to start because of a missing file that was added back later. What should `check-discount.js` do on those commits?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`Math.log2(n)` gives the exact number of halvings; `Math.ceil` rounds it up to a whole number of test runs, the same as the worked example.
+
+HINT 2
+
+`console.log(\`${commits} commits: about ${Math.ceil(Math.log2(commits))} test runs\`);`
+
+SOLUTION
 
 (a)
 
@@ -948,7 +958,17 @@ TRY IT YOURSELF
 
 Do a five-whys analysis for [bug hunt 2](#race), starting from "Ada's ₦5,000 deposit disappeared". Write each answer, then one action for the last two levels.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read [Bug hunt 2](#race)'s reasoning block and the "why it never failed on the developer's laptop" answer: each of your five whys should use a fact already established there, one level deeper each time.
+
+HINT 2
+
+The last two levels should point at something about *testing practice*, not the specific race — what kind of test would have had to exist for this bug to be caught before release?
+
+SOLUTION
 
 1. Why did it disappear? The transfer deposit overwrote the balance that the card deposit had written.
 2. Why did it overwrite it? Both deposits read the balance before either wrote, and each wrote "what I read + my amount".
@@ -977,7 +997,17 @@ function promoFor(customer) {
 }
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Copy each field's *value* into a new object first (a plain number, and a new array made from the old one's contents), then apply the `if`. That new object is what you return.
+
+HINT 2
+
+`const promo = { percent: DEFAULT_PROMO.percent, reasons: [...DEFAULT_PROMO.reasons] }; if (customer.firstOrderToday) { promo.percent += 10; promo.reasons.push("first order today"); } return promo;`
+
+SOLUTION
 
 Reproduce with three customers who all qualify. Hypothesis: `promo` is not a copy, it *is* `DEFAULT_PROMO`, so every call adds 10 to the same object. Test: `promoFor(a) === promoFor(b)` would be `true`.
 

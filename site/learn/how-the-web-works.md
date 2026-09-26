@@ -311,7 +311,17 @@ TRY IT YOURSELF
 
 Use `new URL(...)` to print the hostname, the port, the path and the value of `q` in `http://localhost:3000/search?q=milk`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`new URL(text)` gives you an object with `.hostname`, `.port` and `.pathname` already split apart.
+
+HINT 2
+
+The query string is read with `url.searchParams.get("q")`, not by reading the text after the `?` yourself.
+
+SOLUTION
 
 parts.js
 
@@ -341,7 +351,17 @@ TRY IT YOURSELF
 
 Which port does the client connect to for each URL? `https://shop.example.com/cart`, `http://example.com/`, and `http://localhost:8080/tasks`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Does the URL name a port after the host, with a `:`? If not, the protocol has a default.
+
+HINT 2
+
+HTTPS defaults to port 443 and HTTP to port 80, when the URL does not say otherwise.
+
+SOLUTION
 
 443, 80 and 8080. The first two name no port, so the protocol's default is used: 443 for HTTPS, 80 for HTTP. The third names its port.
 
@@ -349,9 +369,19 @@ TRY IT YOURSELF
 
 ### Predict the tiny API's answers
 
-The tiny API answers `200` only when the method is exactly `GET` and the path is exactly `/tasks`. Everything else gets `404`. Without running anything, predict the status code for each request: `GET /tasks`, `POST /tasks`, `GET /Tasks`, `GET /tasks?done=false` and `GET /tasks/`.
+The tiny API answers `200` only when the method is exactly `GET` and the path is exactly `/tasks`. Everything else gets `404`. Without running anything, predict the status code for each request: `GET /tasks`, `POST /tasks`, `GET /Tasks`, `GET /tasks?done=false` and `GET /tasks/`. Then write `predict.js` below, run it on your computer once Node.js is installed, and check your predictions.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Each pair is an array of two strings, `[method, path]`, exactly as in the example: `["GET", "/tasks"]`.
+
+HINT 2
+
+List all five as `[["GET", "/tasks"], ["POST", "/tasks"], ["GET", "/Tasks"], ["GET", "/tasks?done=false"], ["GET", "/tasks/"]]`.
+
+SOLUTION
 
 Only the first gets `200`. `POST` is a different method. `/Tasks` has a capital T, and the check compares the text exactly, so it is a different path. The last two surprise most people: the server compares `request.url`, which is the path *and* the query, so `/tasks?done=false` is not the text `/tasks`, and neither is `/tasks/` with its extra slash. All four answer `404`.
 

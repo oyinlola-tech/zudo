@@ -4,7 +4,7 @@ description: "Pause a program at breakpoints, step through it and watch values i
 source: https://zudojs.oyinlola.site/learn/debug-tools
 ---
 
-LEVEL 4 · LESSON 19 OF 20
+LEVEL 4 · LESSON 20 OF 21
 
 Tooling and debugging Core
 
@@ -918,7 +918,17 @@ TRY IT YOURSELF
 
 A loop applies a discount to 20,000 orders, and one order ends up with a negative total. Write down, in `node inspect` commands, the session you would run: where the breakpoint goes, its condition, and the two things you would evaluate once it pauses. Assume the loop body is on line 42 of `discounts.js` and each order has `id`, `totalKobo` and `discountKobo`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+A plain breakpoint on line 42 would pause 20,000 times. Re-read [Conditional breakpoints](#node-inspect): the condition should come straight from your hypothesis about what makes the total go negative.
+
+HINT 2
+
+`sb('discounts.js', 42, '')` sets it, `c` continues to it, and once paused, `exec` is how you look at any expression, including `typeof` a value you suspect is the wrong type.
+
+SOLUTION
 
 Pause just before the subtraction, only for the order that goes wrong, and look at both inputs:
 
@@ -939,7 +949,17 @@ TRY IT YOURSELF
 
 A `Customer` class has `name`, `email` and `cardNumber`. Give it a custom inspect method so that `console.log` shows the name, the email and only the last four digits of the card.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Build the string with a template literal, the same shape as the worked example, but keep `name` and `email` in full and mask only the card.
+
+HINT 2
+
+`return \`Customer { name: '${this.name}', email: '${this.email}', card: '**** ${this.cardNumber.slice(-4)}' }\`;`
+
+SOLUTION
 
 customer-redact.jsNode.js only
 
@@ -975,7 +995,17 @@ TRY IT YOURSELF
 
 A page shows "SyntaxError: Unexpected end of JSON input" when it saves a task. In the Network panel the `POST /api/tasks` request has status `204 No Content`. What is the bug, and how should the client code change?
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Order matters: check `res.ok` first (a failed request needs no further reading), then the special case of an empty body, before falling through to the normal case.
+
+HINT 2
+
+`if (!res.ok) throw new Error(\`Request failed: ${res.status}\`); if (res.status === 204) return null; return res.json();`
+
+SOLUTION
 
 204 means "success, and there is no body". The client calls `res.json()` on an empty body, which throws "Unexpected end of JSON input". The request worked; the client's assumption did not. Check the status (and `content-type`) before parsing:
 

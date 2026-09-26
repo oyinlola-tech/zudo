@@ -4,7 +4,7 @@ description: "Learn why each JavaScript tool exists, run Prettier and ESLint for
 source: https://zudojs.oyinlola.site/learn/js-tooling
 ---
 
-LEVEL 4 · LESSON 17 OF 20
+LEVEL 4 · LESSON 18 OF 21
 
 Tooling and debugging Core
 
@@ -776,7 +776,17 @@ TRY IT YOURSELF
 
 New developers copy `.env.example` to `.env`, and six months later the two have drifted apart. Write `compareEnv(envText, exampleText)` that uses `util.parseEnv` and reports which keys are missing from `.env` and which keys in `.env` are not documented in the example.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`Array.prototype.filter` with `!otherArray.includes(item)` is the whole technique, used twice, once in each direction.
+
+HINT 2
+
+`return { missing: example.filter((key) => !env.includes(key)), undocumented: env.filter((key) => !example.includes(key)) };`
+
+SOLUTION
 
 compare-env.jsNode.js only
 
@@ -814,7 +824,17 @@ TRY IT YOURSELF
 
 Real bundlers warn about **circular imports** (a imports b, b imports a), because the order in which such modules run is easy to get wrong. Write `findCycle(files, entry)` for the mini-bundler's `files` format that returns the first cycle it finds as a list of module names, or `null`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`path.includes(entry)` and `path.indexOf(entry)` are the same two calls the worked example uses; `files[entry].matchAll(importPattern)` gives you each import's target in `match[1]`, the same shape as `collect` earlier in the lesson.
+
+HINT 2
+
+`if (path.includes(entry)) return [...path.slice(path.indexOf(entry)), entry]; for (const [, from] of files[entry].matchAll(importPattern)) { const cycle = findCycle(files, from, [...path, entry]); if (cycle) return cycle; } return null;`
+
+SOLUTION
 
 find-cycle.js
 
@@ -856,7 +876,17 @@ TRY IT YOURSELF
 
 A two-person team builds a Node.js API in plain JavaScript and a small browser page. Which tools from this lesson would you set up on day one, and which would you leave for later? Give a reason for each.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+For each tool category in the opening table, ask: what does it cost to add later versus now, and is the API or the browser page the one that actually needs it?
+
+HINT 2
+
+Formatting and linting get more expensive to add the longer you wait (one huge commit, a pile of old warnings), which is a different kind of argument from "we don't have the problem yet" — which tools fall into which camp?
+
+SOLUTION
 
 - **Day one:** Prettier and ESLint (cheap, and adding them later means one huge reformatting commit and hundreds of old warnings); a `check` script and the same check in CI; `--env-file` with a validated config module and a `.env.example`; `node --test` for tests.
 - **Soon:** `// @ts-check` or TypeScript, once the code base grows beyond what two people can keep in their heads.

@@ -4,7 +4,7 @@ description: "Connect a page to your Node.js Task API: the request lifecycle, JS
 source: https://zudojs.oyinlola.site/learn/browser-networking
 ---
 
-LEVEL 4 · LESSON 13 OF 20
+LEVEL 4 · LESSON 14 OF 21
 
 JavaScript in the browser Core
 
@@ -996,7 +996,17 @@ TRY IT YOURSELF
 
 Write `corsHeadersFor(request, allowedOrigins)`, a pure function that takes `{ method, origin, requestMethod }` and returns the headers the API should add. Unknown origins get only `Vary`. Preflights (`OPTIONS`) from allowed origins also get methods, headers and max-age.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check the origin first, and return early when it is missing or not allowed. Only an allowed origin gets any further headers, and only a preflight (`OPTIONS`) among those gets the last three.
+
+HINT 2
+
+`if (!origin || !allowedOrigins.includes(origin)) return headers; headers["Access-Control-Allow-Origin"] = origin; headers["Access-Control-Allow-Credentials"] = "true"; if (method === "OPTIONS") { headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH"; headers["Access-Control-Allow-Headers"] = "Content-Type"; headers["Access-Control-Max-Age"] = "600"; }`
+
+SOLUTION
 
 cors-headers.js
 
@@ -1049,7 +1059,17 @@ TRY IT YOURSELF
 
 Write `withRetry(send, { method, attempts, delayMs })`. It calls `send()`, and retries after a network error (a `TypeError`) or a 503, waiting `delayMs`, then twice as long each time, up to `attempts` tries in total. It never retries a `POST`. Test it with fake responses.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Wrap the body of the loop in a `try`/`catch`, the same shape as the worked example, but check `response.status !== 503` in the `try` as an extra reason to return early.
+
+HINT 2
+
+`for (let attempt = 1; ; attempt++) { try { const response = await send(); if (response.status !== 503 || attempt === tries) return response; } catch (error) { if (!(error instanceof TypeError) || attempt === tries) throw error; } await new Promise((resolve) => setTimeout(resolve, delayMs * 2 ** (attempt - 1))); }`
+
+SOLUTION
 
 retry.js
 
@@ -1108,7 +1128,17 @@ TRY IT YOURSELF
 
 Write `describeCookie(setCookieLine)` that parses a `Set-Cookie` value and reports its name, whether page JavaScript can read it, whether it is limited to HTTPS, and its `SameSite` value. When the attribute is missing, Chromium-based browsers treat the cookie as `Lax`, but not every browser does, so report it as not set.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`flags.has("httponly")` and `flags.has("secure")` give you two of the four fields directly. `flags.get("samesite") || "not set (Lax in Chromium)"` covers both "missing" and "present but empty".
+
+HINT 2
+
+`return { name, readableByJs: !flags.has("httponly"), httpsOnly: flags.has("secure"), sameSite: flags.get("samesite") || "not set (Lax in Chromium)" };`
+
+SOLUTION
 
 describe-cookie.js
 

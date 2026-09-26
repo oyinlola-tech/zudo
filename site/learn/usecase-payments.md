@@ -1089,7 +1089,21 @@ TRY IT YOURSELF
 
 PayGate calls `POST /v1/webhooks/paygate` when a charge settles, with a header `paygate-signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "t.body">` made with a shared secret. Write the verification: the signature over the raw body, compared in constant time; a timestamp within five minutes, so a captured webhook cannot be replayed later; and each event id handled once. Use `@zudojs/crypto`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Split the header on `,` and each part on `=`: `Object.fromEntries(header.split(",").map((p) => p.split("=", 2)))` gives you `{ t, v1 }`. `Number(parts.t)` must be an integer.
+
+HINT 2
+
+`await hmacSha256(\`${timestamp}.${rawBody}\`, key)` is the expected signature; compare it with `timingSafeEqualString(expected, parts.v1)`, never `===`.
+
+HINT 3
+
+`Math.abs(nowSeconds - timestamp) > 300` catches both a replayed old webhook and a clock far in the future. `seen.has(event.id)` before `seen.add(event.id)` is what makes a retry a no-op instead of a second charge recorded twice.
+
+SOLUTION
 
 webhook.ts
 
@@ -1161,7 +1175,17 @@ TRY IT YOURSELF
 
 The load balancer should stop sending payment traffic to an instance when PayGate is unreachable from it. Write `ready()` with the adapter registry's `healthAll`: 200 when every adapter is healthy or degraded, 503 otherwise, and the status of each adapter.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`const report = await oja.registry.healthAll({ timeout: 2000 })` gives you `report.status` (the worst of every adapter) and `report.adapters` (one entry per adapter).
+
+HINT 2
+
+`Object.fromEntries(Object.entries(report.adapters).map(([name, health]) => [name, health.status]))` turns the adapters map into `{ paygate: "healthy" }`. Only `"unhealthy"` should answer 503; a merely `"degraded"` gateway still gets traffic.
+
+SOLUTION
 
 readiness.tsNode.js only
 
@@ -1196,7 +1220,21 @@ TRY IT YOURSELF
 
 Support staff must be able to refund a succeeded payment, fully or partly. Without code: which tables, states and rules do you need, and what can go wrong that the payment flow already taught you to handle?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+A refund is a payment going the other way: which columns did the `payments` table need to stay safe under retries and races, and which of those does a refund need too?
+
+HINT 2
+
+Two support staff refunding the same payment at the same moment is the same shape of problem as two clicks creating two payments — what stopped that, and what must the database enforce here so refunds can never add up to more than was paid?
+
+HINT 3
+
+The gateway call can time out or answer unknown exactly as a charge can. What must never happen to a refund whose outcome is unknown, and who finds out later?
+
+SOLUTION
 
 - A `refunds` table: payment id, amount in kobo, status (`processing`, `succeeded`, `failed`, `unknown`), the staff member, an idempotency key and a fingerprint, like payments.
 - A rule the database enforces: the sum of non-failed refunds never exceeds the payment's amount. Check it in the same transaction that inserts the refund, with the payment row locked (`FOR UPDATE`), so two refunds clicked at once cannot both pass.

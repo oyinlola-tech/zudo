@@ -773,7 +773,17 @@ TRY IT YOURSELF
 
 Write `applyDiscount(kobo, basisPoints)` that takes a percentage off an amount, rounding the discount half-even, and never returns less than 0 or more than the original. Test it on ₦25.50 at 10%, on ₦0.05 at 50%, and with an invalid rate of 12,000 basis points (120%), which should throw.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check `kobo` first: `Number.isSafeInteger(kobo) && kobo >= 0`, throwing a `RangeError` that names the bad amount if it fails.
+
+HINT 2
+
+Then check `basisPoints`: `Number.isInteger(basisPoints) && basisPoints >= 0 && basisPoints <= 10000`. Finally `return kobo - divideRoundHalfEven(kobo * basisPoints, 10000);`.
+
+SOLUTION
 
 discount.js
 
@@ -821,7 +831,17 @@ TRY IT YOURSELF
 
 An API returns `{"items":[{"id":9007199254740993,"qty":2},{"id":9007199254740995,"qty":1}]}`. Parse it so that every `id` becomes a **string** with the exact digits, and print the ids and the total quantity.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The reviver is the second argument to `JSON.parse`: `(key, value, context) => ...`. Its third parameter, `context`, has a `source` property with the original, unrounded text for that value.
+
+HINT 2
+
+`JSON.parse(body, (key, value, context) => key === "id" && typeof value === "number" ? context.source : value)`
+
+SOLUTION
 
 parse-ids.js
 
@@ -853,7 +873,17 @@ TRY IT YOURSELF
 
 Write `statementLine(label, kobo)` that prints the label padded to 14 characters and the amount formatted with `currencySign: "accounting"` (negatives in parentheses), right-aligned to 14 characters. Use it for an opening balance of ₦150,000, a transfer out of ₦45,250.50 and a fee of ₦53.75.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Build the decimal string from integer division and remainder so it stays exact: `Math.trunc(Math.abs(kobo) / 100)` naira and `Math.abs(kobo) % 100` kobo, with a leading `-` when `kobo < 0`.
+
+HINT 2
+
+`return \`${label.padEnd(14)}${accounting.format(text).padStart(14)}\`;` where `text` is the decimal string you built.
+
+SOLUTION
 
 statement.js
 

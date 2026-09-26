@@ -552,7 +552,17 @@ TRY IT YOURSELF
 
 Write a `Task` class with a `title` and a `priority`. Make `priority` a getter and setter backed by a private field `#priority`. The setter must accept only whole numbers from 1 to 5, and throw an error otherwise. The default priority is 3.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Give the private field a default value right where you declare it: `#priority = 3;`. The setter checks the new value before storing it in the field, and throws when it is out of range.
+
+HINT 2
+
+`set priority(value) { if (!Number.isInteger(value) || value < 1 || value > 5) throw new Error(\`priority must be 1 to 5, got ${value}\`); this.#priority = value; }`
+
+SOLUTION
 
 priority.js
 
@@ -604,7 +614,17 @@ TRY IT YOURSELF
 
 Write `DeadlineTask extends Task` that takes a title and a due date string such as `"2026-10-01"`. Override `describe()` so it adds `due 2026-10-01` after the parent's text. Use `super` in both the constructor and `describe`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Call `super(title)` first in the constructor, then store `due`. In `describe`, call `super.describe()` and add the due date to it.
+
+HINT 2
+
+`constructor(title, due) { super(title); this.due = due; } describe() { return \`${super.describe()}, due ${this.due}\`; }`
+
+SOLUTION
 
 deadline.js
 
@@ -644,7 +664,17 @@ TRY IT YOURSELF
 
 A counter object has a method `increment()` that adds 1 to `this.count`. Call it three times through `[1, 2, 3].forEach(...)` so that `count` ends at 3. Show both fixes: an arrow function and `bind`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`obj.method.bind(obj)` returns a new function whose `this` is fixed to `obj` forever, however it is later called.
+
+HINT 2
+
+`const increment = counter.increment.bind(counter);`
+
+SOLUTION
 
 bind.js
 

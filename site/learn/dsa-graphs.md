@@ -823,7 +823,17 @@ TRY IT YOURSELF
 
 Friendships are an undirected graph. Suggest people for Ada: friends of her friends who are not Ada and not already her friends, ranked by how many mutual friends they share (ties alphabetically). What is the cost in terms of degrees?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+For every friend of `person`, look at *that* friend's friends — those are the candidates. Skip a candidate that is `person` itself, or someone `person` is already friends with (`graph.hasEdge(person, candidate)`).
+
+HINT 2
+
+`for (const friend of graph.neighbours(person)) { for (const candidate of graph.neighbours(friend)) { if (candidate === person || graph.hasEdge(person, candidate)) continue; mutual.set(candidate, (mutual.get(candidate) ?? 0) + 1); } }`
+
+SOLUTION
 
 suggest.js
 
@@ -867,7 +877,17 @@ TRY IT YOURSELF
 
 Someone changes `@shop/money`. Which packages must be rebuilt and retested? Build the reversed graph (from each package to the packages that use it) and find everything reachable from `@shop/money`, without visiting anything twice.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Walk the queue with a `head` index, the same level-order shape used earlier in the lesson. For the vertex at `queue[head]`, look up who uses it in `usedBy`, and push any user you have not seen yet.
+
+HINT 2
+
+`for (let head = 0; head < queue.length; head++) { for (const user of usedBy.get(queue[head])) { if (!seen.has(user)) { seen.add(user); queue.push(user); } } }`
+
+SOLUTION
 
 affected.js
 
@@ -922,7 +942,17 @@ TRY IT YOURSELF
 
 An academy lists which lessons each lesson requires. Print a valid study order, and the smallest number of weeks needed if a student can take any number of lessons in one week but only after all their prerequisites are done. Then add a prerequisite that creates a cycle and show the error.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Walk `order` in the order it comes (it is already topological). For each lesson, its week is `1 + Math.max(0, ...)` of the weeks already recorded for everything in `requires[lesson]`.
+
+HINT 2
+
+`for (const lesson of order) { week.set(lesson, 1 + Math.max(0, ...requires[lesson].map((b) => week.get(b)))); } return { order, weeks: Math.max(...week.values()) };`
+
+SOLUTION
 
 course-plan.js
 

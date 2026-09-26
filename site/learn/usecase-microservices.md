@@ -1272,7 +1272,17 @@ TRY IT YOURSELF
 
 Marketing wants a loyalty service: one point per ₦1,000 on every paid order. It must not have an API that orders calls; it listens to `order.paid`. Write its consumer so that duplicate deliveries do not award points twice. Deliver order 7 (₦28,500) three times and order 8 (₦3,500) once, and print the points.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`decodeEvent<OrderPaidV1>(message.body)` gives you the event; check `event.v !== 1 || credited.has(event.orderId)` first and `return` before touching anything else.
+
+HINT 2
+
+After adding `event.orderId` to `credited`, update the map with `points.set(event.email, (points.get(event.email) ?? 0) + Math.floor(event.totalKobo / 100_000))` — one point per ₦1,000, which is 100,000 kobo.
+
+SOLUTION
 
 ex-loyalty.tsNode.js only
 
@@ -1311,7 +1321,21 @@ TRY IT YOURSELF
 
 With the code as it is, what does `POST /orders` answer while the users service is down, and is anything left behind in the orders database? Suggest two different ways to keep taking orders during a users outage, and the price of each.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Walk the four steps of `orders.place` in order: which one calls users, and has anything been written to the orders database before that call runs?
+
+HINT 2
+
+What does `serviceClient` turn an unreachable RPC call into, and what status does the gateway give that error?
+
+HINT 3
+
+For the two alternatives: what could orders keep a local copy of, kept fresh by which event(s)? And separately, which step could be deferred to a later service instead of blocking the request?
+
+SOLUTION
 
 Orders calls `users.get` before inserting anything. The call cannot connect, `serviceClient` rethrows that as `RPCUnavailableError`, orders passes it on to the gateway with its code, and the gateway answers `503 Service Unavailable` (the HTTP package does not send the text of 5xx errors to clients). No order row is written: nothing to clean up, but also no sale. Option 1: keep a local copy of each customer's e-mail in orders, filled from `user.registered` and `user.updated` events. Orders then never calls users while placing an order; the price is a copy that can be seconds out of date, and another event consumer to run. Option 2: save the order without the e-mail and let notifications look the address up when it sends the receipt, retrying with backoff if users is still down. The price is that the receipt waits for users, and notifications gains a dependency.
 
@@ -1321,7 +1345,17 @@ TRY IT YOURSELF
 
 In the outage trace, why is `publish order.paid` a child of the second `retry payment` span, and not of `orders.place`? What would the trace look like if the retry job did not carry the `traceparent`?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+The outbox row that `publish order.paid` reads back was written inside which span — the original request, or one of the retries? A child follows whichever span was active when its data was created, not whichever span started the whole story.
+
+HINT 2
+
+Without a stored `traceparent`, what does a retry job have to hand a new span builder, and what does `withSpan` do when it is given nothing to continue?
+
+SOLUTION
 
 The outbox row stores the `traceparent` that was current when the row was written, and the row was written inside the retry that charged the card; the relay continues the trace from that stored value. Without the `traceparent` in the job, each retry would start a new trace of its own: the customer's trace would end at a failed call, and the successful charge, the event and the receipt would sit in an unrelated trace that nobody would find from the trace id support was given.
 

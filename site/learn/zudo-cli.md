@@ -292,7 +292,7 @@ A **schematic** is one kind of thing the generator can write. `--dry-run` lists 
 Two patterns are worth seeing in that table:
 
 - The layered schematics **cascade**. A controller is useless without a service, a service without a repository, a repository without the DTO types it stores. So `generate controller` writes the whole chain below it. Only `route` and `resource` also wire the result into the app; the others leave it for you to connect.
-- `module` and the dry run disagree slightly: the dry run listed seven files, the real run eight. The eighth is `src/app.ts`, where the new module is added to the runtime's list. Treat `--dry-run` as a close preview, not a contract, and look at `git diff` after the real run.
+- `module` also touches `src/app.ts`, where the new module is added to the runtime's list; `--dry-run` lists it too, so what it previews is what the real run writes.
 
 ### What the small schematics write
 
@@ -592,29 +592,21 @@ Three properties make this safe:
 - It is **idempotent**: doing it twice has the same effect as doing it once. The second call finds the line already there and changes nothing. That is why `generate … --force` can rewrite a resource's own files without registering its routes twice.
 - If the markers are gone, it does not guess where the line belongs.
 
-The last case is a real trap. Delete the `routes` markers from `src/routes/index.ts` (say, while tidying up) and generate a resource:
+The last case used to be a real trap: an older CLI would still write the other seven files, warn about the missing markers, and exit 0, so the resource looked generated while the route stayed unregistered. Delete the `routes` markers from `src/routes/index.ts` (say, while tidying up) and generate a resource now:
 
 Terminal on your computer
 
 ```bash
 $ zudojs generate resource orders
 Detected architecture: monolith
-Generated 8 files:
-  - src/dtos/orders.dto.ts
-  - src/repositories/orders.repository.ts
-  - src/services/orders.service.ts
-  - src/controllers/orders.controller.ts
-  - src/routes/orders.routes.ts
-  - tests/orders.test.ts
-  - src/routes/index.ts
-  - src/container.ts
-Warning: Finish by hand:
+Cannot register resource "orders": the files it registers into are missing their markers, so nothing was written.
   - src/routes/index.ts: add "registerOrdersRoutes(router, deps.ordersController);" between "// zudojs:routes:start" and "// zudojs:routes:end" (the markers are missing, so the file was left unchanged)
+Restore the marker comments (or add the lines by hand and re-run with --force once the files exist).
 $ echo $?
-0
+1
 ```
 
-The exit code is 0, `src/routes/index.ts` is still in the "Generated" list, `npm run typecheck` passes and `tests/orders.test.ts` passes, because the test builds its own router. Yet the running server answers 404 on `/api/v1/orders`. Only the warning tells you. Two habits prevent it: keep your own code outside the markers and never delete them, and read the last lines of every `generate` run.
+Now the whole plan is refused, nothing is written, and the exit code is 1: the same all-or-nothing check that refuses a name clash ([below](#errors)) also refuses a missing marker, because a resource generated but not wired in is just as broken as one only half written. Restore the marker comments and run it again. Missing markers are still worth avoiding on purpose: keep your own code outside them and never delete them, since a refusal here is safer than the silent 404 an older CLI would have left you with, but it is still a run that does nothing until you fix it.
 
 ## Modules and services: where files go
 
@@ -645,18 +637,24 @@ Generated 8 files:
   - src/modules/billing/services/payments.service.ts
   - src/modules/billing/controllers/payments.controller.ts
   - src/modules/billing/routes/payments.routes.ts
-  - tests/payments.test.ts
+  - tests/modules/billing/payments.test.ts
   - src/modules/billing/routes/index.ts
   - src/container.ts
 $ zudojs generate resource payments --module shipping
 Detected architecture: modular-monolith
 Module "shipping" does not exist at src/modules/shipping. Create it first: zudojs generate module shipping
+$ zudojs generate service refunds --module billing
+Detected architecture: modular-monolith
+Generated 3 files:
+  - src/modules/billing/dtos/refunds.dto.ts
+  - src/modules/billing/repositories/refunds.repository.ts
+  - src/modules/billing/services/refunds.service.ts
 ```
 
-Two behaviours in a modular monolith are easy to trip over:
+Two things are worth noticing in a modular monolith:
 
-- **Tests are not grouped by module.** The test still goes to `tests/payments.test.ts`. A `payments` resource in a second module collides with it and is refused with "already exists", even though its source files would not collide.
-- **`service` means "module" here.** `zudojs generate service refunds --module billing` prints `Mapping "service" → "module" for modular-monolith architecture.` and creates a whole new module called `refunds`, ignoring `--module billing`. To get a service inside `billing`, generate a `resource` or `controller` there and delete what you do not need.
+- **Tests are grouped by module.** `payments` in `billing` gets `tests/modules/billing/payments.test.ts`, so a same-named resource in a second module writes its own test alongside its own source files, with nothing to collide.
+- **`--module` is respected by every schematic, including `service`.** `generate service refunds --module billing` writes the service (and the repository and DTO it cascades to) inside `billing`, exactly where `--module` points, the same as `resource` and `controller` do.
 
 In a microservice project, a service name that does not exist is refused the same way: `No app at apps/services/billing. Pass --service with an existing service (or omit it for the gateway).`
 
@@ -681,12 +679,12 @@ $ zudojs generate resource
 Missing required argument "name".
 Run "zudojs generate --help" for usage.
 $ zudojs generate widget orders
-Schematic name is required. Available: resource, service, module, command, query, controller, repository, middleware, event, job, route, model, dto, validator
+Unknown schematic "widget". Available: resource, service, module, command, query, controller, repository, middleware, event, job, route, model, dto, validator
 $ zudojs add payments
 Unknown feature: "payments". Available: database, redis, websockets, email, docker, queue, messaging, openapi, observability, cache, storage, scheduler
 ```
 
-The third message is misleading: you did give a schematic name, just not a valid one. Read the list that follows it, not the first sentence.
+Both name what was wrong and list what is valid, so you fix it from the message alone.
 
 The two options that control writing:
 
@@ -755,6 +753,7 @@ Updated:
   - .gitignore
 Feature "database" added successfully.
 Next: Set DATABASE_URL in .env, then run the db:migrate script after adding models.
+Next: In production, apply migrations with the built image: docker run --rm --env-file .env <image> npx prisma migrate deploy (the db:deploy script does the same locally).
 Next: Resources generated from now on use Prisma; existing ones keep their in-memory repository until you swap it in src/container.ts.
 $ zudojs generate resource coupons
 Detected architecture: monolith
@@ -769,6 +768,7 @@ Generated 10 files:
   - prisma/schema.prisma
   - src/routes/index.ts
   - src/container.ts
+Warning: Could not run "npx prisma generate" (dependencies were skipped above with --skip-install). Run it after installing dependencies; until then the Prisma repository does not type-check.
 Warning: Finish by hand:
   - Run "prisma migrate dev --name add-coupons" (the Coupon model was added to prisma/schema.prisma).
 ```
@@ -865,7 +865,7 @@ Zudojs Doctor - Project Diagnostics
 ✔ Package manager: npm (lock file present)
 ✔ Dependencies installed: node_modules present
 ✔ TypeScript configuration: tsconfig.json found in every app
-✔ Zudojs dependencies: 13 Zudojs package(s) declared
+✔ Zudojs dependencies: 14 Zudojs package(s) declared
 ✔ Features: Every declared feature has its package
 ⚠ Capabilities: "openapi" is in .zudojs/manifest.json but in no app's zudojs.features
 
@@ -974,7 +974,17 @@ TRY IT YOURSELF
 
 Without running it, write down the files `zudojs generate controller invoices --dry-run` lists in a monolith, and which existing files it edits. Then run it.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Find `controller` in the schematics table and read its two columns.
+
+HINT 2
+
+The layered schematics cascade downward only; `controller` needs everything below it in the table (which schematics are those?), but nothing wires it to a route.
+
+SOLUTION
 
 Terminal on your computer
 
@@ -996,7 +1006,17 @@ TRY IT YOURSELF
 
 The singular rule turns `people` into the type `People` and `news` into `New`. Add a check to `resourceNames` that refuses a name when its singular does not look right, using a small list of irregular words, and suggests a better name.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`const better = IRREGULAR.get(slug);` gives you the suggestion, or `undefined` when `slug` is not in the map.
+
+HINT 2
+
+`if (better) throw new Error(\`"${slug}" has an irregular plural; try "${better}"\`);`, the same shape as `checkUsername` above.
+
+SOLUTION
 
 irregular.js
 
@@ -1034,9 +1054,19 @@ TRY IT YOURSELF
 
 A teammate says: "I generated `resource shipments`, the tests pass, but `curl http://localhost:3000/api/v1/shipments` gives 404." List the two most likely causes and how to check each.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
 
-- **The wiring was not written.** Check the end of the generate output for `Warning: Finish by hand`, then open `src/routes/index.ts` and look for `registerShipmentsRoutes` between the `routes` markers, and for `shipmentsController` in `src/container.ts`. If the markers are gone, restore them and add the lines the warning printed.
+HINT 1
+
+The generated test builds its own router, so passing tests tell you nothing about whether the real server was wired up or is running fresh code. Think of one cause in each of those two categories.
+
+HINT 2
+
+One cause is about what `src/routes/index.ts` and `src/container.ts` actually contain right now, regardless of what `generate` reported; the other is about which script started the server they are curling.
+
+SOLUTION
+
+- **The wiring was reverted or edited by hand afterwards.** A missing marker now makes `generate` refuse the whole run (nothing is written, exit 1), so if the command reported success, `registerShipmentsRoutes` is between the `routes` markers in `src/routes/index.ts` and `shipmentsController` is in `src/container.ts` — unless someone removed one of those lines after the fact. Check both, and check `git log` for what changed them.
 - **The running server is old.** With `npm start`, the server runs `dist/`, compiled before the resource existed. Run `npm run build` again, or use `npm run dev`, which restarts on every save.
 
 The tests pass in both cases because `tests/shipments.test.ts` registers the routes on its own router.
@@ -1047,7 +1077,7 @@ The tests pass in both cases because `tests/shipments.test.ts` registers the rou
 - Exit codes: 0 success (warnings included), 1 failure, 2 incomplete command line, 3 unknown command.
 - The CLI walks up from the current folder to the first folder with a manifest, a `zudojs.config` file or a `zudojs` block in `package.json`, and reads the architecture from there.
 - Names become kebab-case files and PascalCase classes; resources are plural, their record types singular; names that would break the code are refused.
-- Generated wiring goes between `// zudojs:…` markers, idempotently. Missing markers produce a warning, not a failure, so read the end of every run.
+- Generated wiring goes between `// zudojs:…` markers, idempotently. Missing markers refuse the whole run rather than write half of it, so read the end of every run.
 - Stubs such as the validator compile but do nothing; replace them before anything depends on them. There are no custom templates, but `zudojs-cli` lets you build your own commands.
 
 Next, [Anatomy of a ZudoJS project](https://zudojs.oyinlola.site/learn/zudo-project-anatomy) opens the files `create` and `generate resource` wrote and follows one request from `src/server.ts` all the way to the repository and back.

@@ -573,7 +573,17 @@ TRY IT YOURSELF
 
 Write `shouldRetry(method, status)` that returns `true` only for `GET`, `HEAD` and `PUT` requests that failed with 429, 502, 503 or 504. Why is `PUT` on the list but not `POST`?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Both sets already exist; the function only needs to ask each of them one question and combine the answers.
+
+HINT 2
+
+`return SAFE.has(method) && TRANSIENT.has(status);`
+
+SOLUTION
 
 should-retry.js
 
@@ -608,7 +618,17 @@ TRY IT YOURSELF
 
 The outbox delivers at least once. Write an inventory handler for `order.placed` that reduces the stock only the first time it sees an `orderId`. Deliver the same event twice and show the stock went down once.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Guard first: `if (handled.has(event.payload.orderId)) { console.log(...); return; }`, before touching `stock` at all.
+
+HINT 2
+
+After the guard: `handled.add(event.payload.orderId); stock -= event.payload.quantity; console.log(\`order ${event.payload.orderId}: stock is now ${stock}\`);`.
+
+SOLUTION
 
 dedupe.ts
 
@@ -653,7 +673,17 @@ TRY IT YOURSELF
 
 Change the circuit breaker example so that when the breaker is open, the caller shows `"stock unknown"` instead of an error. Which ShopFlow pages could live with that fallback, and which could not?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+A rejected promise can be given a fallback value with one method, without touching the breaker itself.
+
+HINT 2
+
+Which pages only ever *read* stock to display it, and which pages need to be sure enough stock exists before they let money change hands?
+
+SOLUTION
 
 Wrap the call: `const text = await breaker.call(askInventory).catch(() => "stock unknown");`. A product page can show "stock unknown" and still sell. Checkout cannot: it must not accept an order it cannot reserve, so there the right answer is a clear "please try again in a minute".
 

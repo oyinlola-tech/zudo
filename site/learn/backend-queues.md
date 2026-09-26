@@ -803,7 +803,17 @@ TRY IT YOURSELF
 
 Another popular strategy is "full jitter": a random delay between 0 and the capped exponential delay. Write `fullJitter({ baseMs, maxMs, random })` in the same shape as `exponentialBackoff`, and print the delays for attempts 1 to 6 with `random` returning 0, 0.5 and 1.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The capped exponential delay is the same expression as in `exponentialBackoff`: `Math.min(maxMs, baseMs * 2 ** (attempt - 1))`.
+
+HINT 2
+
+Multiply it by `random()` and round: `Math.round(random() * Math.min(maxMs, baseMs * 2 ** (attempt - 1)))`.
+
+SOLUTION
 
 full-jitter.ts
 
@@ -837,7 +847,17 @@ TRY IT YOURSELF
 
 Write a consumer that sends an order-shipped SMS. It must send at most one SMS per message id, even when the message is delivered three times. Keep the processed ids in a `Set`, and record the id only **after** the provider accepted the SMS. What happens if the process crashes between sending and recording?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Guard first: `if (processed.has(message.id)) return "duplicate, skipped";`, before doing anything else.
+
+HINT 2
+
+`await sendSms(message.phone, \`Order ${message.orderId} is on its way\`); processed.add(message.id); return "sent";` — in that order.
+
+SOLUTION
 
 sms-consumer.ts
 
@@ -878,7 +898,17 @@ TRY IT YOURSELF
 
 For each job, choose at-most-once or at-least-once delivery, and say what the consumer must do: (a) crediting ₦5,000 to a seller's wallet after a sale; (b) updating a "customers online now" counter on a dashboard; (c) e-mailing a password-reset link; (d) telling the warehouse to pick an order.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Which of these is genuinely fine to miss once, because the next update fixes it? For the rest, is losing the message or repeating it the worse mistake?
+
+HINT 2
+
+Whenever "at-least-once" is the answer, ask what makes the consumer safe to run twice on the same message: what would you key the deduplication on?
+
+SOLUTION
 
 (a) At-least-once with an idempotent consumer: a lost credit is money owed, a double credit is money lost, so dedupe by message id in the same transaction as the wallet update. (b) At-most-once is fine: a missed update is corrected by the next one seconds later. (c) At-least-once: a lost link locks the user out; a duplicate is harmless if the link is single-use. (d) At-least-once with an idempotent consumer, keyed by order id: picking twice ships two parcels.
 

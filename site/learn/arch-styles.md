@@ -959,7 +959,17 @@ TRY IT YOURSELF
 
 Placing an order across two services: inventory reserves copies, then payments charges. If the charge fails or times out, release the copies. Simulate 8 orders (every 4th one over the card limit, payments losing 20% of requests) and check at the end that stock left plus copies held by confirmed orders still equals the starting stock.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Reserve first: `const reserved = await network.call<string>("inventory", { op: "reserve", orderId, quantity }, 100); if (!reserved.ok || reserved.value !== "reserved") return "rejected";`.
+
+HINT 2
+
+Then charge, and branch on both the call's own success and its value: `const charged = await network.call<string>("payments", { orderId, amountKobo }, 100); if (charged.ok && charged.value === "charged") return "confirmed";`, otherwise release and return `charged.ok ? "compensated (declined)" : "compensated (payments timed out)"`.
+
+SOLUTION
 
 saga.ts
 
@@ -1028,7 +1038,17 @@ TRY IT YOURSELF
 
 Run the best-sellers projection on a broker that duplicates 30% of deliveries. Show that the counts are wrong, then fix the projector so each event counts once.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The guard goes first, and only when `idempotent` is true: `if (idempotent) { if (seen.has(message.id)) return; seen.add(message.id); }`.
+
+HINT 2
+
+Returning early skips the `soldCopies.set(...)` line below for a message whose id was already seen, so a redelivered duplicate changes nothing.
+
+SOLUTION
 
 projector-fix.ts
 
@@ -1072,7 +1092,17 @@ TRY IT YOURSELF
 
 The BookStore has these features: book pages and search, prices and discounts, carts, orders, payments, stock, delivery, receipts by e-mail, reviews, and a sales dashboard. Group them into modules, say which could become separate services first and why, and name the events that cross the boundaries.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Group by what changes together and who owns the rule, the same test [Design principles](https://zudojs.oyinlola.site/learn/design-principles#cohesion) used for cohesion. Stock and orders both need strong consistency ("an order reserves stock"): should they live in the same module?
+
+HINT 2
+
+A good early service candidate is owned by a different team, has different security or scaling needs, or can fail without breaking checkout. Which of payments, notifications and reviews fit that description? Name each cross-boundary fact in the past tense, like `order.placed`.
+
+SOLUTION
 
 One reasonable answer (there are others):
 

@@ -4,7 +4,7 @@ description: "Build a complete Task API with no framework: modules, middleware, 
 source: https://zudojs.oyinlola.site/learn/node-task-api
 ---
 
-LEVEL 4 · LESSON 9 OF 20
+LEVEL 4 · LESSON 9 OF 21
 
 HTTP without a framework Core
 
@@ -752,7 +752,17 @@ TRY IT YOURSELF
 
 Write a middleware `countRequests(counter)` that adds 1 to `counter.total` for every request, and to `counter.failed` when the final status is 400 or higher. Try it with `compose` and a handler that sets `ctx.status`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Increment `counter.total` before calling `next()`. `ctx.status` is only set once the handler, further down the chain, has run — which is after `next()` resolves.
+
+HINT 2
+
+`counter.total += 1; await next(); if (ctx.status >= 400) counter.failed += 1;`
+
+SOLUTION
 
 count.js
 
@@ -795,7 +805,17 @@ TRY IT YOURSELF
 
 Add a `limit` query parameter to `GET /tasks`: a whole number from 1 to 100, default 20. Anything else is a 400. Write the check as a function you can test on its own.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Convert `text` to a number first, but keep the original text around too: the regex check and the range check both matter, and either one failing should throw.
+
+HINT 2
+
+`const limit = Number(text); if (!/^[0-9]{1,3}$/.test(text) || limit < 1 || limit > 100) throw new HttpError(400, "limit must be a whole number from 1 to 100"); return limit;`
+
+SOLUTION
 
 limit.js
 
@@ -843,7 +863,17 @@ TRY IT YOURSELF
 
 Look back over the files you wrote. Find one place where you repeated yourself, and one place where forgetting a line would have created a security problem. Which items in the 20,000-lines list do they belong to?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look at `app.js` route by route: which few lines appear, in slightly different words, in more than one handler?
+
+HINT 2
+
+For the security half, ask what a client could send that the code doesn't explicitly check for, in `app.js`'s `PATCH` route and in `middleware.js`'s `requireApiKey`.
+
+SOLUTION
 
 Some possible answers:
 

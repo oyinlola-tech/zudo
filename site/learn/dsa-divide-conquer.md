@@ -697,7 +697,17 @@ TRY IT YOURSELF
 
 A shop's daily profit (in thousands of naira, negative on loss days) is below. Find the largest total of any run of *consecutive* days, with divide and conquer: the best run is entirely in the left half, entirely in the right half, or it *crosses* the middle. The crossing case is the combine step: the best run ending at the middle plus the best run starting just after it. What is the cost?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Mirror the left-side loop: start `sum` at 0, walk from `mid + 1` to `hi`, and after adding each day keep the largest running sum seen so far in `bestRight`.
+
+HINT 2
+
+`for (let i = mid + 1; i <= hi; i++) { sum += days[i]; bestRight = Math.max(bestRight, sum); }`
+
+SOLUTION
 
 best-run.js
 
@@ -742,7 +752,17 @@ TRY IT YOURSELF
 
 Head office receives one list of order times per branch, each sorted. Merge *k* lists by divide and conquer: merge the first half of the lists, merge the second half, then merge the two results. Count comparisons for 16 branches with 1,000 orders each, and compare with merging the lists one after another into a growing result.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Recurse into the two halves of `lists` (from `lo` to `mid`, and `mid + 1` to `hi`), and combine their two results with `merge(...)`, the same way `pairwiseSum` combines its two halves with `+`.
+
+HINT 2
+
+`return merge(mergeAll(lists, lo, mid), mergeAll(lists, mid + 1, hi));`
+
+SOLUTION
 
 merge-branches.js
 
@@ -797,7 +817,17 @@ TRY IT YOURSELF
 
 The catalogue page shows the 5 cheapest of 10,000 products, cheapest first. Use `quickselect` to find the 5th smallest price, then collect everything cheaper than it (plus enough equal ones to make 5), and sort only those. Why is that O(n + k log k)?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Get the threshold with `quickselect(values, k - 1, ...)`. Then `filter` for values strictly below it, and take just enough values equal to it (`k - below.length` of them) to reach `k` in total.
+
+HINT 2
+
+`const threshold = quickselect(values, k - 1, { random: makeRandom(3) }); const below = values.filter((v) => v < threshold); const equal = values.filter((v) => v === threshold).slice(0, k - below.length); return [...below, ...equal].sort((a, b) => a - b);`
+
+SOLUTION
 
 cheapest.js
 

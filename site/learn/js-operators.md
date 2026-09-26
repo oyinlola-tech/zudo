@@ -613,7 +613,17 @@ TRY IT YOURSELF
 
 A delivery takes `135` minutes. Using `Math.floor`, `/` and `%`, print it as `2h 15min`. Then do the same for `59` and `120` minutes.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`Math.floor(total / 60)` gives the whole hours; `%` gives what is left over.
+
+HINT 2
+
+`const hours = Math.floor(total / 60); const minutes = total % 60;` then `console.log(\`${hours}h ${minutes}min\`);`
+
+SOLUTION
 
 minutes.js
 
@@ -646,7 +656,17 @@ const settings = { volume: 0 };
 console.log(`Volume: ${settings.volume || 50}`);
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`||` replaces every falsy value, including a real `0`. Use `??` instead: it only replaces `null` and `undefined`.
+
+HINT 2
+
+`console.log(\`Volume: ${settings.volume ?? 50}\`);` and the same line for `empty.volume`.
+
+SOLUTION
 
 volume.js
 
@@ -673,7 +693,17 @@ TRY IT YOURSELF
 
 Using the flags `VIEW_ORDERS = 1`, `EDIT_ORDERS = 2` and `ISSUE_REFUND = 4` from the bitwise section, write `can(permissions, flag)` that returns `true` or `false`. A manager has `7`. Check whether the manager can issue refunds, then remove that permission and check again.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`permissions & flag` keeps only the bit you ask about: it equals `flag` when that bit is on, and `0` when it is off.
+
+HINT 2
+
+`return (permissions & flag) !== 0;`
+
+SOLUTION
 
 can.js
 
@@ -707,7 +737,17 @@ TRY IT YOURSELF
 
 Given `const order = { customer: { address: null } };`, print the city of the customer's address, or `"unknown"` if there is none, without crashing.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`?.` stops and gives `undefined` as soon as it meets `null` or `undefined`, instead of crashing.
+
+HINT 2
+
+`order.customer?.address?.city ?? "unknown"`
+
+SOLUTION
 
 city.js
 

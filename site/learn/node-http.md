@@ -4,7 +4,7 @@ description: "Build a web server with only node:http: read the method, path, que
 source: https://zudojs.oyinlola.site/learn/node-http
 ---
 
-LEVEL 4 · LESSON 8 OF 20
+LEVEL 4 · LESSON 8 OF 21
 
 HTTP without a framework Core
 
@@ -589,7 +589,17 @@ TRY IT YOURSELF
 
 Add `DELETE /tasks/:id` to a server: answer **204** with no body when the task existed, and 404 otherwise. Test it by deleting the same task twice.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`tasks.findIndex((t) => t.id === Number(match[1]))` gives you `-1` when nothing matches. `res.end()` with no argument sends an empty body.
+
+HINT 2
+
+`if (match && req.method === "DELETE") { const index = tasks.findIndex((t) => t.id === Number(match[1])); if (index !== -1) { tasks.splice(index, 1); res.statusCode = 204; return res.end(); } }`
+
+SOLUTION
 
 delete.jsNode.js only
 
@@ -640,7 +650,17 @@ TRY IT YOURSELF
 
 Write `readPaging(searchParams)` that reads `limit` (default 10, at most 50) and `offset` (default 0) from a query string, and returns an error message for anything that is not a whole number in range.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Test both texts against `/^[0-9]{1,6}$/` before converting either one. Only after that check passes does the range check on `limit` make sense.
+
+HINT 2
+
+`if (!/^[0-9]{1,6}$/.test(limitText) || !/^[0-9]{1,6}$/.test(offsetText)) return { error: "limit and offset must be whole numbers" }; const limit = Number(limitText); if (limit < 1 || limit > 50) return { error: "limit must be between 1 and 50" }; return { limit, offset: Number(offsetText) };`
+
+SOLUTION
 
 paging.js
 

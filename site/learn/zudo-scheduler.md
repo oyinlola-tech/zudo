@@ -244,7 +244,7 @@ Four fields instead of five, and hour 25, cannot be parsed, and the message name
 
 ## Time zones
 
-"09:00" is not a moment until you say *where*. 09:00 in Lagos and 09:00 in Tokyo are eight hours apart. By default, cron fields are read in the **local time zone of the server**, whatever the operating system is set to. Pass `timezone: "UTC"` to read them in UTC, the same everywhere:
+"09:00" is not a moment until you say *where*. 09:00 in Lagos and 09:00 in Tokyo are eight hours apart. By default, cron fields are read in the **local time zone of the server**, whatever the operating system is set to. Pass `timezone: "UTC"` to read them in UTC, the same everywhere, or pass any IANA zone name to read them as wall-clock time *there*:
 
 time-zones.tsNode.js only
 
@@ -260,26 +260,51 @@ scheduler.define({ id: "digest", name: "Weekday digest", handler: () => {} });
 const digest = scheduler.cron("0 9 * * 1-5", "digest", { timezone: "UTC" });
 console.log("next digest:", digest.nextRun()?.toISOString());
 
-try {
-  scheduler.cron("0 9 * * 1-5", "digest", { timezone: "Africa/Lagos" });
-} catch (error) {
-  if (error instanceof Error) console.log(error.name, "-", error.message);
-}
+const lagos = scheduler.cron("0 9 * * 1-5", "digest", { timezone: "Africa/Lagos" });
+console.log("Lagos next digest:", lagos.nextRun()?.toISOString());
 ```
 
 Output of `npx tsx time-zones.ts`
 
 ```ts
 next digest: 2026-10-05T09:00:00.000Z
-InvalidScheduleError - CronTrigger supports only "UTC" or the system local zone, got "Africa/Lagos"
+Lagos next digest: 2026-10-05T08:00:00.000Z
 ```
 
 Two things are new here:
 
 - A **clock** is where the scheduler reads the current time: an object with `now()` and `nowMs()`, described by the `Clock` type. This one always says 12:00 on 2 October, so `nextRun()` gives the same answer on every computer. That is how you test schedules without waiting for real time to pass.
-- Named zones such as `"Africa/Lagos"` are refused rather than silently ignored, because the package carries no time-zone database.
+- Lagos is UTC+1 with no daylight saving, so 09:00 there is 08:00 UTC. `CronTrigger` resolves any named zone through Node's own `Intl` time-zone data (since `@zudojs/scheduler` 1.3.0), so `"Africa/Lagos"`, `"America/New_York"` and `"Asia/Kolkata"` all work; only a name `Intl` does not recognise throws. A `CronTrigger`'s own `.timezone` property reports back the canonical zone name (`undefined` for local time), which is handy to log next to a schedule.
 
-The advice for servers: run schedules in **UTC**. Servers move between regions and clouds, and many places change their clocks for **daylight saving time**. On the night the clocks jump forward, 02:30 local time does not exist, and a local-time job at 02:30 is skipped. When they jump back, 02:30 happens twice. UTC never jumps. If users want their digest at 09:00 *their* time, store each user's zone and compute the UTC time for them.
+What makes a named zone worth using over a fixed UTC offset is **daylight saving time**. A schedule in `America/New_York` keeps firing at 09:00 wall-clock time on both sides of a clock change, because the package recomputes the UTC offset for each run instead of using one fixed number:
+
+dst.tsNode.js only
+
+```ts
+import { CronTrigger } from "@zudojs/scheduler";
+
+const trigger = new CronTrigger("0 9 * * *", "America/New_York");
+let after = new Date("2027-03-12T00:00:00Z"); // two days before the US spring-forward
+for (let i = 0; i < 4; i++) {
+  const next = trigger.next(after);
+  if (!next) break;
+  console.log(next.toISOString());
+  after = next;
+}
+```
+
+Output of `npx tsx dst.ts`
+
+```ts
+2027-03-12T14:00:00.000Z
+2027-03-13T14:00:00.000Z
+2027-03-14T13:00:00.000Z
+2027-03-15T13:00:00.000Z
+```
+
+Before 14 March the offset is UTC-5 (EST), so 09:00 local is 14:00 UTC. The clocks in New York sprang forward that night, and from the 14th on the offset is UTC-4 (EDT): the same 09:00 wall-clock time is now 13:00 UTC. A schedule pinned to a fixed `"UTC-5"` offset would have fired an hour "late" by local time from that day on; a named zone does not drift.
+
+Run schedules in **UTC** when the time itself has no local meaning (a nightly cleanup, an internal sync): it is one fewer thing to reason about, and servers move between regions and clouds. Use a named IANA zone when the time *is* about a place: "09:00 in Lagos" for a digest local users expect at breakfast, or "02:30 in America/New_York" for a maintenance window your ops team schedules by wall clock. Either way, a fixed-offset job (`02:30` with no zone reasoning at all) can still be skipped or repeated across a clock change; a named zone is what keeps a *local* 09:00 meaning 09:00 all year. If users want their digest at 09:00 *their* time, store each user's IANA zone name and pass it straight to `timezone`, rather than computing the UTC time yourself.
 
 ## Pausing, resuming, cancelling
 
@@ -585,7 +610,17 @@ TRY IT YOURSELF
 
 Write cron expressions for: (a) every day at 23:45; (b) every 10 minutes during office hours, 08:00 to 17:59, Monday to Friday; (c) at 06:00 on the first day of every quarter (January, April, July, October). Check each with `CronTrigger` from 2 October 2026, 12:00 UTC.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+(a) is minute 45, hour 23, every day. (b) combines a step (`*/10`) with a range for the hour (`8-17`) and a range for the weekday (`1-5`). (c) is minute 0, hour 6, day 1, and a list of four months.
+
+HINT 2
+
+`"45 23 * * *"`, `"*/10 8-17 * * 1-5"`, `"0 6 1 1,4,7,10 *"`.
+
+SOLUTION
 
 exercise-cron.tsNode.js only
 
@@ -619,7 +654,17 @@ TRY IT YOURSELF
 
 A "recalculate statistics" job runs every 30 seconds but sometimes takes 45 seconds. Which `overlap` policy should it use, and why? What would you change if it often took 2 minutes?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Re-read [overlapping runs](#overlap): which policy is right when a slightly-late run is harmless, because the currently running one will produce a fresh answer anyway?
+
+HINT 2
+
+"Sometimes 45 seconds" is an occasional overrun; "often 2 minutes" means the interval itself no longer fits the work. Those call for different fixes, not just a different `overlap` value.
+
+SOLUTION
 
 `"skip"`: a run that is still going will produce fresh statistics anyway, and a second run in parallel only doubles the load. If it often takes 2 minutes, the interval is simply too short for the work. Make the interval longer, make the job faster (for example by only recalculating users whose tasks changed), or move the work to a queue.
 

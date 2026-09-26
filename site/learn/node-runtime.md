@@ -4,7 +4,7 @@ description: "Learn what Node.js adds to JavaScript, where its event loop fits, 
 source: https://zudojs.oyinlola.site/learn/node-runtime
 ---
 
-LEVEL 4 · LESSON 1 OF 20
+LEVEL 4 · LESSON 1 OF 21
 
 Node.js Core
 
@@ -486,7 +486,17 @@ TRY IT YOURSELF
 
 Write `greet.js` that prints `Hello, Ada!` when you run `node greet.js Ada`, and `Hello, world!` when you give no name.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Run without an argument, `process.argv[2]` is `undefined`. The `??` operator replaces `undefined` with a default value.
+
+HINT 2
+
+`const name = process.argv[2] ?? "world";`
+
+SOLUTION
 
 greet.jsNode.js only
 
@@ -523,7 +533,21 @@ readFile(import.meta.filename, () => {
 });
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Synchronous code (`console.log("C")`) always runs first, before any callback.
+
+HINT 2
+
+Of the two microtasks, `process.nextTick` always runs before a promise's `.then`.
+
+HINT 3
+
+This callback runs inside a file-read callback (I/O), so `setImmediate` comes before the `setTimeout` here — that order is not guaranteed at the top level of a file.
+
+SOLUTION
 
 Terminal on your computer
 
@@ -544,7 +568,17 @@ TRY IT YOURSELF
 
 Change `config.js` so that `PORT=abc` stops the program with the message `PORT must be a whole number between 1 and 65535, got "abc"`, instead of starting on port `NaN`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`Number.isInteger(value)` tells you a number is a whole number. Combine the range check with `||` so any bad case takes the same branch.
+
+HINT 2
+
+`if (!Number.isInteger(port) || port < 1 || port > 65535) { ... }`, and remember every value from `process.env` starts out as text.
+
+SOLUTION
 
 port.jsNode.js only
 

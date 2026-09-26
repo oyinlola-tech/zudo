@@ -605,7 +605,17 @@ TRY IT YOURSELF
 
 A single rider has five deliveries today, each with a riding time and a promised deadline (minutes from now). Deliveries happen one after another. **Lateness** is how far past its deadline a delivery arrives (0 if on time). Order the deliveries to make the *worst* lateness as small as possible. Try the greedy rule "earliest deadline first", and compare with trying all 120 orders.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`edf` should be `jobs` sorted by `deadline`, earliest first, the same shape as `printJobs.toSorted((a, b) => a.minutes - b.minutes)` in the worked example.
+
+HINT 2
+
+`const edf = jobs.toSorted((a, b) => a.deadline - b.deadline);`
+
+SOLUTION
 
 deadlines.js
 
@@ -656,7 +666,17 @@ TRY IT YOURSELF
 
 The cleaning crew needs to know when the room is in use. Merge a list of bookings into the fewest non-overlapping busy periods, treating touching bookings (one ends at 10:00, the next starts at 10:00) as one period. Use a greedy sweep in start order.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Compare the new `[start, end]` with `merged.at(-1)`. If `start` is at or before that period's end, stretch it with `Math.max`. Otherwise push a brand new period.
+
+HINT 2
+
+`for (const [start, end] of sorted) { const last = merged.at(-1); if (last && start <= last[1]) last[1] = Math.max(last[1], end); else merged.push([start, end]); }`
+
+SOLUTION
 
 busy.js
 
@@ -695,7 +715,17 @@ TRY IT YOURSELF
 
 Write `firstGreedyFailure(denominations)` that returns the smallest amount where greedy gives more pieces than the best answer (or fails when the best answer exists), checking every amount up to the sum of the two largest denominations, or `null` if greedy is always optimal. Try it on the naira, on ₦500/₦400/₦100 and on a set with ₦750.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+For each `amount`, try every denomination as the piece used last: `fewest[amount - value] + 1`, keeping the smallest. Then compare that best answer with `greedyCount(amount, sorted)`.
+
+HINT 2
+
+`fewest[amount] = Infinity; for (const value of sorted) { if (value <= amount) fewest[amount] = Math.min(fewest[amount], fewest[amount - value] + 1); } if (fewest[amount] !== Infinity && greedyCount(amount, sorted) > fewest[amount]) return amount;`
+
+SOLUTION
 
 canonical.js
 

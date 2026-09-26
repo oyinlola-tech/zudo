@@ -1065,7 +1065,17 @@ TRY IT YOURSELF
 
 Support tickets are assigned to agents in turn: Ada, Chidi, Tunde, Ada, Chidi, and so on, forever. Write `cycle(items)`, an infinite iterable that repeats the items of an array in order. Use it to assign five tickets, and use `take` to list the first four turns. What should happen with an empty array?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Each call to the iterator's `next()` should return the next item and advance a counter: `list[i++ % list.length]` wraps back to the start once `i` passes the list's length, and `done` is always `false`.
+
+HINT 2
+
+`[Symbol.iterator]() { let i = 0; return Iterator.from({ next: () => ({ value: list[i++ % list.length], done: false }) }); }`, with the length check and throw at the top of `cycle`.
+
+SOLUTION
 
 cycle.js
 
@@ -1118,7 +1128,17 @@ TRY IT YOURSELF
 
 Write a `Cart` class that stores quantities in a `Map` from SKU to quantity, with `add(sku, qty)`. Make it iterable so that `for (const line of cart)` gives objects `{ sku, qty }`, and `[...cart]` works. Walking it twice must work.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+A `Map`'s `entries()` is itself iterable, and iterators from `@zudojs`-style modern JS have a `.map` helper: `this.#lines.entries().map(([sku, qty]) => ({ sku, qty }))`.
+
+HINT 2
+
+`[Symbol.iterator]() { return this.#lines.entries().map(([sku, qty]) => ({ sku, qty })); }` — return a fresh one from `entries()` every call, so a second walk is not exhausted by the first.
+
+SOLUTION
 
 cart-iterable.js
 
@@ -1160,7 +1180,17 @@ TRY IT YOURSELF
 
 Saving 10,000 orders one row at a time is slow; databases prefer batches. Write `chunk(iterable, size)`, a lazy iterable that yields arrays of up to `size` items from any iterable, including a paginator or an infinite sequence. The last batch may be shorter.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Inside `next()`, keep calling `source.next()` in a `while` loop, pushing values onto `batch`, until either `batch.length` reaches `size` or the source reports `done: true`.
+
+HINT 2
+
+See the pattern in full: `while (batch.length < size) { const result = source.next(); if (result.done) { finished = true; break; } batch.push(result.value); }`, then `return batch.length ? { value: batch, done: false } : { value: undefined, done: true };`. Do not forget `return() { finished = true; source.return?.(); return { value: undefined, done: true }; }`.
+
+SOLUTION
 
 chunk.js
 

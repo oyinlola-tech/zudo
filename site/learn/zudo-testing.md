@@ -164,6 +164,8 @@ events: [ 'task.created', 'task.created' ]
 
 Two days later, only "Buy milk" (due after one day) is overdue. One e-mail went out, with the exact address and subject. No time passed, no e-mail was sent, nothing was printed by the logger. Two more doubles: `createStub<T>(overrides)` makes an object whose methods do nothing unless you write them, and `createSpyMethod(object, "name")` records the calls of a real object's method until you call `restore()`.
 
+A mock's value can also change from one call to the next. `mockResolvedValueOnce(v)`, `mockRejectedValueOnce(error)`, `mockReturnValueOnce(v)` and `mockImplementationOnce(fn)` each queue a result for exactly the *next* call; once the queue is empty, the mock falls back to whatever `mockResolvedValue` or `mockImplementation` set. Queue several to script a sequence: `send.mockRejectedValueOnce(new Error("SMTP down")); send.mockResolvedValue("sent");` makes the first call fail and every call after it succeed, which is exactly the shape of "the mail server was down for one message, then recovered".
+
 The recording happens inside the bus itself. Whether your code calls `publish`, `publishEvent` or `emit`, and whether it got the double or its `bus` property, every event lands in `published`. You can pass the double anywhere an `EventBus` is expected. `createTestMessageBus` records every `send` and `dispatch` the same way, and `createTestQueue` every `add`.
 
 ## A test container and test config
@@ -524,7 +526,17 @@ TRY IT YOURSELF
 
 What should `remind` do when the mail server is down? Make the mock fail with `mockRejectedValue`, and check with `assertRejects` that `remind` passes the error on. Print how many times the mailer was called.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`send.mockRejectedValue(new Error("SMTP server unreachable"));` makes every call to the mock reject with that error, so `tasks.remind`'s `await deps.mailer.send(...)` throws.
+
+HINT 2
+
+`send.mockRejectedValue(new Error("SMTP server unreachable"));`. With that in place, `assertRejects` finds a real rejection and returns the error instead of throwing its own "did not reject" failure.
+
+SOLUTION
 
 failing-mailer.tsNode.js only
 
@@ -558,7 +570,17 @@ TRY IT YOURSELF
 
 Use `createTestMessageBus`. Send an `email.send` message, then check with `assertMessageDispatched` that it was sent and with `assertMessageNotDispatched` that no `sms.send` was.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`messages.send(...)` takes the same `{ type, payload }` shape as an event or a command. Send it before checking it: an assertion can only see messages already dispatched.
+
+HINT 2
+
+`await messages.send({ type: "email.send", payload: { to: "ada@example.com", subject: "Overdue: Buy milk" } }); assertMessageDispatched(messages.dispatched, "email.send"); assertMessageNotDispatched(messages.dispatched, "sms.send");`.
+
+SOLUTION
 
 messages.tsNode.js only
 

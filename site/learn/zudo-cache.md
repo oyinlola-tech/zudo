@@ -192,7 +192,7 @@ Output of `npx tsx keys.ts` and of the browser terminal
 taskapi:tasks.list
 taskapi:ada:tasks.list
 ERR_INVALID_INPUT 400
-Invalid cache key part "tasks:list": parts must match /^[a-zA-Z0-9._\-]+$/ and must not contain the separator ":".
+Invalid cache key part "tasks:list": parts must not contain the separator ":", which delimits prefix, namespace and key (a key "a:b" would collide with key "b" in namespace "a"). Put the scope in the namespace option (cache.get("b", { namespace: "a" })), use "." or "-" inside the part, or configure a different separator on the key builder.
 ```
 
 A bad key is a bug in your code, so it throws a `CacheError` with the code `ERR_INVALID_INPUT` and status 400. It is never treated as a miss.
@@ -657,7 +657,17 @@ TRY IT YOURSELF
 
 Add a `get(userId, id)` method that caches a single task under the key `task.<id>` in the user's namespace, with the `tasks` tag. Check that `create` also clears it, without changing `create`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Wrap the load in `cache.getOrSet(key, loader, options)`: `return (await cache.getOrSet(\`task.${id}\`, () => loadTask(id), { namespace: userId, tags: ["tasks"] })).value;`.
+
+HINT 2
+
+The key must be `\`task.${id}\`` and the tag must be exactly `"tasks"`, the same tag `create` already invalidates, or the second block would still show 3 queries instead of 2.
+
+SOLUTION
 
 one-task.ts
 
@@ -704,7 +714,17 @@ TRY IT YOURSELF
 
 A teammate caches the admin report like this: `cache.getOrSet("report", () => buildReport(user.role))`. An admin and a normal user call it. What goes wrong, and how do you fix it?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Look at the key, `"report"`, versus what the answer actually depends on, `user.role`. Re-read the warning in [keys and namespaces](#keys) about the key needing to include who is asking.
+
+HINT 2
+
+`getOrSet` only checks the cache *before* running the callback. If two different roles share one key, whichever role asks first decides what gets stored — and for how long everyone else sees it.
+
+SOLUTION
 
 The key `report` does not include the role, but the answer depends on it. Whoever asks first fills the cache, and everyone else gets that answer. If an admin asks first, normal users receive the admin report: a data leak. Put the role in the key, for example `\`report.${user.role}\``, or better, check the permission before reading the cache at all, so a normal user never reaches the admin data.
 
@@ -714,7 +734,17 @@ TRY IT YOURSELF
 
 Using `getOrSet`, read the key `tasks.list` 10 times with a TTL of 30 ms, waiting 10 ms between reads. Predict the number of misses, then print `getStats()` to check.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Each loop iteration is one call: `await cache.getOrSet("tasks.list", async () => ["Buy milk"], { ttl: 30 });`, followed by `await wait(10);`.
+
+HINT 2
+
+The entry lives 30 ms and you read roughly every 10 ms, so it survives about 2 reads before expiring: expect close to 1 miss in every 3 reads over 10 reads.
+
+SOLUTION
 
 hit-rate.ts
 

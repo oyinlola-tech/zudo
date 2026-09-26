@@ -539,7 +539,17 @@ TRY IT YOURSELF
 
 Give `CatalogApi` a third method, `inStock(sku): boolean`. Use it in `createOrders` so `placeOrder` refuses a sold-out product before calling `reserve`. Why is it still important that `reserve` checks the stock itself?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`inStock` reads the same `stock` map that `reserve` does: `(stock.get(sku) ?? 0) > 0`.
+
+HINT 2
+
+Between the check and the reservation, another request could reserve the last unit; that is why `reserve` must repeat the check itself instead of trusting `inStock`'s earlier answer.
+
+SOLUTION
 
 stock.ts
 
@@ -587,7 +597,17 @@ TRY IT YOURSELF
 
 Write a function `checkImport(fromModule, specifier)` that returns an error message when code in one module imports a file from inside another module, and `null` when the import is allowed. Allowed: anything inside the same module, and another module's `index.js`. Test it with the three imports below.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`const match = specifier.match(/modules\/([^/]+)\/(.+)$/); if (!match) return null; const [, target, rest] = match;` gives you the module name and the rest of the path.
+
+HINT 2
+
+`if (target === fromModule || rest === "index.js") return null; return \`${fromModule} may not import ${target}/${rest}: use ${target}/index.js\`;`
+
+SOLUTION
 
 boundaries.js
 
@@ -621,7 +641,17 @@ TRY IT YOURSELF
 
 Add a `loyalty` subscriber to the events example that gives one point per unit bought, and prints the running total for the customer. Do not change the orders code.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`bus.on<Event<OrderPlaced>>(OrderPlacedEvent.type, (event) => { ... })`, exactly as the worked example subscribes to `page.viewed`.
+
+HINT 2
+
+Inside the handler: `const { email, quantity } = event.payload; points.set(email, (points.get(email) ?? 0) + quantity); console.log(...)`.
+
+SOLUTION
 
 loyalty.ts
 

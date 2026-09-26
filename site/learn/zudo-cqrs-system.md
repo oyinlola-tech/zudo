@@ -1164,7 +1164,17 @@ TRY IT YOURSELF
 
 Add a `ShipOrder` command: only a placed order can be shipped, it uses `expectedVersion` like `CancelOrder`, and it records `order.shipped`. Cancelling a shipped order must then fail. Test it on the write side, without the projector.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Model the `UPDATE` on `CancelOrder`'s, but with `status = 'shipped'` in the `SET` and `status = 'placed'` in the `WHERE` (a shipped or cancelled order does not match, so it falls into the investigation branch).
+
+HINT 2
+
+On success: `await db().query("INSERT INTO outbox (event_id, type, order_id, version, payload) VALUES ($1, 'order.shipped', $2, $3, $4)", [\`${command.orderId}.v${row.version}\`, command.orderId, row.version, { type: "order.shipped", orderId: command.orderId }]);`.
+
+SOLUTION
 
 ship.tsNode.js only
 
@@ -1230,7 +1240,17 @@ TRY IT YOURSELF
 
 Write `lag(store)` that returns how many outbox events have not yet been applied to `order_summaries`. An event counts as applied when the summary row for its order has a version greater than or equal to the event's version.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Start from `outbox o LEFT JOIN order_summaries s ON s.order_id = o.order_id`, then `count(*)` the rows where `s.version IS NULL OR s.version < o.version`.
+
+HINT 2
+
+`return manager.run(async () => (await db().query(\`SELECT count(*)::int AS n FROM outbox o LEFT JOIN order_summaries s ON s.order_id = o.order_id WHERE s.version IS NULL OR s.version < o.version\`)).rows[0]?.n ?? 0, { readOnly: true });`
+
+SOLUTION
 
 lag.tsNode.js only
 
@@ -1273,7 +1293,17 @@ TRY IT YOURSELF
 
 For each piece of logic, say whether it belongs in a command handler, a projector, a query handler or the API layer: (a) "a customer may have at most 5 open orders"; (b) formatting kobo as "₦14,000.00" for the page; (c) reading the `If-Match` header; (d) the number of items in an order, shown on the list page; (e) "only show orders from the last 12 months".
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Which side, write or read, can actually enforce a rule against reality rather than just report on it? Which of these are really about HTTP, not about orders at all?
+
+HINT 2
+
+(d) is decided once, when the order is placed; where does that number then travel so the query side never has to compute it again?
+
+SOLUTION
 
 (a) Command handler: it is a rule that must be enforced against the current state, in the transaction. A read model may be stale, so it can never enforce a rule. (b) Neither side of the server: formatting is presentation, done by the client (or a response mapper in the API layer). The read model stores kobo. (c) API layer: HTTP details stop there; the command gets a plain `expectedVersion`. (d) Decided by the command (it has the lines), carried in the event, stored by the projector; the query only reads it. (e) Query handler: a filter on the read model, perhaps with an index on a date column the projector fills in.
 

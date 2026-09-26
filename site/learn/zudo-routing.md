@@ -73,12 +73,12 @@ await hit(router, "GET", "/tasks?status=open&status=done");
 Output of `npx tsx two-bugs.ts`
 
 ```ts
-GET /tasks/42 -> 200 {"found":"by slug","slug":"42"} [/tasks/:slug]
+GET /tasks/42 -> 200 {"found":"by id","id":42} [/tasks/:id(\d+)]
 GET /tasks?status=open -> 200 {"filter":"OPEN"} [/tasks]
 GET /tasks?status=open&status=done -> 500 (thrown TypeError: status.toUpperCase is not a function)
 ```
 
-- The `:id(\\d+)` route never runs. Its author expected "digits only" to make it the better match for `/tasks/42`, but the slug route was registered first and also matches. No error, no warning: the id route is dead code.
+- The `:id(\\d+)` route wins for `/tasks/42`, even though the slug route was registered first: a constrained parameter always outranks a plain one. Do not read too much into that, though — it only resolves *this* shape of overlap. Two parameter routes with no constraint at all are still a genuine tie, and a route that can never win at all is a different problem again; [Matching order](#matching) covers both.
 - A client repeated a query key, the value became an array, and `toUpperCase` crashed. `as string` told TypeScript to stop checking. In a server that is a 500 for a request any client can send.
 
 The helper `hit` sends a request through `router.dispatch` without a server and prints the status, the body and, in brackets, the pattern that answered. `dispatch` does not turn a thrown error into a response; the server does that. So `hit` prints a thrown error the way the server would answer it: an exposed `HttpError` with its own status, anything else as 500. Every example in this lesson uses it, so you can see which route won. This lesson explains how the router registers, parses, orders and matches routes, so that you can predict the winner before a user finds out.
@@ -134,7 +134,7 @@ Output of `npx tsx registration.ts`
 ]
 PATCH /tasks/7 -> 200 {"updated":"7"} [/tasks/:id]
 DELETE /debug -> 200 {"method":"DELETE"} [/debug]
-DELETE /debug -> 404 {"error":"Not Found","method":"DELETE","path":"/debug"}
+DELETE /debug -> 404 {"error":"Not Found","code":"NOT_FOUND","method":"DELETE","path":"/debug"}
 RouteConflictError - A route for GET /tasks is already registered. | conflict: true
 InvalidRoutePatternError - Invalid route pattern "/tasks/:id(": Invalid parameter name "id(". | conflict: false
 ```
@@ -203,12 +203,12 @@ Output of `npx tsx patterns.ts`
 
 ```ts
 GET /tasks/caf%C3%A9 -> 200 {"id":"café"} [/tasks/:id]
-GET /tasks/a%2Fb -> 404 {"error":"Not Found","method":"GET","path":"/tasks/a%2Fb"}
-GET /tasks/%2e%2e -> 404 {"error":"Not Found","method":"GET","path":"/"}
+GET /tasks/a%2Fb -> 404 {"error":"Not Found","code":"NOT_FOUND","method":"GET","path":"/tasks/a%2Fb"}
+GET /tasks/%2e%2e -> 404 {"error":"Not Found","code":"NOT_FOUND","method":"GET","path":"/"}
 GET /reports/2026 -> 200 {"year":"2026"} [/reports/:year/:month?]
 GET /reports/2026/09 -> 200 {"year":"2026","month":"09"} [/reports/:year/:month?]
 GET /invoices/000123 -> 200 {"number":"000123"} [/invoices/:number(\d{6})]
-GET /invoices/123 -> 404 {"error":"Not Found","method":"GET","path":"/invoices/123"}
+GET /invoices/123 -> 404 {"error":"Not Found","code":"NOT_FOUND","method":"GET","path":"/invoices/123"}
 GET /users/7/tasks -> 200 {"userId":"7"} [/users/{userId}/tasks]
 GET /files/2026/q3/report.pdf -> 200 {"path":"2026/q3/report.pdf"} [/files/*path]
 ```
@@ -245,9 +245,10 @@ Missing route parameter "id".
 
 A request path usually matches more than one pattern. `/tasks/stats` fits both `/tasks/stats` and `/tasks/:id`. Some routers, such as Express, try routes in the order you registered them. `@zudojs/http` does not: it sorts routes by **specificity**, comparing segment by segment from the left:
 
-1. A literal segment beats a parameter.
-2. A parameter beats a wildcard.
-3. When two routes are equally specific, the one registered first wins.
+1. A literal segment beats a parameter, which beats a wildcard.
+2. A **constrained** parameter (`:id(\\d+)`) beats a plain one (`:slug`) at the same position, whichever was registered first.
+3. At equal specificity, a method-specific route (`get(...)`) is tried before a catch-all `all(...)` route.
+4. When two routes are still equally specific after all of that, the one registered first wins.
 
 order.tsNode.js only
 
@@ -279,7 +280,7 @@ The routes were registered in the worst possible order, and each request still r
 
 ### Ties and dead routes
 
-Rule 3 explains the first bug of this lesson. A regular-expression constraint does not make a parameter more specific: `:slug` and `:id(\\d+)` are equally specific, so registration order decides. And the router only rejects routes with the *same* pattern. A route that can never win is accepted without a word:
+Rule 2 resolves a constrained parameter against a plain one automatically, in either order. Two *plain* parameters at the same position are still a genuine tie, decided by rule 4: whichever was registered first wins, and the router refuses to register a second route that the first would shadow for every request:
 
 ties.tsNode.js only
 
@@ -288,9 +289,8 @@ import { createRouter } from "@zudojs/http";
 import { hit } from "./hit.js";
 
 const fixed = createRouter();
-fixed.get("/tasks/:id(\\d+)", (ctx) => ({ found: "by id", id: Number(ctx.params.id) }));
 fixed.get("/tasks/:slug", (ctx) => ({ found: "by slug", slug: ctx.params.slug }));
-fixed.get("/tasks/:taskId", () => ({ found: "never" }));
+fixed.get("/tasks/:id(\\d+)", (ctx) => ({ found: "by id", id: Number(ctx.params.id) }));
 
 await hit(fixed, "GET", "/tasks/42");
 await hit(fixed, "GET", "/tasks/buy-milk");
@@ -298,11 +298,16 @@ await hit(fixed, "GET", "/tasks/buy-milk");
 const samples: [pattern: string, sample: string][] = [
   ["/tasks/:id(\\d+)", "/tasks/42"],
   ["/tasks/:slug", "/tasks/buy-milk"],
-  ["/tasks/:taskId", "/tasks/anything"],
 ];
 for (const [pattern, sample] of samples) {
   const answered = fixed.match("GET", sample).route?.path;
   console.log(answered === pattern ? `${sample} -> ${answered}` : `${sample} -> ${answered}, so ${pattern} is dead`);
+}
+
+try {
+  fixed.get("/tasks/:taskId", () => ({ found: "never" }));
+} catch (error) {
+  console.log((error as Error).name, "-", (error as Error).message);
 }
 ```
 
@@ -313,14 +318,14 @@ GET /tasks/42 -> 200 {"found":"by id","id":42} [/tasks/:id(\d+)]
 GET /tasks/buy-milk -> 200 {"found":"by slug","slug":"buy-milk"} [/tasks/:slug]
 /tasks/42 -> /tasks/:id(\d+)
 /tasks/buy-milk -> /tasks/:slug
-/tasks/anything -> /tasks/:slug, so /tasks/:taskId is dead
+RouteConflictError - Route GET /tasks/:taskId can never match: GET /tasks/:slug is tried first and matches every request it would. Pass { shadowedRoutes: "ignore" } to register it anyway.
 ```
 
-Registering the constrained route first fixes the first bug, because it now wins the tie for digits and refuses everything else. The third route is dead: `:slug` already takes every single segment. `router.match(method, path)` tells you which route *would* answer without running anything, so a test can check your own sample path for each route. You will build that test for the Task API at the end of this lesson.
+The constrained route wins for digits whichever order the two were registered in, so the first bug from the opening was never really a bug in this build. The third route is a different problem: `:taskId` is exactly as specific as `:slug`, which was registered first and matches every path `:taskId` would, so `:taskId` could never run at all. The router refuses that registration outright with `RouteConflictError`, at startup, instead of accepting dead code silently; pass `createRouter({ shadowedRoutes: "ignore" })` on the rare occasion you register such a route on purpose. `router.match(method, path)` still tells you which route *would* answer a given path without running anything, for the ties that are not full shadows. You will build that test for the Task API at the end of this lesson.
 
 > TIP
 >
-> Avoid overlapping parameter routes altogether when you can. `/tasks/:id` and `/tasks/by-slug/:slug` can never compete. When they must overlap, register the constrained one first and write a test for both.
+> Avoid overlapping parameter routes altogether when you can. `/tasks/:id` and `/tasks/by-slug/:slug` can never compete. A registration order still matters for two plain parameters at the same position, so write a test for both, and let a fully shadowed route fail your build instead of hiding in the route table.
 
 ### HEAD, OPTIONS and 405
 
@@ -346,12 +351,12 @@ Output of `npx tsx methods.ts`
 ```ts
 HEAD 200 allow: undefined
 OPTIONS 204 allow: GET, PATCH, HEAD, OPTIONS
-DELETE 405 allow: GET, PATCH
+DELETE 405 allow: GET, PATCH, HEAD, OPTIONS
 ```
 
 - **HEAD** runs the `GET` route. The server then sends the headers without the body, which is what HEAD means.
 - **OPTIONS** answers 204 with an `Allow` header listing every method the path supports.
-- A method the path does not support gets **405** with an `Allow` header. Notice that it lists only the methods you registered; the automatic HEAD and OPTIONS are left out, although they work.
+- A method the path does not support gets **405** with an `Allow` header that lists every method that does work, including the automatic `HEAD` and `OPTIONS`, matching what a request to those methods actually gets.
 
 Turn the first two off with `createRouter({ automaticHead: false, automaticOptions: false })` if you need to handle them yourself. A CORS preflight is also an OPTIONS request, but the CORS middleware from [the middleware lesson](https://zudojs.oyinlola.site/learn/zudo-middleware#cors) answers it before the router is reached.
 
@@ -594,8 +599,8 @@ GET /TASKS/7 -> 200 {"id":"7"} [/tasks/:id]
 GET /tasks/7/ -> 200 {"id":"7"} [/tasks/:id]
 GET //tasks//7 -> 200 {"id":"7"} [/tasks/:id]
 --- strict
-GET /TASKS/7 -> 404 {"error":"Not Found","method":"GET","path":"/TASKS/7"}
-GET /tasks/7/ -> 404 {"error":"Not Found","method":"GET","path":"/tasks/7/"}
+GET /TASKS/7 -> 404 {"error":"Not Found","code":"NOT_FOUND","method":"GET","path":"/TASKS/7"}
+GET /tasks/7/ -> 404 {"error":"Not Found","code":"NOT_FOUND","method":"GET","path":"/tasks/7/"}
 GET //tasks//7 -> 200 {"id":"7"} [/tasks/:id]
 ```
 
@@ -665,18 +670,18 @@ Output of `npx tsx canonical.ts`
 ```ts
 /tasks/7                          200 {"id":"7","path":"/tasks/7"}
 //tasks//7                        200 {"id":"7","path":"/tasks/7"}
-/tasks/../admin                   400 {"error":"Bad Request"}
-/tasks/%2e%2e/admin               400 {"error":"Bad Request"}
-/tasks\..\admin                   400 {"error":"Bad Request"}
-//evil.example/admin              404 {"error":"Not Found","method":"GET","path":"/evil.example/admin"}
+/tasks/../admin                   400 {"error":"Bad Request","code":"BAD_REQUEST"}
+/tasks/%2e%2e/admin               400 {"error":"Bad Request","code":"BAD_REQUEST"}
+/tasks\..\admin                   400 {"error":"Bad Request","code":"BAD_REQUEST"}
+//evil.example/admin              404 {"error":"Not Found","code":"NOT_FOUND","method":"GET","path":"/evil.example/admin"}
 http://tasks.example.com/tasks/9  200 {"id":"9","path":"/tasks/9"}
-/tasks?k0=1&k1=1&k2=1&k3=1&k4=1&  400 {"error":"Bad Request"}
+/tasks?k0=1&k1=1&k2=1&k3=1&k4=1&  414 {"error":"URI Too Long","code":"URI_TOO_LONG"}
 ```
 
 - Every dot segment and the backslash were refused with 400 before routing, so `/admin` was never reached by a trick.
 - `//evil.example/admin` stayed a *path*: it found no route and got 404. No other host was involved.
 - The **absolute form**, a full URL as the target, is allowed; proxies send it. Its path is used.
-- The query with 1001 parameters was refused with 400 before any route ran.
+- The query with 1001 parameters was refused before any route ran, with its own status: **414 URI Too Long**, not a generic 400, so a client (or a proxy log) can tell "the request line itself is too big" from "something in the request body was wrong".
 
 The adapter uses exported helpers, which you can call in your own code, for example in a proxy or a tool that must agree with the server. `getCanonicalPath(target)` gives the path every layer will route on; `findRequestTargetViolation(target)` explains a refusal:
 
@@ -747,10 +752,10 @@ PASS GET /tasks -> /tasks
 PASS GET /tasks/stats -> /tasks/stats
 PASS GET /tasks/42 -> /tasks/:id(\d+)
 PASS POST /tasks -> /tasks
-FAIL DELETE /tasks/42 -> no route (allowed: GET)
+FAIL DELETE /tasks/42 -> no route (allowed: GET, HEAD, OPTIONS)
 ```
 
-The last line is a deliberate failure: the table has no `DELETE` route, and the test says so, naming the methods the path does allow. A table like `expected` doubles as documentation of your API's surface.
+The last line is a deliberate failure: the table has no `DELETE` route, and the test says so, naming the methods the path does allow — the automatic `HEAD` and `OPTIONS` included, since `allowedMethods` reports what the path really answers. A table like `expected` doubles as documentation of your API's surface.
 
 ## Put it in the Task API
 
@@ -1069,7 +1074,7 @@ requests:
   /tasks/stats?priority=high&priority=normal&priority=high -> 200 {"priorities":["high","normal"],"total":3,"open":1,"done":2}
   /tasks/stats?priority=urgent -> 400 {"error":"priority must be low, normal or high","code":"BAD_REQUEST"}
   /tasks/1 -> 200 {"id":1,"title":"Pay the ₦45,000 electricity bill","done":false,"priority":"high","createdAt":"2026-09-24T09:00:00.000Z"}
-  /tasks/../tasks/stats -> 400 {"error":"Bad Request"}
+  /tasks/../tasks/stats -> 400 {"error":"Bad Request","code":"BAD_REQUEST"}
 ```
 
 The table test passes for all four routes, including the literal `/tasks/stats` next to `/tasks/:id`. The repeated `high` was counted once, the unknown priority got a 400, and the dot-segment trick was refused before routing. Run it in your project, and check that the app still type-checks:
@@ -1089,9 +1094,19 @@ TRY IT YOURSELF
 
 ### Find the dead route
 
-A teammate's route table is below. Without running it, predict which handler answers each of `GET /orders/latest`, `GET /orders/2026-09`, `GET /orders/17` and `GET /orders/17/items`, and which route can never run. Then run it and use `router.match` to prove your answer.
+A teammate's route table is below. Without running it, predict which handler answers each of `GET /orders/latest`, `GET /orders/2026-09`, `GET /orders/17` and `GET /orders/17/items`. Is any route here truly unreachable? Then run it and use `router.match` to check your answer.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`router.match("GET", "/orders/17").route?.path === "/orders/:number(\\d+)"`, the same shape as the `by sku` check above.
+
+HINT 2
+
+`router.match("GET", "/orders/buy-milk").route?.path === "/orders/:id"`.
+
+SOLUTION
 
 orders.tsNode.js only
 
@@ -1110,6 +1125,7 @@ for (const url of ["/orders/latest", "/orders/2026-09", "/orders/17", "/orders/1
   await hit(router, "GET", url);
 }
 console.log("by number reachable:", router.match("GET", "/orders/17").route?.path === "/orders/:number(\\d+)");
+console.log("one order still reachable:", router.match("GET", "/orders/buy-milk").route?.path === "/orders/:id");
 ```
 
 Output of `npx tsx orders.ts`
@@ -1117,12 +1133,13 @@ Output of `npx tsx orders.ts`
 ```ts
 GET /orders/latest -> 200 {"route":"latest"} [/orders/latest]
 GET /orders/2026-09 -> 200 {"route":"by month","month":"2026-09"} [/orders/:month(\d{4}-\d{2})]
-GET /orders/17 -> 200 {"route":"one order","id":"17"} [/orders/:id]
+GET /orders/17 -> 200 {"route":"by number","number":"17"} [/orders/:number(\d+)]
 GET /orders/17/items -> 200 {"route":"catch-all","rest":"17/items"} [/orders/*rest]
-by number reachable: false
+by number reachable: true
+one order still reachable: true
 ```
 
-The literal `latest` wins over every parameter. `2026-09` matches both the month route and `:id`; the month route was registered first, so it wins. `17` matches `:id` and `:number(\\d+)`, which tie, and `:id` came first: the `by number` route is dead. Two segments reach only the wildcard. Fix it by moving the `:number` route above `:id`, or better, by deleting one of them.
+The literal `latest` wins over every parameter. `2026-09` matches only the month constraint: `:number(\d+)` requires digits with no dash, and `:id` is weaker than either constrained route. `17` matches `:id`, `:number(\d+)` and the wildcard; a constrained parameter now outranks a plain one whichever order they were registered in, so `by number` wins, whatever the registration order. Nothing here is truly dead: `:id` still answers every non-numeric, non-month-shaped segment, such as `buy-milk`, so it is narrower than its author probably intended, not unreachable. Two segments, like `17/items`, reach only the wildcard. A genuinely dead route needs a same-specificity twin, like two plain parameters at the same position — that case is refused outright at registration, as [Ties and dead routes](#matching) showed.
 
 TRY IT YOURSELF
 
@@ -1130,7 +1147,17 @@ TRY IT YOURSELF
 
 Build a router with a `/api/v2` group containing `GET /bookings` and `GET /bookings/:id`. The group must require a header `x-client: mobile` (401 otherwise), and `:id` must be a UUID-like value of hex digits and dashes (`[0-9a-f-]{36}`). Show a good request, a missing header, and a bad id.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`router.group("/api/v2", (v2) => { ... }, { middleware: [mobileOnly] });`, the same shape as the admin example above.
+
+HINT 2
+
+Inside the group callback: `v2.get("/bookings", () => [...]); v2.get("/bookings/:id([0-9a-f-]{36})", (ctx) => ({ id: ctx.params.id, room: "Ikoyi suite" }));`.
+
+SOLUTION
 
 bookings.tsNode.js only
 
@@ -1165,7 +1192,7 @@ Output of `npx tsx bookings.ts`
 ```ts
 GET /api/v2/bookings/7d9f0c7a-2b1e-4c5a-9f3e-1a2b3c4d5e6f -> 200 {"id":"7d9f0c7a-2b1e-4c5a-9f3e-1a2b3c4d5e6f","room":"Ikoyi suite"} [/api/v2/bookings/:id([0-9a-f-]{36})]
 GET /api/v2/bookings -> 401 {"error":"Unknown client"} [/api/v2/bookings]
-GET /api/v2/bookings/42 -> 404 {"error":"Not Found","method":"GET","path":"/api/v2/bookings/42"}
+GET /api/v2/bookings/42 -> 404 {"error":"Not Found","code":"NOT_FOUND","method":"GET","path":"/api/v2/bookings/42"}
 ```
 
 The middleware belongs to the group, so no route can forget it. The id that does not fit the constraint matches no route at all, which is a 404: from the client's point of view, there is no such booking URL.
@@ -1176,7 +1203,17 @@ TRY IT YOURSELF
 
 Write `pageOf(ctx)` for `GET /tasks?page=N`: missing means 1; repeated means 400; anything but a whole number from 1 to 1000 means 400. Test `?page=3`, no page, `?page=2&page=9` and `?page=0`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`const values = toRouterContext(ctx).queryArray("page"); if (values.length > 1) throw badRequest('Send "page" at most once'); if (values.length === 0) return 1;`, the same three-way split as `sizeOf` above.
+
+HINT 2
+
+`const page = /^\d{1,4}$/.test(values[0] ?? "") ? Number(values[0]) : NaN; if (!(page >= 1 && page <= 1000)) throw badRequest("page must be a whole number from 1 to 1000"); return page;`.
+
+SOLUTION
 
 page.tsNode.js only
 
@@ -1217,7 +1254,7 @@ Handling the three cases (none, one, several) explicitly is what `queryArray` ma
 
 - Register with the method helpers, `all`, `on` or `add`. Exact duplicates throw `RouteConflictError`, bad patterns `InvalidRoutePatternError`; every registration returns a remover.
 - Patterns: `:id`, `:id?`, `:id(\\d+)`, `{id}` and a trailing `*rest`. Parameters are decoded strings; encoded slashes and dot segments never match. `buildRoutePath` goes the other way, with encoding.
-- Matching is by specificity, literal over parameter over wildcard, segment by segment. Ties, including a constrained against an unconstrained parameter, go to the first registered route, and shadowed routes are not reported: test them with `router.match`.
+- Matching is by specificity, segment by segment: literal beats parameter beats wildcard, and a constrained parameter beats a plain one automatically, whichever was registered first. Only a genuine tie (two routes equally specific) falls back to registration order, and a route fully shadowed by an earlier one of the same specificity is refused at registration with `RouteConflictError`, not accepted silently. `router.match` still tells you which route answers any given path without running anything.
 - HEAD and OPTIONS are automatic; a wrong method gets 405 with `Allow`.
 - Route middleware runs after matching and can read parameters; `state` is shared with the handler. Groups add a prefix and middleware to many routes at once, outer group first.
 - Repeated query keys become arrays. Use `queryArray` for lists and refuse repeats for single values; the parser drops `__proto__` and enforces size limits.

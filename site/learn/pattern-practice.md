@@ -939,7 +939,17 @@ TRY IT YOURSELF
 
 A shopping session is a list of the categories of the products a customer viewed, in order. Marketing wants the longest stretch of consecutive views that touches at most 2 different categories (a focused session). Which pattern, and what is the window's summary?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+While `counts.size > maxCategories`, the window has too many distinct categories: decrement the count of `views[left]`, delete it from `counts` once it reaches 0, and move `left` forward. Keep going until the window is valid again.
+
+HINT 2
+
+`while (counts.size > maxCategories) { const c = views[left]; counts.set(c, counts.get(c) - 1); if (counts.get(c) === 0) counts.delete(c); left++; }`
+
+SOLUTION
 
 two-categories.js
 
@@ -979,7 +989,17 @@ TRY IT YOURSELF
 
 A refund of ₦30,000 was split into *three* payouts. Given an unsorted list of payouts (in naira), find three different ones that add up to it. Aim for better than O(n³).
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Run the standard two-pointer sum search: while `left < right`, compare `sorted[i] + sorted[left] + sorted[right]` with `target`, moving `right` down when too big and `left` up when too small.
+
+HINT 2
+
+`while (left < right) { const sum = sorted[i] + sorted[left] + sorted[right]; if (sum === target) return [sorted[i], sorted[left], sorted[right]]; if (sum > target) right--; else left++; }`
+
+SOLUTION
 
 three-payouts.js
 
@@ -1018,7 +1038,17 @@ TRY IT YOURSELF
 
 A shop has a list of the day each of its 12 products will be ready (day numbers). It wants to publish a catalogue on the earliest day when at least 8 products are ready, and in a batch of at least 3 *consecutive* products on the shelf plan (positions in the list) all ready. Which pattern finds the day, and what is the check?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop `while (lo < hi)`: compute `mid`, call `canPublish(readyDay, mid, minReady, minRun)`; a pass means the earliest day is `mid` or earlier (`hi = mid`), a fail means it is later (`lo = mid + 1`).
+
+HINT 2
+
+`while (lo < hi) { const mid = Math.floor((lo + hi) / 2); if (canPublish(readyDay, mid, minReady, minRun)) hi = mid; else lo = mid + 1; }`
+
+SOLUTION
 
 publish-day.js
 

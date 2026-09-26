@@ -603,7 +603,17 @@ const b = "20";
 console.log(`Total: ${a + b}`);
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`a` and `b` are strings, so `+` joins them as text instead of adding them. Convert each one first, with `Number(...)`.
+
+HINT 2
+
+`console.log(\`Total: ${Number(a) + Number(b)}\`);`
+
+SOLUTION
 
 Both values are strings, so `+` joins them. Convert them to numbers first:
 
@@ -627,7 +637,17 @@ TRY IT YOURSELF
 
 Turn the title `"  Buy Milk and Bread "` into `"buy-milk-and-bread"`: no spaces at the ends, all lowercase, spaces replaced with dashes. Print the result and its length.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Chain the string methods, in order: `title.trim().toLowerCase().replaceAll(...)`. Each method works on the string the one before it gave back.
+
+HINT 2
+
+`replaceAll(" ", "-")` replaces every remaining space with a dash, after trimming and lowercasing.
+
+SOLUTION
 
 slug.js
 
@@ -663,7 +683,17 @@ console.log(Boolean("0"));
 console.log(Number(" 7 "));
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Write down your prediction for each line first. Then wrap each of the six expressions in its own `console.log(...)`, in order, and compare.
+
+HINT 2
+
+`typeof null` is a famous exception: it reports `"object"`, not `"null"`, a bug kept for compatibility since 1995.
+
+SOLUTION
 
 predict.js
 

@@ -417,7 +417,17 @@ TRY IT YOURSELF
 
 Test `OrderService.place` without the memory repositories: write two small objects that satisfy `BookRepository` and `OrderRepository`, and check the total, the new stock and the order's owner.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`find` needs an `if`: `id === 1 ? { id: 1, title: "Kindred", priceCents: 1000, stock: 4 } : undefined`.
+
+HINT 2
+
+`save` just records what it was given: `saved.push(book);`.
+
+SOLUTION
 
 service-check.ts
 
@@ -462,7 +472,17 @@ TRY IT YOURSELF
 
 Write a `PgliteBookRepository` that implements `BookRepository` with PGlite, as in [the data lesson](https://zudojs.oyinlola.site/learn/bookstore-data), and place an order through the unchanged `OrderService`. Which files did you have to change?
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`find`: `const { rows } = await this.db.query<Book>(\`SELECT id, title, price_cents AS "priceCents", stock FROM books WHERE id = $1\`, [id]); return rows[0];`.
+
+HINT 2
+
+`save`: `await this.db.query("UPDATE books SET stock = $2 WHERE id = $1", [book.id, book.stock]);`.
+
+SOLUTION
 
 One new infrastructure file:
 

@@ -555,7 +555,17 @@ TRY IT YOURSELF
 
 Write `filledFields(profile)` that returns how many properties have a value that is not an empty string. Use `Object.values`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`Object.values(profile)` gives an array of the values. Filter out the empty strings, then count what is left.
+
+HINT 2
+
+`return Object.values(profile).filter((value) => value !== "").length;`
+
+SOLUTION
 
 filled.js
 
@@ -581,7 +591,17 @@ TRY IT YOURSELF
 
 An old mobile app expects `user_name` instead of `name`, and `user_email` instead of `email`. Write `withPrefix(obj, prefix)` that returns a new object where every key starts with the prefix. Use `Object.entries`, `map` and `Object.fromEntries`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`Object.entries(obj)` gives `[key, value]` pairs. `map` can change the key of each pair; `Object.fromEntries` turns the pairs back into an object.
+
+HINT 2
+
+`Object.fromEntries(Object.entries(obj).map(([key, value]) => [prefix + key, value]))`
+
+SOLUTION
 
 prefix.js
 
@@ -628,7 +648,17 @@ Output of `node shared-bug.js` and of the browser terminal
 false
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`{ ...defaultSettings }` only copies the top level. Both users' `settings` objects still point at the very same nested `alerts` object.
+
+HINT 2
+
+Replace `{ ...defaultSettings }` with `structuredClone(defaultSettings)` for each user.
+
+SOLUTION
 
 Spread copies only one level. Both users got their own `settings` object, but both of those point at the *same* `alerts` object. Use `structuredClone` to copy every level:
 

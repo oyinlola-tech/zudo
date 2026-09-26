@@ -879,7 +879,17 @@ TRY IT YOURSELF
 
 Write `createTicketCounter(prefix, step = 1)`. It returns an object with `next()`, which returns ticket codes like `"Q-1"`, `"Q-2"` (increasing by `step`), and `reset()`, which starts again at the first number. Two counters must not affect each other.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep `current` as a local variable in the factory call. `next` increases it by `step` and builds the code; `reset` sets it back to 0.
+
+HINT 2
+
+`let current = 0; return { next() { current += step; return \`${prefix}-${current}\`; }, reset() { current = 0; } };`
+
+SOLUTION
 
 tickets.js
 
@@ -939,7 +949,17 @@ Output of `node coupons-bug.js` and of the browser terminal
 applied FREESHIP, applied FREESHIP, applied FREESHIP
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Capture a variable that never changes after the closure is made: a `const` declared inside the loop body gets a fresh copy every turn.
+
+HINT 2
+
+`const coupon = coupons[k];` inside the loop, before `handlers.push(...)`. For the map version: `coupons.map((coupon) => () => \`applied ${coupon}\`)`.
+
+SOLUTION
 
 There is one `k`, in the module environment. All three arrows read it when they run, after the loop, when `k` is 3, so `coupons[k - 1]` is always the last coupon. Fix it by capturing a value that never changes: a `const` inside the loop body (a new environment each turn), or a `map` callback (a new call per item):
 
@@ -974,7 +994,17 @@ TRY IT YOURSELF
 
 Extend `memoize(fn)` so the memoized function has a `stats()` method that returns `{ hits, misses }`. A hit is a call answered from the cache; a miss is a call that ran `fn`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep two counters, `hits` and `misses`, in the same closure as `cache`. Increase `hits` when the key is already cached, otherwise increase `misses`.
+
+HINT 2
+
+`const memoized = (key) => { ... }; memoized.stats = () => ({ hits, misses }); return memoized;` — attach `stats` to the returned function before returning it.
+
+SOLUTION
 
 memo-stats.js
 

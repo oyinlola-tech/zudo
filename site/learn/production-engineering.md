@@ -562,7 +562,17 @@ TRY IT YOURSELF
 
 Extend the configuration schema with `LOG_LEVEL`, one of `debug`, `info`, `warn`, `error`, defaulting to `info`, and `CACHE_TTL_MS`, a whole number of at least 1000, defaulting to 60000. Show that `CACHE_TTL_MS=5` is refused.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`schema.default(schema.enum([...]), "info")` gives an enum field a fallback when it is missing. `schema.coerce.number()` turns a string such as `"5"` into a number before the other checks run.
+
+HINT 2
+
+`LOG_LEVEL: schema.default(schema.enum(["debug", "info", "warn", "error"]), "info"), CACHE_TTL_MS: schema.coerce.number().int().min(1000).default(60_000),`
+
+SOLUTION
 
 config-more.ts
 
@@ -592,7 +602,17 @@ TRY IT YOURSELF
 
 For each check, decide whether it belongs in `/health` (liveness), `/ready` (readiness), or neither: the event loop is responsive; the database answers `SELECT 1`; the payment provider's API is reachable; database migrations have run; the disk has more than 1 GB free.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask two questions for each check: "if this fails, would restarting the process help?" (liveness) versus "if this fails, can the process still serve some traffic?" (readiness). Something that is neither belongs on a dashboard instead.
+
+HINT 2
+
+A check that depends on another service or a slowly changing resource (disk, a third party) rarely belongs in either probe: it needs its own metric and alert, not a request that blocks startup or serving traffic.
+
+SOLUTION
 
 - Event loop responsive: **liveness**. If the process cannot answer at all, a restart helps.
 - Database answers: **readiness**. Without it the app cannot serve, but a restart would not help.
@@ -606,7 +626,17 @@ TRY IT YOURSELF
 
 Your database allows 100 connections. You keep 10 for yourself and for migrations. You run 6 app processes, and each process also runs a background worker with its own pool of 3. What is the largest safe pool size for the web part of each process?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+First divide what is left after the reserved connections across every process. Then take the worker's own pool out of that share.
+
+HINT 2
+
+`const perProcess = Math.floor((limit - reserved) / processes); console.log("connections per process:", perProcess); console.log("web pool size:", perProcess - workerPool);`
+
+SOLUTION
 
 pool-size.js
 

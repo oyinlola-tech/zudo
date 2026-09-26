@@ -271,10 +271,15 @@ factories.ts
 ```ts
 import { createEmailAddress, createTenantId, createTimestamp, createUrl, createUserId, InvalidConstantError } from "@zudojs/constants";
 
-// The id factories only brand: they accept anything.
-console.log(JSON.stringify(createUserId("")), JSON.stringify(createUserId("  user 42 ")));
+// The id factories brand, checking only that the value is a non-empty string.
+console.log(JSON.stringify(createUserId("  user 42 ")));
+try {
+  createUserId("");
+} catch (error) {
+  console.log("refused:", error instanceof InvalidConstantError ? (error as Error).message : error);
+}
 
-// These validate, and throw InvalidConstantError.
+// These validate further, and throw InvalidConstantError.
 const attempts: Array<[string, () => string]> = [
   ["tenant", () => createTenantId("  Shop-NG ")],
   ["tenant", () => createTenantId("shop/ng")],
@@ -298,7 +303,8 @@ for (const [kind, attempt] of attempts) {
 Output of `npx tsx factories.ts` and of the browser terminal
 
 ```ts
-"" "  user 42 "
+"  user 42 "
+refused: UserId must be a non-empty string.
 tenant    ok      shop-ng
 tenant    refused Invalid tenant id: "shop/ng"
 timestamp ok      2026-09-24T09:00:00.000Z
@@ -310,7 +316,7 @@ url       ok      https://shop.ng/orders?id=19
 url       refused Invalid URL: "shop.ng/orders"
 ```
 
-`createUserId` branded an empty string and one with spaces. The other factories validate and throw `InvalidConstantError`: `createTenantId` also normalises (trimmed, lowercased, Unicode-normalised) so `Shop-NG` and `shop-ng` cannot become two tenants, and `createTimestamp` refuses a 30 February. So for ids that come from outside, write a **parse** function that checks first and brands second, and make it the only place where `as OrderId` appears:
+`createUserId` branded a string with spaces exactly as given, but refused the empty string: id factories check only that the value is a non-empty string, and never echo the rejected value in the error, since a caller passing an empty id is often passing something sensitive by mistake. The other factories validate further and throw `InvalidConstantError`: `createTenantId` also normalises (trimmed, lowercased, Unicode-normalised) so `Shop-NG` and `shop-ng` cannot become two tenants, and `createTimestamp` refuses a 30 February. Even the id factories' "non-empty" check does not mean "well-formed": `"  user 42 "` is still branded as-is, spaces and all. So for ids that come from outside, write a **parse** function that checks first and brands second, and make it the only place where `as OrderId` appears:
 
 order-id.ts
 
@@ -678,7 +684,17 @@ TRY IT YOURSELF
 
 Write `isCartLine(value)` for objects like `{ sku: "RICE-5KG", qty: 2, unitKobo: 650000 }`: a non-empty `sku`, an integer `qty` from 1 to 99, and a positive integer `unitKobo`. Test it on a good line, a line with `qty: 0`, one with `unitKobo: 6500.5` and an array.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Chain the checks with `&&`, the same as `isCoupon` above: `isPlainObject(value) && isNonEmptyString(value.sku) && ...`.
+
+HINT 2
+
+`isInteger(value.qty) && value.qty >= 1 && value.qty <= 99 && isInteger(value.unitKobo) && isPositiveNumber(value.unitKobo)`.
+
+SOLUTION
 
 cart-line.ts
 
@@ -722,7 +738,17 @@ TRY IT YOURSELF
 
 Write `parseUserId(value: unknown): UserId` that accepts only strings matching `user_` followed by 1 to 12 digits, and brands them with `createUserId`. Why is the check your job and not `createUserId`'s?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`if (typeof value !== "string" || !/^user_\d{1,12}$/.test(value)) throw new Error(...)`, the same shape as `parseOrderRef` above.
+
+HINT 2
+
+Once the check passes, `return createUserId(value);`.
+
+SOLUTION
 
 user-id.ts
 
@@ -763,7 +789,17 @@ TRY IT YOURSELF
 
 A reset link is valid for 15 minutes. Write `isLinkValid(clock, issuedAt)` using `TimeMs`, and test it with a `FixedClock` at 0, 14 and 16 minutes after issuing, without waiting.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`clock.now() - issuedAt` is the elapsed time in milliseconds; compare it with `15 * TimeMs.MINUTE`.
+
+HINT 2
+
+`return clock.now() - issuedAt < 15 * TimeMs.MINUTE;`.
+
+SOLUTION
 
 expiry.ts
 

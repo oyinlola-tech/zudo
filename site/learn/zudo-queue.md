@@ -330,7 +330,7 @@ Each entry keeps the job, the error and the number of attempts. What you do with
 
 - **Alert** when the count grows. A dead-letter queue nobody looks at is just a slower way to lose data. Every queue has an `events` emitter: `queue.events?.on("job:failed", ({ job, error }) => …)` runs on every failed attempt, and `getStats().deadLettered` gives the count. The [observability lesson](https://zudojs.oyinlola.site/learn/zudo-observability) shows how to count and alert.
 - **Fix and replay.** If a bug caused the failures, fix it, then add the jobs again with `queue.add(dead.job.name, dead.job.data)`.
-- **Stop early for permanent errors.** Retrying "mailbox does not exist" three times wastes time. A processor can check the error and give up at once, for example by marking the reminder as failed in the database and returning normally.
+- **Stop early for permanent errors.** Retrying "mailbox does not exist" three times wastes time. Since `@zudojs/queue` 1.3.0, throw `createUnrecoverableJobError(message)` (or wrap your own error with `markUnrecoverable(error)`) and the job is dead-lettered on this attempt, however many `attempts` it was allowed. `isUnrecoverableJobError` reads the mark back off a dead letter's error. Before that, the only way to stop retrying a permanent error was to swallow it and return normally, which recorded the job as `completed`, hiding the failure from `getStats().deadLettered` and from anyone watching the dead-letter queue.
 
 ## Timeouts
 
@@ -532,34 +532,42 @@ TRY IT YOURSELF
 
 ### Give up on permanent errors
 
-Change the dead-letter example so that a "does not exist" error does not waste retries: the processor records the bad address in a `failedAddresses` list and returns normally, while other errors are still thrown for a retry.
+Change the dead-letter example so that a "does not exist" error does not waste retries: throw `createUnrecoverableJobError` so the job dead-letters on this first attempt, while other errors are still thrown for a retry as before.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Only the thrown value changes: `throw createUnrecoverableJobError(\`mailbox ${job.data.email} does not exist\`);` in place of `throw new Error(...)`. Nothing else in the processor or the `queue.add` options needs to change.
+
+HINT 2
+
+With an ordinary `Error`, the queue retries up to `attempts` times before dead-lettering the job, so `tries` ends at 3. `createUnrecoverableJobError` skips straight to `dead_letter` on the first attempt, so `tries` stays at 1.
+
+SOLUTION
 
 permanent.ts
 
 ```ts
-import { createInMemoryQueue, createQueueName, createFixedBackoff } from "@zudojs/queue";
+import { createFixedBackoff, createInMemoryQueue, createQueueName, createUnrecoverableJobError } from "@zudojs/queue";
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const queue = createInMemoryQueue<{ email: string }>(createQueueName("reminders"));
-const failedAddresses: string[] = [];
 let tries = 0;
 
 queue.process("send-reminder", async (job) => {
   tries += 1;
   if (job.data.email.endsWith("@example.invalid")) {
-    failedAddresses.push(job.data.email);
-    return;
+    throw createUnrecoverableJobError(`mailbox ${job.data.email} does not exist`);
   }
 });
 
-await queue.add("send-reminder", { email: "nobody@example.invalid" }, {
+const job = await queue.add("send-reminder", { email: "nobody@example.invalid" }, {
   attempts: 3,
   backoff: createFixedBackoff(10),
 });
 await wait(300);
-console.log("tries:", tries, "failed addresses:", failedAddresses);
+console.log("tries:", tries, "state:", (await queue.getJob(job.id))?.state);
 console.log("dead-lettered:", (await queue.getStats()).deadLettered);
 await queue.close();
 ```
@@ -567,11 +575,11 @@ await queue.close();
 Output of `npx tsx permanent.ts` and of the browser terminal
 
 ```ts
-tries: 1 failed addresses: [ 'nobody@example.invalid' ]
-dead-lettered: 0
+tries: 1 state: dead_letter
+dead-lettered: 1
 ```
 
-One try instead of three. In the Task API, write the failure to the database so the user can see "reminder could not be delivered" and fix their address.
+One try instead of three, and the job is honestly recorded as dead-lettered rather than quietly marked `completed`. In the Task API, still write the failure to the database in the processor before returning, so the user can see "reminder could not be delivered" and fix their address; `isUnrecoverableJobError(dead.error)` lets a dead-letter watcher tell this apart from a temporary outage.
 
 TRY IT YOURSELF
 
@@ -579,7 +587,17 @@ TRY IT YOURSELF
 
 Queue middleware wraps every job, like the other middleware you have met. It receives `ctx` with `ctx.job` and `ctx.next()`. Write one that prints `start` and `end` with the job name, and pass it in the `middleware` option of the queue.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Log before calling `ctx.next()`, then wrap the call in `try`/`finally` so the closing log runs even if the job throws: `console.log("start", ctx.job.name); try { return await ctx.next(); } finally { console.log("end", ctx.job.name); }`.
+
+HINT 2
+
+The full body: `console.log("start", ctx.job.name); try { return await ctx.next(); } finally { console.log("end", ctx.job.name); }`.
+
+SOLUTION
 
 middleware.ts
 
@@ -620,7 +638,17 @@ TRY IT YOURSELF
 
 For each, choose a direct call, an event, or a job: (a) checking a password at login; (b) generating a 200-page PDF export; (c) clearing the cache after a task changes; (d) calling a partner's webhook that is often slow.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask two questions of each: does the caller need the answer right now, and can the work fail and need a retry without anyone waiting for it?
+
+HINT 2
+
+(a) is fast and the caller needs the result immediately. (b) is slow, with no other reaction to it. (c) is fast, in-process, and one of possibly several reactions. (d) is slow and can fail for reasons outside your control.
+
+SOLUTION
 
 (a) A direct call: the user needs the answer now, and it is fast. (b) A job: slow, and the user can get a link when it is ready. (c) An event: fast, in-process, and several parts may care. (d) A job, with retries and backoff: slow and unreliable, and a failure must not be lost.
 

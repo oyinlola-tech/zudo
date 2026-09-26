@@ -707,7 +707,17 @@ TRY IT YOURSELF
 
 A third vendor's SDK has `dispatch(msisdn: string, body: string)`, wants numbers as `2348031234567`, returns `{ accepted: boolean; ref?: string; error?: "BAD_MSISDN" | "BLOCKED" }`, and throws on network errors. Write `thirdVendorSender(sdk)` implementing `SmsSender`, and run the same three contract checks against it.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Start like the other two adapters: `const number = nigerianE164(to); if (number === undefined) return { ok: false, reason: "invalid_number" };`.
+
+HINT 2
+
+Then `try { const response = await sdk.dispatch(number.slice(1), text); if (response.accepted && response.ref) return { ok: true, messageId: response.ref }; return { ok: false, reason: response.error === "BAD_MSISDN" ? "invalid_number" : "rejected" }; } catch { return { ok: false, reason: "unavailable" }; }`.
+
+SOLUTION
 
 third-vendor.ts
 
@@ -766,7 +776,17 @@ TRY IT YOURSELF
 
 Write `withTimeout(sender, ms)`: if the wrapped `send` has not finished within `ms` milliseconds, return `{ ok: false, reason: "unavailable" }`. Clear the timer when the send finishes first, so it does not keep the process alive. Test it with a sender that never answers and one that answers at once.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Build a timeout promise with `new Promise<SmsResult>((resolve) => { timer = setTimeout(() => resolve({ ok: false, reason: "unavailable" }), ms); })`, then `Promise.race` it against `sender.send(to, text)`.
+
+HINT 2
+
+Wrap the `Promise.race` in `try { ... } finally { clearTimeout(timer); }` so the timer never lingers once either side settles.
+
+SOLUTION
 
 timeout-decorator.ts
 
@@ -811,7 +831,17 @@ TRY IT YOURSELF
 
 Add `findByStatus(status)` to the memory repository, returning orders sorted by id, and add a contract check for it. Why must the check go into the shared contract rather than into a test of the memory repository alone?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`#sorted` takes a predicate and does the filtering and sorting for you; `findByStatus` only needs to say which orders to keep.
+
+HINT 2
+
+`return this.#sorted((order) => order.status === status);`, exactly the shape of `findByCustomer`.
+
+SOLUTION
 
 by-status.ts
 

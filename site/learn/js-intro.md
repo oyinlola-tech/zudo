@@ -580,7 +580,17 @@ For each piece of code, decide whether it is an expression (it produces a value)
 5. `if (fee > 0) { console.log("fee"); }`
 6. `Math.round(2.6)`
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Wrap each expression in its own `console.log(...)` call, in the order given.
+
+HINT 2
+
+The ternary reads `condition ? valueIfTrue : valueIfFalse`: `console.log(fee >= 1000 ? "high" : "low")`.
+
+SOLUTION
 
 1, 3, 4 and 6 are expressions; 2 and 5 are statements. Only expressions can go inside `console.log(…)`:
 
@@ -618,7 +628,17 @@ const message = "Paid"
 console.log(total)
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+A missing semicolon lets the next line continue the statement when that line *could* be part of an expression, such as one starting with `[`, `(` or a backtick. Add a `;` at the end of every statement.
+
+HINT 2
+
+Three semicolons are missing: after `13500`, after `"Paid"`, and after the `.forEach(...)` call.
+
+SOLUTION
 
 The third line starts with `[`, so it continues the second: the engine reads `const message = "Paid"[message, "Thank you"].forEach(…)`. That uses `message` while it is still being created, which is itself an error. Adding semicolons separates the statements:
 
@@ -654,7 +674,17 @@ const ok = t <= x;
 console.log(t, ok);
 ```
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Check the naming table earlier in this lesson: a fixed setting that never changes is UPPER_SNAKE_CASE, a list is plural, and its loop variable is the singular of that name.
+
+HINT 2
+
+For example, the list becomes plural, such as `withdrawals`, and its loop variable becomes the singular of that, such as `amount`. Do the same for the limit, the running total and the boolean, then end with `console.log(yourTotal, yourBoolean);`.
+
+SOLUTION
 
 rename.js
 

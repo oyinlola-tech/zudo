@@ -918,7 +918,17 @@ TRY IT YOURSELF
 
 `customers.full_name` must become `first_name` and `last_name`. List the deploys and migrations, in order, so that every running app version works at every moment.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+At every step, ask: which app version (old, new, or both) is running right now, and does this change break the one that has not deployed yet? A column cannot be dropped while any running version still reads it.
+
+HINT 2
+
+Four phases, each safe on its own: expand the schema (new nullable columns plus a trigger keeping both in sync), backfill existing rows in batches, deploy the version that uses the new columns, then contract (drop the trigger and the old column) only once nothing reads it any more.
+
+SOLUTION
 
 1. **Expand** (migration): add nullable `first_name` and `last_name`, plus a trigger that fills them from `full_name` when only `full_name` is written, and fills `full_name` from them when only they are written.
 2. **Backfill** in batches: split existing names. Decide what to do with names that do not split cleanly (a single name, three names), and log them for review instead of guessing silently.
@@ -933,7 +943,17 @@ TRY IT YOURSELF
 
 Seed a category tree (Groceries with Grains and Oils; Electronics with Audio) idempotently. Children refer to their parent by `parent_id`, which is a generated id that differs between databases. Run the seed twice and show that nothing is duplicated.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The parent is looked up *inside* the same insert, by its stable `slug`, not by an id you looked up beforehand — that is what makes the seed work the same way on a fresh database or one that already has rows.
+
+HINT 2
+
+`insert into categories (slug, name, parent_id) values ($1, $2, (select id from categories where slug = $3)) on conflict (slug) do update set name = excluded.name, parent_id = excluded.parent_id`, with `[slug, name, parentSlug]` as the parameters.
+
+SOLUTION
 
 seed-tree.jsNode.js only
 
@@ -997,7 +1017,17 @@ TRY IT YOURSELF
 
 Your managed PostgreSQL allows 200 connections. You run 8 API containers, 2 background workers, a cron container, and you want 10 connections left for migrations and people. The API has 4 CPU cores per container. What pool sizes would you choose? What changes if autoscaling can run 30 API containers at peak?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Start from the reserved connections and subtract, container by container, rather than sizing each pool as if it were the only thing connecting. Then ask what happens to the total the moment the number of containers changes.
+
+HINT 2
+
+200 − 10 reserved = 190 to share. Workers and cron take a handful each; the API containers split what is left, a small pool per container (a few per core is plenty for short queries) — and check whether that per-container number, multiplied by the *maximum* number of containers autoscaling can create, still fits.
+
+SOLUTION
 
 Budget: 200 − 10 reserved = 190. Workers and cron might take 5 each (15 total), leaving 175 for 8 API containers: at most 21 each. A pool of about 10 to 15 per API container (a few per core) is plenty for typical short queries, and leaves headroom. At 30 containers, 30 × 10 = 300 exceeds the limit: either cap autoscaling, shrink the pools (30 × 5 = 150), or put PgBouncer in front so the containers' client connections share a fixed set of server connections. Then load-test: if requests wait for the pool while the database is idle, the pool is too small; if the database is saturated, more connections will only make it slower.
 

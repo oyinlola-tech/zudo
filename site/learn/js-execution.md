@@ -740,7 +740,17 @@ const reassigned   runtime TypeError      first line printed: true
 duplicate let      early SyntaxError      first line printed: false
 ```
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask, for each snippet: could the parser notice this is wrong just by looking at the grammar, before any line runs? Or does it need to actually execute a line and hit a bad value?
+
+HINT 2
+
+A missing bracket and a duplicate `let` in the same scope are both grammar violations the parser rejects outright — early errors, nothing prints. Reading a property of `null` and reassigning a `const` both need a specific line to actually run before anything is wrong, so the line before it gets a chance to print first.
+
+SOLUTION
 
 The missing bracket and the duplicate `let` are early errors: the grammar forbids them, so the parser rejects the code and nothing prints. Reading a property of `null` is a runtime `TypeError`. Assigning to a `const` is also a runtime `TypeError`, even though the engine could see it in the text: the specification defines it as an error at the moment of assignment. Early errors are exactly the ones the grammar and its static rules forbid.
 
@@ -750,7 +760,17 @@ TRY IT YOURSELF
 
 Staff want `min(price * qty, 5_000_000)` to cap a line at ₦50,000. Extend the tokenizer to allow `min` and a comma, the grammar with `factor = "min" "(" expression "," expression ")"`, and the interpreter. Keep the name whitelist working.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Three separate spots need "min": the tokenizer's whitelist (so it is not rejected as an unknown name), a new branch in `factor()` that reads `min ( expr , expr )`, and a case in `evaluate` for a `"min"` node.
+
+HINT 2
+
+Whitelist: `["price", "qty", "min"]`. Grammar: `if (t.value === "min") { expect("("); const a = expression(); expect(","); const b = expression(); expect(")"); return { type: "min", args: [a, b] }; }`. Interpreter: `if (node.type === "min") return Math.min(...node.args.map((a) => evaluate(a, vars)));`.
+
+SOLUTION
 
 rules-min.js
 
@@ -848,7 +868,17 @@ TRY IT YOURSELF
 
 A receipt job fails inside a timer callback, and the stack trace does not show which order it was for. Change `scheduleReceipt` so that the error thrown later carries the order id and the stack of the *scheduling* call as its `cause`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Create the "marker" error *before* the `setTimeout`, while `handleCheckout` is still on the stack — that is the only moment its stack is available. Attach it later as `{ cause: scheduledAt }` on the error you throw from inside the timer.
+
+HINT 2
+
+`const scheduledAt = new Error("scheduled here"); setTimeout(() => { try { sendReceipt(order); } catch (error) { const wrapped = new Error(\`receipt for order ${order.id} failed: ${error.message}\`, { cause: scheduledAt }); console.log(wrapped.message); console.log("failed in:", framesOf(error, names)); console.log("scheduled from:", framesOf(wrapped.cause, names)); } }, 0);`
+
+SOLUTION
 
 scheduled-cause.js
 

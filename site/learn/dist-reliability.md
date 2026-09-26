@@ -1193,7 +1193,7 @@ Output of `npx tsx readiness.ts`
 
 ```ts
 database up      -> ready=true (ready)
-database down    -> ready=false (degraded) [ 'database: returned false' ]
+database down    -> ready=false (degraded) [ 'database: Check returned false.' ]
 database hanging -> ready=false (degraded) [
   'database: Check threw an error: Readiness check "database" did not settle within 100ms.'
 ]
@@ -1211,7 +1211,7 @@ During a deploy, the platform sends `SIGTERM` to the old instances. A graceful s
 3. **Drain workers**: let running jobs finish, leave waiting ones in the queue for other instances.
 4. **Close** connections to the database and other dependencies, last.
 
-[The lifecycle lesson](https://zudojs.oyinlola.site/learn/zudo-lifecycle#shop) built steps 2 to 4 with `dependsOn`. Step 1 is the distributed-systems part, and it has a trap in the published `@zudojs/runtime`: running the readiness checks again during shutdown recomputes readiness from the checks alone, so an instance that is stopping, with a healthy database, reports ready again:
+[The lifecycle lesson](https://zudojs.oyinlola.site/learn/zudo-lifecycle#shop) built steps 2 to 4 with `dependsOn`. Step 1 is the distributed-systems part. Before this was fixed, running the readiness checks again during shutdown recomputed readiness from the checks alone, so an instance that was stopping, with a healthy database, reported ready again. `@zudojs/runtime` now keeps `runtime.ready` tied to the lifecycle state, so it already reports not-ready once shutdown starts:
 
 shutdown-ready.tsNode.js only
 
@@ -1250,11 +1250,11 @@ Output of `npx tsx shutdown-ready.ts`
 
 ```ts
 running:        200 (runtime.ready=true, state=running)
-after SIGTERM:  503 (runtime.ready=true, state=stopping)
-stopped:        503 (runtime.ready=true, state=stopped)
+after SIGTERM:  503 (runtime.ready=false, state=stopping)
+stopped:        503 (runtime.ready=false, state=stopped)
 ```
 
-`runtime.ready` alone says `true` while the runtime is stopping and even after it has stopped, because the database check still passes. A load balancer trusting it would keep sending customers to an instance that is closing its doors. The probe above therefore also requires `state === "running"`. The rule holds with any framework: readiness is "my dependencies are fine *and* I intend to serve", and shutdown must flip the second half first.
+`runtime.ready` now already says `false` once the runtime starts stopping, and stays `false` once it has stopped, even though the database check still passes: the tracker itself accounts for the lifecycle state. The probe above still also requires `state === "running"`, which is a defensive habit worth keeping, since not every readiness source is tied to a lifecycle the way `@zudojs/runtime`'s is. The rule holds with any framework: readiness is "my dependencies are fine *and* I intend to serve", and shutdown must flip the second half first.
 
 ## Chaos testing: keep breaking it
 
@@ -1335,7 +1335,17 @@ TRY IT YOURSELF
 
 Full jitter can wait almost zero. **Equal jitter** waits half the backoff plus a random part of the other half, so there is always some pause. Using `calculateRetryDelay` and `seeded(9)`, print the equal-jitter waits for attempts 1 to 5 with a 100 ms base and a 1,000 ms cap, next to the cap for each attempt.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Equal jitter is `ceiling / 2` (always paid) plus a random amount from 0 up to the other half, `ceiling / 2`.
+
+HINT 2
+
+`const wait = Math.round(ceiling / 2 + random() * (ceiling / 2));`
+
+SOLUTION
 
 equal-jitter.ts
 
@@ -1379,7 +1389,17 @@ TRY IT YOURSELF
 
 The payments API answers 402 when a card is declined, 429 when you send too much, and 503 when it is down. Which of these should count as breaker failures, and why? Write an `isFailure` function for a breaker around it, given errors shaped `{ status: number }`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+A declined card or an unknown charge (402, 404) means the payments API worked correctly and told you no — that must not count as a breaker failure.
+
+HINT 2
+
+`return status === 429 || status >= 500;`
+
+SOLUTION
 
 is-failure.js
 
@@ -1413,7 +1433,17 @@ TRY IT YOURSELF
 
 The cache normally answers in 2 ms, but sometimes one instance is slow. Instead of waiting 30 ms for the timeout, a **hedged request** asks the database too if the cache has not answered within 10 ms, and uses whichever answers first. Write `hedged(primary, backup, afterMs)` and explain when hedging is a bad idea.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Start a delayed promise with `sleep(afterMs).then(() => { started = true; return backup(); })`, and race it against `primary()` with `Promise.any` — the same shape as the health-check example.
+
+HINT 2
+
+`let started = false; const backupAfterDelay = sleep(afterMs).then(() => { started = true; return backup(); }); const answer = await Promise.any([primary(), backupAfterDelay]); return { answer, backupStarted: started };`
+
+SOLUTION
 
 hedged.js
 

@@ -1091,7 +1091,17 @@ TRY IT YOURSELF
 
 The shop has 1 bag of rice left. Three customers try to reserve 1 bag each at the same moment. Write `reserve(productId, quantity)` as one conditional update on an `inventory (product_id, on_hand, reserved)` table that succeeds only while `reserved + quantity <= on_hand`, run the three calls concurrently, and show that exactly one succeeds.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The `where` clause is the whole safety net: it must recheck the limit (`reserved + $2 <= on_hand`) as part of the same statement that changes `reserved`, so no other update can sneak in between the check and the write.
+
+HINT 2
+
+`const { rows } = await db.query("update inventory set reserved = reserved + $2 where product_id = $1 and reserved + $2 <= on_hand returning reserved", [productId, quantity]); return \`${customer}: ${rows.length === 1 ? "reserved" : "sold out"}\`;`
+
+SOLUTION
 
 last-bag.jsNode.js only
 
@@ -1138,7 +1148,17 @@ TRY IT YOURSELF
 
 Write `transferOptimistic(fromId, toId, amount)` for the wallet: read the sender's balance and version, refuse if the balance is too low, then debit with `where id = $1 and version = $2` (increasing the version) and credit, all in one transaction. If the debit matched no row, retry from the read, at most 3 times. Show it with two concurrent transfers from Ada that together exceed her balance.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The version you compare against in the debit's `where` clause must be the one you just read in *this* attempt — that mismatch, when someone else updated it first, is exactly what `affectedRows === 0` detects.
+
+HINT 2
+
+`const debit = await tx.query("update accounts set balance_kobo = balance_kobo - $1, version = version + 1 where id = $2 and version = $3", [amount, fromId, rows[0].version]); if (debit.affectedRows === 0) return false; await tx.query("update accounts set balance_kobo = balance_kobo + $1 where id = $2", [amount, toId]); return true;`
+
+SOLUTION
 
 transfer-optimistic.jsNode.js only
 
@@ -1185,7 +1205,17 @@ TRY IT YOURSELF
 
 Which approach fits each case: (a) decrementing stock when an order is placed; (b) an admin editing a product description in a form for ten minutes; (c) a monthly statement that sums a customer's transfers and shows their balance; (d) a rule "a doctor can go off call only if another doctor stays on call"; (e) many workers sending queued SMS messages?
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Ask, for each case: does anything need to hold a lock for as long as a human is thinking? Does the check span more than one row? Do several workers need to split up a queue without colliding?
+
+HINT 2
+
+(a) is a single-row conditional update. (b) cannot hold a row lock for ten minutes, so it needs a version check instead. (c) needs one consistent snapshot across two reads. (d) checks a rule across *other* rows, which read committed cannot protect on its own. (e) is a job queue, where each worker must skip rows others already grabbed.
+
+SOLUTION
 
 (a) An atomic conditional update (`set on_hand = on_hand - $1 where … and on_hand >= $1`), in read committed. (b) Optimistic concurrency with a version column: no lock can be held for ten minutes, and conflicts are rare. (c) A read-only transaction in repeatable read, so the sum and the balance come from the same snapshot. (d) Write skew across rows: serializable with retries (or lock all on-call rows with `for update` before checking). (e) `select … for update skip locked`, so each worker takes a different message.
 

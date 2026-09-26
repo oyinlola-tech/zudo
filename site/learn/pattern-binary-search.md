@@ -489,7 +489,17 @@ TRY IT YOURSELF
 
 A print shop has jobs with these page counts: `[120, 45, 300, 80, 210]`. A printer prints `s` pages per hour and works on one job at a time; a job of `p` pages takes `Math.ceil(p / s)` whole hours (the leftover part of an hour is not used for the next job). What is the slowest speed that finishes all jobs within 10 hours? Use `firstTrue`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Search speeds from 1 to `Math.max(...jobs)` (inclusive): the slowest one where `hoursAt(jobs, s) <= maxHours` is the switch point `firstTrue` finds.
+
+HINT 2
+
+`return firstTrue(1, Math.max(...jobs) + 1, (s) => hoursAt(jobs, s) <= maxHours);`
+
+SOLUTION
 
 printer.js
 
@@ -528,7 +538,17 @@ TRY IT YOURSELF
 
 A customer borrows ₦500,000 at 3% interest per month and wants to repay it in 12 equal monthly payments. Each month, interest is added to the balance (rounded to the nearest kobo) and then the payment is subtracted. Find the smallest payment, in whole kobo, that brings the balance to zero or below after 12 months.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Search payments from 0 to `principal * 2` (inclusive) for the smallest one where `balanceAfter(principal, 0.03, p, 12) <= 0`.
+
+HINT 2
+
+`const payment = firstTrue(0, principal * 2, (p) => balanceAfter(principal, 0.03, p, 12) <= 0);`
+
+SOLUTION
 
 repayment.js
 
@@ -565,7 +585,17 @@ TRY IT YOURSELF
 
 In a rotated sorted array of unique timestamps, find the position of the *smallest* one (the oldest ping, where the rotation happened) in O(log n). Hint: compare the middle with the last element.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Search positions 0 to `items.length - 2` (inclusive) for the first one where `items[i] <= last`.
+
+HINT 2
+
+`return firstTrue(0, items.length - 1, (i) => items[i] <= last);`
+
+SOLUTION
 
 rotation-point.js
 

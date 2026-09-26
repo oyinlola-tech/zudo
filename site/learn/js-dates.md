@@ -734,7 +734,17 @@ TRY IT YOURSELF
 
 A shop in Lagos is open Monday to Saturday, 08:00 to 20:00 local time. Write `isOpen(instant)` using `Intl.DateTimeFormat` with `timeZone: "Africa/Lagos"` (no local getters) and check it for 07:30Z on a Monday (08:30 in Lagos), 19:30Z on a Saturday, and 10:00Z on a Sunday.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`parts.formatToParts(instant)` gives an array of `{ type, value }` pairs. `Object.fromEntries(...map((p) => [p.type, p.value]))` turns that into an object like `{ weekday: "Mon", hour: "8" }`.
+
+HINT 2
+
+`return fields.weekday !== "Sun" && hour >= 8 && hour < 20;`
+
+SOLUTION
 
 opening-hours.js
 
@@ -770,7 +780,17 @@ TRY IT YOURSELF
 
 Invoices are due on the same day of the following month, clamped to the month's last day. Using `addMonthsClamped`'s idea, print the due dates for invoices dated 2026-01-15, 2026-01-31, 2026-03-31 and 2026-12-31.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Go to the first of the target month before setting the day, so a short month cannot roll over into the one after it: `new Date(Date.UTC(y, m - 1 + months, 1))`.
+
+HINT 2
+
+The target month's length is "day 0 of the month after it": `new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate()`. Then `target.setUTCDate(Math.min(d, lastDay))`.
+
+SOLUTION
 
 due-dates.js
 
@@ -805,7 +825,17 @@ TRY IT YOURSELF
 
 Write `ago(then, now)` that returns text such as `"3 hours ago"`, `"yesterday"` or `"2 weeks ago"` with `Intl.RelativeTimeFormat`, choosing the largest unit that fits (seconds, minutes, hours, days, weeks). Both arguments are timestamps; test it with fixed values only.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Loop over `units` in the order given (largest first). The first one where `Math.abs(diff) >= ms` — or `"second"`, which always qualifies — is the one to format with.
+
+HINT 2
+
+`for (const [unit, ms] of units) { if (Math.abs(diff) >= ms || unit === "second") return rtf.format(Math.trunc(diff / ms), unit); }`
+
+SOLUTION
 
 ago.js
 

@@ -802,7 +802,17 @@ TRY IT YOURSELF
 
 An order-history screen has a "newer" button as well as "older". Write `newerPage(db, before, limit)` that returns the `limit` orders just *newer* than the order `before` (an object with `createdAt` and `id`), still in newest-first order. Test it on `openShop(9)`: the page newer than order 4 with limit 3 must be `[7, 6, 5]`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The row comparison and the sort direction both flip together: `>` instead of `<`, and `ASC` instead of `DESC`. Only the final `.toReversed()` puts the page back in the order the screen shows.
+
+HINT 2
+
+`const { rows } = await db.query(\`SELECT id FROM orders WHERE (created_at, id) > ($1, $2) ORDER BY created_at ASC, id ASC LIMIT $3\`, [before.createdAt, before.id, limit]); return rows.map((r) => r.id).toReversed();`
+
+SOLUTION
 
 Flip the comparison and the sort to read the nearest newer rows first, then reverse them back into newest-first order:
 
@@ -841,7 +851,17 @@ TRY IT YOURSELF
 
 For each change to the orders API, say whether it breaks existing clients and what you would do: (a) add `delivery_eta` to each order; (b) change `created_at` from `"2026-03-01T09:30:00.000Z"` to the Unix number `1772357400`; (c) accept an optional `?customer=` filter; (d) lower the maximum `limit` from 100 to 50; (e) add the status `"refunded"`.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Match each one against the table in [Breaking and non-breaking changes](#breaking) — most of these five are rows in it, sometimes with a twist worth naming.
+
+HINT 2
+
+(b) and (d) both change something a correctly-written old client already relies on; (a), (c) and (e) only bite a client that was written stricter than the tolerant-reader rule allows.
+
+SOLUTION
 
 (a) Not breaking for tolerant readers: ship it. (b) Breaking: a different type under the same name. Make it a new dated version (or add a new field such as `created_at_unix` and keep the old one). (c) Not breaking: old clients never send it. (d) Breaking: a client that sends `limit=100` now gets 400. Keep 100 for old versions, or make the change in a new version. (e) Breaking in practice for clients with exhaustive checks. Announce it in advance, document that clients must handle unknown statuses, and consider gating it behind a new version for clients pinned before it.
 
@@ -851,7 +871,17 @@ TRY IT YOURSELF
 
 In `version-changes.js`, the status `"canceled"` used to be spelled `"cancelled"`. Add a version change for `2026-10-01` that renamed it, so that clients on older versions still receive `"cancelled"`. Print a canceled order for versions `2026-09-01` and `2026-10-01`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+The condition and the spread both come straight from the worked example: check the field, and when it matches, spread the object and override just that one field.
+
+HINT 2
+
+`undo: (order) => (order.status === "canceled" ? { ...order, status: "cancelled" } : order)`
+
+SOLUTION
 
 rename-status.js
 

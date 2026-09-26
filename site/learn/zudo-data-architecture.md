@@ -138,7 +138,7 @@ The counter must go down by exactly one. That needs the "mark done" and "decreas
 | Request DTO | `CreateTaskBody`: `{ title, priority? }` | a schema, from an `unknown` body |
 | Response DTO | `TaskResponse`: `{ id, title, createdAt: "2026-…Z" }` | a mapper, from the entity |
 
-A **DTO** (data transfer object) is a shape made for crossing a boundary, here the network. An **entity** is the full record your code works with. `@zudojs/database` gives you base types for entities: `DatabaseEntity<TId>` has a readonly `id`, `createdAt` and `updatedAt`. There is also `SoftDeletableEntity`, but it has no type parameter, so its id is always a `string`. With `serial` number ids it does not fit:
+A **DTO** (data transfer object) is a shape made for crossing a boundary, here the network. An **entity** is the full record your code works with. `@zudojs/database` gives you base types for entities: `DatabaseEntity<TId>` has a readonly `id`, `createdAt` and `updatedAt`. There is also `SoftDeletableEntity<TId = string>`, whose id defaults to `string` when you don't say otherwise. Extend it plainly, with no type argument, and a `serial` number id still does not fit the default:
 
 entity-id.ts
 
@@ -154,7 +154,7 @@ export interface Task extends SoftDeletableEntity {
 What `npx tsc --noEmit` prints
 
 ```ts
-entity-id.ts:3:18 - error TS2430: Interface 'Task' incorrectly extends interface 'SoftDeletableEntity'.
+entity-id.ts:3:18 - error TS2430: Interface 'Task' incorrectly extends interface 'SoftDeletableEntity<string>'.
   Types of property 'id' are incompatible.
     Type 'number' is not assignable to type 'string'.
 
@@ -165,7 +165,7 @@ entity-id.ts:3:18 - error TS2430: Interface 'Task' incorrectly extends interface
 Found 1 error in entity-id.ts:3
 ```
 
-So for number ids, extend `DatabaseEntity<number>` and add `deletedAt` yourself, as the next file does.
+Pass the id type instead, `SoftDeletableEntity<number>`, and it compiles (before `@zudojs/database` 1.5.0, the type took no argument at all, so a number id could never fit it). This lesson still extends `DatabaseEntity<number>` and adds `deletedAt` by hand, as the next file does, to keep the soft-delete field visible in one place with the rest of the schema.
 
 ### The project's data files
 
@@ -596,12 +596,12 @@ Output of `npx tsx repository-rules.ts`
 open in project 1: [ 1, 3, 4 ]
 same title, other case: 409 Task already exists.
 project that does not exist: 409 Task create violates a foreign key constraint.
-counter below zero: 500 Project update failed.
+counter below zero: 409 Project update failed: a database constraint was violated.
 ```
 
 The unique index compares `lower(title)`, so "write THE copy" collides with "Write the copy": **409**. The foreign key refuses a task in project 9: also **409**. Both messages are generic; they never name the constraint or the column.
 
-The `CHECK` violation arrives as a **500**. In `@zudojs/database` 1.4.0, the repository maps unique and foreign-key violations to 409, but not a `CHECK` (`P2004`), which falls through to a generic failure. Treat it as what it is: your validation let through a value the database refuses, which is a bug to fix, not a client mistake. Validate at the edge first (next section), and let the constraint be the last line of defence.
+The `CHECK` violation now arrives as a **409** too. `@zudojs/database` 1.5.0 made `mapRepositoryError` cover every code the database can raise: a `CHECK` (`P2004`) is a 409, a missing required value or one that is the wrong shape (`P2000`/`P2011`) is 400, and a few rarer ones map to 404 or 503. Before 1.5.0, a `CHECK` violation fell through to a generic, non-exposed 500. Either way, treat it as what it is: your validation let through a value the database refuses, which is a bug to fix, not a client mistake. Validate at the edge first (next section), and let the constraint be the last line of defence, not the first.
 
 ## DTOs and mappers at the edge
 
@@ -944,7 +944,8 @@ Output of `npx tsx keyset-where.ts`
    "AND": [
     {
      "createdAt": {
-      "equals": "2026-09-02T09:00:00.000Z"
+      "gte": "2026-09-02T09:00:00.000Z",
+      "lt": "2026-09-02T09:00:00.001Z"
      }
     },
     {
@@ -958,11 +959,11 @@ Output of `npx tsx keyset-where.ts`
 }
 ```
 
-Read the condition as "created earlier, or created at the same moment with a smaller id". Only the sort fields go into the cursor, not the title. In SQL it becomes `created_at < $1 OR (created_at = $1 AND id < $2)`, and an index on `(created_at DESC, id DESC)` can jump straight to that spot. Give the repository a `cursorSecret`, as in the database lesson, and the cursor is signed so a client cannot edit it.
+Read the condition as "created earlier, or created inside the same millisecond with a smaller id". Only the sort fields go into the cursor, not the title. The tie branch does not compare `equals`: it treats the cursor's millisecond as a whole **bucket**, `gte` the cursor and `lt` one millisecond later, because the column can hold more precision than the cursor can carry (next section). In SQL it becomes `created_at < $1 OR (created_at >= $1 AND created_at < $1 + interval '1 millisecond' AND id < $2)`, and an index on `(created_at DESC, id DESC)` can still jump straight to that spot. Give the repository a `cursorSecret`, as in the database lesson, and the cursor is signed so a client cannot edit it.
 
-### The cursor that skipped rows
+### Millisecond cursors and same-millisecond rows
 
-Look at the payload again: the date became the text `"2026-09-02T09:00:00.000Z"`. A JavaScript `Date` has millisecond precision. A PostgreSQL `timestamptz` has *microsecond* precision by default. Rows created within the same millisecond differ only in digits the cursor cannot carry. Here are sensor readings stored with the default precision, paged one at a time:
+Look at the payload again: the date became the text `"2026-09-02T09:00:00.000Z"`. A JavaScript `Date` has millisecond precision. A PostgreSQL `timestamptz` has *microsecond* precision by default, so several rows can share every digit a cursor can carry. Here are sensor readings stored with the default precision, three of them a fraction of a millisecond apart, paged one at a time:
 
 precision.tsNode.js only
 
@@ -1007,11 +1008,13 @@ await pg.close();
 Output of `npx tsx precision.ts`
 
 ```ts
-paged through: [ 'third', 'older' ]
+paged through: [ 'third', 'second', 'first', 'older' ]
 in the table: { n: 4 }
 ```
 
-Two of the four readings were never shown, and nothing failed. The first page's cursor said `10:00:00.000`. PostgreSQL compared it with `10:00:00.000200` and decided that "second" was *newer* than the cursor, so it did not belong on the next page. The fix is to store only what the cursor can carry: `timestamptz(3)`, as the tasks table does, or to sort by a column without this problem, such as the id. Bulk imports, which insert many rows in one millisecond, are exactly where this shows up.
+All four readings came back, in the right order. The first page's cursor said `10:00:00.000`; PostgreSQL's real column holds `10:00:00.000100`, `…0200` and `…0300`, all inside that same millisecond. `buildKeysetWhere` treats the cursor's millisecond as the bucket you saw above, `gte` the cursor and `lt` one millisecond later, and lets the `id` tiebreaker order the rows inside it — so "second" and "first" stayed on the next pages instead of falling through the gap.
+
+Before `@zudojs/database` 1.5.0, the tie branch compared the cursor with `equals` against the microsecond column, so PostgreSQL saw `10:00:00.000 < 10:00:00.000200` as true and every reading after the first one on a page quietly never came back, with no error to notice. If you already store timestamps at millisecond precision, such as `timestamptz(3)` as the tasks table does, you were never exposed to this: the bucket and the column agree exactly, so the comparison behaves exactly as a plain equality always did. Bulk imports, which insert many rows within one millisecond, are exactly where the gap used to show up.
 
 ## Indexes for the queries you really run
 
@@ -1460,7 +1463,17 @@ TRY IT YOURSELF
 
 Add `assigneeLoad(projectId)` to `ProjectQueries`: for one project, each assignee with their number of open tasks, busiest first, unassigned tasks left out. Use one query, and return `{ assigneeId, open }` objects.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Use `client.queryRawUnsafe(sql, [projectId])` with a `GROUP BY assignee_id` and `count(*)::int AS open`, the same shape as `cardsFor` above, filtered with a `WHERE` instead of a join.
+
+HINT 2
+
+`WHERE project_id = $1 AND status = 'open' AND deleted_at IS NULL AND assignee_id IS NOT NULL GROUP BY assignee_id ORDER BY open DESC, assignee_id`. Map each row to `{ assigneeId: row.assignee_id, open: row.open }`.
+
+SOLUTION
 
 assignee-load.tsNode.js only
 
@@ -1500,7 +1513,17 @@ TRY IT YOURSELF
 
 The invariant test found that soft-deleting an open task left `open_tasks` too high. Write `deleteTask(service parts, id)` that, in one transaction, soft-deletes the task and decrements the counter only if the task was open. Show that the drift query then finds nothing.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Inside `withTransaction(client, async (tx) => { ... })`, bind both repositories first: `const p = projects.withTransaction(tx); const t = tasks.withTransaction(tx);`. Call `t.softDelete(id)` and catch its rejection to throw your own `NotFoundError`.
+
+HINT 2
+
+`const deleted = await t.softDelete(id).catch(() => { throw new NotFoundError(\`Task ${id} not found\`); });`, then `if (deleted.status === "open") await p.update(deleted.projectId, { openTasks: { decrement: 1 } });`. Reading `deleted.status` from the row you just changed avoids a second query that could see stale data.
+
+SOLUTION
 
 delete-task.tsNode.js only
 
@@ -1555,7 +1578,17 @@ TRY IT YOURSELF
 
 Clients want "high priority first, then newest". Page project 1's tasks with `paginateCursor` sorted by `priority` ascending and then `createdAt` descending, two per page. Why is sorting by the text `priority` a trap, and what would you change?
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Give `paginateCursor` a `sort` with two entries: `[{ field: "priority", direction: "asc" }, { field: "createdAt", direction: "desc" }]`, and filter to `{ projectId: 1 }`. Loop on `page.meta.nextCursor` as the examples above do.
+
+HINT 2
+
+After collecting `seen`, look at the order the priorities come out in: `"high"`, `"low"`, `"normal"`. Ask what a plain text sort does with those three words compared with what "high, then normal, then low" means.
+
+SOLUTION
 
 priority-sort.tsNode.js only
 

@@ -595,7 +595,17 @@ TRY IT YOURSELF
 
 Two partners share ₦100,000.01 of profit (10,000,001 kobo) in the ratio 2 : 3. Compute each share in whole kobo so that the shares add up exactly to the total. Hint: compute the first share rounded down, and give the second partner the rest.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Out of a 2 : 3 split, the first partner's share is 2/5 of the total.
+
+HINT 2
+
+`const first = Math.floor(profitKobo * 2 / 5);`
+
+SOLUTION
 
 ratio-split.js
 
@@ -625,7 +635,17 @@ TRY IT YOURSELF
 
 Shelf prices include 7.5% VAT. Write `splitGross(grossKobo)` returning `{ net, vat }` in whole kobo so that `net + vat` is exactly the gross price. Try ₦10,750.00 and ₦24.50.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Solve *net* × 1.075 = *gross* for *net*: *net* = *gross* ÷ 1.075, written with whole numbers as `gross * 10000 / 10750`.
+
+HINT 2
+
+`const net = Math.round(grossKobo * 10000 / 10750);`
+
+SOLUTION
 
 split-gross.js
 
@@ -655,7 +675,17 @@ TRY IT YOURSELF
 
 A customer has a ₦10,000 basket. Offer A is 25% off. Offer B is 15% off, then another 10% off the reduced price. Offer C is ₦2,400 off. Compute the final price of each in whole naira, and print the best offer.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Write each percentage as `(100 - p) / 100` with whole numbers: `offerA = basket * (100 - 25) / 100`.
+
+HINT 2
+
+Two `if` statements, one for `offerB` and one for `offerC`, each comparing against the current `bestPrice` and updating both `best` and `bestPrice` on a lower find.
+
+SOLUTION
 
 best-deal.js
 

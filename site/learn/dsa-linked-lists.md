@@ -856,7 +856,17 @@ TRY IT YOURSELF
 
 A delivery route is a singly linked list and nobody stored its length. Find the middle stop in one pass, using a slow pointer and a fast pointer. For an even number of stops, return the second of the two middle ones.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Move `fast` two nodes (`fast.next.next`) and `slow` one node (`slow.next`) on every pass through the loop, and stop as soon as `fast` or `fast.next` is `null`.
+
+HINT 2
+
+`while (fast !== null && fast.next !== null) { slow = slow.next; fast = fast.next.next; }` then `return slow?.value ?? null;`
+
+SOLUTION
 
 middle.js
 
@@ -898,7 +908,17 @@ TRY IT YOURSELF
 
 Two payment terminals each keep a linked list of transactions sorted by time. Merge them into one sorted list *by relinking the existing nodes* (no new nodes except one dummy head). What are the time and extra space?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Compare `a.value.time` and `b.value.time`. Attach the node with the earlier time to `tail.next`, advance that list past it, then move `tail` forward to the node you just attached.
+
+HINT 2
+
+`while (a !== null && b !== null) { if (a.value.time <= b.value.time) { tail.next = a; a = a.next; } else { tail.next = b; b = b.next; } tail = tail.next; }` then `tail.next = a !== null ? a : b;` once the loop ends.
+
+SOLUTION
 
 merge-lists.js
 
@@ -953,7 +973,17 @@ TRY IT YOURSELF
 
 Remove every node whose order is cancelled from a singly linked list, including at the head and in a row, in one pass. Return the new head. Use a dummy node so the head is not a special case.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Keep a `previous` pointer starting at a dummy node before the head. When `previous.next` is cancelled, unlink it with `previous.next = previous.next.next` and do *not* move `previous`, so the next check looks at the node that just slid into place.
+
+HINT 2
+
+`while (previous.next !== null) { if (previous.next.value.status === "cancelled") previous.next = previous.next.next; else previous = previous.next; }`
+
+SOLUTION
 
 remove-all.js
 

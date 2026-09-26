@@ -734,7 +734,17 @@ TRY IT YOURSELF
 
 Write `tap(fn)`: it returns a step that calls `fn(value)` for its side effect and then returns `value` unchanged. Use it to log the quote between two steps of a pipeline without changing the result.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`tap` must return a function that both calls `fn` and returns its argument — the side effect (logging) and the value passed on are two separate things.
+
+HINT 2
+
+`function tap(fn) { return (value) => { fn(value); return value; }; }`
+
+SOLUTION
 
 tap.js
 
@@ -774,7 +784,17 @@ TRY IT YOURSELF
 
 Write a curried `priceFor(taxRate)(discountPercent)(kobo)` that applies the discount first, then the tax, rounding once at the end. Build calculators for a Nigerian customer with no discount (7.5%), a Ghanaian customer with no discount (15%) and a Nigerian staff member with 20% off, and price ₦10,000 for each.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Three arrows in a row, each taking one argument: `(taxRate) => (discountPercent) => (kobo) => ...`. Apply the discount to `kobo` first, then the tax to that result, then round once.
+
+HINT 2
+
+`Math.round(kobo * (1 - discountPercent / 100) * (1 + taxRate))`
+
+SOLUTION
 
 price-for.js
 
@@ -811,7 +831,17 @@ TRY IT YOURSELF
 
 Write `removeLine(cart, sku)` that returns a new cart without that line and with a new `updatedAt` passed in by the caller. The original cart must be unchanged, and lines that were not removed must be the same objects (structural sharing). If the SKU is not in the cart, return the original cart unchanged, so callers can detect "nothing happened" with `===`.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`cart.lines.findIndex((line) => line.sku === sku)` gives you the position to remove, or `-1` when it is not there — handle that case by returning `cart` itself, unchanged.
+
+HINT 2
+
+`const index = cart.lines.findIndex((line) => line.sku === sku); if (index === -1) return cart; return { ...cart, lines: cart.lines.toSpliced(index, 1), updatedAt };`
+
+SOLUTION
 
 remove-line.js
 

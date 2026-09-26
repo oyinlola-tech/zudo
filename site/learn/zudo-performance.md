@@ -402,7 +402,7 @@ From about 42 to about 1,100 requests a second, median from 424 ms to 16 ms, and
 
 Profile again after a fix, because the ranking changes. With the list fixed, the top of the profile looked like this, and then like this after restarting with the production limit of 300:
 
-Profiles after the fix (example output)
+Profiles after the fix (example output, before a later @zudojs/security release)
 
 ```bash
 $ node top-functions.mjs profiles/*.cpuprofile        # RATE_LIMIT_MAX=1000000
@@ -419,7 +419,7 @@ $ node top-functions.mjs profiles/*.cpuprofile        # RATE_LIMIT_MAX=300
 …
 ```
 
-The rate limiter from `@zudojs/security` keeps a list of timestamps per client (a **sliding log**) and copies that list on every check, so each check costs time proportional to the requests that client made in the window. With a limit of 300 the list never grows past 300; with a limit of a million and every request coming from one load tester, it grows with the test:
+At the time, the rate limiter from `@zudojs/security` kept a list of timestamps per client (a **sliding log**) and copied that list on every check, so each check cost time proportional to the requests that client made in the window. With a limit of 300 the list never grew past 300; with a limit of a million and every request coming from one load tester, it grew with the test, which is exactly the bug the measurement below was written to catch:
 
 rate-limiter-cost.tsNode.js only
 
@@ -440,18 +440,18 @@ const best = (max: number, checks: number) => Math.min(...[1, 2, 3].map(() => la
 const production = best(300, 8_000);
 const productionLater = best(300, 16_000);
 const loadTest = best(1_000_000, 8_000);
-console.log("after 8,000 checks from one client, a limit of 1,000,000 costs at least 5x a limit of 300:", loadTest > 5 * production);
-console.log("with a limit of 300, the cost after 16,000 checks is still below the high limit's after 8,000:", productionLater < loadTest);
+console.log("a limit of 1,000,000 no longer costs meaningfully more than a limit of 300:", loadTest < 5 * production);
+console.log("the cost barely grows with more checks under the same limit:", productionLater < 5 * production);
 ```
 
 Output of `npx tsx rate-limiter-cost.ts`
 
 ```ts
-after 8,000 checks from one client, a limit of 1,000,000 costs at least 5x a limit of 300: true
-with a limit of 300, the cost after 16,000 checks is still below the high limit's after 8,000: true
+a limit of 1,000,000 no longer costs meaningfully more than a limit of 300: true
+the cost barely grows with more checks under the same limit: true
 ```
 
-So the second hot spot was produced by the test setup, not by production traffic, where thousands of clients each stay under 300. Two lessons: make the load test look like production (many client addresses, production settings), and know your tools' cost model. If you ever need a high per-client limit, such as for a trusted internal client, prefer a counter-based limiter (a fixed window or token bucket in Redis, from [the rate limiting lesson](https://zudojs.oyinlola.site/learn/api-rate-limiting)) over a sliding log.
+`@zudojs/security` has since replaced the sliding log with a structure that checks in time proportional to the log of the window's size, not its size, so this specific hot spot is gone: a check now costs about the same whether `max` is 300 or a million. The lesson underneath does not change. Two things are still worth knowing: make a load test look like production (many client addresses, production settings) so it measures your traffic and not the tool's, and know your dependencies' cost model, because the next one might not have been fixed yet. If you ever need a very high per-client limit, such as for a trusted internal client, a counter-based limiter (a fixed window or token bucket in Redis, from [the rate limiting lesson](https://zudojs.oyinlola.site/learn/api-rate-limiting)) is simpler to reason about than any sliding log, however it is implemented.
 
 ## Middleware and serialization cost
 
@@ -1005,7 +1005,17 @@ TRY IT YOURSELF
 
 The board sometimes needs assignees from a different service's table, so a join is not possible. Rewrite `boardOneByOne` from the database section so it makes exactly 2 queries: one for the tasks, and one for all their assignees using `WHERE id = ANY($1)`.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Collect the distinct assignee ids from the tasks with `[...new Set(...)]`, then fetch them all in one query with `WHERE id = ANY($1)`, and join in memory with a `Map`.
+
+HINT 2
+
+`const ids = [...new Set(tasks.rows.map((task) => task.assignee_id))]; const users = await query("SELECT id, name FROM users WHERE id = ANY($1)", [ids]);`
+
+SOLUTION
 
 any-query.tsNode.js only
 
@@ -1053,7 +1063,17 @@ TRY IT YOURSELF
 
 Your shared cache has no hot-key statistics, but you have an access log: one key per line. Write `topKeys(lines, n)` that returns the `n` most frequent keys with their share of all reads in whole percent, most frequent first, and ties in alphabetical order.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Count with a `Map` in one pass, then sort the entries by count descending, breaking ties with `localeCompare` on the key.
+
+HINT 2
+
+`[...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, n).map(([key, count]) => \`${key} ${Math.round((count / lines.length) * 100)}%\`)`
+
+SOLUTION
 
 top-keys.js
 
@@ -1086,7 +1106,17 @@ TRY IT YOURSELF
 
 For each report, name the kind of slowness (CPU, I/O, or queueing) and the first thing you would measure: (a) all routes are slow at 14:00 every day, event-loop delay p99 is 800 ms, CPU is at 100% on one core; a nightly report export was moved to 14:00. (b) only `POST /tasks` is slow; event-loop delay is 2 ms; the database CPU is at 10%; the pool's waiting count is 30. (c) `GET /tasks/:id` p95 doubled after a release; the query count per request went from 1 to 3.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Read the event-loop delay first: high delay points at CPU work shared by every route; low delay with a slow single route points at I/O or a queue further down.
+
+HINT 2
+
+For (b), notice which two numbers are both low (loop delay, database CPU) while a third is high (waiting count): the bottleneck sits between those two measurements, not inside either one.
+
+SOLUTION
 
 - (a) **CPU.** The export runs on the same event loop as the API. Profile one process during the export to confirm; then move the export to a worker (a queue job or a worker thread, see [worker threads](https://zudojs.oyinlola.site/learn/node-events-processes#workers)) or stream it in chunks.
 - (b) **Queueing.** The database is idle and the loop is idle, but 30 requests wait for a connection: something holds connections too long. Measure how long each connection is held in `POST /tasks`; the usual culprit is a transaction left open while calling another service. Shorten the transaction before you touch the pool size.

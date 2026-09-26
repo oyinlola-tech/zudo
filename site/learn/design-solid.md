@@ -832,7 +832,17 @@ TRY IT YOURSELF
 
 A `Payroll` module computes net pay (HR and finance own the rules: 7.5% pension, flat ₦2,000 union dues) and writes the bank's salary file (the bank owns the format: `account|amountKobo`, one line per employee). Both use a shared `formatAmount` that HR now wants to show as naira with commas. Write the two parts so that HR's formatting cannot reach the bank file, and test both.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`netPayKobo` is one formula: `const pension = Math.round(employee.grossKobo * 0.075);`, then `employee.grossKobo - pension - 200_000`.
+
+HINT 2
+
+`payslipLine`: turn `netPayKobo(employee)` into naira with `(net / 100).toFixed(2)`, then add thousands commas with `.replace(/\B(?=(\d{3})+(?!\d))/g, ",")`. `bankFile`: `employees.map((e) => \`${e.account}|${netPayKobo(e)}\`).join("\n")`.
+
+SOLUTION
 
 payroll.ts
 
@@ -890,7 +900,17 @@ TRY IT YOURSELF
 
 Using `promotions.ts`, add a "bulk" promotion: ₦2,500 off orders of ₦50,000 or more. Do not edit `promotions.ts`. Then prove with tests that a new customer ordering ₦60,000 still gets the first-order discount (15% is bigger), and a returning customer gets the bulk discount.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`appliesTo` just needs a comparison: `(order) => order.subtotalKobo >= 5_000_000`.
+
+HINT 2
+
+`discountKobo` ignores its argument and always returns the same amount: `() => 250_000`.
+
+SOLUTION
 
 bulk-promo.ts
 
@@ -932,7 +952,17 @@ TRY IT YOURSELF
 
 Write `HonestLegacyStore`, a wrapper that holds a `LegacyInvoiceStore`, implements `InvoiceStore`, and turns the legacy "ERR 404" error into `undefined` while letting every other error through. Run the contract test against it.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Wrap the call in `try`/`catch`: `try { return await this.legacy.find(number); } catch (error) { ... }`.
+
+HINT 2
+
+In the `catch`: `if (error instanceof Error && error.message.startsWith("ERR 404")) return undefined; throw error;`.
+
+SOLUTION
 
 honest-store.ts
 

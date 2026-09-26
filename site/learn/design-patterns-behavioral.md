@@ -796,7 +796,17 @@ TRY IT YOURSELF
 
 The shop starts selling 50 kg bags of rice. Add a `freight` strategy: available only for orders of 30 kg or more, ₦10,000 plus ₦150 per kg. Without editing `shipping.ts`, show the options for a 40 kg order outside Lagos and prove freight is not offered for 29.5 kg.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`available` is a simple comparison: `(order) => order.weightKg >= 30`.
+
+HINT 2
+
+`feeKobo`: `(order) => 1_000_000 + Math.ceil(order.weightKg) * 15_000`. `Math.ceil` matches how `express` rounds weight up above.
+
+SOLUTION
 
 freight.ts
 
@@ -837,7 +847,17 @@ TRY IT YOURSELF
 
 Write a `deactivateProduct(store, sku)` command for a store that tracks which products are active. Undo must restore the *previous* state, even if the product was already inactive. Run it through `CommandHistory` and show the audit log.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`execute`: `wasActive = store.isActive(sku); store.setActive(sku, false);`, the same two lines as `disableFlag` above.
+
+HINT 2
+
+`undo`: `if (wasActive === undefined) throw new Error("cannot undo a command that never ran"); store.setActive(sku, wasActive);`.
+
+SOLUTION
 
 deactivate.ts
 
@@ -899,7 +919,17 @@ TRY IT YOURSELF
 
 Write `rateLimit(max)`, a middleware for the chain above that allows at most `max` requests per token (or per `"anonymous"`) and answers 429 after that. Put it where it also protects against password guessing, and show a fourth anonymous attempt being refused before authentication runs.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+`const key = ctx.token ?? "anonymous"; const count = (counts.get(key) ?? 0) + 1; counts.set(key, count);`.
+
+HINT 2
+
+`if (count > max) return { status: 429, body: "too many requests" }; return next();`.
+
+SOLUTION
 
 rate-limit.ts
 

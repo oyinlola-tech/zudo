@@ -724,7 +724,17 @@ TRY IT YOURSELF
 
 Write `completeTask(id)`. In one transaction it marks the task done (add a `done` column), records the activity with a participant function, and registers an after-commit "notify" message. If no row was updated, throw a `NotFoundError` from `@zudojs/errors`. Try it with an existing and a missing id, and show that the missing one changed nothing.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Call `await recordActivity(...)` first, so its insert is part of the same transaction. Then run the update with `pg.query` and look at `result.affectedRows` to see whether a row actually changed.
+
+HINT 2
+
+`const result = await pg.query(...); if (result.affectedRows === 0) throw new NotFoundError(\`Task ${id} not found\`); tx.afterCommit(async () => console.log(\`notify: task ${id} is done\`));`. Registering the hook after the check means a missing task never gets a notification.
+
+SOLUTION
 
 complete-task.tsNode.js only
 
@@ -776,7 +786,17 @@ TRY IT YOURSELF
 
 Create a manager with the in-memory adapter whose `onEvent` counts events by type. Run one transaction that commits and one that throws, then print the counts.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`onEvent` is called once per lifecycle event, each with a `type` such as `"transaction.started"`. Read the current count with `counts.get(event.type) ?? 0` before you write a new one.
+
+HINT 2
+
+`counts.set(event.type, (counts.get(event.type) ?? 0) + 1)`. A committing run fires `started`, `committing`, `committed`; a throwing one fires `started`, `rolling_back`, `rolled_back`.
+
+SOLUTION
 
 event-counts.tsNode.js only
 

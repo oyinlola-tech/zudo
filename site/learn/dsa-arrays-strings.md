@@ -743,7 +743,17 @@ TRY IT YOURSELF
 
 Write `insertAt(items, index, value)` for a plain JavaScript array without `splice`: grow the array by one, move the items after `index` one place right (starting from the end), then write the value. Return the number of moves, and throw a `RangeError` for an index outside `0` to `items.length`. Why must the loop start from the end?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Writing `items[items.length]` first grows the array by one slot. Then walk an index down from `items.length` to just above `index`, copying each item one place right before you overwrite its old slot.
+
+HINT 2
+
+`for (let i = items.length; i > index; i--) { items[i] = items[i - 1]; moves++; }`, then `items[index] = value;` after the loop.
+
+SOLUTION
 
 insert-at.js
 
@@ -789,7 +799,17 @@ TRY IT YOURSELF
 
 A rota was rotated by some unknown `k`. Write `isRotation(a, b)` for two strings: `true` when `b` is `a` rotated by any amount. Hint: every rotation of `a` appears inside `a + a`. State the complexity.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Two strings of different lengths can never be rotations of each other. For equal lengths, think about what every rotation of `a` has in common when you write out `a + a`.
+
+HINT 2
+
+`return a.length === b.length && (a + a).includes(b);`
+
+SOLUTION
 
 is-rotation.js
 
@@ -823,7 +843,17 @@ TRY IT YOURSELF
 
 A warehouse scanner logs one letter per scanned box: `"AAABCCDDDD"`. Write `compress(log)` that returns `"A3B1C2D4"`, building the result with an array and `join`. Handle the empty log. What is the complexity?
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Inside the outer `while`, grow `run` with an inner loop as long as the next character equals `log[i]`. Then you know the whole run's length before you push anything.
+
+HINT 2
+
+`while (i + run < log.length && log[i + run] === log[i]) run++;` then `parts.push(log[i], String(run)); i += run;`. Without `i += run` the outer loop never advances.
+
+SOLUTION
 
 compress.js
 

@@ -189,7 +189,17 @@ TRY IT YOURSELF
 
 Before you change any code, write down every problem you can find in `server.ts`, including ones the script did not show. Sort them into **security**, **correctness**, **architecture** and **operations**. Aim for at least ten.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Read every line that builds a SQL string, every place a value comes out of `ctx.params`, `ctx.query` or the body, and every write that is not wrapped in anything. Each is a different category, but the same handful of lines cause most of them.
+
+HINT 2
+
+Then look for what is simply *missing* rather than wrong: things the six-attack script never had a reason to try, like tests, logs, a health check, or a schema for the body.
+
+SOLUTION
 
 | Kind | Problem |
 | --- | --- |
@@ -241,7 +251,21 @@ Hints:
 - For a transfer, debit with `AND balance_cents >= $1`, then credit, inside `db.transaction`. Check `affectedRows` after each `UPDATE` and throw if it is 0: the throw rolls back the whole transaction.
 - Throw errors from `@zudojs/errors`. `@zudojs/http` turns them into 400, 401, 404 and 409 answers for you.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+The fix for the race is one statement: `UPDATE gift_cards SET redeemed_by = $1 WHERE code = $2 AND redeemed_by IS NULL RETURNING amount_cents`. It both checks and claims the card, so a second, simultaneous `UPDATE` finds no matching row instead of a stale "unused" answer.
+
+HINT 2
+
+`authenticate` is the only function that ever reads `authorization`; every route calls `me(ctx)` for identity and never `ctx.params` or the body for who the caller is.
+
+HINT 3
+
+In `transfer`, the debit's `WHERE ... AND balance_cents >= $1` makes "not enough money" impossible to write past; check `affectedRows` after *both* updates and throw inside the `db.transaction` callback, since a throw there rolls back everything already written.
+
+SOLUTION
 
 The rules, in one module with no HTTP in it:
 
@@ -400,9 +424,9 @@ Output of `npx tsx try-again.ts`
 ```ts
 start: user 1: 1000, user 2: 1000
 1. 200 {"creditedCents":5000}
-2. 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+2. 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":[],"code":"invalid_format","message":"String does not match pattern"}]}
 3. 401 {"error":"Log in first","code":"ERR_AUTHENTICATION_FAILED"}
-4. 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+4. 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":["amountCents"],"code":"too_small","message":"Expected >= 1, received -3000"}]}
 5. 404 {"error":"No wallet for user 99","code":"ERR_RESOURCE_NOT_FOUND"}
 6. 401 {"error":"Log in first","code":"ERR_AUTHENTICATION_FAILED"}
 7. 404 {"error":"No unused gift card with that code","code":"ERR_RESOURCE_NOT_FOUND"}
@@ -435,7 +459,17 @@ TRY IT YOURSELF
 
 Write Vitest tests for the wallet module. Give every test a fresh database, so tests cannot affect each other. Include the race: redeem the same card twice *at the same time* with `Promise.allSettled`, and require exactly one success.
 
-**Show a solution**
+Write it in the editor and run it. Hints and the solution open up once you have tried.
+
+HINT 1
+
+`expect(promise).rejects.toThrow("message")` checks both that it rejects and what it says, in one line; `Promise.allSettled([...]).then((results) => results.filter((r) => r.status === "fulfilled"))` is how you count successes without one rejection failing the whole test.
+
+HINT 2
+
+Every test starts from the same seed data (Step "The code you inherit"): user 1 (Ada) and user 2 (Linus) each start with 1000 cents, and `GIFT-ADA-5000` is worth 5000.
+
+SOLUTION
 
 wallets.test.ts
 
@@ -516,7 +550,21 @@ TRY IT YOURSELF
 
 After a successful redemption or transfer, publish `wallet.credited` and queue a confirmation e-mail. Rate-limit the code endpoints. Decide what, if anything, to cache.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Where exactly does `order.placed` get published in the capstone, relative to the transaction that changed the order — before it opens, inside it, or after it closes? Publishing at the wrong point either loses the event or publishes one for a change that got rolled back.
+
+HINT 2
+
+Two different limits protect two different things: one keyed by IP, one keyed by the account being attacked. Which incident from Step 1 does each one stop?
+
+HINT 3
+
+For caching, ask what happens to a customer who is told their balance is one thing and then finds it is another. Is a card lookup's staleness the same kind of problem?
+
+SOLUTION
 
 - Publish from the HTTP layer or the module *after* `db.transaction` returns, never inside it, exactly like `order.placed` in the capstone. For no lost events, write an outbox row inside the transaction instead.
 - A subscriber adds a `send-confirmation` job with `attempts` and exponential `backoff`. The job carries ids and amounts only, never the gift code.
@@ -529,7 +577,21 @@ TRY IT YOURSELF
 
 Make every money movement traceable and every route documented.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+An audit row and the balance update it explains must never be able to disagree. What does that tell you about which transaction the audit insert belongs in?
+
+HINT 2
+
+The logger's default redaction looks for field names like `password` or `token`. Would it know that a field called `code` holds a secret in this app?
+
+HINT 3
+
+If the OpenAPI document is written by hand, separately from the schemas the routes actually parse with, what happens the day someone changes a schema and forgets the document?
+
+SOLUTION
 
 - Add a `ledger` table (who, what, amount, related card or user, time) and insert one row per movement *inside* the same transaction. A ledger that can disagree with the balances is worse than none.
 - Log one JSON line per request with the request id, route, status and duration. Log user ids, never tokens or gift codes: the logger's redaction does not know that `code` is secret here, so leave it out yourself.
@@ -542,7 +604,17 @@ TRY IT YOURSELF
 
 Ship it, and decide what happens when things go wrong at 3 a.m.
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+PGlite hid a race in this exact code once already, in the reasoning section above. What else might it be hiding, and against which database must the parallel-redemption test also run before you trust it?
+
+HINT 2
+
+For each alert you would set, ask: what does the person who gets paged at 3 a.m. do in the first five minutes? If the answer is not written down anywhere, the alert is not finished yet.
+
+SOLUTION
 
 - Swap PGlite for a `pg` pool from `DATABASE_URL`, checked at startup. Turn the table definitions into numbered migrations, run by `docker compose run --rm app node dist/migrate.js` before each release.
 - Add `/health` and `/ready` (database check), graceful shutdown and statement timeouts. Run with Docker Compose behind Caddy, with the readiness check wired to the proxy's health checks, and a nightly backup that you have restored once.

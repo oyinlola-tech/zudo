@@ -353,6 +353,8 @@ Error: connect ECONNREFUSED 127.0.0.1:5432
 
 The first frame points at line 22 of your file, where the error was created. That is where you start looking.
 
+`logError` is not the only place an `Error` can end up. Since `@zudojs/logger` 1.5.0, an `Error` nested anywhere in metadata, such as `logger.error("retry failed", { cause: previousError })`, is normalized the same way when the entry is built: `{ name, message, stack, …ownFields }`, with its own fields redacted like any other metadata and a self-referential `cause` written as `"[Circular]"`. Before that fix, an error nested this way had no enumerable properties of its own, so a custom transport that stringifies `entry.metadata` saw `{}` and the failure it was trying to record vanished. The built-in formatters already rendered it correctly; the fix is for your own transports.
+
 Two rules make error logs useful:
 
 - **4xx is not an error of your server.** A missing task or a bad request body is the client's mistake. Log it as `warn` (or `info`), without a stack trace. Keep `error` for 5xx, the failures you must fix. If every 404 is an `error`, the real errors drown.
@@ -543,7 +545,17 @@ TRY IT YOURSELF
 
 A transport can do more than print. Write one that counts entries per level name in a `Map` (use `entry.levelName`). Log two `info` entries, one `warn` and one `debug` with the default level, then print the map.
 
-**Show a solution**
+Write it in the editor, then press **Check**. Hints and the solution open up once you have checked your code.
+
+HINT 1
+
+Inside the transport, read the current count with `counts.get(entry.levelName) ?? 0` before writing it back with `counts.set`.
+
+HINT 2
+
+`counts.set(entry.levelName, (counts.get(entry.levelName) ?? 0) + 1);`. The `debug` call never reaches the transport at all, because the default level is `info`.
+
+SOLUTION
 
 count-levels.ts
 
@@ -579,7 +591,17 @@ TRY IT YOURSELF
 
 Which of these lines leak a secret into the logs, and how do you fix them? (a) `log.info("login", { user, password })` (b) `log.info(\`token issued: ${token}\`)` (c) `log.debug("request", { headers: request.headers })` (d) `log.info("user", { profile: { name, creditCard, phone } })`
 
-**Show a solution**
+Work it out first, on paper or in your head. Then use the hints, and compare with the solution.
+
+HINT 1
+
+Redaction checks a field *name*, at any depth of an object. Ask, for each case, whether the secret value sits in a named field at all, or whether it has already been merged into plain text.
+
+HINT 2
+
+(a) and part of (d) are already covered by the built-in name list. (b) has no field to redact, because a template literal is just a string. (c) and the rest of (d) need a decision about which fields belong in a log at all, not just whether the logger recognises their names.
+
+SOLUTION
 
 (a) is safe: `password` is redacted by name. (b) leaks: the token is inside the message text, which is never redacted. Log `"token issued"` with a harmless field like `{ userId }` instead. (c) is safe for `authorization` and `cookie`, but you still log every other header, some of which may be personal. Log only the headers you need. (d) half leaks: `creditCard` is redacted by default (the list also knows `cardNumber`, `cvv` and `ssn`), but `phone` is personal data the logger does not know about. Add it with `redact: { keys: ["phone"] }`. Better still, log only the `userId`, and never put card data in a log object at all.
 

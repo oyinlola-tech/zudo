@@ -162,7 +162,7 @@ src/receipts/receipts.plugin.ts
 
 ```ts
 import { createDegradedHealth, createHealthyHealth } from "@zudojs/plugins";
-import type { Plugin, PluginContainer, PluginContext } from "@zudojs/plugins";
+import type { Plugin, PluginContainer, PluginContext, PluginHealth } from "@zudojs/plugins";
 import { MAILER } from "../mailer/mailer.contract.js";
 import type { Mailer } from "../mailer/mailer.contract.js";
 import { parseReceiptsOptions } from "./receipts.options.js";
@@ -177,7 +177,7 @@ export interface PaymentSucceeded {
 
 /** The plugin object, plus a health check the host can call. */
 export interface ReceiptsPlugin extends Plugin<Partial<ReceiptsOptions> | undefined> {
-  health(): { readonly status: string; readonly details?: unknown };
+  health(): PluginHealth;
 }
 
 type ResolvingContainer = PluginContainer & { resolve(token: unknown): unknown };
@@ -263,7 +263,7 @@ export function createReceiptsPlugin(): ReceiptsPlugin {
 - **`initialize`** resolves the mailer. It can, because every plugin's `install`, including the mailer's, has finished.
 - **`start`** subscribes to `payment.succeeded` and registers the unsubscribe on the very next line. The handler does not `await` the mail: the host's publish returns at once, so a slow mail server never slows a payment. Each send is tracked in `inFlight`.
 - **`stop`** refuses new work, then waits for the sends in flight. It does not release anything: that is disposal's job, and it happens next.
-- **`health()`** is not part of the `Plugin` interface. The manager's diagnostics only know a plugin's lifecycle state; whether receipts are actually going out is something only the plugin knows, so it offers a method for the host to call.
+- **`health()`** is an optional part of the `Plugin` interface, and `manager.diagnostics()` now calls it itself for every `started` plugin, folding the result straight into the report (a plugin with no `health()` is just reported `healthy` while it runs). Receipts still defines its own, because whether mail is actually going out is something only the plugin knows, and the type it returns, `PluginHealth`, is exactly what `diagnostics()` expects back.
 
 ## The host, and a first run
 
@@ -361,7 +361,7 @@ event: started @mycompany/zudo-plugin-mailer
 event: started @mycompany/zudo-plugin-receipts
 two payments published
 [WARN] [shopflow] receipt not sent reference=ORD-1002 reason="ORD-1002: mailbox unavailable"
-manager: 2 of 2 healthy | receipts says: {
+manager: 1 of 2 healthy | receipts says: {
   status: 'degraded',
   details: 'last receipt failed: ORD-1002: mailbox unavailable'
 }
@@ -378,7 +378,7 @@ Follow the order in the output:
 
 - Receipts was registered first, but the mailer started first: it is a dependency. The lifecycle event `plugin:started` arrives as `plugin.started`, because the event bus normalizes `:` to `.` (you traced that in [Reading ZudoJS internals](https://zudojs.oyinlola.site/learn/zudo-internals#trace-events)). A host can subscribe to `plugin.*` to see every lifecycle event.
 - "two payments published" appears before the bounce warning: publishing returned before any mail was sent, so receipts never slow the payment path.
-- The manager says both plugins are healthy, because both are `started`. The plugin knows better: its last receipt bounced. A health endpoint should report both views.
+- The manager already agrees with the plugin: `diagnostics()` calls `receipts.health()` itself while it is `started`, so the bounce shows up as `1 of 2 healthy` without receipts having to push the news anywhere. Calling `receipts.health()` directly, as the host does here, still has its place: it is the one place that can also carry extra detail (counts, timings) that a generic diagnostics report has no room for.
 - The third receipt was still being sent when `stop` began. `stop` waited for it (`drained=1`), so it reached the outbox. Then receipts was disposed before the mailer, and the SMTP connection closed last.
 
 ## What the manager refuses before any hook runs
@@ -389,6 +389,7 @@ checks.tsNode.js only
 
 ```ts
 import { PluginManager } from "@zudojs/plugins";
+import type { Plugin } from "@zudojs/plugins";
 import { createHost, createMemoryTransport } from "./src/host/host.js";
 import { createMailerPlugin } from "./src/mailer/mailer.plugin.js";
 import { createReceiptsPlugin } from "./src/receipts/receipts.plugin.js";
@@ -412,7 +413,8 @@ try {
 }
 
 const typo = new PluginManager();
-typo.register(createReceiptsPlugin(), { form: "receipts@shopflow.ng" });
+const asPlugin: Plugin = createReceiptsPlugin(); // erased to the base type: see below
+typo.register(asPlugin, { form: "receipts@shopflow.ng" });
 typo.register(createMailerPlugin(transport));
 try {
   await typo.start(context);
@@ -427,17 +429,17 @@ Output of `npx tsx checks.ts`
 ```ts
 1. PluginRegistrationError - Plugin "@mycompany/zudo-plugin-receipts" requests capabilities that are not granted: container.
 2. PluginDependencyVersionError - Plugin "@mycompany/zudo-plugin-receipts" requires "@mycompany/zudo-plugin-mailer@^2.0.0", but version 3.0.0 is registered. Register a "@mycompany/zudo-plugin-mailer" that satisfies ^2.0.0, relax the constraint on "@mycompany/zudo-plugin-receipts", or construct the manager with { checkVersions: false }.
-3. TypeError - receipts: invalid options: from must be an email address
+3. PluginInitializationError - Plugin "@mycompany/zudo-plugin-receipts" failed to install: receipts: invalid options: from must be an email address
 3. states: receipts=disposed mailer=disposed
 ```
 
 - **Capabilities** are compared at `register`: the host grants `events` only, receipts asks for `container` too. Remember from [the plugins lesson](https://zudojs.oyinlola.site/learn/zudo-plugins#task-api) that this is a declaration check, not a sandbox.
 - **The version range** `^2.0.0` refuses mailer 3.0.0 before any plugin was installed: nothing to roll back. The error class, `PluginDependencyVersionError`, extends `PluginDependencyError`, so a handler for missing plugins still catches it.
-- **The typo** `form` reached `install` unnoticed by TypeScript: the second argument of `register` is typed `unknown`, whatever the plugin declares. Only the plugin's own validation caught it. The mailer had already been installed, so the manager disposed it: both end `disposed`. (The `smtp` lines are missing because the mailer never reached `start`, where the connection opens.)
+- **The typo** `form` reached `install` unnoticed by TypeScript, but only because of the `asPlugin: Plugin` line just above it. `register<TOptions>(plugin: Plugin<TOptions>, options?: TOptions)` infers `TOptions` from whatever *type* the plugin is held as, so a `createReceiptsPlugin()` passed straight to `register` would make this exact typo a compile error today. Holding the plugin as the bare `Plugin` interface first, the way a value coming out of a plugin registry or a dynamic import usually would, erases that connection, and `TOptions` falls back to `unknown`: anything compiles again. Either way, the runtime backstop is what actually caught it: the plugin's own validation, throwing a plain `TypeError`. The manager wraps whatever a hook throws in a named error before it reaches you, here `PluginInitializationError`, with the plugin's name, the phase, and the original error kept as `.cause`. The mailer had already been installed, so the manager disposed it: both end `disposed`. (The `smtp` lines are missing because the mailer never reached `start`, where the connection opens.)
 
 > TIP
 >
-> Because `register` does not check options against the plugin's type, a plugin package can offer a typed helper instead: for example `createReceiptsPlugin(options)` that keeps the options in the closure. Then the compiler checks them in the host's code, and `install` still validates them at run time.
+> `register` checks options against the plugin's type only while the compiler can still see it as the concrete plugin, which a plain list of installed plugins or a dynamically loaded one usually cannot. A plugin package can make the safe path the only path by offering a typed factory instead: `createReceiptsPlugin(options)` that keeps the options in its closure rather than accepting them through `register`. Then the compiler checks them where they are written, in the host's code, and `install` still validates them at run time for whatever slips past that — options built dynamically, read from a config file, or a plugin the compiler only ever sees as `Plugin`.
 
 ## Optional dependencies and plugins that talk through events
 
@@ -528,7 +530,7 @@ manager.register(createMailerPlugin(createMemoryTransport().transport));
 try {
   await manager.start(context);
 } catch (error) {
-  console.log("start failed:", (error as Error).message);
+  console.log("start failed:", (error as Error).name, "-", (error as Error).message);
 }
 
 const report = manager.diagnostics();
@@ -554,11 +556,11 @@ event: sms-alerts disposed
 event: receipts disposed
 smtp: connection closed
 event: mailer disposed
-start failed: SMS gateway rejected the API key
-healthy 0, degraded 2, unhealthy 1
+start failed: PluginStartError - Plugin "@mycompany/zudo-plugin-sms-alerts" failed to start: SMS gateway rejected the API key
+healthy 2, degraded 0, unhealthy 1
   sms-alerts disposed unhealthy SMS gateway rejected the API key
-  receipts disposed degraded
-  mailer disposed degraded
+  receipts disposed healthy
+  mailer disposed healthy
 handlers still subscribed to payments: 0
 ```
 
@@ -566,31 +568,18 @@ Read the output as the rollback's checklist:
 
 1. SMS alerts failed in `start`. Receipts was `started`, so it was stopped (its drain found nothing in flight), then the mailer.
 2. Every plugin that still held anything was disposed, dependents first: the SMS plugin, receipts (whose disposables unsubscribed it from payments), then the mailer (whose disposable closed the connection).
-3. `diagnostics()` names the culprit and its error. The other two are `disposed`, reported as `degraded`.
+3. `diagnostics()` names the culprit and its error, `unhealthy`. The other two are cleanly `disposed`, reported as `healthy`: an idle plugin (registered, stopped or disposed without failing) reads healthy, so a shutdown report is not full of false alarms.
 4. No handler is left on `payment.succeeded`. Without the `onDispose` line in receipts' `start`, a disposed plugin would still be sending mail through a closed connection.
 
 ### Which plugin failed?
 
-Notice what the `catch` received: the plugin's own `Error`, unwrapped. It does not say which plugin threw it. `@zudojs/plugins` exports `PluginStartError` and `PluginInitializationError`, but the published manager never throws them. A host that logs "SMS gateway rejected the API key" at start-up leaves the operator to guess which of twelve plugins has an SMS gateway. Wrap it yourself, using the diagnostics:
+Look again at what the rollback's `catch` received above: not the SMS plugin's bare `Error`, but a `PluginStartError` that already names it. The manager wraps whatever a hook throws before it reaches you: an `install` or `initialize` failure becomes `PluginInitializationError`, a `start` failure becomes `PluginStartError`, each with the plugin's name, a stable code, and the original error kept as `.cause`. Confirm the shape directly:
 
 named-failure.tsNode.js only
 
 ```ts
 import { PluginManager, PluginStartError } from "@zudojs/plugins";
-import type { PluginContext } from "@zudojs/plugins";
 import { createHost } from "./src/host/host.js";
-
-/** Starts the plugins; when one fails, throws a PluginStartError that names it. */
-async function startPlugins(manager: PluginManager, context: PluginContext): Promise<void> {
-  try {
-    await manager.start(context);
-  } catch (error) {
-    const failed = manager.diagnostics().plugins.find((p) => p.failed);
-    if (!failed) throw error;
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new PluginStartError(`Plugin "${failed.plugin.name}" failed to start: ${reason}`, failed.plugin.name, { cause: error });
-  }
-}
 
 const { context } = createHost();
 const manager = new PluginManager();
@@ -602,7 +591,7 @@ manager.register({
 });
 
 try {
-  await startPlugins(manager, context);
+  await manager.start(context);
 } catch (error) {
   if (error instanceof PluginStartError) {
     console.log(String(error));
@@ -618,7 +607,7 @@ PluginStartError [ERR_PLUGIN_START]: Plugin "@mycompany/zudo-plugin-fx-rates" fa
 plugin: @mycompany/zudo-plugin-fx-rates | status: 500 | cause: rates API returned 401
 ```
 
-Now the log line names the plugin, the error has the stable code `ERR_PLUGIN_START`, and the original error is kept as the cause. Put `startPlugins` in the host once, and every plugin failure is reported the same way.
+No wrapper of your own needed any more: even a host that only logs `error.message` at start-up already gets the plugin's name in the text, and code that needs the structured fields catches by type (`instanceof PluginStartError`) and reads `.pluginName`, `.statusCode` and `.cause` directly. A short "before `@zudojs/plugins` 1.3, this reached you unwrapped, and hosts wrapped it themselves using `diagnostics().plugins.find(p => p.failed)`" is worth knowing only if you are reading code written before then.
 
 > A ROLLED-BACK MANAGER CANNOT START AGAIN
 >
@@ -668,14 +657,16 @@ console.log("stderr:", run.stderr.trim().split("\n")[0]);
 Output of `npx tsx run-hang.ts`
 
 ```ts
-exit code: 13
-stdout: ""
-stderr: Warning: Detected unsettled top-level await at /home/you/project/hang.mjs:15
+exit code: 0
+stdout: "mailer: connection closed\ncaught: PluginTimeoutError\nstart-up finished"
+stderr:
 ```
 
-No `PluginTimeoutError`, no rollback, no "connection closed", not even "start-up finished": Node simply exited with code 13 while `start` was still waiting. The reason is in the manager's `dist` code: the timeout timer is created with `timer.unref()`, which tells Node "do not stay alive just for this timer". The hanging promise holds nothing either, so Node saw no more work and quit. In a server that is already listening, the open socket keeps the process alive and the timeout fires. During start-up, before anything listens, nothing does.
+The timeout fires, the rollback stops the mailer (its connection is closed), the error reaches your `catch`, and start-up carries on to report it. That works even here, where nothing else holds the event loop, because the manager's own timers do. `hookTimeout`'s timer is ref'd, so a hanging hook cannot let Node exit before it fires. After it fires, the manager waits one more `hookTimeout` to see whether the abandoned `start()` settles after all. `Promise.race` cannot cancel the losing call, and a plugin that does finish starting late must still be stopped. That grace wait is ref'd too, and it is cleared the moment it is decided.
 
-So the host keeps the process alive itself while plugins start. One interval, cleared in `finally`, is enough:
+Before `@zudojs/plugins` 1.4.1 the grace timer was unref'd. A `start()` that never settled let Node exit with code 13 ("unsettled top-level await") one `hookTimeout` after the timeout, with no error, no rollback and no log line. Hosts guarded against that with a `setInterval` around `manager.start()`. You no longer need that, but the lesson behind it still holds: a timeout you have never seen fire in a fresh process is a timeout you have not tested.
+
+The same failure inside the plugin project, reading the diagnostics afterwards:
 
 hang-guarded.tsNode.js only
 
@@ -693,14 +684,11 @@ manager.register({
   start: () => new Promise<void>(() => {}),
 });
 
-const keepAlive = setInterval(() => {}, 60_000);
 try {
   await manager.start(context);
 } catch (error) {
   const timeout = error as Error & { getMetadata(key: string): unknown };
   console.log(timeout.name, "-", timeout.message, "| phase:", timeout.getMetadata("phase"));
-} finally {
-  clearInterval(keepAlive);
 }
 console.log(manager.diagnostics().plugins.map((p) => `${p.plugin.name.slice(23)}: ${p.health.status}`).join(", "));
 ```
@@ -711,14 +699,14 @@ Output of `npx tsx hang-guarded.ts`
 smtp: connected
 smtp: connection closed
 PluginTimeoutError - Plugin "@mycompany/zudo-plugin-fx-rates" timed out after 200ms. | phase: starting
-mailer: degraded, fx-rates: unhealthy
+mailer: healthy, fx-rates: unhealthy
 ```
 
-Now the timeout fires, the mailer is stopped and its connection closed, and the diagnostics blame the right plugin. Put the guard in the host's `startPlugins` helper from the previous section, so every start-up has it. Choose the timeout from the slowest honest start-up of your plugins (a database migration may need a minute; a mailer needs seconds), and remember it bounds `stop` too, which is what limits the receipts plugin's drain on shutdown.
+The mailer is stopped and its connection closed, and the diagnostics blame the right plugin. Choose the timeout from the slowest honest start-up of your plugins (a database migration may need a minute; a mailer needs seconds), and remember it bounds `stop` too, which is what limits the receipts plugin's drain on shutdown.
 
 > TEST START-UP THE WAY PRODUCTION RUNS IT
 >
-> This failure only appears when nothing else holds the event loop, which is exactly the situation in a fresh process at start-up, and rarely the situation in a test runner or a development server. A start-up test that runs your real entry file in a child process, with a plugin that hangs, is the only reliable way to know that your timeout works.
+> Start-up failures behave differently when nothing else holds the event loop, which is exactly the situation in a fresh process at start-up, and rarely the situation in a test runner or a development server. A start-up test that runs your real entry file in a child process, with a plugin that hangs, is the only reliable way to know that your timeout works.
 
 ## Testing the plugin
 
@@ -772,7 +760,7 @@ describe("receipts plugin, hooks in isolation", () => {
   it("subscribes on start and unsubscribes when disposed", async () => {
     const sentTo: string[] = [];
     const mailer: Mailer = { send: async (message) => void sentTo.push(message.to) };
-    const container = { register: () => undefined, resolve: (token: unknown) => (token === MAILER ? mailer : undefined) };
+    const container = { register: () => undefined, resolve: <T,>(token: unknown): T => (token === MAILER ? mailer : undefined) as T };
     const { events, handlers } = fakeEvents();
     const owned = createOwnedPluginContext({ name: "receipts" }, { events, container });
     const plugin = createReceiptsPlugin();
@@ -885,7 +873,17 @@ TRY IT YOURSELF
 
 One bounced mailbox is the customer's problem, not the mail system's. Change the health rule: `degraded` only after three failures in a row, reset by any success. Show it with a small stand-in for the plugin's counters.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+`success` resets the counter to 0, `failure` increments it, and `health` compares the counter with `limit` to decide which health value to return.
+
+HINT 2
+
+`success: () => void (failuresInARow = 0), failure: () => void failuresInARow++, health: () => (failuresInARow >= limit ? createDegradedHealth(\`${failuresInARow} receipts failed in a row\`) : createHealthyHealth()),`
+
+SOLUTION
 
 health-rule.tsNode.js only
 
@@ -929,7 +927,17 @@ TRY IT YOURSELF
 
 Plugins: `api` depends on `receipts`; `receipts` depends on `mailer` and optionally on `audit`; `audit` is registered. They are registered as `api`, `audit`, `receipts`, `mailer`. Predict the start order, the stop order, and what happens to each if `api`'s `start` throws. Then check with plugins that only log.
 
-**Show a solution**
+Write it in the editor, run it on your computer, then press **Check** and paste what it printed. Hints and the solution open up once you have checked your output.
+
+HINT 1
+
+Each registration mirrors the worked example's shape: `plugin(name, dependencies, optionalDependencies, fails)`. `api` is the only one with `fails` set to `true`.
+
+HINT 2
+
+`manager.register(plugin("api", [{ name: "receipts" }], [], true)); manager.register(plugin("audit")); manager.register(plugin("receipts", [{ name: "mailer" }], [{ name: "audit" }])); manager.register(plugin("mailer"));`
+
+SOLUTION
 
 orders.tsNode.js only
 
@@ -972,18 +980,18 @@ dispose api
 dispose receipts
 dispose audit
 dispose mailer
-api failed
+Plugin "api" failed to start: api failed
 ```
 
-Start: `mailer`, `audit`, `receipts`, then `api`, which fails. Every plugin starts after everything it depends on, optional ones included when present. The rollback stops the started plugins in reverse order (`receipts`, `audit`, `mailer`) and then disposes all four in reverse start order, the failed `api` first. A normal shutdown would use the same reverse order.
+Start: `mailer`, `audit`, `receipts`, then `api`, which fails. Every plugin starts after everything it depends on, optional ones included when present. The rollback stops the started plugins in reverse order (`receipts`, `audit`, `mailer`) and then disposes all four in reverse start order, the failed `api` first. A normal shutdown would use the same reverse order. Notice the last line already names the plugin: the plain `Error("api failed")` the plugin threw was wrapped in a `PluginStartError` before it reached this `catch`.
 
 ## Recap
 
 - A complete plugin is a factory returning metadata (name, version, capabilities), dependencies with version ranges, and hooks that each do one job: `install` validates and offers, `initialize` wires, `start` works, `stop` finishes, disposal releases.
 - Register cleanup with `onDispose` or `registerDisposable` on the line after you create the thing it cleans up. Rollback and shutdown then release exactly what exists.
 - Share services between plugins through the container under a `Symbol.for` token; tell others what happened through events. Optional dependencies only order plugins that are present.
-- The manager checks capabilities at `register`, dependencies and versions before any hook, and rolls back everything on a failed or timed-out hook. It does not check `register` options against the plugin's type, and it rethrows a hook's error without naming the plugin: validate options in `install`, and wrap failures in `PluginStartError` using the diagnostics.
-- Diagnostics reflect lifecycle state only; give plugins their own `health()`.
+- The manager checks capabilities at `register`, dependencies and versions before any hook, and rolls back everything on a failed or timed-out hook. `register` checks options against the plugin's type when the compiler can still see it as that concrete plugin, and a hook's error reaches you already named and typed (`PluginInitializationError`, `PluginStartError`, `PluginTimeoutError`, …) with the original kept as `.cause` — validate options in `install` too, for whatever the type system cannot see.
+- `health()` is an optional part of the `Plugin` interface; diagnostics consult it for every `started` plugin automatically, and treat an idle plugin (registered, cleanly stopped or disposed) as healthy. Give plugins their own `health()` when lifecycle state alone would not tell the whole story.
 - Test hooks in isolation with `createOwnedPluginContext`, and the rollback promises inside a real manager.
 
 You can now read ZudoJS, extend it with packages and plugins, and prove each piece works. Next: [the real-world projects](https://zudojs.oyinlola.site/learn/usecase-rest-api), starting with a users, products and orders API built from everything in the course.
