@@ -279,13 +279,12 @@ try {
   code: 'ERR_TASK_ALREADY_DONE',
   message: 'Task 3 is already done',
   category: 'business',
-  statusCode: 409,
-  metadata: { taskId: 3 }
+  statusCode: 409
 }</pre></div>
 </figure>
 <ul>
 <li>The <code>code</code> is your own string. Prefix it (<code>ERR_</code>) and keep it stable: clients will write <code>if (body.error.code === "ERR_TASK_ALREADY_DONE")</code>.</li>
-<li><code>metadata</code> holds facts about the failure. It is copied and frozen, so nobody can change it later. Look at the last output: for an exposed error such as this 409, <code>serializePublicError</code> sends the metadata to the client. So only put there what a client may see. Facts for your logs only belong in the log line, or in the metadata of a 5xx error, which is never exposed. Never a password or a token.</li>
+<li><code>metadata</code> holds facts about the failure. It is copied and frozen, so nobody can change it later. Look at the last output: <code>metadata</code> is missing, even though this is an exposed 409. <code>expose</code> only says the <em>message</em> is safe; <code>serializePublicError</code> no longer assumes the metadata is too. To send <code>taskId</code> here, opt in with <code>serializePublicError(error, { publicMetadataKeys: ["taskId"] })</code>, or pass <code>exposeMetadata: true</code> to publish all of it (still redacted) on every exposed error. Until you opt in, metadata stays in your logs only. Never put a password or a token in it regardless.</li>
 <li><code>name</code> was set to the class name for you.</li>
 <li>409 Conflict fits: the request clashes with the current state of the task.</li>
 </ul>
@@ -397,7 +396,7 @@ NotFoundError  404 ERR_RESOURCE_NOT_FOUND   true</pre></div>
 <li><strong>The client</strong> of a 500 gets a stable code and a generic message, nothing else. SQL, table names, hosts and stack traces are a map of your system for an attacker, and the client cannot act on them anyway.</li>
 <li><strong>Your log</strong> gets everything that helps you fix the bug: the real message, the SQL, the stack and the cause.</li>
 <li><strong>Neither</strong> gets the password: logs are copied and read widely, so secrets are redacted even there.</li>
-<li>A <strong>404</strong> is different: the client made the mistake and needs to know which task was missing, so its message and a <code>taskId</code> in its metadata may be sent. That is why exposure depends on the status: 4xx errors are exposed, 5xx errors are not.</li>
+<li>A <strong>404</strong> is different: the client made the mistake and needs to know which task was missing, so its message is sent. That is why exposure depends on the status: 4xx errors are exposed, 5xx errors are not. <code>expose</code> only covers the message, though: a <code>taskId</code> in the 404's metadata is sent only if you name it, with <code>publicMetadataKeys</code> or <code>exposeMetadata: true</code> — otherwise it stays server-side, exposed or not.</li>
 </ul></details></div>
 <p><code>serializePublicError(error)</code> is for clients. <code>error.toJSON()</code> is for logs. Here both look at a database failure whose metadata holds the failing SQL and, by mistake, a password:</p>
 <figure class="lx-example" data-index="4" data-file="serialize.ts">
@@ -465,8 +464,7 @@ console.log(await handler.handlePublic(new Error("connect ECONNREFUSED 10.0.0.5:
   code: 'ERR_RESOURCE_NOT_FOUND',
   message: 'Task 9 not found',
   statusCode: 404,
-  requestId: 'req-1',
-  details: { taskId: 9 }
+  requestId: 'req-1'
 }
 [report] ERR_INTERNAL_ERROR operational=false request=req-2
 {
@@ -476,7 +474,7 @@ console.log(await handler.handlePublic(new Error("connect ECONNREFUSED 10.0.0.5:
   requestId: 'req-2'
 }</pre></div>
 </figure>
-<p>The second error was a plain <code>Error</code> mentioning an internal address. The client body says nothing about it; the reporter saw it as a non-operational error, which is exactly the kind you want an alert for.</p>
+<p>The first body has no <code>details</code> for <code>taskId</code>, for the same reason as <code>custom.ts</code> above: <code>handlePublic</code> shares the same metadata policy as <code>serializePublicError</code>, so pass <code>publicMetadataKeys</code> or <code>exposeMetadata</code> to <code>ErrorHandler</code>'s constructor if you want it there. The second error was a plain <code>Error</code> mentioning an internal address. The client body says nothing about it; the reporter saw it as a non-operational error, which is exactly the kind you want an alert for.</p>
 </section>
 
 <section>
@@ -781,7 +779,60 @@ curl -i -X POST http://localhost:3000/tasks -H &quot;content-type: application/j
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="complete.ts" data-title="Complete a task"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Complete a task</h3><div class="lx-ex-task"><p>Add a <code>complete(id)</code> method to the <code>TaskService</code>: it throws <code>TaskAlreadyDoneError</code> when the task is already done, and <code>NotFoundError</code> when it does not exist. Try both through <code>toErrorResponse</code>-style handling: print the status and code of each outcome.</p></div><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="11" data-file="complete.ts">
+<div class="lx-exercise" data-exercise="1" data-mode="run" data-target="0" data-file="complete.ts" data-title="Complete a task"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Complete a task</h3><div class="lx-ex-task"><p>Add a <code>complete(id)</code> method to the <code>TaskService</code>: it throws <code>TaskAlreadyDoneError</code> when the task is already done, and <code>NotFoundError</code> when it does not exist. Try both through <code>toErrorResponse</code>-style handling: print the status and code of each outcome.</p></div><script type="text/plain" class="lx-ex-starter" data-file="complete.ts">// Example to learn from: the same shape for cancelling an order instead
+// of completing a task, with its own business error class.
+//
+//   class OrderAlreadyCancelledError extends BaseError {
+//     constructor(orderId: number) {
+//       super(`Order ${orderId} is already cancelled`, {
+//         code: "ERR_ORDER_ALREADY_CANCELLED",
+//         category: ErrorCategory.BUSINESS,
+//         statusCode: 409,
+//         metadata: { orderId },
+//       });
+//     }
+//   }
+//   function cancel(id: number) {
+//     const order = orders.get(id);
+//     if (!order) throw new NotFoundError(`Order ${id} not found`);
+//     if (order.cancelled) throw new OrderAlreadyCancelledError(id);
+//     // ...update and return the order
+//   }
+//
+// Now do the same for complete below.
+
+import { BaseError, ErrorCategory, normalizeToBaseError, NotFoundError } from "@zudojs/errors";
+
+class TaskAlreadyDoneError extends BaseError {
+  constructor(taskId: number) {
+    super(`Task ${taskId} is already done`, {
+      code: "ERR_TASK_ALREADY_DONE",
+      category: ErrorCategory.BUSINESS,
+      statusCode: 409,
+      metadata: { taskId },
+    });
+  }
+}
+
+const tasks = new Map([[1, { id: 1, title: "Buy milk", done: false }]]);
+
+function complete(id: number): { id: number; title: string; done: boolean } {
+  const task = tasks.get(id);
+  // if there is no task, throw new NotFoundError(`Task ${id} not found`)
+  // if it is already done, throw new TaskAlreadyDoneError(id)
+  // otherwise, mark it done, store it, and return it
+  // your code here
+  return task as { id: number; title: string; done: boolean };
+}
+
+for (const id of [1, 1, 5]) {
+  try {
+    console.log(200, complete(id));
+  } catch (thrown) {
+    const error = normalizeToBaseError(thrown);
+    console.log(error.statusCode, error.code, error.message);
+  }
+}</script><p class="lx-ex-how">Write it in the editor, then press <strong>Check</strong>. Hints and the solution open up once you have checked your code.</p><div class="lx-ex-bar"><button type="button" class="lx-ex-try"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Try it in the editor</button><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Guard in the same order as <code>cancel</code> above: missing task first, then already-done, then the update. <code>if (!task) throw new NotFoundError(...); if (task.done) throw new TaskAlreadyDoneError(id);</code>.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p><code>const updated = { ...task, done: true }; tasks.set(id, updated); return updated;</code>, after the two guards.</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><figure class="lx-example" data-index="11" data-file="complete.ts">
 <figcaption class="lx-bar"><span class="lx-file">complete.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">BaseError</span><span class="t-pn">,</span> <span class="t-ty">ErrorCategory</span><span class="t-pn">,</span> normalizeToBaseError<span class="t-pn">,</span> <span class="t-ty">NotFoundError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 
@@ -853,6 +904,8 @@ for (const id of [1, 1, 5]) {
 404 ERR_RESOURCE_NOT_FOUND Task 5 not found</pre></div>
 </figure></div></div>
 <div class="lx-exercise" data-exercise="2" data-mode="think" data-title="What leaks?"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>What leaks?</h3><div class="lx-ex-task"><p>A teammate writes this handler. List everything that can leak to a client, and say what to use instead.</p>
+
+
 <figure class="lx-example" data-index="12" data-file="leaky.ts">
 <figcaption class="lx-bar"><span class="lx-file">leaky.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="12"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">function</span> <span class="t-fn">leakyHandler</span><span class="t-pn">(</span>error<span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">)</span> <span class="t-pn">{</span>
@@ -870,7 +923,7 @@ for (const id of [1, 1, 5]) {
     error,
   });
 }</script>
-</figure></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
+</figure></div><p class="lx-ex-how">Work it out first, on paper or in your head. Then use the hints, and compare with the solution.</p><div class="lx-ex-bar"><span class="lx-ex-status" aria-live="polite"></span></div><div class="lx-ex-hints"><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 1</p><p>Look at each of the three fields in the response body separately, and ask what a <code>TypeError</code> or a database error's <code>message</code> and <code>stack</code> can contain that a stranger should never read.</p></div><div class="lx-ex-hint" hidden><p class="lx-ex-hint-label">HINT 2</p><p>The status code is fixed at 500 for everything, even a missing task. What does a real client need in order to tell "you made a mistake" from "we made a mistake"?</p></div></div><div class="lx-ex-unlocks"><button type="button" class="lx-ex-more" disabled>Show a hint</button><button type="button" class="lx-ex-reveal" disabled>Show the solution</button></div><div class="lx-ex-solution" hidden><p class="lx-ex-hint-label">SOLUTION</p><ul>
 <li><code>message</code> of a bug or database error can contain SQL, table names, internal host names or file paths.</li>
 <li><code>stack</code> shows your file layout, the libraries and versions you use, and the exact lines that failed: a map for an attacker.</li>
 <li><code>error</code> itself is serialized with its <code>toJSON()</code>, which for a <code>BaseError</code> includes the stack, the cause chain and the metadata.</li>
