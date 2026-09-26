@@ -56,8 +56,9 @@ export type RateLimitMiddlewareOptions =
 /**
  * Creates middleware that answers `429 Too Many Requests` once a client
  * exceeds its allowance, and otherwise passes the request on. The 429 has a
- * JSON body (`{"error":{"code":"RATE_LIMIT_EXCEEDED",...}}`) sent as
- * `application/json`, and always a `Retry-After` header (the
+ * JSON body (`{"error":{"code":"RATE_LIMIT_EXCEEDED",...},"code":
+ * "RATE_LIMIT_EXCEEDED","message":...}`) sent as `application/json`, and
+ * always a `Retry-After` header (the
  * `@zudojs/security` handler's, or one computed from the limiter's reset
  * time when a custom handler leaves it out).
  */
@@ -95,7 +96,7 @@ export function createRateLimitMiddleware(
       response.setHeader("retry-after", String(retryAfterSeconds(decision)));
     }
 
-    const body = rejection.body ?? DEFAULT_REJECTION_BODY;
+    const body = withTopLevelCode(rejection.body ?? DEFAULT_REJECTION_BODY);
 
     /*
      * The limiter's body is JSON, but it went out as a bare string, which the
@@ -124,6 +125,42 @@ function isJson(body: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Adds top-level `code` and `message` to a `{ error: { code, message } }`
+ * body, so the 429 carries the same `code` field every other framework error
+ * body has (`{ error: "...", code: "..." }`). The nested `error` object is
+ * kept for clients already reading it.
+ */
+function withTopLevelCode(body: string): string {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return body;
+  }
+
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return body;
+  }
+
+  const record = parsed as Record<string, unknown>;
+
+  const nested = record.error;
+
+  if (nested === null || typeof nested !== "object" || "code" in record) {
+    return body;
+  }
+
+  const { code, message } = nested as { code?: unknown; message?: unknown };
+
+  return JSON.stringify({
+    ...record,
+    ...(typeof code === "string" ? { code } : {}),
+    ...(typeof message === "string" ? { message } : {}),
+  });
 }
 
 function clientIpOf(remoteAddress: string | undefined): string {

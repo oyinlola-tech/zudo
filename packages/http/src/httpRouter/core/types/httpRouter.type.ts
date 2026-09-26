@@ -115,7 +115,19 @@ export interface RouterMatch {
 export interface RouterResult {
   readonly response: ResponseContext;
   readonly route: MatchedRoute | undefined;
+  /**
+   * The error a route handler threw, when {@link RouterOptions.onError}
+   * turned it into `response`. Absent when the handler succeeded.
+   */
+  readonly error?: unknown;
 }
+
+/**
+ * What to do when a route is registered that another route, for the same
+ * method, makes unreachable: `"throw"` (default) refuses it with
+ * `RouteConflictError`; `"ignore"` registers it anyway.
+ */
+export type RouterShadowedRoutePolicy = "throw" | "ignore";
 
 export interface RouterOptions {
   readonly caseSensitive?: boolean;
@@ -124,7 +136,33 @@ export interface RouterOptions {
   readonly automaticOptions?: boolean;
   readonly notFoundHandler?: RouterNotFoundHandler;
   readonly methodNotAllowedHandler?: RouterMethodNotAllowedHandler;
+  /** See {@link RouterShadowedRoutePolicy}. Defaults to `"throw"`. */
+  readonly shadowedRoutes?: RouterShadowedRoutePolicy;
+  /**
+   * Turns an error thrown by a route handler or route middleware into a
+   * response. Without it (the default) `dispatch()` rethrows, which is what
+   * lets an adapter map the error to a status. Returning `undefined`
+   * rethrows as well, so a handler can decline.
+   */
+  readonly onError?: RouterErrorHandler;
 }
+
+/**
+ * Context given to {@link RouterOptions.onError}.
+ */
+export interface HttpRouterErrorContext extends HttpRouterRequestContext {
+  readonly route: MatchedRoute;
+}
+
+export type RouterErrorHandler = (
+  error: unknown,
+  context: HttpRouterErrorContext,
+) =>
+  | ResponseContext
+  | Response
+  | RouterJsonValue
+  | undefined
+  | Promise<ResponseContext | Response | RouterJsonValue | undefined>;
 
 export type RouterNotFoundHandler = (
   context: HttpRouterRequestContext,

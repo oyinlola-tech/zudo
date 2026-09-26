@@ -15,9 +15,19 @@
 
 import { INCOMING_REQUEST_ID_PATTERN } from "../httpRequest/requestId/httpRequest.requestId.js";
 
+/**
+ * Default maximum request body size, in bytes (10 MiB).
+ *
+ * One number for the whole package: the request guard's `Content-Length`
+ * check, the Node adapter's body reader and the fetch helpers all default to
+ * it. The guard used to say 1 MB while the adapters read up to 10 MB, so the
+ * documented limit and the enforced one disagreed.
+ */
+export const DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024;
+
 /** Configuration for HTTP request security guards. */
 export interface HTTPSecurityConfig {
-  /** Maximum request body size in bytes (default: 1MB). */
+  /** Maximum request body size in bytes (default: {@link DEFAULT_MAX_BODY_SIZE}). */
   readonly maxBodySize?: number;
   /** Maximum number of headers allowed (default: 100). */
   readonly maxHeaders?: number;
@@ -57,7 +67,7 @@ export interface HTTPSecurityConfig {
 /** Default security configuration. */
 export const DEFAULT_SECURITY_CONFIG: Required<HTTPSecurityConfig> =
   Object.freeze({
-    maxBodySize: 1_048_576, // 1MB
+    maxBodySize: DEFAULT_MAX_BODY_SIZE,
     maxHeaders: 100,
     maxHeaderValueSize: 8_192, // 8KB
     maxUrlLength: 2048,

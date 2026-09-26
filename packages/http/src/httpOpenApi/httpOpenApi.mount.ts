@@ -20,7 +20,8 @@ export interface HttpOpenAPIMount {
 /**
  * Serves the router's OpenAPI document at `path` (default `/openapi.json`),
  * optionally as YAML at `yamlPath`, and a Swagger UI page (or ReDoc, with
- * `ui: { renderer: "redoc" }`) at `docsPath` (default `/docs`).
+ * `ui: { renderer: "redoc" }`) at `docsPath` (default `/docs`, or off when
+ * `NODE_ENV` is `production` and no `docsPath` is given).
  *
  * The document is generated from the routes registered on `router`, so a
  * route added after mounting appears on the next request. The routes this
@@ -57,7 +58,7 @@ export function mountOpenAPI(
   if (typeof options.yamlPath === "string") {
     removers.push(router.get(options.yamlPath, serve("yaml"), routeOptions));
   }
-  const docsPath = options.docsPath ?? "/docs";
+  const docsPath = options.docsPath ?? defaultDocsPath();
   if (docsPath !== false) {
     const ui = { ...options.ui, specUrl: options.ui?.specUrl ?? jsonPath };
     removers.push(
@@ -78,4 +79,9 @@ export function mountOpenAPI(
       for (const remove of removers) remove();
     },
   });
+}
+
+/** `/docs`, or `false` in production so the page is opt-in there. */
+function defaultDocsPath(): string | false {
+  return process.env.NODE_ENV === "production" ? false : "/docs";
 }

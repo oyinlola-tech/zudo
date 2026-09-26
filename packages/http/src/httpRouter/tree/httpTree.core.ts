@@ -19,13 +19,15 @@ import {
   splitPath,
 } from "./core/httpTree.helper.js";
 
-import { collectCandidates } from "./core/httpTree.traversal.js";
+import { collectMatches } from "./core/httpTree.traversal.js";
 
 export class RouteTree {
   private readonly root: MutableRouteTreeNode;
+  private readonly caseSensitive: boolean;
   private nodeCount = 0;
 
-  constructor(_options: RouteTreeOptions = {}) {
+  constructor(options: RouteTreeOptions = {}) {
+    this.caseSensitive = options.caseSensitive ?? false;
     this.root = {
       name: "",
       type: "static",
@@ -44,31 +46,35 @@ export class RouteTree {
     metadata: Record<string, unknown> = {},
   ): void {
     const segments = splitPath(path);
-    insertSegment(this.root, segments, handler, methods, metadata);
+    insertSegment(this.root, segments, handler, methods, metadata, this.caseSensitive);
     this.nodeCount++;
   }
 
   remove(path: string): boolean {
     const segments = splitPath(path);
-    const removed = removeRouteFromTree(this.root, segments);
+    const removed = removeRouteFromTree(this.root, segments, this.caseSensitive);
     if (removed) {
       this.nodeCount--;
     }
     return removed;
   }
 
+  /**
+   * Finds the most specific route for a path: literal segments first, then
+   * parameters, then wildcards, left to right, as the router ranks them.
+   * Every parameter along the path is reported.
+   */
   lookup(path: string, method?: string): RouteTreeMatch | undefined {
     const segments = splitPath(path);
-    const candidates = collectCandidates(this.root, segments);
 
-    for (const candidate of candidates) {
-      if (candidate.handler && (!method || matchesMethod(candidate, method))) {
+    for (const { node, params } of collectMatches(this.root, segments, this.caseSensitive)) {
+      if (node.handler && (!method || matchesMethod(node, method))) {
         return {
-          params: this.extractParams(segments, candidate),
+          params: { ...params },
           path,
-          handler: candidate.handler,
-          methods: Array.from(candidate.methods),
-          metadata: { ...candidate.metadata },
+          handler: node.handler,
+          methods: Array.from(node.methods),
+          metadata: { ...node.metadata },
         };
       }
     }
@@ -98,19 +104,6 @@ export class RouteTree {
 
   get size(): number {
     return this.nodeCount;
-  }
-
-  private extractParams(
-    segments: readonly string[],
-    node: MutableRouteTreeNode,
-  ): Record<string, string> {
-    const params: Record<string, string> = {};
-
-    if (node.type === "parameter" && node.param) {
-      params[node.param] = segments[segments.length - 1] ?? "";
-    }
-
-    return params;
   }
 
   private freezeNode(node: MutableRouteTreeNode): RouteTreeNode {

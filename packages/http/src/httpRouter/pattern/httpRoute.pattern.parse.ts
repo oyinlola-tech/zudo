@@ -18,6 +18,8 @@ import type {
   CompiledSegmentParameter,
 } from "../core/types/httpRouter.type.js";
 
+import { DuplicateRouteParameterError } from "@zudojs/errors";
+
 import { InvalidRoutePatternError } from "../core/error/httpRouter.error.js";
 
 import {
@@ -36,28 +38,63 @@ export interface CompiledRoutePath {
   readonly expectsTrailingSlash: boolean;
 }
 
-const SEGMENT_SCORE_LITERAL = 3;
-const SEGMENT_SCORE_PARAMETER = 2;
+const SEGMENT_SCORE_LITERAL = 6;
+const SEGMENT_SCORE_CONSTRAINED_PARAMETER = 5;
+const SEGMENT_SCORE_PARAMETER = 4;
+const SEGMENT_SCORE_ABSENT = 3;
+const SEGMENT_SCORE_OPTIONAL_PARAMETER = 2;
 const SEGMENT_SCORE_WILDCARD = 1;
 
 /**
  * Compiles a route path into its segments.
+ *
+ * Rejects a pattern that reuses a parameter or wildcard name
+ * ({@link DuplicateRouteParameterError}: `/bad/:a/:a` registered and the
+ * second value silently won) and a wildcard that is not the final segment
+ * ({@link InvalidRoutePatternError}: `/files/*rest/more` matched `/files/a/b`
+ * with `more` never checked).
  */
 export function compileRouteSegments(path: string): readonly CompiledSegment[] {
   const segments: CompiledSegment[] = [];
 
   const parts = splitRoutePattern(path);
 
-  for (const part of parts) {
+  const names = new Set<string>();
+
+  const claim = (name: string): void => {
+    if (names.has(name)) {
+      throw new DuplicateRouteParameterError(path, name);
+    }
+
+    names.add(name);
+  };
+
+  for (const [index, part] of parts.entries()) {
     if (part.startsWith(":")) {
-      segments.push(parseParameter(part, path));
+      const parameter = parseParameter(part, path);
+
+      claim(parameter.name);
+
+      segments.push(parameter);
     } else if (part.startsWith("{")) {
-      segments.push(parseBraceParameter(part, path));
+      const parameter = parseBraceParameter(part, path);
+
+      claim(parameter.name);
+
+      segments.push(parameter);
     } else if (part.startsWith("*")) {
-      segments.push({
-        type: "wildcard",
-        name: part.slice(1) || "*",
-      });
+      if (index !== parts.length - 1) {
+        throw new InvalidRoutePatternError(
+          path,
+          `A wildcard segment "${part}" must be the last segment.`,
+        );
+      }
+
+      const name = part.slice(1) || "*";
+
+      claim(name);
+
+      segments.push({ type: "wildcard", name });
     } else {
       segments.push({
         type: "literal",
@@ -101,9 +138,20 @@ export function scoreSegments(segments: readonly CompiledSegment[]): number {
   return score;
 }
 
-function segmentScore(segment: CompiledSegment | undefined): number {
+/**
+ * Scores one segment by how narrowly it matches: a literal, then a parameter
+ * with a regular expression constraint, then a plain parameter, then the end
+ * of the pattern, then an optional parameter, then a wildcard.
+ *
+ * A constrained parameter used to score the same as an unconstrained one, so
+ * `/x/:slug` registered before `/x/:id(\\d+)` left the id route unreachable.
+ * The end of a pattern used to score lowest of all, so `/files/*path` (whose
+ * wildcard matches an empty tail) and `/users/:id?` were tried before the
+ * exact `/files` and `/users` routes, which could then never answer.
+ */
+export function segmentScore(segment: CompiledSegment | undefined): number {
   if (segment === undefined) {
-    return 0;
+    return SEGMENT_SCORE_ABSENT;
   }
 
   if (segment.type === "literal") {
@@ -111,7 +159,13 @@ function segmentScore(segment: CompiledSegment | undefined): number {
   }
 
   if (segment.type === "parameter") {
-    return SEGMENT_SCORE_PARAMETER;
+    if (segment.pattern !== undefined) {
+      return SEGMENT_SCORE_CONSTRAINED_PARAMETER;
+    }
+
+    return segment.optional
+      ? SEGMENT_SCORE_OPTIONAL_PARAMETER
+      : SEGMENT_SCORE_PARAMETER;
   }
 
   return SEGMENT_SCORE_WILDCARD;

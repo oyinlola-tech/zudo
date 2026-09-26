@@ -504,13 +504,29 @@ export function parseQueryString(url: string): HTTPQuery {
   const queryIndex = url.indexOf("?");
 
   if (queryIndex < 0) {
-    return parseHardenedQueryString(undefined);
+    /*
+     * A bare query string (`a=1&b=2`) is accepted as well: this is the
+     * `parseQueryString` the package root exports, and it used to answer
+     * `{}` for anything without a `?`, which read as the parser being broken.
+     * A path or absolute URL without a query still yields `{}`.
+     */
+    return parseHardenedQueryString(
+      isBareQueryString(url) ? url : undefined,
+    );
   }
 
   const hashIndex = url.indexOf("#", queryIndex + 1);
 
   return parseHardenedQueryString(
     url.slice(queryIndex + 1, hashIndex === -1 ? undefined : hashIndex),
+  );
+}
+
+function isBareQueryString(value: string): boolean {
+  return (
+    !value.startsWith("/") &&
+    !/^[a-z][a-z0-9+.-]*:\/\//i.test(value) &&
+    /[=&]/.test(value)
   );
 }
 

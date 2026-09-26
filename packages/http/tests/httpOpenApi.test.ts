@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   objectSchema,
   stringSchema,
@@ -126,7 +126,9 @@ describe("generateOpenAPIDocument", () => {
   });
 
   it("expands optional segments and reports duplicate operations", () => {
-    const router = createRouter();
+    /* `/a/:id` and `/a/{id}` are one route in two spellings; the router now
+     * refuses the second unless told not to. */
+    const router = createRouter({ shadowedRoutes: "ignore" });
     router.get("/users/:id?", ok, { openapi: { operationId: "users.get" } });
     router.get("/a/:id", ok);
     router.get("/a/{id}", ok);
@@ -211,5 +213,26 @@ describe("mountOpenAPI", () => {
     mountOpenAPI(router, { info: INFO, path: "/spec.json", docsPath: false });
     expect((await get(router, "/spec.json")).status).toBe(200);
     expect((await get(router, "/docs")).status).toBe(404);
+  });
+
+  describe("in production (#134)", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("serves no docs page unless a docsPath is given", async () => {
+      vi.stubEnv("NODE_ENV", "production");
+      const router = shopRouter();
+      mountOpenAPI(router, { info: INFO });
+      expect((await get(router, "/openapi.json")).status).toBe(200);
+      expect((await get(router, "/docs")).status).toBe(404);
+    });
+
+    it("serves the page at an explicit docsPath", async () => {
+      vi.stubEnv("NODE_ENV", "production");
+      const router = shopRouter();
+      mountOpenAPI(router, { info: INFO, docsPath: "/docs" });
+      expect((await get(router, "/docs")).status).toBe(200);
+    });
   });
 });

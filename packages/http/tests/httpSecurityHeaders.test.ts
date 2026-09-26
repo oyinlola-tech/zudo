@@ -40,7 +40,7 @@ describe("no empty policies", () => {
 
     const policy = parseHSTS(headers["strict-transport-security"]);
 
-    expect(policy?.maxAge).toBe(31536000);
+    expect(policy?.maxAge).toBe(63072000);
     expect(policy?.includeSubDomains).toBe(true);
   });
 

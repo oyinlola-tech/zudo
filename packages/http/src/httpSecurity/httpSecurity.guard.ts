@@ -85,10 +85,28 @@ export function guardRequest(
   allErrors.push(...transferEncodingResult.errors);
 
   if (allErrors.length > 0) {
-    return { allowed: false, errors: allErrors, statusCode: 400 };
+    return {
+      allowed: false,
+      errors: allErrors,
+      statusCode: guardStatusCode(allErrors, urlResult.errors, queryResult.errors),
+    };
   }
 
   return { allowed: true, errors: [], statusCode: 200 };
+}
+
+/**
+ * A request refused only for the length of its URL or query string is a
+ * `414 URI Too Long`, the status `HTTPQueryLimitError` already carries; it
+ * used to be reported as `400` like every other rejection. Any other failure
+ * keeps `400`.
+ */
+function guardStatusCode(
+  all: readonly string[],
+  url: readonly string[],
+  query: readonly string[],
+): number {
+  return all.length === url.length + query.length ? 414 : 400;
 }
 
 /**

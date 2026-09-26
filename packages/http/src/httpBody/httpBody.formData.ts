@@ -76,7 +76,11 @@ export const DEFAULT_MAX_FIELD_SIZE = 1024 * 1024;
 
 export const DEFAULT_MAX_FILE_SIZE = 10 * 1024 * 1024;
 
-export const DEFAULT_MAX_FILES = 100;
+/**
+ * Same default as `DEFAULT_MULTIPART_MAX_FILES`; the two parsers used to
+ * disagree (100 here, 20 there).
+ */
+export const DEFAULT_MAX_FILES = 20;
 
 /* -------------------------------------------------------------------------- */
 /* Content Type                                                               */

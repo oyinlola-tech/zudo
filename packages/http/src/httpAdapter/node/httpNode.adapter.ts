@@ -57,7 +57,14 @@ import { createNodeRequestGuard, type NodeRequestGuard } from "../../httpSecurit
 
 import { createNodeRequestContext } from "./httpNode.request.js";
 
-import { resolveErrorResponse } from "../httpAdapter.errorResponse.js";
+import {
+  finalizeErrorResponse,
+  resolveErrorResponse,
+} from "../errorResponse/index.js";
+
+import { getStatusText } from "../../httpResponse/core/httpResponse.statusText.js";
+
+import { statusName } from "../../httpStatus/httpStatus.name.js";
 
 import {
   isIncomingMessage,
@@ -265,8 +272,10 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
 
     const response = input.response;
 
-    if (this.requestGuard && !this.requestGuard(request).allowed) {
-      await this.writeBadRequest(response);
+    const verdict = this.requestGuard?.(request);
+
+    if (verdict && !verdict.allowed) {
+      await this.writeRejection(response, verdict.statusCode);
 
       return;
     }
@@ -297,7 +306,18 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
        */
       this.emitAdapterError(error);
 
-      await this.writeBadRequest(response);
+      /*
+       * An error that names its own status — the query parser's 414 — keeps
+       * it; anything else (an unparseable target) is the client's fault and
+       * gets a 400.
+       */
+      const resolved = resolveErrorResponse(error);
+
+      if (resolved.status !== 500) {
+        await this.writeRejection(response, resolved.status, resolved.body, error);
+      } else {
+        await this.writeRejection(response, 400);
+      }
 
       return;
     }
@@ -383,9 +403,14 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
        */
       context.setHeader("connection", "close");
 
+      context.setStatus(413).json({
+        error: "Payload Too Large",
+        code: "PAYLOAD_TOO_LARGE",
+      });
+
       await this.writeNodeResponse(
         response,
-        context.setStatus(413).json({ error: "Payload Too Large" }),
+        finalizeErrorResponse(context, this.securityHeaders),
       );
 
       return;
@@ -397,7 +422,10 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
 
         const normalized = this.normalizeResult(result);
 
-        await this.writeNodeResponse(response, normalized);
+        await this.writeNodeResponse(
+          response,
+          finalizeErrorResponse(normalized, this.securityHeaders, error),
+        );
 
         return;
       } catch {
@@ -418,10 +446,23 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
 
     context.setStatus(resolved.status).json(resolved.body);
 
-    await this.writeNodeResponse(response, context);
+    await this.writeNodeResponse(
+      response,
+      finalizeErrorResponse(context, this.securityHeaders),
+    );
   }
 
-  private async writeBadRequest(response: ServerResponse): Promise<void> {
+  /**
+   * Answers a request the adapter refuses before any handler runs (the
+   * request guard, an undescribable request). The connection is closed
+   * because the body was never read.
+   */
+  private async writeRejection(
+    response: ServerResponse,
+    status: number,
+    body?: Readonly<Record<string, unknown>>,
+    error?: unknown,
+  ): Promise<void> {
     if (response.headersSent) {
       response.destroy();
 
@@ -432,9 +473,13 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
 
     context.setHeader("connection", "close");
 
+    context.setStatus(status).json(
+      body ?? { error: getStatusText(status), code: statusName(status) },
+    );
+
     await this.writeNodeResponse(
       response,
-      context.setStatus(400).json({ error: "Bad Request" }),
+      finalizeErrorResponse(context, this.securityHeaders, error),
     );
   }
 

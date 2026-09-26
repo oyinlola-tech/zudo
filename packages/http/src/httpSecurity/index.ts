@@ -8,7 +8,10 @@
 
 export type { HTTPSecurityConfig } from "./httpSecurity.config.js";
 
-export { DEFAULT_SECURITY_CONFIG } from "./httpSecurity.config.js";
+export {
+  DEFAULT_MAX_BODY_SIZE,
+  DEFAULT_SECURITY_CONFIG,
+} from "./httpSecurity.config.js";
 
 export type { SecurityValidationResult } from "./httpSecurity.validator.js";
 

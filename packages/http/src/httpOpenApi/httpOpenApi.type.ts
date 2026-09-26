@@ -54,7 +54,11 @@ export interface HttpOpenAPIMountOptions extends HttpOpenAPIOptions {
   readonly path?: string;
   /** Where a YAML copy is served, or `false` (default) for none. */
   readonly yamlPath?: string | false;
-  /** Where the documentation page is served, or `false`. Default: `/docs`. */
+  /**
+   * Where the documentation page is served, or `false`. Default: `/docs`,
+   * except when `NODE_ENV` is `production`, where the page is off unless
+   * a path is passed explicitly. The JSON document is served either way.
+   */
   readonly docsPath?: string | false;
   /**
    * Documentation page options (`renderer: "redoc"`, `logo`, …). `specUrl`

@@ -160,7 +160,10 @@ describe("HTTP-R9-01: request normalisation failures answer 400, not a reset", (
 
       expect(response.error).toBeUndefined();
       expect(response.status).toBe(400);
-      expect(JSON.parse(response.body)).toEqual({ error: "Bad Request" });
+      expect(JSON.parse(response.body)).toEqual({
+        error: "Bad Request",
+        code: "BAD_REQUEST",
+      });
       expect(response.headers.connection).toBe("close");
     } finally {
       await adapter.stop();
@@ -425,6 +428,7 @@ describe("HTTP-R9-05: thrown HttpErrors keep their status, message and headers",
         expect(response.status).toBe(503);
         expect(JSON.parse(response.body)).toEqual({
           error: "Service Unavailable",
+          code: "SERVICE_UNAVAILABLE",
         });
       },
     );
@@ -441,6 +445,7 @@ describe("HTTP-R9-05: thrown HttpErrors keep their status, message and headers",
         expect(response.status).toBe(500);
         expect(JSON.parse(response.body)).toEqual({
           error: "Internal Server Error",
+          code: "INTERNAL_SERVER_ERROR",
         });
       },
     );

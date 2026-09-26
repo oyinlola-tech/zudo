@@ -9,12 +9,14 @@ import type {
   CompiledRoute,
   RouteDefinition,
   RouteOptions,
+  RouterErrorHandler,
   RouterHandler,
   RouterMatch,
   RouterMethodNotAllowedHandler,
   RouterNotFoundHandler,
   RouterOptions,
   RouterResult,
+  RouterShadowedRoutePolicy,
 } from "../types/httpRouter.type.js";
 
 import type { HttpRequestContext as RequestContext } from "../../../httpRequest/httpRequest.context.js";
@@ -34,7 +36,6 @@ import {
   defaultNotFoundHandler,
   executeRoute,
   extractRouteSequence,
-  isHttpMethod,
   normalizeMethod,
   normalizeMethods,
   normalizeResponse,
@@ -61,8 +62,20 @@ import {
 
 import { createRouterMiddlewareContext } from "../../httpRouter.context.js";
 
+import { shadowsRoute } from "./httpRouter.shadow.js";
+
 export class HttpRouter {
   private readonly routes: CompiledRoute[] = [];
+
+  /**
+   * The routes in matching order. Rebuilt lazily after a registration or
+   * removal; `match()` used to copy and sort every route on every request.
+   */
+  private sortedCache: CompiledRoute[] | undefined;
+
+  private readonly shadowedRoutes: RouterShadowedRoutePolicy;
+
+  private readonly errorHandler: RouterErrorHandler | undefined;
 
   private readonly routerOptions: Required<
     Pick<
@@ -95,6 +108,10 @@ export class HttpRouter {
 
     this.methodNotAllowedHandler =
       options.methodNotAllowedHandler ?? defaultMethodNotAllowedHandler;
+
+    this.shadowedRoutes = options.shadowedRoutes ?? "throw";
+
+    this.errorHandler = options.onError;
   }
 
   /* ------------------------------------------------------------------------ */
@@ -243,11 +260,15 @@ export class HttpRouter {
 
     this.routes.splice(index, 1);
 
+    this.sortedCache = undefined;
+
     return true;
   }
 
   clear(): void {
     this.routes.length = 0;
+
+    this.sortedCache = undefined;
   }
 
   count(): number {
@@ -284,13 +305,13 @@ export class HttpRouter {
     const candidates = this.sortedRoutes();
 
     const allowedForPath = (): HttpMethod[] =>
-      collectAllowedMethods(
-        candidates,
-        matchPath,
-        this.routerOptions.caseSensitive,
+      this.withAutomaticMethods(
+        collectAllowedMethods(
+          candidates,
+          matchPath,
+          this.routerOptions.caseSensitive,
+        ),
       );
-
-    const allowed = new Set<HttpMethod>();
 
     let pathMatched = false;
 
@@ -314,14 +335,10 @@ export class HttpRouter {
           matched: true,
           route: route.definition,
           params,
-          allowedMethods: Object.freeze([...allowedForPath()]),
+          allowedMethods: Object.freeze(allowedForPath()),
           path: normalizedPath,
           method: normalizedMethod,
         };
-      }
-
-      if (isHttpMethod(routeMethod)) {
-        allowed.add(routeMethod);
       }
     }
 
@@ -342,7 +359,7 @@ export class HttpRouter {
             matched: true,
             route: route.definition,
             params,
-            allowedMethods: Object.freeze([...allowedForPath(), "HEAD"]),
+            allowedMethods: Object.freeze(allowedForPath()),
             path: normalizedPath,
             method: normalizedMethod,
           };
@@ -359,20 +376,44 @@ export class HttpRouter {
         matched: true,
         route: undefined,
         params: {},
-        allowedMethods: Object.freeze([...allowedForPath(), "OPTIONS"]),
+        allowedMethods: Object.freeze(allowedForPath()),
         path: normalizedPath,
         method: normalizedMethod,
       };
     }
 
+    /*
+     * The methods a `405` advertises must be the ones the router actually
+     * answers: the automatic `HEAD` (for a `GET` route) and `OPTIONS` were
+     * left out, so `Allow: GET, PATCH` contradicted the `OPTIONS` response
+     * for the same path.
+     */
     return {
       matched: false,
       route: undefined,
       params: {},
-      allowedMethods: Object.freeze([...allowed]),
+      allowedMethods: Object.freeze(pathMatched ? allowedForPath() : []),
       path: normalizedPath,
       method: normalizedMethod,
     };
+  }
+
+  private withAutomaticMethods(methods: HttpMethod[]): HttpMethod[] {
+    const result = new Set<HttpMethod>(methods);
+
+    if (result.size === 0) {
+      return [];
+    }
+
+    if (this.routerOptions.automaticHead && result.has("GET")) {
+      result.add("HEAD");
+    }
+
+    if (this.routerOptions.automaticOptions) {
+      result.add("OPTIONS");
+    }
+
+    return [...result];
   }
 
   /* ------------------------------------------------------------------------ */
@@ -424,12 +465,37 @@ export class HttpRouter {
     if (match.matched && match.route) {
       applyRouteParams(request, match.params);
 
-      const response = await executeRoute(match.route, routerContext);
+      try {
+        const response = await executeRoute(match.route, routerContext);
 
-      return {
-        response: await normalizeResponse(response),
-        route: match.route,
-      };
+        return {
+          response: await normalizeResponse(response),
+          route: match.route,
+        };
+      } catch (error) {
+        if (!this.errorHandler) {
+          throw error;
+        }
+
+        const handled = await this.errorHandler(error, {
+          request,
+          path,
+          method,
+          signal,
+          state,
+          route: match.route,
+        });
+
+        if (handled === undefined) {
+          throw error;
+        }
+
+        return {
+          response: await normalizeResponse(handled),
+          route: match.route,
+          error,
+        };
+      }
     }
 
     if (
@@ -532,34 +598,106 @@ export class HttpRouter {
       middleware: Object.freeze([...(options.middleware ?? [])]),
     };
 
-    this.routes.push({
+    const route: CompiledRoute = {
       definition,
       segments: compiled.segments,
       score: compiled.score,
       strictTrailingSlash: compiled.strictTrailingSlash,
       expectsTrailingSlash: compiled.expectsTrailingSlash,
-    });
+    };
+
+    if (this.shadowedRoutes === "throw") {
+      this.assertReachable(route);
+    }
+
+    this.routes.push(route);
+
+    this.sortedCache = undefined;
 
     return () => {
       this.remove(normalizedMethod, normalizedPath);
     };
   }
 
-  private sortedRoutes(): CompiledRoute[] {
-    return [...this.routes].sort((left, right) => {
-      const specificity = compareSegmentSpecificity(
-        left.segments,
-        right.segments,
-      );
+  /**
+   * Refuses a registration that leaves a route unreachable: the new route
+   * when an earlier-ranked route already matches everything it would, or an
+   * existing route the new one would rank ahead of and fully cover.
+   */
+  private assertReachable(candidate: CompiledRoute): void {
+    for (const existing of this.routes) {
+      const existingFirst = this.compareRoutes(existing, candidate) < 0;
 
-      if (specificity !== 0) {
-        return specificity;
+      const [first, second] = existingFirst
+        ? [existing, candidate]
+        : [candidate, existing];
+
+      if (!shadowsRoute(first, second, this.routerOptions.caseSensitive)) {
+        continue;
       }
 
-      return (
-        extractRouteSequence(left.definition.id) -
-        extractRouteSequence(right.definition.id)
-      );
-    });
+      throw shadowedRouteError(second, first);
+    }
   }
+
+  private compareRoutes(left: CompiledRoute, right: CompiledRoute): number {
+    const specificity = compareSegmentSpecificity(
+      left.segments,
+      right.segments,
+    );
+
+    if (specificity !== 0) {
+      return specificity;
+    }
+
+    /*
+     * At equal specificity a method-specific route is tried before an
+     * `all()` route, so `all("/x/:id")` no longer swallows a later
+     * `get("/x/:id")`.
+     */
+    const leftAny = left.definition.method === "*" ? 1 : 0;
+
+    const rightAny = right.definition.method === "*" ? 1 : 0;
+
+    if (leftAny !== rightAny) {
+      return leftAny - rightAny;
+    }
+
+    return (
+      extractRouteSequence(left.definition.id) -
+      extractRouteSequence(right.definition.id)
+    );
+  }
+
+  private sortedRoutes(): CompiledRoute[] {
+    if (this.sortedCache === undefined) {
+      this.sortedCache = [...this.routes].sort((left, right) =>
+        this.compareRoutes(left, right),
+      );
+    }
+
+    return this.sortedCache;
+  }
+}
+
+/**
+ * Builds the conflict error for a shadowed route, naming the route that
+ * shadows it in both the message and `reason`.
+ */
+function shadowedRouteError(
+  shadowed: CompiledRoute,
+  by: CompiledRoute,
+): RouteConflictError {
+  return new RouteConflictError(
+    shadowed.definition.path,
+    shadowed.definition.method,
+    {
+      reason: `shadowed by ${by.definition.method} ${by.definition.path}`,
+      message:
+        `Route ${shadowed.definition.method} ${shadowed.definition.path} can ` +
+        `never match: ${by.definition.method} ${by.definition.path} is tried ` +
+        "first and matches every request it would. Pass " +
+        '{ shadowedRoutes: "ignore" } to register it anyway.',
+    },
+  );
 }

@@ -12,6 +12,8 @@ import type { TrustProxy } from "../../httpTrustProxy/httpTrustProxy.core.js";
 
 import type { NodeAdapterSecurityOptions } from "../../httpSecurity/httpSecurity.nodeGuard.js";
 
+import { DEFAULT_MAX_BODY_SIZE } from "../../httpSecurity/httpSecurity.config.js";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -135,7 +137,7 @@ export const NODE_DEFAULT_REQUEST_TIMEOUT = 30_000;
 
 export const NODE_DEFAULT_KEEP_ALIVE_TIMEOUT = 5_000;
 
-export const DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024;
+export { DEFAULT_MAX_BODY_SIZE };
 
 /* -------------------------------------------------------------------------- */
 /* Validation                                                                 */

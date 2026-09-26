@@ -10,6 +10,8 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import { parseQueryString } from "../httpQuery/queryParse/index.js";
+
 import { parseRequestTarget } from "./target/httpRequest.target.js";
 
 /* -------------------------------------------------------------------------- */
@@ -181,7 +183,12 @@ export class HttpRequestContext {
 
     this.headersMap = createHeaderMap(init.headers);
 
-    this.queryMap = createMap(init.query);
+    /*
+     * With no explicit `query`, parse the URL's own: `createRequestContext({
+     * url: "/x?a=1" })` used to report `query` as `{}` while the router's
+     * `ctx.query` parsed the same URL.
+     */
+    this.queryMap = createMap(init.query ?? queryFromUrl(init.url));
 
     this.paramsMap = createMap(init.params);
 
@@ -647,6 +654,20 @@ function createMap<T>(
   value: Readonly<Record<string, T>> | undefined,
 ): Map<string, T> {
   return new Map(Object.entries(value ?? {}));
+}
+
+function queryFromUrl(url: string): Record<string, string | string[]> {
+  const queryIndex = url.indexOf("?");
+
+  if (queryIndex === -1) {
+    return {};
+  }
+
+  const hashIndex = url.indexOf("#", queryIndex + 1);
+
+  return parseQueryString(
+    url.slice(queryIndex + 1, hashIndex === -1 ? undefined : hashIndex),
+  );
 }
 
 function validateHeaderName(name: string): void {

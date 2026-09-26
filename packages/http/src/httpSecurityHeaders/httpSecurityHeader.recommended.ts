@@ -85,15 +85,22 @@ export function createDefaultSecurityHeaders(): SecurityHeaders {
 
 /**
  * Creates default CSP options for a web application.
+ *
+ * Matches `@zudojs/security`'s `generateSecurityHeaders()` policy: no
+ * `'unsafe-inline'` for styles (it used to be allowed here, weakening the
+ * default `createSecurityMiddleware()` relative to the security package) and
+ * `object-src 'none'`. An application that needs inline styles passes its
+ * own `contentSecurityPolicy`.
  */
 export function createDefaultCSPOptions(): Record<string, readonly string[]> {
   return {
     "default-src": ["'self'"],
     "script-src": ["'self'"],
-    "style-src": ["'self'", "'unsafe-inline'"],
+    "style-src": ["'self'"],
     "img-src": ["'self'", "data:", "https:"],
     "font-src": ["'self'"],
     "connect-src": ["'self'"],
+    "object-src": ["'none'"],
     "frame-ancestors": ["'none'"],
     "base-uri": ["'self'"],
     "form-action": ["'self'"],
@@ -101,7 +108,8 @@ export function createDefaultCSPOptions(): Record<string, readonly string[]> {
 }
 
 /**
- * Creates default HSTS options.
+ * Creates default HSTS options: two years, the `max-age` `@zudojs/security`
+ * uses and the preload list asks for. It used to be one year here.
  */
 export function createDefaultHSTSOptions(): {
   readonly maxAge: number;
@@ -109,7 +117,7 @@ export function createDefaultHSTSOptions(): {
   readonly preload: boolean;
 } {
   return {
-    maxAge: 31536000,
+    maxAge: 63_072_000,
     includeSubDomains: true,
     preload: true,
   };

@@ -4,6 +4,8 @@
  * @module httpAdapter/fetch/types
  */
 
+import { DEFAULT_MAX_BODY_SIZE } from "../../httpSecurity/httpSecurity.config.js";
+
 export interface FetchAdapterOptions {
   readonly port?: number;
   readonly host?: string;
@@ -31,4 +33,4 @@ export interface FetchAdapterResult {
   readonly context: unknown;
 }
 
-export const DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB
+export { DEFAULT_MAX_BODY_SIZE };

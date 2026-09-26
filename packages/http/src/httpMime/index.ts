@@ -5,3 +5,4 @@
  */
 
 export * from "./http.mime.js";
+export * from "./httpMime.sniff.js";

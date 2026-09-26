@@ -314,7 +314,7 @@ describe("guardRequest", () => {
 
 describe("DEFAULT_SECURITY_CONFIG", () => {
   it("has sensible defaults", () => {
-    expect(DEFAULT_SECURITY_CONFIG.maxBodySize).toBe(1_048_576);
+    expect(DEFAULT_SECURITY_CONFIG.maxBodySize).toBe(10 * 1024 * 1024);
     expect(DEFAULT_SECURITY_CONFIG.maxHeaders).toBe(100);
     expect(DEFAULT_SECURITY_CONFIG.maxHeaderValueSize).toBe(8_192);
     expect(DEFAULT_SECURITY_CONFIG.maxUrlLength).toBe(2048);

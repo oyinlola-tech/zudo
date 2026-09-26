@@ -22,14 +22,16 @@ export type RouteTreeNodeType =
 /**
  * Options for {@link RouteTree}.
  *
- * Deliberately empty. `caseSensitive` and `strict` were declared here and never
- * read — case sensitivity and trailing-slash handling are owned by
- * `RouterOptions` and applied by `RouteMatcher`, which is the path requests
- * actually take. Declaring them here again promised behaviour this structure
- * never implemented.
+ * `strict` (trailing-slash handling) is deliberately not offered: the tree
+ * splits on `/` and drops empty segments, so `/a` and `/a/` are one path.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface RouteTreeOptions {}
+export interface RouteTreeOptions {
+  /**
+   * Whether literal segments are compared case-sensitively. Defaults to
+   * `false`, the router's default, so the two agree on `/PAYMENTS/x`.
+   */
+  readonly caseSensitive?: boolean;
+}
 
 export interface RouteTreeMatch {
   readonly params: Record<string, string>;

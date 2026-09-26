@@ -210,14 +210,11 @@ export function createOptionsResponse(
 export function defaultNotFoundHandler(
   context: HttpRouterRequestContext,
 ): ResponseContext {
-  return new HttpResponseContext({
-    status: 404,
-    headers: { "content-type": "application/json; charset=utf-8" },
-    body: {
-      error: "Not Found",
-      method: context.method,
-      path: context.path,
-    },
+  return jsonErrorResponse(404, {
+    error: "Not Found",
+    code: "NOT_FOUND",
+    method: context.method,
+    path: context.path,
   });
 }
 
@@ -228,19 +225,29 @@ export function defaultMethodNotAllowedHandler(
   context: HttpRouterRequestContext,
   allowedMethods: readonly HttpMethod[],
 ): ResponseContext {
-  return new HttpResponseContext({
-    status: 405,
-    headers: {
-      allow: formatAllowHeader(allowedMethods),
-      "content-type": "application/json; charset=utf-8",
-    },
-    body: {
-      error: "Method Not Allowed",
-      method: context.method,
-      path: context.path,
-      allowed: [...allowedMethods],
-    },
-  });
+  return jsonErrorResponse(405, {
+    error: "Method Not Allowed",
+    code: "METHOD_NOT_ALLOWED",
+    method: context.method,
+    path: context.path,
+    allowed: [...allowedMethods],
+  }).setHeader("allow", formatAllowHeader(allowedMethods));
+}
+
+/**
+ * Builds a default error response the same way `.json()` does, so its body
+ * is the serialized string every other JSON response carries. The default
+ * 404/405 used to keep a plain object as the body while a handler's
+ * `.json()` produced a string, so `result.response.body` had two types.
+ * Every framework-built error body carries `error` and `code`.
+ */
+function jsonErrorResponse(
+  status: number,
+  body: Readonly<Record<string, unknown>>,
+): ResponseContext {
+  return new HttpResponseContext({ status })
+    .json(body)
+    .setHeader("content-type", "application/json; charset=utf-8");
 }
 
 /* -------------------------------------------------------------------------- */

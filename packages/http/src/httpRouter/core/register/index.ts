@@ -5,3 +5,4 @@
  */
 
 export * from "./httpRouter.register.js";
+export * from "./httpRouter.shadow.js";

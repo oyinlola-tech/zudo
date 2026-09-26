@@ -6,99 +6,103 @@
 
 import type { MutableRouteTreeNode } from "./httpTree.type.js";
 
+import { literalKey } from "./httpTree.nodeCreation.js";
+
 /**
- * Collects candidates from the tree.
+ * A node that matched a path, with every parameter captured on the way.
+ */
+export interface RouteTreeCandidate {
+  readonly node: MutableRouteTreeNode;
+  readonly params: Readonly<Record<string, string>>;
+}
+
+/**
+ * Collects the nodes matching `segments`, most specific first: at each level
+ * a literal child, then parameter children, then an optional child skipped,
+ * then a wildcard. Parameters are accumulated along the path — the old
+ * traversal returned bare nodes, so only the last parameter was ever
+ * reported — and a wildcard captures the rest of the path.
+ */
+export function collectMatches(
+  node: MutableRouteTreeNode,
+  segments: readonly string[],
+  caseSensitive: boolean,
+  index = 0,
+  params: Readonly<Record<string, string>> = {},
+): RouteTreeCandidate[] {
+  const matches: RouteTreeCandidate[] = [];
+
+  const recurse = (
+    child: MutableRouteTreeNode,
+    next: number,
+    captured: Readonly<Record<string, string>>,
+  ): void => {
+    matches.push(...collectMatches(child, segments, caseSensitive, next, captured));
+  };
+
+  const segment = segments[index];
+
+  if (segment === undefined) {
+    if (node.handler !== undefined) {
+      matches.push({ node, params });
+    }
+
+    for (const child of node.children.values()) {
+      if (child.type === "optional") {
+        recurse(child, index, params);
+      } else if (child.type === "wildcard" && child.handler !== undefined) {
+        matches.push({ node: child, params: { ...params, [child.param ?? "*"]: "" } });
+      }
+    }
+
+    return matches;
+  }
+
+  const literal = node.children.get(literalKey(segment, caseSensitive));
+
+  if (literal && literal.param === undefined && literal.type !== "wildcard") {
+    recurse(literal, index + 1, params);
+  }
+
+  for (const child of node.children.values()) {
+    if (child.param !== undefined && child.type !== "wildcard") {
+      recurse(child, index + 1, { ...params, [child.param]: decodeSegment(segment) });
+    }
+  }
+
+  for (const child of node.children.values()) {
+    if (child.type === "optional") {
+      recurse(child, index, params);
+    }
+  }
+
+  for (const child of node.children.values()) {
+    if (child.type === "wildcard" && child.handler !== undefined) {
+      const rest = segments.slice(index).map(decodeSegment).join("/");
+
+      matches.push({ node: child, params: { ...params, [child.param ?? "*"]: rest } });
+    }
+  }
+
+  return matches;
+}
+
+function decodeSegment(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Collects candidate nodes for `segments`, in priority order.
+ *
+ * Kept for compatibility; {@link collectMatches} also reports parameters.
  */
 export function collectCandidates(
   node: MutableRouteTreeNode,
   segments: readonly string[],
 ): MutableRouteTreeNode[] {
-  if (segments.length === 0) {
-    return [node];
-  }
-
-  const [segment, ...rest] = segments;
-
-  if (segment === undefined) {
-    return [node];
-  }
-
-  const candidates: MutableRouteTreeNode[] = [];
-
-  const staticChild = node.children.get(segment);
-  if (staticChild) {
-    candidates.push(...collectCandidates(staticChild, rest));
-  }
-
-  for (const child of node.children.values()) {
-    if (child.type === "parameter") {
-      candidates.push(...collectCandidates(child, rest));
-    }
-    if (child.type === "wildcard") {
-      candidates.push(child);
-    }
-    if (child.type === "optional") {
-      candidates.push(...collectCandidates(child, rest));
-      candidates.push(child);
-    }
-  }
-
-  return candidates;
-}
-
-/**
- * Collects optional routes from the tree.
- */
-export function collectOptionalRoutes(
-  node: MutableRouteTreeNode,
-): MutableRouteTreeNode[] {
-  const results: MutableRouteTreeNode[] = [];
-
-  for (const child of node.children.values()) {
-    if (child.type === "optional" || child.wildcard) {
-      results.push(child);
-      results.push(...collectOptionalRoutes(child));
-    }
-  }
-
-  return results;
-}
-
-/**
- * Collects all routes from the tree.
- */
-export function collectRoutes(
-  node: MutableRouteTreeNode,
-  path: string,
-): Array<{ readonly path: string; readonly node: MutableRouteTreeNode }> {
-  const results: Array<{
-    readonly path: string;
-    readonly node: MutableRouteTreeNode;
-  }> = [];
-
-  if (node.handler) {
-    results.push({ path, node });
-  }
-
-  for (const [key, child] of node.children) {
-    const childPath =
-      child.type === "parameter"
-        ? `${path}:${key}`
-        : child.type === "wildcard"
-          ? `${path}*`
-          : `${path}/${key}`;
-    results.push(...collectRoutes(child, childPath));
-  }
-
-  return results;
-}
-
-/**
- * Finds a static child node.
- */
-export function findStaticChild(
-  node: MutableRouteTreeNode,
-  name: string,
-): MutableRouteTreeNode | undefined {
-  return node.children.get(name);
+  return collectMatches(node, segments, false).map((match) => match.node);
 }

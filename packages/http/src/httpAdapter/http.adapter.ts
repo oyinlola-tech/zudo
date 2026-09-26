@@ -27,7 +27,12 @@ import { writeResponse } from "../httpResponse/httpResponse.writer.js";
 
 import type { HttpResponseWriter } from "../httpResponse/httpResponse.writer.js";
 
-import { resolveErrorResponse } from "./httpAdapter.errorResponse.js";
+import {
+  finalizeErrorResponse,
+  resolveAdapterSecurityHeaders,
+  resolveErrorResponse,
+  type AdapterSecurityHeadersOption,
+} from "./errorResponse/index.js";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -77,6 +82,16 @@ export interface HttpAdapterOptions {
   readonly trustProxy?: boolean | number | string | readonly string[];
 
   readonly metadata?: Readonly<Record<string, unknown>>;
+
+  /**
+   * Security headers added to every response the adapter builds itself — a
+   * request refused by the guard, its own `413`, an unhandled error, the
+   * response a custom `errorHandler` returns — for header names the response
+   * does not already carry. Defaults to the package's default security
+   * header set; an object replaces that set, `false` adds none. Responses
+   * that pass through the middleware pipeline are unaffected.
+   */
+  readonly securityHeaders?: AdapterSecurityHeadersOption;
 }
 
 export interface HttpAdapterContext {
@@ -164,6 +179,9 @@ export abstract class BaseHttpAdapter implements HttpAdapter {
 
   protected errorHandler: HttpErrorHandler | undefined;
 
+  /** The resolved {@link HttpAdapterOptions.securityHeaders}. */
+  protected readonly securityHeaders: Readonly<Record<string, string>>;
+
   private started = false;
 
   normalizeRequest?(
@@ -193,6 +211,10 @@ export abstract class BaseHttpAdapter implements HttpAdapter {
     this.handler = options.handler;
 
     this.errorHandler = options.errorHandler;
+
+    this.securityHeaders = resolveAdapterSecurityHeaders(
+      options.securityHeaders,
+    );
   }
 
   /**
@@ -283,7 +305,10 @@ export abstract class BaseHttpAdapter implements HttpAdapter {
       response.setStatus(resolved.status).json(resolved.body);
     }
 
-    await this.write(input, response);
+    await this.write(
+      input,
+      finalizeErrorResponse(response, this.securityHeaders, error),
+    );
   }
 
   protected async write(

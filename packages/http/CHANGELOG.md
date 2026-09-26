@@ -1,5 +1,116 @@
 # @zudojs/http
 
+## 1.5.0
+
+### Minor Changes
+
+- Round 12: fixes for the academy package findings assigned to `@zudojs/http`
+  ([#49](https://github.com/oyinlola-tech/zudo/issues/49)–[#56](https://github.com/oyinlola-tech/zudo/issues/56), [#65](https://github.com/oyinlola-tech/zudo/issues/65), [#66](https://github.com/oyinlola-tech/zudo/issues/66), [#83](https://github.com/oyinlola-tech/zudo/issues/83), [#93](https://github.com/oyinlola-tech/zudo/issues/93), [#107](https://github.com/oyinlola-tech/zudo/issues/107), [#113](https://github.com/oyinlola-tech/zudo/issues/113), [#114](https://github.com/oyinlola-tech/zudo/issues/114), [#115](https://github.com/oyinlola-tech/zudo/issues/115), [#126](https://github.com/oyinlola-tech/zudo/issues/126), [#131](https://github.com/oyinlola-tech/zudo/issues/131), [#137](https://github.com/oyinlola-tech/zudo/issues/137)).
+
+  **Security (default behaviour changed, deliberately):**
+
+  - [#137](https://github.com/oyinlola-tech/zudo/issues/137) Every response an adapter builds itself — a request refused by the
+    request guard, the adapter's own `413`, an unhandled error (`500`), a thrown
+    `HttpError`, and the response a custom `errorHandler` returns — now carries
+    the package's default security headers (`X-Content-Type-Options`,
+    `X-Frame-Options`, `Content-Security-Policy`, HSTS, …). They were only ever
+    added by `createSecurityMiddleware`, which never sees a response that
+    escapes the pipeline. New adapter option `securityHeaders: boolean |
+Record<string, string>` (default `true`; an object replaces the set, `false`
+    restores the old behaviour). Only header names the response lacks are
+    filled in.
+  - [#137](https://github.com/oyinlola-tech/zudo/issues/137) `createDefaultCSPOptions()` no longer allows `style-src
+'unsafe-inline'` and adds `object-src 'none'`; `createDefaultHSTSOptions()`
+    uses `max-age=63072000` (two years). Both now match
+    `@zudojs/security`'s `generateSecurityHeaders()`. Applications relying on
+    inline styles under the default CSP must pass their own
+    `contentSecurityPolicy`.
+  - [#66](https://github.com/oyinlola-tech/zudo/issues/66) One default request body limit: `DEFAULT_MAX_BODY_SIZE` (10 MiB) is
+    shared by `DEFAULT_SECURITY_CONFIG.maxBodySize`, the Node adapter and the
+    fetch helpers. The guard previously documented 1 MB while the adapters
+    enforced 10 MB; `guardRequest` callers relying on the 1 MB `Content-Length`
+    check should pass `maxBodySize` explicitly.
+  - [#83](https://github.com/oyinlola-tech/zudo/issues/83) `DEFAULT_MAX_FILES` (form-data parser) is now 20, the same as
+    `DEFAULT_MULTIPART_MAX_FILES`; it was 100.
+
+  **Router:**
+
+  - [#49](https://github.com/oyinlola-tech/zudo/issues/49) A pattern reusing a parameter or wildcard name (`/bad/:a/:a`) throws
+    `DuplicateRouteParameterError` at registration; the second value used to win
+    silently.
+  - [#50](https://github.com/oyinlola-tech/zudo/issues/50) A wildcard that is not the final segment (`/files/*rest/more`) throws
+    `InvalidRoutePatternError`; the tail was never checked.
+  - [#51](https://github.com/oyinlola-tech/zudo/issues/51) A constrained parameter (`:id(\d+)`) now outranks an unconstrained one,
+    the end of a pattern outranks an optional parameter or wildcard (so
+    `/files` beats `/files/*path` for `/files`), and at equal specificity a
+    method-specific route is tried before an `all()` route. Registering a route
+    that another route, for the same method, makes unreachable now throws
+    `RouteConflictError` (previously the dead route registered silently); pass
+    `createRouter({ shadowedRoutes: "ignore" })` to opt out. Note: this refuses
+    a registration that never worked, but an application that had such a dead
+    route will now fail at startup instead of at runtime.
+  - [#52](https://github.com/oyinlola-tech/zudo/issues/52) A `405`'s `Allow` header and `RouterMatch.allowedMethods` include the
+    automatic `HEAD` and `OPTIONS`, matching what the router answers.
+  - [#65](https://github.com/oyinlola-tech/zudo/issues/65) Routes are sorted once per registration change instead of on every
+    request; `compiled()` returns the cached list.
+  - [#93](https://github.com/oyinlola-tech/zudo/issues/93) New `createRouter({ onError })`: turns a thrown handler/middleware error
+    into a response and reports it as `RouterResult.error`. Without it (and when
+    it returns `undefined`) `dispatch()` rethrows as before.
+  - [#55](https://github.com/oyinlola-tech/zudo/issues/55) The default 404/405 bodies are serialized strings like every `.json()`
+    response; `createRequestContext({ url: "/x?a=1" }).query` is parsed from the
+    URL when no `query` is given.
+  - [#56](https://github.com/oyinlola-tech/zudo/issues/56) `buildRoutePath` throws `HttpRouterError` for a missing parameter,
+    leaves no trailing slash for an omitted optional parameter, strips
+    constraints, and fills `{name}` and `*rest` segments.
+  - [#107](https://github.com/oyinlola-tech/zudo/issues/107) `RouteTree` agrees with the router: named wildcards (`*rest`), brace
+    and optional parameters, every parameter along the path reported, literal
+    segments matched case-insensitively by default (`RouteTreeOptions.caseSensitive`),
+    and a literal-anchored wildcard preferred over a longer all-parameter route.
+
+  **Errors and bodies:**
+
+  - [#114](https://github.com/oyinlola-tech/zudo/issues/114) Every framework-built error body carries `error` and `code`: the
+    router's 404/405 add `code`, the adapter's generic 500 adds
+    `INTERNAL_SERVER_ERROR`, a non-exposed status error carries its status name,
+    and the rate-limit 429 gains top-level `code` and `message` beside the
+    existing `error` object. Nothing was removed.
+  - [#131](https://github.com/oyinlola-tech/zudo/issues/131) A thrown validation error with `issues` (`ValidationError`,
+    `SchemaError`, `@zudojs/schema` errors) now includes a sanitized `issues`
+    list (`path`/`field`/`code`/`message`, never submitted values) when exposed.
+  - [#115](https://github.com/oyinlola-tech/zudo/issues/115) A custom `errorHandler`'s response receives the thrown error's headers
+    (`Retry-After`, `WWW-Authenticate`, `Allow`) for names it did not set itself.
+  - [#126](https://github.com/oyinlola-tech/zudo/issues/126) The 5xx factories document that their message is hidden unless
+    `{ expose: true }` is passed; the secure default is kept.
+  - [#54](https://github.com/oyinlola-tech/zudo/issues/54) A request refused only for URL/query length is answered `414`, and an
+    `HTTPQueryLimitError` raised while building the request context keeps its
+    `414`; both used to be `400`.
+  - [#53](https://github.com/oyinlola-tech/zudo/issues/53) The root `parseQueryString` accepts a bare query string (`"a=1"`), not
+    only a URL.
+
+  **Exports:**
+
+  - [#113](https://github.com/oyinlola-tech/zudo/issues/113) `createHttpClient`, `createHttpClientWithBaseUrl` and `httpGet` /
+    `httpPost` / `httpPut` / `httpPatch` / `httpDelete` / `httpHead` /
+    `httpOptions` are exported from the package root.
+  - [#83](https://github.com/oyinlola-tech/zudo/issues/83) New `sniffContentType(bytes)` and `matchesDeclaredContentType(bytes,
+declared)` identify common file signatures from magic bytes.
+  - [#134](https://github.com/oyinlola-tech/zudo/issues/134) (security default) `mountOpenAPI` no longer serves the documentation
+    page when `NODE_ENV` is `production` and no `docsPath` is given. Pass
+    `docsPath: "/docs"` to keep it; the JSON document is served either way.
+    This matches what `zudojs-cli` projects already generate.
+  - The shadowed-route error is built with `RouteConflictError`'s new
+    `{ reason, message }` options (`error.reason` names the shadowing route).
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/logger@1.5.0
+  - @zudojs/middleware@1.1.3
+  - @zudojs/openapi@1.6.0
+  - @zudojs/crypto@1.4.0
+  - @zudojs/security@1.3.4
+  - @zudojs/errors@1.4.0
+
 ## 1.4.4
 
 ### Patch Changes

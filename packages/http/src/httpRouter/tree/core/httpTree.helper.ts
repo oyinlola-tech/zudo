@@ -6,7 +6,7 @@
 
 import type { MutableRouteTreeNode } from "./httpTree.type.js";
 
-import { createChildNode } from "./httpTree.nodeCreation.js";
+import { childKey, createChildNode } from "./httpTree.nodeCreation.js";
 
 /**
  * Gets pattern segments from a path.
@@ -24,6 +24,7 @@ export function insertSegment(
   handler: unknown,
   methods: readonly string[],
   metadata: Record<string, unknown>,
+  caseSensitive = false,
 ): void {
   if (segments.length === 0) {
     node.handler = handler;
@@ -40,14 +41,16 @@ export function insertSegment(
     return;
   }
 
-  let child = node.children.get(segment);
+  const key = childKey(segment, caseSensitive);
+
+  let child = node.children.get(key);
 
   if (!child) {
     child = createChildNode(segment);
-    node.children.set(segment, child);
+    node.children.set(key, child);
   }
 
-  insertSegment(child, rest, handler, methods, metadata);
+  insertSegment(child, rest, handler, methods, metadata, caseSensitive);
 }
 
 /**
@@ -56,6 +59,7 @@ export function insertSegment(
 export function removeRouteFromTree(
   node: MutableRouteTreeNode,
   segments: readonly string[],
+  caseSensitive = false,
 ): boolean {
   if (segments.length === 0) {
     if (node.handler) {
@@ -72,16 +76,18 @@ export function removeRouteFromTree(
     return false;
   }
 
-  const child = node.children.get(segment);
+  const key = childKey(segment, caseSensitive);
+
+  const child = node.children.get(key);
 
   if (!child) {
     return false;
   }
 
-  const removed = removeRouteFromTree(child, rest);
+  const removed = removeRouteFromTree(child, rest, caseSensitive);
 
   if (removed && isEmptyNode(child)) {
-    node.children.delete(segment);
+    node.children.delete(key);
   }
 
   return removed;
