@@ -12,6 +12,8 @@
  *   - internal dependencies still pointing at an older line
  *   - compiled .js debris inside src/, which shadows .ts under NodeNext
  *   - a scoped package missing publishConfig.access, which npm refuses
+ *   - dist files ending in a sourceMappingURL comment while "files" leaves
+ *     the .map files out, so every consumer's tooling chases a missing file
  *
  * Exits non-zero if any check fails. Nothing here writes.
  *
@@ -67,6 +69,26 @@ function srcDebris(pkgDir) {
   return found;
 }
 
+/** dist .js/.d.ts files that reference a source map, relative to pkgDir. */
+function mapReferences(pkgDir) {
+  const dist = join(pkgDir, "dist");
+  if (!existsSync(dist)) return [];
+  const found = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(js|d\.ts)$/.test(entry.name)) {
+        if (readFileSync(full, "utf8").includes("//# sourceMappingURL=")) {
+          found.push(full.slice(pkgDir.length + 1));
+        }
+      }
+    }
+  };
+  walk(dist);
+  return found;
+}
+
 const packages = new Map();
 for (const dir of readdirSync(PKGS)) {
   const manifest = join(PKGS, dir, "package.json");
@@ -105,6 +127,16 @@ for (const [name, { dir, pkg }] of packages) {
     failures.push(
       `${name}: ${debris.length} compiled .js file(s) inside src/ — these shadow the .ts sources (e.g. ${debris[0]})`,
     );
+  }
+
+  // Maps left out of the tarball must not be referenced from it.
+  if ((pkg.files ?? []).includes("!dist/**/*.map")) {
+    const refs = mapReferences(dir);
+    if (refs.length > 0) {
+      failures.push(
+        `${name}: ${refs.length} dist file(s) reference a source map that "files" excludes (e.g. ${refs[0]}) — clean and rebuild with sourceMap/declarationMap off`,
+      );
+    }
   }
 
   // npm refuses a scoped package without explicit public access.

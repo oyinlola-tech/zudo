@@ -19,12 +19,15 @@
  *                                                            --declaration)
  *   <shell title="…">$ command\noutput</shell>              (run on your computer)
  *   <note>, <tip>, <warn>                                    (callouts)
- *   <exercise title="…"> … <solution> … </solution></exercise>
+ *   <exercise title="…"> task <starter file="…">code</starter> <hint>…</hint> <solution> … </solution></exercise>
+ *                                                           (see scripts/learn/exercise.mjs)
  *   <reason title="…"> questions to think through … <answer> the reasoning </answer></reason>
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { lessonExercises, parseExercise, renderExercise } from "./exercise.mjs";
 
 export function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -153,7 +156,7 @@ function renderExample(ex, highlight, index) {
           ? `What the browser terminal prints`
           : `Output of <code>${escapeHtml(runLabel(ex.file))}</code>${runnable ? " and of the browser terminal" : ""}`;
     html +=
-      `<div class="lx-out${ex.outputKind === "tsc" ? " lx-out-tsc" : ""}"><div class="lx-out-label">${label}</div>` +
+      `<div class="lx-out${ex.outputKind === "tsc" ? " lx-out-tsc" : ""}"${ex.mask ? ` data-mask="${escapeAttr(ex.mask)}"` : ""}><div class="lx-out-label">${label}</div>` +
       `<pre class="lx-no-copy">${escapeHtml(ex.expected)}</pre></div>\n`;
   }
   return html + `</figure>`;
@@ -200,7 +203,14 @@ const CALLOUTS = { note: ["callout-note", "NOTE"], tip: ["callout-tip", "TIP"], 
 /** Lesson source → the HTML that goes inside <main>. */
 export function renderBody(lesson, highlight) {
   let index = 0;
-  let html = lesson.body.replace(
+  const exercises = lessonExercises(lesson.body);
+  /* Starter code is kept aside so the rewrites below never touch it. */
+  const starterCodes = [];
+  let html = lesson.body.replace(/<starter\b([^>]*)>([\s\S]*?)<\/starter>/g, (m, a, code) => {
+    starterCodes.push(dedent(code));
+    return `<starter${a} data-i="${starterCodes.length - 1}"></starter>`;
+  });
+  html = html.replace(
     /<(example|file)\b([^>]*)>([\s\S]*?)<\/\1>(\s*<output\b([^>]*)>([\s\S]*?)<\/output>)?/g,
     (m, tag, a, code, hasOut, outAttrs, expected) => {
       const at = attrs(a);
@@ -213,6 +223,7 @@ export function renderBody(lesson, highlight) {
         code: dedent(code),
         expected: hasOut ? dedent(expected) : null,
         outputKind: hasOut ? attrs(outAttrs).kind || "run" : null,
+        mask: hasOut ? attrs(outAttrs).mask || null : null,
       };
       return renderExample(ex, highlight, index++);
     },
@@ -224,13 +235,12 @@ export function renderBody(lesson, highlight) {
       (m, title, inner) => `<div class="callout ${cls}"><p class="lx-callout-label">${title || label}</p>${inner.trim()}</div>`,
     );
   }
+  let exIndex = 0;
   html = html.replace(/<exercise\s+title="([^"]*)">([\s\S]*?)<\/exercise>/g, (m, title, inner) => {
-    const [task, solution] = inner.split(/<solution>/);
-    return (
-      `<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>${title}</h3>${task.trim()}` +
-      (solution ? `<details class="lx-solution"><summary>Show a solution</summary>${solution.replace(/<\/solution>/, "").trim()}</details>` : "") +
-      `</div>`
-    );
+    const source = exercises[exIndex++];
+    const rendered = parseExercise(inner);
+    const codes = rendered.starters.map((st) => starterCodes[Number(st.stash)]);
+    return renderExercise(source.number, title, { ...source, task: rendered.task, hints: rendered.hints }, codes, rendered.solution);
   });
   html = html.replace(/<reason\s+title="([^"]*)">([\s\S]*?)<\/reason>/g, (m, title, inner) => {
     const [task, answer] = inner.split(/<answer>/);

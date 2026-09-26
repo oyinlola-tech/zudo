@@ -6,7 +6,7 @@
  *   pnpm site:learn:check            build, then run every example in Node (npm packages,
  *                                    tsx, tsc) and in the browser terminal, and check the
  *                                    terminal's Node-style formatter against util.inspect
- *   node scripts/site-learn.mjs --node|--browser|--inspect|--quiz|--links [--only <slug>[,<slug>…]]
+ *   node scripts/site-learn.mjs --node|--browser|--inspect|--quiz|--links|--exercises [--only <slug>[,<slug>…]]
  *   node scripts/site-learn.mjs --fill --only <slug>   write real Node output into empty <output>s
  *
  * Lesson tests live in site-src/learn/quiz/<slug>.html (see scripts/learn/quiz.mjs);
@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { format } from "node:util";
 
 import { checkBrowser } from "./learn/check-browser.mjs";
+import { checkExercises } from "./learn/check-exercise.mjs";
 import { checkNode } from "./learn/check-node.mjs";
 import { checkQuizNode } from "./learn/check-quiz.mjs";
 import { quizJson, readQuizzes } from "./learn/quiz.mjs";
@@ -210,6 +211,7 @@ if (wantAll || args.includes("--links")) {
   const { course, lessons: read } = readCourse(ROOT);
   failures += report("links to lessons", checkLinks(course, read, only));
 }
+if (wantAll || args.includes("--exercises")) failures += report("exercises", checkExercises(lessons, { only, root: ROOT }));
 if (wantAll || args.includes("--inspect")) failures += report("formatter vs util.inspect", checkInspect());
 if (wantAll || args.includes("--node")) failures += report("examples in Node", checkNode(lessons, { only, root: ROOT }));
 if (wantQuiz) failures += report("tests in Node", await checkQuizNode(quizzes, { lessons, root: ROOT }));

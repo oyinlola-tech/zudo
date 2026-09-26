@@ -2,7 +2,8 @@
  * Opens every lesson page in headless Chromium, presses each example's
  * "Run in browser" button (through window.ZudoLearn.run, the same path the
  * click takes) and compares the terminal output with the output shown on
- * the page. Also fails on any uncaught page error.
+ * the page, and checks each browser exercise (its solution passes the
+ * editor's Check, its starter does not). Also fails on any uncaught page error.
  */
 
 import { spawn } from "node:child_process";
@@ -11,6 +12,7 @@ import { join } from "node:path";
 import { launchBrowser } from "./cdp.mjs";
 import { applyMasks, normalize } from "./check-node.mjs";
 import { checkQuizBrowser } from "./check-quiz.mjs";
+import { lessonExercises } from "./exercise.mjs";
 import { extractExamples } from "./source.mjs";
 
 async function startServer(root) {
@@ -51,6 +53,20 @@ export async function checkBrowser(root, lessons, { log = console.log, only = nu
         const got = applyMasks(normalize(lines.filter((l) => l.kind !== "stack").map((l) => l.text).join("\n")), ex.mask);
         const want = applyMasks(normalize(ex.expected), ex.mask);
         results.push({ label, ok: got === want, detail: got === want ? "" : `  want:\n${want}\n  got:\n${got}` });
+      }
+      /* Exercises checked in the browser: run them the way the editor's Check does. */
+      for (const ex of lessonExercises(lesson.body)) {
+        if (ex.mode !== "run") continue;
+        const label = `${lesson.slug} exercise ${ex.number}`;
+        const r = await browser.evaluate(`ZudoExercise.check(${ex.number})`);
+        results.push({
+          label: `${label} (solution)`,
+          ok: r.solution.ok,
+          detail: r.solution.ok ? "" : `the solution does not pass its own check at line ${r.solution.line}\n  want: ${r.solution.want}\n  got:  ${r.solution.got}`,
+        });
+        if (ex.starters.length) {
+          results.push({ label: `${label} (starter)`, ok: !r.starter.ok, detail: "the starter code already passes the check" });
+        }
       }
       if (browser.consoleErrors.length) {
         results.push({ label: `${lesson.slug} page errors`, ok: false, detail: browser.consoleErrors.join("\n") });

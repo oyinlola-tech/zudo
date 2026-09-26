@@ -113,6 +113,7 @@ function foot() {
   <script src="/js/learn.js" defer></script>
   <script src="/js/quiz.js" defer></script>
   <script src="/js/ide.js" defer></script>
+  <script src="/js/exercise.js" defer></script>
 
   <div id="zudo-footer"></div>
 </body>
