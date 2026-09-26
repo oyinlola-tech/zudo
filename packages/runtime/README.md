@@ -162,13 +162,26 @@ one on a running runtime moves it to `degraded` until it passes.
 
 ```typescript
 runtime.registerReadinessCheck("database", () => database.isConnected());
+runtime.registerReadinessCheck("cache", () => cache.isWarm(), { critical: false });
 
 await runtime.runReadinessChecks();
 
-runtime.ready; // false while any check fails
+runtime.ready; // false while any critical check fails
 runtime.health.state; // "healthy" | "degraded" | ...
-runtime.readiness.checks.get("database"); // per-check result and duration
+runtime.readiness.checks.get("database"); // per-check result, message and duration
+runtime.readiness.reason; // "Readiness checks failing: database."
 ```
+
+A check registered with `{ critical: false }` is evaluated and reported
+(health shows it as `degraded`) but never gates `ready`. A check that
+returns `false` carries the message `"Check returned false."`; one that
+throws or exceeds the timeout carries the error.
+
+Readiness is pinned at `false` in two situations regardless of the checks:
+while the runtime is `shutting_down` (entered by `stop()`, so a `/ready`
+probe that re-runs the checks during or after shutdown never reports
+ready again), and after a manual `tracker.markNotReady()`, which holds
+until `markReady()`.
 
 `runtime.health` is derived from the lifecycle state and the readiness
 checks: a running runtime is `healthy` when every check passes and

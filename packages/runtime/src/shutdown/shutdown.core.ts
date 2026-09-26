@@ -105,6 +105,11 @@ export async function executeShutdown(
 
   let timer: ReturnType<typeof setTimeout> | undefined;
 
+  // Not unref'd: the timer is cleared as soon as the race settles, and
+  // while a module's onShutdown hangs it is the only thing that will
+  // ever settle it. Unref'd, a script that awaited stop() with nothing
+  // else on the loop exited (code 13, "unsettled top-level await")
+  // instead of reporting the RuntimeTimeoutError.
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(
       () => {
@@ -112,8 +117,6 @@ export async function executeShutdown(
       },
       Math.min(Math.max(0, shutdownTimeout), MAX_TIMER_DELAY),
     );
-
-    timer.unref?.();
   });
 
   try {

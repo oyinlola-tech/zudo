@@ -53,6 +53,7 @@ import { ReadinessTracker } from "../readiness/index.js";
 
 import type {
   ReadinessCheckFn,
+  ReadinessCheckOptions,
   ReadinessTrackerState,
 } from "../readiness/index.js";
 
@@ -97,9 +98,15 @@ export interface Runtime {
    *
    * A registered check starts out failing until it is first evaluated by
    * `runReadinessChecks`, so registering one on a running runtime moves it
-   * to `degraded` until the check passes.
+   * to `degraded` until the check passes. Pass `{ critical: false }` for
+   * a check that is reported (and shows in `health`) but must not gate
+   * `ready`.
    */
-  registerReadinessCheck(name: string, check: ReadinessCheckFn): void;
+  registerReadinessCheck(
+    name: string,
+    check: ReadinessCheckFn,
+    options?: ReadinessCheckOptions,
+  ): void;
 
   /**
    * Removes a readiness check. Returns whether one was registered.
@@ -283,10 +290,14 @@ export class DefaultRuntime implements Runtime {
   /**
    * Registers a readiness check.
    */
-  public registerReadinessCheck(name: string, check: ReadinessCheckFn): void {
+  public registerReadinessCheck(
+    name: string,
+    check: ReadinessCheckFn,
+    options?: ReadinessCheckOptions,
+  ): void {
     const previousHealth = this.health.state;
 
-    this.readinessTracker.registerCheck(name, check);
+    this.readinessTracker.registerCheck(name, check, options);
 
     this.emitHealthChange(previousHealth);
   }

@@ -2,23 +2,26 @@ import type {
   ReadinessState,
   ReadinessCheck,
   ReadinessCheckFn,
+  ReadinessCheckOptions,
   ReadinessTrackerState,
   ReadinessOptions,
 } from "./readiness.type.js";
 
+import {
+  DEFAULT_CHECK_TIMEOUT,
+  evaluateReadinessCheck,
+} from "./readiness.check.js";
+
 import { RuntimeStateError } from "../runtimeError/index.js";
 
 /**
- * How long a single readiness check may run before it counts as failed.
- *
- * Without a bound, one hanging probe hangs the readiness endpoint
- * indefinitely — a health check that never answers is worse than one
- * that answers "unhealthy".
- */
-const DEFAULT_CHECK_TIMEOUT = 5_000;
-
-/**
  * Tracks runtime readiness state.
+ *
+ * Two things pin readiness at `false` regardless of what the checks
+ * say: the `shutting_down` state (entered by the runtime in `stop()`)
+ * and a manual `markNotReady()`, which holds until `markReady()`.
+ * Before, the next `runChecks()` — a `/ready` probe, typically —
+ * overwrote both and sent traffic to an instance that was going away.
  */
 export class ReadinessTracker {
   private state: ReadinessState = "not_ready";
@@ -27,6 +30,7 @@ export class ReadinessTracker {
   private readonly autoMarkReady: boolean;
   private readonly checkTimeout: number;
   private ready = false;
+  private held = false;
   private reason?: string;
   private running: Promise<void> | undefined;
 
@@ -34,10 +38,8 @@ export class ReadinessTracker {
     this.autoMarkReady = options.autoMarkReady ?? true;
     this.checkTimeout = options.checkTimeout ?? DEFAULT_CHECK_TIMEOUT;
 
-    if (options.initialChecks) {
-      for (const check of options.initialChecks) {
-        this.registerCheck(check.name, check.check);
-      }
+    for (const check of options.initialChecks ?? []) {
+      this.registerCheck(check.name, check.check, { critical: check.critical });
     }
   }
 
@@ -46,13 +48,20 @@ export class ReadinessTracker {
    *
    * The check function is retained so it can be re-evaluated later by
    * `updateCheck(name)` or `runChecks()`. Registration does not run the
-   * check: it starts out not-ready until it is first evaluated.
+   * check: it starts out not-ready until it is first evaluated. Pass
+   * `{ critical: false }` for a check that should be reported but must
+   * not gate readiness.
    */
-  public registerCheck(name: string, check: ReadinessCheckFn): void {
+  public registerCheck(
+    name: string,
+    check: ReadinessCheckFn,
+    options: ReadinessCheckOptions = {},
+  ): void {
     this.checkFns.set(name, check);
     this.checks.set(name, {
       name,
       ready: false,
+      critical: options.critical ?? true,
       lastCheckedAt: new Date(),
       durationMs: 0,
     });
@@ -76,7 +85,8 @@ export class ReadinessTracker {
     if (
       this.autoMarkReady &&
       this.checks.size === 0 &&
-      this.state === "degraded"
+      this.state === "degraded" &&
+      !this.held
     ) {
       // `degraded` is only ever entered from `ready` because a check
       // failed. Removing the last check leaves nothing failing, so the
@@ -113,7 +123,7 @@ export class ReadinessTracker {
       );
     }
 
-    await this.evaluateCheck(name, fn);
+    await this.evaluate(name, fn);
     this.evaluateReadiness();
   }
 
@@ -130,7 +140,7 @@ export class ReadinessTracker {
     this.running = (async () => {
       try {
         await Promise.all(
-          [...this.checkFns].map(([name, fn]) => this.evaluateCheck(name, fn)),
+          [...this.checkFns].map(([name, fn]) => this.evaluate(name, fn)),
         );
 
         this.evaluateReadiness();
@@ -150,91 +160,25 @@ export class ReadinessTracker {
   }
 
   /**
-   * Runs a single check and records its result and duration.
-   */
-  private async evaluateCheck(
-    name: string,
-    fn: ReadinessCheckFn,
-  ): Promise<void> {
-    const startedAt = Date.now();
-
-    try {
-      const result = await this.withCheckTimeout(name, fn);
-
-      this.checks.set(name, {
-        name,
-        ready: result,
-        lastCheckedAt: new Date(),
-        durationMs: Date.now() - startedAt,
-      });
-    } catch (error) {
-      this.checks.set(name, {
-        name,
-        ready: false,
-        lastCheckedAt: new Date(),
-        durationMs: Date.now() - startedAt,
-        message:
-          error instanceof Error
-            ? `Check threw an error: ${error.message}`
-            : "Check threw an error",
-      });
-    }
-  }
-
-  /**
-   * Runs a check under a timeout, clearing the timer either way.
-   */
-  private async withCheckTimeout(
-    name: string,
-    fn: ReadinessCheckFn,
-  ): Promise<boolean> {
-    if (this.checkTimeout <= 0) {
-      return fn();
-    }
-
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    try {
-      return await Promise.race([
-        Promise.resolve(fn()),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            reject(
-              new Error(
-                `Readiness check "${name}" did not settle within ${this.checkTimeout}ms.`,
-              ),
-            );
-          }, this.checkTimeout);
-
-          timer.unref?.();
-        }),
-      ]);
-    } finally {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-      }
-    }
-  }
-
-  /**
-   * Marks the runtime as ready.
+   * Marks the runtime as ready and releases a `markNotReady()` hold.
+   * Ignored while `shutting_down`; leave that state with `setState()`.
    */
   public markReady(reason?: string): void {
+    if (this.state === "shutting_down") return;
+
+    this.held = false;
     this.state = "ready";
     this.ready = true;
     this.reason = reason;
   }
 
   /**
-   * Marks the runtime as not ready.
+   * Marks the runtime as not ready and holds it there: automatic
+   * evaluation will not report ready again until `markReady()`.
    */
   public markNotReady(reason?: string): void {
-    this.ready = false;
-    this.reason = reason;
-
-    if (this.state === "ready") {
-      this.state = "degraded";
-    }
+    this.held = true;
+    this.becomeNotReady(reason);
   }
 
   /**
@@ -245,6 +189,7 @@ export class ReadinessTracker {
 
     if (state === "ready") {
       this.ready = true;
+      this.held = false;
     } else if (state === "not_ready" || state === "shutting_down") {
       this.ready = false;
     }
@@ -271,18 +216,39 @@ export class ReadinessTracker {
     });
   }
 
+  private async evaluate(name: string, fn: ReadinessCheckFn): Promise<void> {
+    const critical = this.checks.get(name)?.critical ?? true;
+    this.checks.set(
+      name,
+      await evaluateReadinessCheck(name, fn, this.checkTimeout, critical),
+    );
+  }
+
+  private becomeNotReady(reason?: string): void {
+    this.ready = false;
+    this.reason = reason;
+
+    if (this.state === "ready") {
+      this.state = "degraded";
+    }
+  }
+
   /**
-   * Evaluates overall readiness based on registered checks.
+   * Evaluates overall readiness from the critical checks. Never acts
+   * while shutting down or under a manual hold.
    */
   private evaluateReadiness(): void {
-    if (this.autoMarkReady && this.checks.size > 0) {
-      const allReady = [...this.checks.values()].every((check) => check.ready);
+    if (!this.autoMarkReady || this.checks.size === 0) return;
+    if (this.state === "shutting_down" || this.held) return;
 
-      if (allReady && !this.ready) {
-        this.markReady("All readiness checks passed.");
-      } else if (!allReady && this.ready) {
-        this.markNotReady("One or more readiness checks failed.");
-      }
+    const failing = [...this.checks.values()]
+      .filter((check) => check.critical && !check.ready)
+      .map((check) => check.name);
+
+    if (failing.length > 0) {
+      this.becomeNotReady(`Readiness checks failing: ${failing.join(", ")}.`);
+    } else if (!this.ready) {
+      this.markReady("All readiness checks passed.");
     }
   }
 }
