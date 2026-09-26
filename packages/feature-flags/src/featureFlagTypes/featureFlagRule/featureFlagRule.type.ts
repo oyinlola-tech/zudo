@@ -62,11 +62,25 @@ export interface FeatureFlagAttributeRule {
   readonly result?: FeatureFlagValue;
 }
 
+/**
+ * Which context field a rollout hashes on.
+ *
+ * Without `bucketBy`, the subject is `userId`, then `tenantId`, then
+ * `sessionId`, then `"anonymous"` — so for a context carrying both a user
+ * and a tenant, members of one tenant land in different buckets. Set
+ * `bucketBy: "tenantId"` to roll a flag out per organisation. When the
+ * named field is absent from the context the rule does not match, rather
+ * than silently bucketing on something else.
+ */
+export type FeatureFlagBucketBy = "userId" | "tenantId" | "sessionId";
+
 /** Percentage-based rollout — deterministic per subject. */
 export interface FeatureFlagPercentageRule {
   readonly type: "percentage";
   readonly percentage: number;
   readonly value: FeatureFlagValue;
+  /** Context field to bucket on; see {@link FeatureFlagBucketBy}. */
+  readonly bucketBy?: FeatureFlagBucketBy;
 }
 
 /** Time-windowed rule — enabled only within a date range. */
@@ -81,6 +95,8 @@ export interface FeatureFlagScheduleRule {
 export interface FeatureFlagVariantRule {
   readonly type: "variant";
   readonly variants: readonly FeatureFlagVariant[];
+  /** Context field to bucket on; see {@link FeatureFlagBucketBy}. */
+  readonly bucketBy?: FeatureFlagBucketBy;
 }
 
 /** A variant with a weight for percentage-based assignment. */

@@ -9,7 +9,11 @@
 import type { FeatureFlagRule } from "../featureFlagTypes/featureFlagRule/featureFlagRule.type.js";
 import type { FeatureFlagContext } from "../featureFlagTypes/featureFlagContext.js";
 import type { FeatureFlagValue } from "../featureFlagTypes/featureFlagRule/featureFlagValue.type.js";
-import { getBucket, isInRollout } from "../rollout/rolloutBucketing.js";
+import {
+  getBucket,
+  isInRollout,
+  resolveRolloutSubject,
+} from "../rollout/rolloutBucketing.js";
 import { matchAttribute, resolvePath } from "./evaluatorAttribute.js";
 
 /** Bucket resolution for variant assignment — 0.01% precision. */
@@ -64,8 +68,8 @@ export function evaluateRule(
     }
 
     case "percentage": {
-      const subject =
-        context.userId ?? context.tenantId ?? context.sessionId ?? "anonymous";
+      const subject = resolveRolloutSubject(context, rule.bucketBy);
+      if (subject === undefined) return { matched: false };
       const matched = isInRollout(flagKey, subject, rule.percentage);
       return { matched, value: matched ? rule.value : undefined };
     }
@@ -82,8 +86,8 @@ export function evaluateRule(
     }
 
     case "variant": {
-      const subject =
-        context.userId ?? context.tenantId ?? context.sessionId ?? "anonymous";
+      const subject = resolveRolloutSubject(context, rule.bucketBy);
+      if (subject === undefined) return { matched: false };
 
       // Negative or non-finite weights would make the cumulative walk
       // non-monotonic, shifting every downstream variant's band, so they are

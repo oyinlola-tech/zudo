@@ -7,6 +7,8 @@
  * @module rollout/rolloutBucketing
  */
 
+import type { FeatureFlagContext } from "../featureFlagTypes/featureFlagContext.js";
+import type { FeatureFlagBucketBy } from "../featureFlagTypes/featureFlagRule/featureFlagRule.type.js";
 import { hashString } from "./rolloutHashing.js";
 
 /** Default number of buckets — 10,000 allows 0.01% precision. */
@@ -49,4 +51,27 @@ export function isInRollout(
   const threshold = Math.round((percentage / 100) * buckets);
   const bucket = getBucket(key, subject, buckets);
   return bucket < threshold;
+}
+
+/**
+ * Pick the identifier a percentage or variant rule buckets on.
+ *
+ * With `bucketBy` set, only that field counts: `undefined` is returned when
+ * the context lacks it, and the caller treats the rule as not matched.
+ * Without it, the default chain applies — `userId`, then `tenantId`, then
+ * `sessionId`, then `"anonymous"`.
+ *
+ * @param context - The evaluation context.
+ * @param bucketBy - The rule's `bucketBy`, if any.
+ * @returns The subject to hash, or `undefined` when a pinned field is absent.
+ */
+export function resolveRolloutSubject(
+  context: FeatureFlagContext,
+  bucketBy?: FeatureFlagBucketBy,
+): string | undefined {
+  if (bucketBy !== undefined) {
+    const pinned = context[bucketBy];
+    return typeof pinned === "string" && pinned.length > 0 ? pinned : undefined;
+  }
+  return context.userId ?? context.tenantId ?? context.sessionId ?? "anonymous";
 }

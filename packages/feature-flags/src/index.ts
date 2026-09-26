@@ -46,7 +46,11 @@ export {
 
 // ─── Rollout ──────────────────────────────────────────────────────────────
 export { hashString } from "./rollout/rolloutHashing.js";
-export { getBucket, isInRollout } from "./rollout/rolloutBucketing.js";
+export {
+  getBucket,
+  isInRollout,
+  resolveRolloutSubject,
+} from "./rollout/rolloutBucketing.js";
 
 // ─── Providers ────────────────────────────────────────────────────────────
 export { createMemoryProvider } from "./provider/providerMemory.core.js";

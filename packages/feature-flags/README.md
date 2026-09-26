@@ -105,7 +105,15 @@ default was `true`. For a variant flag, declare the variant to fall back to:
 
 Rules are evaluated in declaration order and the first match wins. The
 subject for `percentage` and `variant` is `userId`, then `tenantId`, then
-`sessionId`, then `"anonymous"`.
+`sessionId`, then `"anonymous"`. That default splits an organisation whenever
+the context carries both a `userId` and a `tenantId`; pin the subject with
+`bucketBy` to roll out per tenant (or per session):
+
+```ts
+{ type: "percentage", percentage: 10, value: true, bucketBy: "tenantId" }
+```
+
+With `bucketBy` set, a context missing that field does not match the rule.
 
 Operators: `equals`, `not_equals`, `contains`, `starts_with`, `ends_with`,
 `in`, `not_in`, `greater_than`, `greater_than_or_equal`, `less_than`,
