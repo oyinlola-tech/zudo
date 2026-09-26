@@ -45,6 +45,7 @@ const PAGES = [
   { id: "learn", path: "/learn" },
   { id: "course", path: "/learn/javascript" },
   { id: "lesson", path: "/learn/logic-math" },
+  { id: "theming", path: "/learn/browser-theming" },
   { id: "editor", path: "/learn/logic-math", action: "editor" },
   { id: "playground", path: "/docs/getting-started", action: "click:#zudoTerminalTrigger" },
   { id: "search", path: "/docs/getting-started", action: "click:#zudoSearchTrigger" },
