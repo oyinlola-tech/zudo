@@ -68,6 +68,15 @@ export const INTERNAL_ERROR_MESSAGE =
   "The server encountered an internal error while handling this request.";
 
 /**
+ * Message sent with `RPC_UNAVAILABLE` when a handler failed because a
+ * service it called — over RPC or otherwise — could not be reached or
+ * timed out. The downstream error's own text (hosts, paths, timeouts) is
+ * server detail and goes to `onInternalError` instead.
+ */
+export const UNAVAILABLE_ERROR_MESSAGE =
+  "A service this request depends on is temporarily unavailable.";
+
+/**
  * Default limit, in bytes, on an HTTP request or response body carrying
  * one RPC frame: the payload limit plus headroom for the frame envelope
  * (`id`, `procedure`, `metadata`, `timestamp`).

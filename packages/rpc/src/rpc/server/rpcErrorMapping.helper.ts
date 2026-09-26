@@ -21,6 +21,7 @@ import {
 import { INTERNAL_ERROR_MESSAGE } from "../constants/rpcConstants.core.js";
 
 import { mapExposedBaseError, withheldRPCErrorCode } from "./rpcBaseErrorMapping.helper.js";
+import { mapDownstreamError } from "./rpcDownstreamMapping.helper.js";
 
 /**
  * Wire codes for the error types the server maps.
@@ -69,14 +70,16 @@ export interface RPCMappedError {
  * `RPC_CONFLICT`, `RPC_VALIDATION_ERROR` …). Anything not built to be
  * exposed — an `RPCInternalError`, a non-exposed custom `RPCError` or
  * `BaseError`, or any other error — is answered with
- * {@link INTERNAL_ERROR_MESSAGE}, so exception text, stack traces and
- * causes never reach the remote side — nor does a non-exposed custom
- * code ({@link withheldRPCErrorCode}).
+ * {@link INTERNAL_ERROR_MESSAGE} and its custom code withheld
+ * ({@link withheldRPCErrorCode}), so no server detail reaches the peer.
  */
 export function mapRPCError(error: unknown): RPCMappedError {
   if (error instanceof RPCInternalError || !(error instanceof Error)) {
     return internalFailure("RPC_INTERNAL_ERROR");
   }
+
+  const downstream = mapDownstreamError(error);
+  if (downstream !== undefined) return downstream;
 
   for (const [type, code, internal] of ERROR_CODES) {
     if (error instanceof type) {

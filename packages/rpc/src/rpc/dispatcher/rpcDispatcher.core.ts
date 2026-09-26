@@ -33,6 +33,8 @@ import {
 
 import { createTimeout } from "../reliability/timeout/rpcTimeout.helper.js";
 
+import { toUpstreamError } from "./rpcDispatcher.downstream.js";
+
 import {
   abortReasonToRPCError,
   raceAbort,
@@ -152,9 +154,14 @@ export class RPCDispatcher {
 
         bindRPCContextInput(context, input);
 
-        const result = await this.middleware.execute(context, async () => {
-          return procedure.handler(input, context);
-        });
+        let result: unknown;
+        try {
+          result = await this.middleware.execute(context, async () => {
+            return procedure.handler(input, context);
+          });
+        } catch (error) {
+          throw toUpstreamError(error, request.procedure, controller.signal);
+        }
 
         return procedure.options?.output
           ? parseOutput(procedure.options.output, result, request.procedure)

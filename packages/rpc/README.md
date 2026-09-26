@@ -206,6 +206,14 @@ A pending call's deadline and a `retry()` backoff hold a normal (ref'd)
 timer, cleared as soon as the call settles, so a plain script awaiting a call
 stays alive until it resolves or times out.
 
+`retry(operation, { attempts, delay, backoff, jitter, retryIf, signal })`
+counts **calls**, not retries: `attempts: 3` runs the operation up to three
+times (one call plus two retries) and `attempts: 1` never retries. This is
+the opposite of `@zudojs/lifecycle`, whose `attempts` counts the retries after
+the first call. `delay` is the base backoff in milliseconds (`"fixed"` by
+default; `"linear"` and `"exponential"` scale it per attempt, capped by
+`maxDelay`), and `jitter` defaults to `"full"`.
+
 ### Middleware and trusted identity
 
 Everything in a frame, `metadata` included, is written by the caller: any
@@ -273,6 +281,20 @@ public vocabulary a client acts on (retries, status), so it travels with the
 generic message. To send a custom code, build the error with `expose: true`. A handler result that fails the procedure's
 `output` schema is treated the same way: it is the server's fault, not the
 caller's.
+
+A failure of something the handler *called* is reported as
+`RPC_UNAVAILABLE`, not as an internal error and not as this procedure's own
+timeout: an `RPCTransportError`, or an `RPCTimeoutError` naming another
+procedure, thrown inside a handler or middleware — what an `RPCClient`
+raises when a downstream service cannot be reached or does not answer — is
+wrapped in an `RPCUnavailableError` (the original as `cause`) and answered
+with `{ code: "RPC_UNAVAILABLE", message: UNAVAILABLE_ERROR_MESSAGE }`, so
+the caller can retry while the downstream error's own text stays out of the
+response; the wrapped error is handed to `onInternalError` for logging. A
+timeout about the procedure itself still goes out as `RPC_TIMEOUT`: the
+dispatcher's own (including when a cooperative handler rethrows
+`context.signal.reason`) and one a handler throws under its own procedure
+name.
 
 ```typescript
 const server = new RPCServer(undefined, undefined, {

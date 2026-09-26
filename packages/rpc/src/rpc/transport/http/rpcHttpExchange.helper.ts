@@ -27,6 +27,8 @@ import { abortReasonToRPCError } from "../../reliability/cancellation/rpcAbort.h
 
 import { MAX_TIMER_DELAY } from "../../constants/rpcConstants.core.js";
 
+import { withCause } from "../../errors/rpcErrorCause.helper.js";
+
 /**
  * Links the caller signal and the deadline into one abort signal.
  *
@@ -111,12 +113,3 @@ export async function decode(
   return frame;
 }
 
-function withCause<T extends Error>(error: T, cause: unknown): T {
-  Object.defineProperty(error, "cause", {
-    value: cause,
-    enumerable: false,
-    configurable: true,
-    writable: true,
-  });
-  return error;
-}

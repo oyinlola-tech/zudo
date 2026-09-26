@@ -22,8 +22,17 @@ export type RPCJitter = "none" | "full" | "equal";
  * Retry options.
  */
 export interface RPCRetryOptions {
+  /**
+   * Total number of calls, not the number of retries: `attempts: 3` calls
+   * the operation up to three times (one call plus two retries), and
+   * `attempts: 1` never retries. Values below 1 are treated as 1.
+   *
+   * Note that `@zudojs/lifecycle` counts the other way — its `attempts`
+   * is the number of retries after the first call.
+   */
   readonly attempts: number;
 
+  /** Base delay before a retry, in milliseconds; see `backoff`. */
   readonly delay: number;
 
   readonly maxDelay?: number;
