@@ -91,8 +91,15 @@ export class DefaultRuntimeBootstrap implements RuntimeBootstrap {
 
     try {
       if (diagnostics.startupLogging) {
+        // The phase about to run, not the pipeline's resting "created".
         this.log("info", "Runtime bootstrap started.", {
-          ...(diagnostics.includeState && { phase: this._phase }),
+          ...(diagnostics.includeState && {
+            phase: configuration.loadModules
+              ? "loading"
+              : configuration.initializeModules
+                ? "initializing"
+                : "starting",
+          }),
         });
       }
 

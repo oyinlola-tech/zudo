@@ -76,6 +76,10 @@ const app = await Application.create({
 
 A failed `lifecycle.start()` stops, in reverse order, every participant whose `start()` completed, so a retry starts from the first one again. `dispose()` only reaches participants whose `initialize()` ran.
 
+### Names shared with sibling packages
+
+`LifecycleState`, `Lifecycle`, `LifecycleManager`, `createRuntime`, `Container` and `ConfigurationManager` are also exported — with different meanings — by `@zudojs/constants`, `@zudojs/lifecycle`, `@zudojs/runtime`, `@zudojs/container` and `@zudojs/config`. This package's `LifecycleState` (`created … running … stopped`) is the state of the core `Lifecycle` participant machine; `@zudojs/constants`' is the component state used by `@zudojs/lifecycle` (`idle … ready … disposed`); `@zudojs/runtime` has its own `RuntimeState`. When two of these packages meet in one file, import the aliases `CoreLifecycleState`, `CoreLifecycle`, `CoreLifecycleManager`, `createCoreRuntime`, `CoreContainer` and `CoreConfigurationManager` instead of renaming at the import.
+
 ## Runtime
 
 `createRuntime(dependencies, options)` returns a single-use runtime:
@@ -87,7 +91,8 @@ FAILED is reachable from every non-terminal state via fail() or a failure.
 
 - `start()` loads, initializes, and starts modules through the bootstrap pipeline; `getStatus().bootstrap` reports counts, errors, and duration.
 - `stop()` stops and destroys modules through the shutdown pipeline; `getStatus().shutdown` reports the same.
-- `startup.timeoutMs` / `shutdown.timeoutMs` abort the pipeline with a `RuntimeTimeoutError`; the abandoned pipeline can never surface an unhandled rejection. A timed-out bootstrap starts no further phase or module hook; the hook still running finishes, and the runtime then stops and destroys whatever it brought up. `stop()` waits for that teardown.
+- `startup.timeoutMs` / `shutdown.timeoutMs` abort the pipeline with a `RuntimeTimeoutError`; the abandoned pipeline can never surface an unhandled rejection. `startup.timeoutMs` defaults to `0` (no deadline) — set one in production. A timed-out bootstrap starts no further phase or module hook. `stop()` does not wait behind the hook that is still running: it tears down every module that came up and returns; the stuck module stays in its active phase, and if its hook settles later it is stopped and destroyed then (best-effort, recorded on its lifecycle state).
+- Rollback and shutdown only call `onDestroy` on modules whose `onInitialize` was invoked; a module that was never reached (a dependent of the one that failed) is left untouched.
 - `continueOnInitializeError` / `continueOnStartError` (and the stop/destroy equivalents) make the runtime finish with `success: false` and the failures listed instead of throwing.
 - Every error the runtime throws extends `RuntimeError` (which itself extends `RuntimeError` from `@zudojs/errors`), so `isRuntimeError()` from either package recognises it.
 - `runtime.context` is the runtime's immutable `RuntimeExecutionContext` (`executionId` = runtime id, `service` = runtime name, `metadata.runtimeId/runtimeName/runtimeMode/runtimeRole` plus `RuntimeOptions.metadata`); `runtime.timing` holds the state-transition timestamps; `runtime.contextStorage` is the `ContextStorage` the context is established in (`RuntimeDependencies.contextStorage`, default `getDefaultContextStorage()`).
@@ -95,6 +100,10 @@ FAILED is reachable from every non-terminal state via fail() or a failure.
 ### Signals
 
 When `signals.handleSigint` / `handleSigterm` / `handleSighup` are on (SIGINT and SIGTERM default to on), the runtime registers handlers on start and removes them on stop, failure, or dispose. The first signal triggers a graceful `stop()`. A second signal during shutdown exits the process with `signals.forceExitCode` (default 1); set `signals.forceExitOnSecondSignal: false` to log and ignore it instead. `handleUncaughtException` / `handleUnhandledRejection` mark the runtime failed, stop it, and then exit the process with code 1, because the installed handler suppresses Node's own crash and the process would otherwise end with code 0. `signals.fatalExitTimeout` (default 10000 ms) bounds a shutdown that hangs; set `signals.exitOnFatalError: false` to stop the runtime and keep the process running. The runtime never calls `process.exit()` otherwise.
+
+An `Application` follows a stop its runtime started on its own (`runtime.onStateChange(listener)` reports every transition): after a signal it moves through `stopping` to `stopped` and stops its lifecycle participants; after a fatal error it ends `failed`. `Application.stop()` is single-flight, so a concurrent call joins the run in progress. `signalTarget` accepts `process` or any `EventEmitter` without a cast.
+
+Diagnostics log entries carry `environment` (the runtime mode: development/test/production), `engine` (the JavaScript engine) and, for the start entries, the phase about to run.
 
 ## Modules
 
@@ -125,8 +134,10 @@ onInitialize → onReady → onShutdown → onDestroy
 - `logger.child({ moduleId })` merges the context into every entry it emits; `LoggerOptions.context` is attached to every entry.
 - `LoggerOptions.contextStorage` makes the logger merge `executionId`, `correlationId`, `traceId`, `spanId`, and `runtimeId` from the active execution context beneath its own context (explicit values win). `createApplication` sets it on the logger it creates.
 - An unknown `level` throws `InvalidArgumentError` at construction rather than silently disabling logging.
-- Error causes are serialised recursively with a depth limit; `redact` (see `createLogRedactor()`) is applied to context and error details.
+- Error causes are serialised recursively with a depth limit. Sensitive keys (`password`, `secret`, `token`, `apiKey`, `authorization`, ...) in context and error details are redacted **by default** (`createLogRedactor()`); pass `redact: false` to log them in clear, or your own hook to replace the default. Child loggers inherit the setting.
+- `logger.error(message, error, context?)` also accepts the `@zudojs/logger` convention `logger.error(message, context)`: a plain object in the second position with no third argument is logged as context. To log a plain object as the error, pass a third argument.
 - `trace` output goes through `console.debug`, so the structured-output invariant holds.
+- `ContextValues.require(key)` throws `ContextValueNotFoundError` (`CORE_CONTEXT_VALUE_NOT_FOUND`) rather than a bare `Error`.
 
 ## Execution context
 

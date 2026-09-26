@@ -164,10 +164,12 @@ export function canModuleEnterPhase(
     case "stop":
       return state.phase === "started";
     case "destroy":
+      // A module still in "created" never had onInitialize invoked, so
+      // there is nothing for onDestroy to release. Rollback used to
+      // destroy every module that was never reached.
       return (
         state.phase === "stopped" ||
         state.phase === "initialized" ||
-        state.phase === "created" ||
         state.phase === "started" ||
         state.phase === "failed"
       );
@@ -209,7 +211,7 @@ const SATISFIED_PHASES: Record<
   initialize: ["initialized", "starting", "started"],
   start: ["started"],
   stop: ["created", "initialized", "stopped", "destroying", "destroyed"],
-  destroy: ["destroyed"],
+  destroy: ["created", "destroyed"],
 };
 
 /**

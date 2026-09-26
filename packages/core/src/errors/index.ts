@@ -13,6 +13,8 @@ export {
   type FrameworkErrorJSON,
 } from "./frameworkError.error.js";
 
+export { ContextValueNotFoundError } from "./contextValueNotFound.error.js";
+
 export {
   InvalidArgumentError,
   InvalidStateError,

@@ -18,6 +18,7 @@ import {
   DEFAULT_LOGGER_OPTIONS,
   type LoggerOptions,
 } from "../core/loggerOptions.options.js";
+import { createLogRedactor } from "../core/logRedaction.redaction.js";
 import { BaseLogger, type LogContext } from "../core/logger.js";
 
 /**
@@ -65,10 +66,14 @@ export class ConsoleLogger extends BaseLogger {
       );
     }
 
+    // Secure by default: sensitive keys are redacted unless the caller
+    // opts out with `redact: false` or supplies its own hook. Children
+    // receive the resolved value, so they inherit whichever it is.
     this.options = {
       ...DEFAULT_LOGGER_OPTIONS,
       ...options,
       level,
+      redact: options.redact === undefined ? createLogRedactor() : options.redact,
     };
   }
 
@@ -90,7 +95,8 @@ export class ConsoleLogger extends BaseLogger {
       return;
     }
 
-    const redact = this.options.redact;
+    const redact =
+      this.options.redact === false ? undefined : this.options.redact;
     context = this.withExecutionContext(context);
 
     const entry: LogEntry = {

@@ -1,19 +1,58 @@
 import type { ModuleId } from "../module.js";
+import type { ModuleRegistrationState } from "../moduleRegistry/moduleRegistry.type.js";
 
 import { ModuleErrorCode, ModuleError } from "./moduleError.base.js";
 
 /**
- * Error thrown when a required module dependency is missing.
+ * What is known about the dependency that could not be resolved.
+ */
+export interface MissingModuleDependencyContext {
+  /**
+   * Registration state of the dependency when it IS registered but did
+   * not take part in the lifecycle run (not loaded). Omitted when the
+   * dependency is not registered at all.
+   */
+  readonly dependencyState?: ModuleRegistrationState;
+}
+
+function describeMissingDependency(
+  moduleId: ModuleId,
+  dependencyId: ModuleId,
+  dependencyState: ModuleRegistrationState | undefined,
+): string {
+  if (dependencyState === undefined) {
+    return `Module "${moduleId}" requires missing module "${dependencyId}".`;
+  }
+
+  return (
+    `Module "${moduleId}" depends on "${dependencyId}", which is registered but not loaded ` +
+    `(state: "${dependencyState}"). Load it before starting the lifecycle, or enable autoLoad on its definition.`
+  );
+}
+
+/**
+ * Error thrown when a required module dependency cannot be resolved.
+ *
+ * The message distinguishes a dependency that is not registered from
+ * one that is registered but was not loaded; the latter used to be
+ * reported as "missing module", which was misleading.
  */
 export class MissingModuleDependencyError extends ModuleError {
-  public constructor(moduleId: ModuleId, dependencyId: ModuleId) {
-    super(`Module "${moduleId}" requires missing module "${dependencyId}".`, {
+  public readonly dependencyState?: ModuleRegistrationState;
+
+  public constructor(
+    moduleId: ModuleId,
+    dependencyId: ModuleId,
+    context: MissingModuleDependencyContext = {},
+  ) {
+    super(describeMissingDependency(moduleId, dependencyId, context.dependencyState), {
       code: ModuleErrorCode.MISSING_DEPENDENCY,
       moduleId,
       dependencyId,
     });
 
     this.name = "MissingModuleDependencyError";
+    this.dependencyState = context.dependencyState;
   }
 }
 

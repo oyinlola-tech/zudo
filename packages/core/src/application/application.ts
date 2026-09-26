@@ -3,6 +3,7 @@ import type { ApplicationState } from "./applicationState.state.js";
 import type { Lifecycle } from "../lifecycle/core/lifecycle.js";
 import type { Runtime } from "../runtime/runtime.js";
 import { RuntimeState } from "../runtime/runtimeState.state.js";
+import type { RuntimeStateTransition } from "../runtime/runtimeState.state.js";
 import { InvalidStateError } from "../errors/exceptions.js";
 
 /**
@@ -33,12 +34,21 @@ export interface ApplicationOptions {
  * inside the runtime's execution context (`runtime.contextStorage`
  * / `runtime.context`), so lifecycle participants observe the same
  * context as module hooks.
+ *
+ * A stop the runtime starts on its own — a SIGTERM handled by its
+ * signal manager, or a fatal error — is followed: the application
+ * moves through `stopping` to `stopped` (or `failed`) and its
+ * participants are stopped too. Previously the runtime reported
+ * `stopped` while the application stayed `running` with its
+ * participants still up.
  */
 export class Application {
   private readonly context?: ApplicationContext;
   private readonly lifecycle?: Lifecycle;
   private readonly runtimeFactory?: RuntimeFactory;
   private runtime?: Runtime;
+  private unobserveRuntime?: () => void;
+  private stopPromise?: Promise<void>;
 
   private _state: ApplicationState;
 
@@ -118,6 +128,7 @@ export class Application {
     // Resolve the runtime first so a refused restart leaves the
     // application untouched.
     const runtime = this.ensureRuntime();
+    this.observe(runtime);
 
     this._state = "starting";
 
@@ -135,6 +146,12 @@ export class Application {
     }
   }
 
+  /**
+   * Stops the runtime, then the lifecycle participants.
+   *
+   * Single-flight: a second call while stopping joins the first
+   * instead of throwing `InvalidStateError`.
+   */
   public async stop(): Promise<void> {
     if (
       this._state === "stopped" ||
@@ -144,6 +161,10 @@ export class Application {
       return;
     }
 
+    if (this._state === "stopping" && this.stopPromise) {
+      return this.stopPromise;
+    }
+
     if (this._state !== "running" && this._state !== "failed") {
       throw new InvalidStateError(
         `Application cannot stop from state "${this._state}".`,
@@ -151,6 +172,16 @@ export class Application {
       );
     }
 
+    this.stopPromise = this.performStop();
+
+    try {
+      await this.stopPromise;
+    } finally {
+      this.stopPromise = undefined;
+    }
+  }
+
+  private async performStop(): Promise<void> {
     this._state = "stopping";
     const errors: unknown[] = [];
     const runtime = this.runtime;
@@ -256,5 +287,52 @@ export class Application {
       `Application runtime is "${current.state}" and cannot be restarted; supply a runtime factory to enable restart.`,
       { runtimeState: current.state },
     );
+  }
+
+  /**
+   * Follows state transitions of the runtime being started.
+   */
+  private observe(runtime: Runtime | undefined): void {
+    this.unobserveRuntime?.();
+    this.unobserveRuntime = runtime?.onStateChange?.((transition) => {
+      this.onRuntimeTransition(transition);
+    });
+  }
+
+  /**
+   * Reacts to a stop or failure the runtime started on its own while
+   * the application was running. Deferred to a microtask: the runtime
+   * records its in-flight stop promise only after the synchronous part
+   * of `stop()` returns, so calling `stop()` from inside the listener
+   * would start a second, overlapping shutdown.
+   */
+  private onRuntimeTransition(transition: RuntimeStateTransition): void {
+    if (this._state !== "running") return;
+    if (
+      transition.to !== RuntimeState.STOPPING &&
+      transition.to !== RuntimeState.FAILED
+    ) {
+      return;
+    }
+
+    queueMicrotask(() => {
+      void this.followRuntime(transition.to);
+    });
+  }
+
+  private async followRuntime(target: RuntimeState): Promise<void> {
+    if (this._state !== "running") return;
+
+    try {
+      await this.stop();
+    } catch {
+      /* stop() has already recorded the failure in the state. */
+    }
+
+    // Read through the getter: the guard above narrowed `this._state`
+    // to "running" and stop() has changed it since.
+    if (target === RuntimeState.FAILED && this.state === "stopped") {
+      this._state = "failed";
+    }
   }
 }

@@ -69,9 +69,13 @@ export interface LoggerOptions {
    * Redaction hook applied to structured log data (entry context
    * and error details) before it is written.
    *
-   * See createLogRedactor for a key-based implementation.
+   * Defaults to `createLogRedactor()`, which replaces values under
+   * sensitive-looking keys (`password`, `secret`, `token`, `apiKey`,
+   * `authorization`, ...) with `"[REDACTED]"`. Logging such keys in
+   * clear used to be the default. Pass `false` to disable redaction,
+   * or your own hook to replace it.
    */
-  readonly redact?: LogRedactionHook;
+  readonly redact?: LogRedactionHook | false;
 
   /**
    * ContextStorage consulted on every write. When an execution

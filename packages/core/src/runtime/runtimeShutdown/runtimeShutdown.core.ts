@@ -88,8 +88,11 @@ export class DefaultRuntimeShutdown implements RuntimeShutdown {
 
     try {
       if (diagnostics.shutdownLogging) {
+        // The phase about to run, not the pipeline's resting "created".
         this.log("info", "Runtime shutdown started.", {
-          ...(diagnostics.includeState && { phase: this._phase }),
+          ...(diagnostics.includeState && {
+            phase: configuration.stopModules ? "stopping" : "destroying",
+          }),
           ...(diagnostics.includeModules && {
             modules: this._moduleRegistry
               .getLoadedModules()

@@ -35,11 +35,17 @@ export interface Logger {
 
   /**
    * Logs an error.
+   *
+   * Argument order differs from `@zudojs/logger`, whose signature is
+   * `error(message, metadata)`. Both conventions work here: a plain
+   * object in the second position with no third argument is treated
+   * as context, not as the error. To log a plain object AS the error,
+   * pass a third argument (`{}` will do).
    */
   error(message: string, error?: unknown, context?: LogContext): void;
 
   /**
-   * Logs a fatal error.
+   * Logs a fatal error. Accepts the same two conventions as `error`.
    */
   fatal(message: string, error?: unknown, context?: LogContext): void;
 
@@ -108,11 +114,13 @@ export abstract class BaseLogger implements Logger {
   }
 
   public error(message: string, error?: unknown, context?: LogContext): void {
-    this.write("error", message, this.mergeCallContext(context), error);
+    const [thrown, callContext] = splitErrorArguments(error, context);
+    this.write("error", message, this.mergeCallContext(callContext), thrown);
   }
 
   public fatal(message: string, error?: unknown, context?: LogContext): void {
-    this.write("fatal", message, this.mergeCallContext(context), error);
+    const [thrown, callContext] = splitErrorArguments(error, context);
+    this.write("fatal", message, this.mergeCallContext(callContext), thrown);
   }
 
   public child(context: LogContext): Logger {
@@ -138,4 +146,27 @@ export abstract class BaseLogger implements Logger {
    * Creates a child logger.
    */
   protected abstract createChild(context: LogContext): Logger;
+}
+
+/**
+ * Resolves the two `error()`/`fatal()` calling conventions: with no
+ * third argument, a plain object (not an Error, not a class instance)
+ * in the error position is the `@zudojs/logger`-style metadata.
+ */
+function splitErrorArguments(
+  error: unknown,
+  context: LogContext | undefined,
+): readonly [unknown, LogContext | undefined] {
+  if (context === undefined && isPlainContext(error)) {
+    return [undefined, error];
+  }
+  return [error, context];
+}
+
+function isPlainContext(value: unknown): value is LogContext {
+  if (typeof value !== "object" || value === null || value instanceof Error) {
+    return false;
+  }
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }

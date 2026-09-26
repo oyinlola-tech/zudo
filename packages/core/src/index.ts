@@ -107,3 +107,25 @@ export * from "./runtime/index.js";
  */
 
 export * from "./application/index.js";
+
+/*
+ * ============================================================
+ * Aliases for colliding names
+ * ============================================================
+ *
+ * These names are also exported, with different meanings, by sibling
+ * packages: `LifecycleState`/`LifecycleManager` by @zudojs/lifecycle
+ * and @zudojs/constants, `createRuntime` by @zudojs/runtime,
+ * `Container` by @zudojs/container, `ConfigurationManager` by
+ * @zudojs/config. The originals stay; import the Core-prefixed alias
+ * when two of those packages meet in one file.
+ */
+
+export {
+  Lifecycle as CoreLifecycle,
+  LifecycleManager as CoreLifecycleManager,
+  LifecycleState as CoreLifecycleState,
+} from "./lifecycle/index.js";
+export { Container as CoreContainer } from "./container/index.js";
+export { ConfigurationManager as CoreConfigurationManager } from "./configuration/index.js";
+export { createRuntime as createCoreRuntime } from "./runtime/index.js";

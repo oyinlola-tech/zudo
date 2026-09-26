@@ -22,7 +22,11 @@ export function logRuntimeEvent(
       ).call(logger, message, {
         runtimeId: identity.id,
         runtimeName: identity.name,
-        environment: environment.engine,
+        // `environment` is the runtime mode (development/test/production),
+        // as everywhere else in the framework; the JavaScript engine used
+        // to be logged under that key and read as "environment=node".
+        environment: environment.mode,
+        engine: environment.engine,
         ...metadata,
       });
     }

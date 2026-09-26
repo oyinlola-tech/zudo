@@ -1,3 +1,6 @@
+import { ContextValueNotFoundError } from "../../errors/contextValueNotFound.error.js";
+import { InvalidArgumentError } from "../../errors/exceptions.js";
+
 /**
  * A typed key used to store and retrieve values from
  * an execution context.
@@ -30,7 +33,7 @@ export interface ContextKey<T> {
  */
 export function createContextKey<T>(name: string): ContextKey<T> {
   if (!name.trim()) {
-    throw new Error("Context key name cannot be empty.");
+    throw new InvalidArgumentError("Context key name cannot be empty.");
   }
 
   return Object.freeze({
@@ -81,7 +84,7 @@ export function requireContextValue<T>(
   const value = getContextValue(store, key);
 
   if (value === undefined) {
-    throw new Error(`Required context value "${key.name}" is not available.`);
+    throw new ContextValueNotFoundError(key.name);
   }
 
   return value;

@@ -23,7 +23,9 @@ import type {
   LifecycleStateMap,
 } from "./moduleLifecycle.type.js";
 import type { ModuleDependency } from "../moduleDependency/moduleDependency.type.js";
+import { MissingModuleDependencyError } from "../moduleError/moduleError.dependency.js";
 import { ModuleLifecycleError } from "./moduleLifecycle.type.js";
+import { ExclusiveOperations } from "./moduleLifecycle.exclusive.js";
 import type { ContextStorage } from "../../context/provider/contextStorage.storage.js";
 import { getDefaultContextStorage } from "../../context/provider/defaultContextStorage.storage.js";
 import {
@@ -49,7 +51,8 @@ export class ModuleLifecycleManager {
   >;
   private readonly contextStorage: ContextStorage;
   private readonly states: LifecycleStateMap = new Map();
-  private operation: Promise<void> | undefined;
+  private readonly exclusive = new ExclusiveOperations();
+  private tornDown = false;
 
   public constructor(
     registry: ModuleRegistry,
@@ -71,6 +74,7 @@ export class ModuleLifecycleManager {
     options: ModuleLifecyclePhaseOptions = {},
   ): Promise<ModuleLifecycleResult> {
     return this.runExclusive(async () => {
+      this.tornDown = false;
       ensureStateSynchronized(this.registry, this.states);
       try {
         return await executeLifecyclePhase(
@@ -89,7 +93,7 @@ export class ModuleLifecycleManager {
         await this.rollbackAfterFailure(error, { stopFirst: false });
         throw error;
       }
-    });
+    }, options.signal);
   }
 
   public async start(
@@ -114,7 +118,7 @@ export class ModuleLifecycleManager {
         await this.rollbackAfterFailure(error, { stopFirst: true });
         throw error;
       }
-    });
+    }, options.signal);
   }
 
   public async stop(
@@ -141,17 +145,21 @@ export class ModuleLifecycleManager {
   ): Promise<ModuleLifecycleResult> {
     return this.runExclusive(async () => {
       ensureStateSynchronized(this.registry, this.states);
-      return executeLifecyclePhase(
-        this.getShutdownOrder(),
-        "destroy",
-        "destroying",
-        "destroyed",
-        options.continueOnError ?? this.options.continueOnDestroyError,
-        this.registry,
-        this.loader,
-        this.states,
-        this.contextStorage,
-      );
+      try {
+        return await executeLifecyclePhase(
+          this.getShutdownOrder(),
+          "destroy",
+          "destroying",
+          "destroyed",
+          options.continueOnError ?? this.options.continueOnDestroyError,
+          this.registry,
+          this.loader,
+          this.states,
+          this.contextStorage,
+        );
+      } finally {
+        this.tornDown = true;
+      }
     });
   }
 
@@ -422,27 +430,61 @@ export class ModuleLifecycleManager {
     return createModuleDependencyGraph(nodes);
   }
 
+  /**
+   * Startup order over the loaded modules. A dependency that is
+   * registered but not loaded used to be reported as a "missing
+   * module", which sent people looking for a typo; it is now described
+   * by its registration state.
+   */
   private getStartupOrder(): readonly ModuleId[] {
-    return resolveModuleStartupOrder(this.createGraph());
+    try {
+      return resolveModuleStartupOrder(this.createGraph());
+    } catch (error) {
+      if (
+        error instanceof MissingModuleDependencyError &&
+        error.moduleId !== undefined &&
+        error.dependencyId !== undefined
+      ) {
+        const registration = this.registry.get(error.dependencyId);
+        if (registration !== undefined) {
+          throw new MissingModuleDependencyError(
+            error.moduleId,
+            error.dependencyId,
+            { dependencyState: registration.state },
+          );
+        }
+      }
+      throw error;
+    }
   }
 
   private getShutdownOrder(): readonly ModuleId[] {
     return resolveModuleShutdownOrder(this.createGraph());
   }
 
-  private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
-    while (this.operation) await this.operation;
-    let resolveOperation: (() => void) | undefined;
-    const lock = new Promise<void>((resolve) => {
-      resolveOperation = resolve;
+  /**
+   * Serialises operations. One whose `signal` was aborted (a bootstrap
+   * abandoned by the startup timeout) is not waited for, so `stop()`
+   * and `destroy()` no longer queue behind a hook that may never
+   * settle; a module whose hook does settle later is torn down then.
+   */
+  private runExclusive<T>(
+    operation: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    return this.exclusive.run(operation, signal, () => {
+      this.finalizeLateModules();
     });
-    this.operation = lock;
-    try {
-      return await operation();
-    } finally {
-      resolveOperation?.();
-      this.operation = undefined;
-    }
+  }
+
+  /**
+   * Best-effort teardown for modules an abandoned startup brought up
+   * after the runtime had already been shut down. Failures land on the
+   * module's lifecycle state as they would for any stop/destroy.
+   */
+  private finalizeLateModules(): void {
+    if (!this.tornDown) return;
+    void this.stopApplication().catch(() => undefined);
   }
 }
 

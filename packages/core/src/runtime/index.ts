@@ -12,6 +12,7 @@ export { DefaultRuntime, createRuntime } from "./runtime.js";
 export type {
   RuntimeLifecycleState,
   RuntimeDependencies,
+  RuntimeStateListener,
   RuntimeStatus,
   Runtime,
 } from "./runtime.js";

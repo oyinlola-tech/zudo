@@ -2,7 +2,18 @@ import type { Logger } from "../../logging/core/logger.js";
 import { InvalidStateError } from "../../errors/exceptions.js";
 import { rollbackStartedParticipants } from "./lifecycle.rollback.js";
 
-/** Lifecycle states supported by the Zudojs application runtime. */
+/**
+ * States of the core `Lifecycle` participant machine (created →
+ * initializing → initialized → starting → running → stopping → stopped,
+ * plus failed).
+ *
+ * This is one of three state vocabularies in the framework and they do
+ * not share values: `LifecycleState` from @zudojs/constants describes
+ * a component managed by @zudojs/lifecycle (idle … started → ready …
+ * disposed) and `RuntimeState` from @zudojs/runtime describes that
+ * package's runtime. Import this one as `CoreLifecycleState` when the
+ * names would clash.
+ */
 export const LifecycleState = {
   CREATED: "created",
   INITIALIZING: "initializing",

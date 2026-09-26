@@ -30,10 +30,15 @@ export type RuntimeProcessEvent =
  * Minimal `process`-like target. Defaults to the global process; tests
  * inject an EventEmitter so nothing is registered on the real process
  * and `exit` can be observed instead of executed.
+ *
+ * Listeners are typed `(...args: unknown[]) => void`: the previous
+ * `never[]` rest made `process` and `EventEmitter` (whose listeners are
+ * `(...args: any[]) => void`) fail to type-check against this target
+ * under current `@types/node`.
  */
 export interface RuntimeSignalTarget {
-  on(event: string, listener: (...args: never[]) => void): unknown;
-  off(event: string, listener: (...args: never[]) => void): unknown;
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+  off(event: string, listener: (...args: unknown[]) => void): unknown;
   exit?(code?: number): void;
 }
 
@@ -88,7 +93,7 @@ export class RuntimeSignalManager {
   private readonly _logger: Logger | undefined;
   private readonly _listeners = new Map<
     RuntimeProcessEvent,
-    (...args: never[]) => void
+    (...args: unknown[]) => void
   >();
   private _handlers: RuntimeSignalHandlers | undefined;
   private _receivedSignals = 0;
@@ -162,7 +167,7 @@ export class RuntimeSignalManager {
 
   private createListener(
     event: RuntimeProcessEvent,
-  ): (...args: never[]) => void {
+  ): (...args: unknown[]) => void {
     switch (event) {
       case "SIGINT":
       case "SIGTERM":
@@ -171,19 +176,19 @@ export class RuntimeSignalManager {
           this.handleSignal(event);
         };
       case "uncaughtException":
-        return ((error: unknown) => {
+        return (error: unknown) => {
           this.runFatal(
             () => this._handlers?.onUncaughtException(error),
             "uncaughtException",
           );
-        }) as (...args: never[]) => void;
+        };
       case "unhandledRejection":
-        return ((reason: unknown) => {
+        return (reason: unknown) => {
           this.runFatal(
             () => this._handlers?.onUnhandledRejection(reason),
             "unhandledRejection",
           );
-        }) as (...args: never[]) => void;
+        };
       default:
         return () => {};
     }

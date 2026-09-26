@@ -48,7 +48,9 @@ describe("runtime/CORE-02", () => {
 
     await expect(app.start()).rejects.toThrow();
     await app.stop();
-    await delay(30);
+    // Since round 12 stop() no longer waits behind the abandoned hook;
+    // the late module is destroyed once its hook settles (at ~120 ms).
+    await delay(150);
 
     expect(log).toEqual(["init:end", "onDestroy"]);
   });
@@ -69,6 +71,9 @@ describe("runtime/CORE-02", () => {
 
     await expect(app.start()).rejects.toThrow();
     await app.stop();
+    // Since round 12 stop() returns without waiting for the abandoned
+    // onReady; the module is stopped and destroyed once it settles.
+    await delay(150);
 
     expect(log).toEqual(["listening", "onShutdown", "onDestroy"]);
   });

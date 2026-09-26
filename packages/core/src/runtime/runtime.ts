@@ -16,6 +16,7 @@ import {
 } from "./runtimeState.state.js";
 import type {
   RuntimeStateSnapshot,
+  RuntimeStateTransition,
   RuntimeTiming,
 } from "./runtimeState.state.js";
 import {
@@ -57,6 +58,12 @@ import { RuntimeTimeoutError } from "./runtimeError/runtimeError.specialized.js"
  * RuntimeState enum).
  */
 export type RuntimeLifecycleState = `${RuntimeState}`;
+
+/**
+ * Receives every runtime state transition, synchronously, after the
+ * state has changed.
+ */
+export type RuntimeStateListener = (transition: RuntimeStateTransition) => void;
 
 /**
  * Dependencies required by the runtime.
@@ -146,6 +153,16 @@ export interface Runtime extends Disposable {
   getModuleLifecycle(): ModuleLifecycleManager;
   getModule(moduleId: string): Module | undefined;
   requireModule(moduleId: string): Module;
+  /**
+   * Subscribes to state transitions; returns the unsubscribe function.
+   *
+   * The Application uses this to follow a stop the runtime started on
+   * its own (a SIGTERM, a fatal error), so its own state and its
+   * lifecycle participants do not stay `running` behind a stopped
+   * runtime. Optional on the contract so hand-written runtimes keep
+   * compiling; without it the Application cannot follow such stops.
+   */
+  onStateChange?(listener: RuntimeStateListener): () => void;
 }
 
 /**
@@ -178,6 +195,7 @@ export class DefaultRuntime implements Runtime {
   private _stopPromise: Promise<void> | undefined;
   private _unwound = false;
   private _unwindPromise: Promise<void> | undefined;
+  private readonly _stateListeners = new Set<RuntimeStateListener>();
 
   public constructor(
     dependencies: RuntimeDependencies,
@@ -283,6 +301,13 @@ export class DefaultRuntime implements Runtime {
 
   public get signalHandlersRegistered(): boolean {
     return this._signals.registered;
+  }
+
+  public onStateChange(listener: RuntimeStateListener): () => void {
+    this._stateListeners.add(listener);
+    return () => {
+      this._stateListeners.delete(listener);
+    };
   }
 
   public async start(): Promise<void> {
@@ -542,6 +567,23 @@ export class DefaultRuntime implements Runtime {
       );
     } catch {
       /* Logging must never prevent a lifecycle transition. */
+    }
+
+    if (this._stateListeners.size === 0) return;
+
+    const transition: RuntimeStateTransition = Object.freeze({
+      from: current,
+      to: next,
+      timestamp: new Date(),
+      reason,
+    });
+
+    for (const listener of this._stateListeners) {
+      try {
+        listener(transition);
+      } catch {
+        /* A listener must never prevent a lifecycle transition. */
+      }
     }
   }
 
