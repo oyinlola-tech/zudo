@@ -163,7 +163,7 @@ export function ensureDeps(lessons, log, root) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "package.json"), JSON.stringify(pkg, null, 2));
       log(`installing ${Object.keys(deps).length} packages + tooling from npm into ${dir}`);
-      const r = spawnSync("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error"], { cwd: dir, encoding: "utf8" });
+      const r = spawnSync("npm", ["install", "--prefer-online", "--no-audit", "--no-fund", "--loglevel=error"], { cwd: dir, encoding: "utf8" });
       if (r.status !== 0) throw new Error("npm install failed:\n" + r.stderr);
       writeFileSync(done, new Date().toISOString());
     } finally {

@@ -15,6 +15,8 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { withThemeBlock } from "./site-theme.mjs";
+
 const ROOT = fileURLToPath(new URL("../site/", import.meta.url));
 /* ZudoJS Academy structure, for lesson breadcrumbs (Academy › course › lesson). */
 const ACADEMY = JSON.parse(readFileSync(fileURLToPath(new URL("../site-src/learn/course.json", import.meta.url)), "utf8"));
@@ -275,6 +277,7 @@ function processPage(abs) {
     `$1${block}\n`,
   );
   head = head.replace(OLD_ORIGIN, (_, path) => BASE + mapOldPath(path));
+  head = withThemeBlock(head);
 
   writeFileSync(abs, head + body);
   return { rel, url, noindex: isNoIndex(rel) };

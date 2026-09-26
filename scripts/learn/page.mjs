@@ -4,6 +4,7 @@
  * components.js work unchanged.
  */
 
+import { themeBlock } from "../site-theme.mjs";
 import { escapeAttr, escapeHtml } from "./source.mjs";
 
 function tierBadge(course, tier, extra = "") {
@@ -19,6 +20,7 @@ function head({ title, description, path, keywords }) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1A1A2E">
+${themeBlock()}
   <title>${escapeHtml(title)}</title>
   <link rel="alternate" type="text/markdown" href="${path === "/learn" ? "/learn/index" : path}.md" title="Markdown version">
   <meta name="description" content="${escapeAttr(description)}">
