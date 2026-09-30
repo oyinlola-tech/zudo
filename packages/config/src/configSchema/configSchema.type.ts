@@ -82,14 +82,57 @@ export interface ConfigSchema<T extends ConfigValue = ConfigValue> {
 }
 
 /**
+ * A schema for a nested value whose value type the container does not
+ * know.
+ *
+ * `ConfigSchema<T>` is contravariant in `T` through `validate(value: T,
+ * ...)` and `transform`, so a `ConfigStringSchema` (which extends
+ * `ConfigSchema<string>`) is NOT assignable to `ConfigSchema<ConfigValue>`:
+ * a validator that accepts only `string` cannot stand in for one that must
+ * accept any `ConfigValue`.
+ *
+ * That made typed object schemas inexpressible. Declaring `properties` as
+ * `Record<string, ConfigSchema>` rejected every specific variant, including
+ * through a typed intermediate constant, so there was no user-side
+ * workaround short of a cast:
+ *
+ * ```ts
+ * const schema: ConfigObjectSchema = {
+ *   type: ConfigValueType.OBJECT,
+ *   // previously: not assignable to ConfigSchema<ConfigValue>
+ *   properties: { port: { type: ConfigValueType.NUMBER, min: 1 } },
+ * };
+ * ```
+ *
+ * A container of schemas over differing value types is an existential
+ * type, which TypeScript cannot express. `ConfigSchema<any>` is the
+ * deliberate encoding of that: `any` is assignable in both directions, so
+ * every variant is accepted and the validator can still invoke `validate`
+ * on what it reads back out.
+ *
+ * The named variants are unioned in as well so an inline literal may carry
+ * variant-specific fields (`minLength`, `min`, `max`, `enum`). Excess
+ * property checking against a union admits any property declared by some
+ * member, which a bare `ConfigSchema<any>` would reject.
+ */
+export type AnyConfigSchema =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | ConfigSchema<any>
+  | ConfigStringSchema
+  | ConfigNumberSchema
+  | ConfigBooleanSchema
+  | ConfigObjectSchema
+  | ConfigArraySchema;
+
+/**
  * Object configuration schema.
  */
 export interface ConfigObjectSchema<
   T extends ConfigValue = ConfigValue,
 > extends ConfigSchema<T> {
   readonly type: ConfigValueType.OBJECT;
-  readonly properties: Readonly<Record<string, ConfigSchema>>;
-  readonly additionalProperties?: boolean | ConfigSchema;
+  readonly properties: Readonly<Record<string, AnyConfigSchema>>;
+  readonly additionalProperties?: boolean | AnyConfigSchema;
 }
 
 /**
@@ -99,7 +142,7 @@ export interface ConfigArraySchema<
   T extends ConfigValue = ConfigValue,
 > extends ConfigSchema<T> {
   readonly type: ConfigValueType.ARRAY;
-  readonly items?: ConfigSchema;
+  readonly items?: AnyConfigSchema;
   readonly minItems?: number;
   readonly maxItems?: number;
 }

@@ -6,7 +6,7 @@ import {
 } from "../configValue/configValue.core.js";
 
 import type {
-  ConfigSchema,
+  AnyConfigSchema,
   ConfigArraySchema,
   ConfigNumberSchema,
   ConfigStringSchema,
@@ -157,7 +157,9 @@ function formatExpectedType(
 /**
  * Resolves a schema default.
  */
-function resolveDefaultValue(schema: ConfigSchema): ConfigValue | undefined {
+function resolveDefaultValue(
+  schema: AnyConfigSchema,
+): ConfigValue | undefined {
   if (schema.default === undefined) {
     return undefined;
   }
@@ -212,7 +214,7 @@ function appendCustomValidationResult(
  */
 function validateBuiltInRules(
   value: unknown,
-  schema: ConfigSchema,
+  schema: AnyConfigSchema,
   context: ConfigValidationContext,
   issues: ConfigValidationIssue[],
 ): void {
@@ -366,7 +368,7 @@ function validateBuiltInRules(
  */
 export function validateConfigValue(
   value: unknown,
-  schema: ConfigSchema,
+  schema: AnyConfigSchema,
   context?: Partial<ConfigValidationContext>,
 ): ConfigValidationResult {
   const path = context?.path ?? "$";
@@ -627,7 +629,7 @@ export function validateConfigObject(
  */
 export function assertValidConfig(
   value: unknown,
-  schema: ConfigSchema,
+  schema: AnyConfigSchema,
 ): ConfigValue {
   const result = validateConfigValue(value, schema);
 

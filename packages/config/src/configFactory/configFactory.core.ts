@@ -1,5 +1,7 @@
 import type { ConfigValue } from "../configValue/configValue.core.js";
-import type { ConfigSchema } from "../configSchema/configSchema.type.js";
+import type {
+  AnyConfigSchema,
+} from "../configSchema/configSchema.type.js";
 import type { ConfigSource } from "../configSource/configSource.core.js";
 import type { ConfigStore } from "../configStore/configStore.core.js";
 import type { ConfigManagerOptions } from "../configManager/configManager.type.js";
@@ -80,8 +82,8 @@ export async function createValidatedConfiguration<
   T extends ConfigValue = ConfigValue,
 >(
   schema: {
-    readonly properties: Readonly<Record<string, ConfigSchema>>;
-    readonly additionalProperties?: boolean | ConfigSchema;
+    readonly properties: Readonly<Record<string, AnyConfigSchema>>;
+    readonly additionalProperties?: boolean | AnyConfigSchema;
   },
   options: ConfigFactoryOptions = {},
 ): Promise<{

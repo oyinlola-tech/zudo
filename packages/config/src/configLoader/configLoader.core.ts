@@ -39,11 +39,26 @@ export interface ConfigLoaderOptions {
 
   readonly clearStore?: boolean;
 
+  /**
+   * Called after each source loads successfully.
+   *
+   * Receives the source itself and that source's result, in that order,
+   * as two separate arguments. Awaited, so a slow hook delays the rest of
+   * the load.
+   */
   readonly onSourceLoaded?: (
     source: ConfigSource,
     result: ConfigSourceResult,
   ) => void | Promise<void>;
 
+  /**
+   * Called when a source fails to load.
+   *
+   * Receives the source first and the thrown value second. The thrown
+   * value is `unknown` because a source may reject with anything, so
+   * narrow it before use. Awaited, and returning normally does not
+   * suppress the failure.
+   */
   readonly onSourceError?: (
     source: ConfigSource,
     error: unknown,

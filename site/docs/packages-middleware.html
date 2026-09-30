@@ -236,7 +236,7 @@ yarn add @zudojs/middleware</div>
         </div>
 
         <div class="mt-4 callout callout-warning">
-          <strong class="text-zudo-yellow">Internal dependencies:</strong> Packages depend on each other with <code>workspace:*</code>, always &mdash; including on <code>main</code>. They are never hand-pinned to an exact version. At publish time <code>pnpm</code> rewrites each <code>workspace:*</code> to the exact version of that package in the same release, so a published tarball carries real ranges. Publish with <code>pnpm publish</code>: plain <code>npm publish</code> does not understand the <code>workspace:</code> protocol and would ship a literal <code>workspace:*</code> to the registry.
+          <strong class="text-zudo-yellow">Internal dependencies:</strong> Packages depend on each other with <code>workspace:*</code>, always &mdash; including on <code>main</code>. They are never hand-pinned to an exact version. At publish time <code>pnpm</code> rewrites each <code>workspace:*</code> to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through <code>publish-all.sh</code>, which runs <code>pnpm -r publish</code> &mdash; it rewrites the ranges and publishes in dependency order. Plain <code>npm publish</code> does not understand the <code>workspace:</code> protocol and would ship a literal <code>workspace:*</code> to the registry.
         </div>
       </section>
 
@@ -524,6 +524,7 @@ result.executedMiddleware; <span class="cm">// ["auth", "logging"]</span></div>
   <span class="fn">withTiming</span>,
   <span class="tp">MiddlewareTimeoutError</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/middleware"</span>;
+<span class="kw">import type</span> { <span class="tp">NamedMiddleware</span> } <span class="kw">from</span> <span class="str">"@zudojs/middleware"</span>;
 
 <span class="cm">// 1. Define a custom authentication middleware</span>
 <span class="kw">type</span> <span class="tp">RequestContext</span> = {
@@ -533,7 +534,9 @@ result.executedMiddleware; <span class="cm">// ["auth", "logging"]</span></div>
   <span class="kw">readonly</span> token?: <span class="tp">string</span>;
 };
 
-<span class="kw">const</span> authMiddleware = <span class="fn">withTiming</span>(<span class="str">"auth"</span>, <span class="kw">async</span> (ctx, next) =&gt; {
+<span class="kw">type</span> <span class="tp">HandlerResult</span> = { status: <span class="tp">string</span>; path: <span class="tp">string</span>; timestamp: <span class="tp">number</span> };
+
+<span class="kw">const</span> authMiddleware = <span class="fn">withTiming</span>&lt;<span class="tp">RequestContext</span>, <span class="tp">HandlerResult</span>&gt;(<span class="str">"auth"</span>, <span class="kw">async</span> (ctx, next) =&gt; {
   <span class="kw">if</span> (!ctx.token) {
     <span class="kw">throw new</span> <span class="tp">Error</span>(<span class="str">"Unauthorized: missing token"</span>);
   }
@@ -543,18 +546,18 @@ result.executedMiddleware; <span class="cm">// ["auth", "logging"]</span></div>
 });
 
 <span class="cm">// 2. Build the middleware stack</span>
-<span class="kw">const</span> middleware = [
-  <span class="fn">errorMiddleware</span>((error, ctx) =&gt; {
+<span class="kw">const</span> middleware: <span class="kw">readonly</span> <span class="tp">NamedMiddleware</span>&lt;<span class="tp">RequestContext</span>, <span class="tp">HandlerResult</span>&gt;[] = [
+  <span class="fn">errorMiddleware</span>&lt;<span class="tp">HandlerResult</span>&gt;((error) =&gt; {
     console.<span class="fn">error</span>(<span class="str">"[error]"</span>, error);
   }),
-  <span class="fn">loggingMiddleware</span>(),
-  <span class="fn">timeoutMiddleware</span>(<span class="num">10_000</span>),
-  <span class="fn">rateLimitMiddleware</span>(<span class="num">100</span>, <span class="num">60_000</span>),
+  <span class="fn">loggingMiddleware</span>&lt;<span class="tp">HandlerResult</span>&gt;(),
+  <span class="fn">timeoutMiddleware</span>&lt;<span class="tp">RequestContext</span>, <span class="tp">HandlerResult</span>&gt;(<span class="num">10_000</span>),
+  <span class="fn">rateLimitMiddleware</span>&lt;<span class="tp">RequestContext</span>, <span class="tp">HandlerResult</span>&gt;(<span class="num">100</span>, <span class="num">60_000</span>),
   authMiddleware,
 ];
 
 <span class="cm">// 3. Create the pipeline with a handler</span>
-<span class="kw">const</span> handler = <span class="kw">async</span> (ctx: <span class="tp">RequestContext</span>) =&gt; {
+<span class="kw">const</span> handler = <span class="kw">async</span> (ctx: <span class="tp">RequestContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">HandlerResult</span>&gt; =&gt; {
   <span class="kw">return</span> {
     status: <span class="str">"ok"</span>,
     path: ctx.path,

@@ -287,7 +287,7 @@ yarn add @zudojs/config</div>
 <span class="kw">const</span> debug = manager.<span class="fn">boolean</span>(<span class="str">'app.debug'</span>);   <span class="cm">// true</span></div>
 
         <h3 class="text-lg font-bold mb-3">Using ConfigFactory (Shorthand)</h3>
-        <div class="code-block mb-6"><span class="kw">import</span> { <span class="fn">configFactory</span> } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
+        <div class="code-block mb-6"><span class="kw">import</span> { <span class="fn">configFactory</span>, <span class="tp">ConfigValueType</span> } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
 
 <span class="kw">const</span> manager = <span class="kw">await</span> configFactory.<span class="fn">initialize</span>({
   initialValues: {
@@ -296,16 +296,17 @@ yarn add @zudojs/config</div>
   }
 });
 
-<span class="cm">// Or create a validated configuration</span>
-<span class="kw">const</span> { manager, config } = <span class="kw">await</span> configFactory.<span class="fn">validated</span>({
-  schema: {
-    type: <span class="str">'object'</span>,
-    properties: {
-      <span class="str">'app.name'</span>: { type: <span class="str">'string'</span>, required: <span class="num">true</span> },
-      <span class="str">'app.port'</span>: { type: <span class="str">'number'</span>, min: <span class="num">1</span>, max: <span class="num">65535</span> },
-    }
-  }
+<span class="cm">// Or create a validated configuration. `validated` takes the object</span>
+<span class="cm">// schema itself — its `properties` map — not a wrapper with a `schema` key.</span>
+<span class="kw">const</span> { manager: validatedManager, config } = <span class="kw">await</span> configFactory.<span class="fn">validated</span>({
+  properties: {
+    <span class="str">'app.name'</span>: { type: <span class="tp">ConfigValueType</span>.STRING, required: <span class="num">true</span> },
+    <span class="str">'app.port'</span>: { type: <span class="tp">ConfigValueType</span>.NUMBER, min: <span class="num">1</span>, max: <span class="num">65535</span> },
+  },
 });</div>
+        <div class="border-2 border-black bg-zudo-yellow/20 p-4 mt-3 mb-6">
+          <strong class="text-zudo-yellow">Use the <code>ConfigValueType</code> enum for <code>type</code>.</strong> A bare string literal such as <code>type: 'string'</code> widens to <code>string</code> in a plain object and will not satisfy <code>ConfigSchema</code>. <code>ConfigValueType.STRING</code> is the value <code>"string"</code>, so the runtime shape is identical &mdash; it just keeps the literal type intact.
+        </div>
 
         <h3 class="text-lg font-bold mb-3">Scoped Resolvers</h3>
         <div class="code-block"><span class="kw">const</span> db = manager.<span class="fn">scoped</span>(<span class="str">'db'</span>);
@@ -650,14 +651,15 @@ dbPool.<span class="fn">number</span>(<span class="str">'maxSize'</span>); <span
 }</div>
 
         <h3 class="text-lg font-bold mb-3">Validation</h3>
-        <div class="code-block mb-6"><span class="kw">import</span> { <span class="fn">validateConfigObject</span>, <span class="fn">assertValidConfig</span> } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
+        <div class="code-block mb-6"><span class="kw">import</span> { <span class="fn">validateConfigObject</span>, <span class="fn">assertValidConfig</span>, <span class="tp">ConfigValueType</span> } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
+<span class="kw">import</span> <span class="kw">type</span> { <span class="tp">ConfigObjectSchema</span> } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
 
-<span class="kw">const</span> schema = {
-  type: <span class="str">'object'</span>,
+<span class="kw">const</span> schema: <span class="tp">ConfigObjectSchema</span> = {
+  type: <span class="tp">ConfigValueType</span>.OBJECT,
   properties: {
-    <span class="str">'app.name'</span>: { type: <span class="str">'string'</span>, required: <span class="num">true</span>, minLength: <span class="num">1</span> },
-    <span class="str">'app.port'</span>: { type: <span class="str">'number'</span>, min: <span class="num">1</span>, max: <span class="num">65535</span>, integer: <span class="num">true</span> },
-    <span class="str">'app.debug'</span>: { type: <span class="str">'boolean'</span>, default: <span class="num">false</span> },
+    <span class="str">'app.name'</span>: { type: <span class="tp">ConfigValueType</span>.STRING, required: <span class="num">true</span>, minLength: <span class="num">1</span> },
+    <span class="str">'app.port'</span>: { type: <span class="tp">ConfigValueType</span>.NUMBER, min: <span class="num">1</span>, max: <span class="num">65535</span>, integer: <span class="num">true</span> },
+    <span class="str">'app.debug'</span>: { type: <span class="tp">ConfigValueType</span>.BOOLEAN, default: <span class="num">false</span> },
   }
 };
 
@@ -693,10 +695,10 @@ dbPool.<span class="fn">number</span>(<span class="str">'maxSize'</span>); <span
   sources: [defaultsSource, envSource, fileSource],
   context: { environment: <span class="str">'production'</span> },
   freeze: <span class="num">true</span>,
-  onSourceLoaded: (result) => {
-    console.<span class="fn">log</span>(<span class="str">`Loaded <span class="kw">${</span>result.values.length<span class="kw">}</span> values from <span class="kw">${</span>result.source<span class="kw">}</span>`</span>);
+  onSourceLoaded: (source, result) => {
+    console.<span class="fn">log</span>(<span class="str">`Loaded <span class="kw">${</span>Object.<span class="fn">keys</span>(result.values).length<span class="kw">}</span> values from <span class="kw">${</span>source.name<span class="kw">}</span>`</span>);
   },
-  onSourceError: (error, source) => {
+  onSourceError: (source, error) => {
     console.<span class="fn">error</span>(<span class="str">`Failed to load <span class="kw">${</span>source.name<span class="kw">}</span>: <span class="kw">${</span>error.message<span class="kw">}</span>`</span>);
   },
 });</div>
@@ -825,10 +827,8 @@ manager.<span class="fn">removeSource</span>(<span class="str">'old-source'</spa
 <span class="kw">const</span> manager = configFactory.<span class="fn">fromStore</span>(existingStore);
 
 <span class="cm">// Create, load, and validate</span>
-<span class="kw">const</span> { manager, config } = <span class="kw">await</span> configFactory.<span class="fn">validated</span>({
-  sources,
-  schema: appSchema,
-});</div>
+<span class="cm">// validated(schema, options) — the schema is the first argument.</span>
+<span class="kw">const</span> { manager, config } = <span class="kw">await</span> configFactory.<span class="fn">validated</span>(appSchema, { sources });</div>
       </section>
 
       <!-- ==================== SECTION: TYPES ==================== -->

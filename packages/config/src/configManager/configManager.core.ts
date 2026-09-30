@@ -2,7 +2,10 @@ import type { ConfigValue } from "../configValue/configValue.core.js";
 
 import { cloneConfigValue } from "../configValue/configValue.core.js";
 
-import type { ConfigSchema } from "../configSchema/index.js";
+import type {
+  ConfigSchema,
+  AnyConfigSchema,
+} from "../configSchema/index.js";
 
 import {
   ConfigValueType,
@@ -294,8 +297,8 @@ export class ConfigManager {
    * Loads a schema and validates the complete configuration.
    */
   validate<T extends ConfigValue>(schema: {
-    readonly properties: Readonly<Record<string, ConfigSchema>>;
-    readonly additionalProperties?: boolean | ConfigSchema;
+    readonly properties: Readonly<Record<string, AnyConfigSchema>>;
+    readonly additionalProperties?: boolean | AnyConfigSchema;
   }): T {
     this.assertActive();
 
